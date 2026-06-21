@@ -1,0 +1,26 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Java/Maven
+fastrag-backend/**/target/
+fastrag-backend/**/*.class
+fastrag-backend/**/*.jar
+fastrag-backend/**/*.log
+
+# Node/Frontend
+fastrag-frontend/node_modules/
+fastrag-frontend/dist/
+fastrag-frontend/.env.local
+fastrag-frontend/.env.*.local
+
+# Junction link (fastrag-demo will be renamed to fastrag-frontend)
+fastrag-frontend
+
+# Claude
+.claude/

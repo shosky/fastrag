@@ -1,0 +1,79 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /
+
+spring:
+  application:
+    name: fastrag-backend
+  datasource:
+    url: jdbc:mysql://${MYSQL_HOST:mysql}:3306/fastrag?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true
+    username: ${MYSQL_USER:fastrag}
+    password: ${MYSQL_PASSWORD:fastrag123}
+    driver-class-name: com.mysql.cj.jdbc.Driver
+    hikari:
+      maximum-pool-size: 20
+      minimum-idle: 5
+  data:
+    redis:
+      host: ${REDIS_HOST:redis}
+      port: 6379
+      password: ${REDIS_PASSWORD:}
+      database: 0
+    elasticsearch:
+      uris: http://${ES_HOST:elasticsearch}:9200
+  rabbitmq:
+    host: ${RABBITMQ_HOST:rabbitmq}
+    port: 5672
+    username: ${RABBITMQ_USER:fastrag}
+    password: ${RABBITMQ_PASSWORD:fastrag123}
+    virtual-host: /
+  servlet:
+    multipart:
+      max-file-size: 200MB
+      max-request-size: 200MB
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
+  global-config:
+    db-config:
+      logic-delete-field: deletedAt
+      logic-delete-value: "NOW()"
+      logic-not-delete-value: "null"
+      id-type: assign_id
+
+jwt:
+  secret: ${JWT_SECRET:FastRAGDefaultSecretKey2024!PleaseChangeInProductionAndMakeItAtLeast32Bytes!}
+  expiration: 86400000
+
+milvus:
+  host: ${MILVUS_HOST:milvus}
+  port: 19530
+
+neo4j:
+  uri: bolt://${NEO4J_HOST:neo4j}:7687
+  username: ${NEO4J_USER:neo4j}
+  password: ${NEO4J_PASSWORD:fastrag123}
+
+minio:
+  endpoint: http://${MINIO_HOST:minio}:9000
+  access-key: ${MINIO_ACCESS_KEY:minioadmin}
+  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  bucket: fastrag
+
+ai:
+  gateway:
+    url: ${AI_GATEWAY_URL:http://localhost:11434}
+
+springdoc:
+  api-docs:
+    path: /v3/api-docs
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.fastrag: DEBUG
+    org.springframework.security: DEBUG
