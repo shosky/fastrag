@@ -28,6 +28,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
+      milvus:
+        condition: service_healthy
     networks:
       - fastrag-net
     restart: unless-stopped
@@ -115,23 +117,30 @@ services:
       - fastrag-net
     restart: unless-stopped
 
-  # ==================== Milvus ====================
+  # ==================== Milvus (Fixed) ====================
   milvus:
     image: milvusdb/milvus:v2.3.4
     container_name: fastrag-milvus
+    command: ["milvus", "run", "standalone"]
     environment:
-      ETCD_USE_EMBED: "true"
-      COMMON_STORAGETYPE: local
+      - ETCD_USE_EMBED=true
+      - MINIO_ADDRESS=minio:9000
+      - MINIO_ACCESS_KEY_ID=minioadmin
+      - MINIO_SECRET_ACCESS_KEY=minioadmin
+      - COMMON_STORAGETYPE=local
     ports:
       - "19530:19530"
       - "9091:9091"
     volumes:
       - milvus-data:/var/lib/milvus
+    depends_on:
+      - minio
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
       interval: 15s
       timeout: 10s
-      retries: 5
+      retries: 10
+      start_period: 30s
     networks:
       - fastrag-net
     restart: unless-stopped
@@ -165,6 +174,11 @@ services:
       - "9001:9001"
     volumes:
       - minio-data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
     networks:
       - fastrag-net
     restart: unless-stopped
