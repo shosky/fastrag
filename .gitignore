@@ -20,7 +20,6 @@ fastrag-frontend/.env.local
 fastrag-frontend/.env.*.local
 
 # Junction link (fastrag-demo will be renamed to fastrag-frontend)
-fastrag-frontend
 
 # Claude
 .claude/
