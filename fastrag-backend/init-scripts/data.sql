@@ -1,4 +1,6 @@
 -- FastRAG Seed Data
+SET NAMES utf8mb4;
+SET CHARACTER SET utf8mb4;
 USE fastrag;
 
 -- Default roles
