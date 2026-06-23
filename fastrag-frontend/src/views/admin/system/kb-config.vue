@@ -1,11 +1,13 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const searchName = ref('')
 const filterType = ref('')
 const showDefaultConfig = ref(false)
 const showBatchEdit = ref(false)
+const loading = ref(false)
 
 const defaultConfig = ref({
   teamSpace: 10,
@@ -17,27 +19,48 @@ const defaultConfig = ref({
 const batchForm = ref({ space: 10, unit: 'GB' })
 const selectedKBs = ref<string[]>([])
 
-const kbList = ref([
-  { id: '1', name: '产品知识库', creator: '管理员', createdAt: '2026-01-15', type: '团队', usedSize: '2.3 GB', spaceLimit: '10 GB' },
-  { id: '2', name: '技术知识库', creator: '开发工程师', createdAt: '2026-02-20', type: '团队', usedSize: '1.8 GB', spaceLimit: '10 GB' },
-  { id: '3', name: '客户案例库', creator: '产品经理', createdAt: '2026-03-10', type: '团队', usedSize: '0.5 GB', spaceLimit: '10 GB' },
-  { id: '4', name: '我的个人笔记', creator: '我', createdAt: '2026-05-01', type: '个人', usedSize: '0.1 GB', spaceLimit: '5 GB' },
-])
+const kbList = ref<any[]>([])
 
-const filteredList = ref(kbList.value)
+async function loadKBs() {
+  loading.value = true
+  try {
+    const res = await api.getKnowledgeBases()
+    kbList.value = ((res as any)?.list || (res as any) || []).map((kb: any) => ({
+      ...kb,
+      usedSize: formatSize(kb.usedSize || 0),
+      spaceLimit: formatSize(kb.totalSize || 10737418240),
+      editing: false,
+    }))
+  } finally {
+    loading.value = false
+  }
+}
 
-function handleSearch() {
-  filteredList.value = kbList.value.filter(kb => {
-    const nameMatch = !searchName.value || kb.name.includes(searchName.value)
+onMounted(loadKBs)
+
+function formatSize(bytes: number): string {
+  if (bytes === 0) return '0 B'
+  const gb = bytes / (1024 * 1024 * 1024)
+  if (gb >= 1) return gb.toFixed(1) + ' GB'
+  const mb = bytes / (1024 * 1024)
+  return mb.toFixed(1) + ' MB'
+}
+
+const filteredList = computed(() => {
+  return kbList.value.filter((kb: any) => {
+    const nameMatch = !searchName.value || kb.name?.includes(searchName.value)
     const typeMatch = !filterType.value || kb.type === filterType.value
     return nameMatch && typeMatch
   })
+})
+
+function handleSearch() {
+  // 使用 computed 自动过滤
 }
 
 function handleReset() {
   searchName.value = ''
   filterType.value = ''
-  filteredList.value = kbList.value
 }
 
 function handleSaveDefaultConfig() {
@@ -62,14 +85,19 @@ function handleInlineEdit(kb: any) {
   kb.editing = true
 }
 
-function handleInlineSave(kb: any) {
+async function handleInlineSave(kb: any) {
   kb.editing = false
-  ElMessage.success('保存成功')
+  try {
+    await api.updateKnowledgeBase(kb.id, { totalSize: kb.totalSize })
+    ElMessage.success('保存成功')
+  } catch (e: any) {
+    ElMessage.error(e.message || '保存失败')
+  }
 }
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="card-panel">
       <div class="section-header">
         <div class="section-title">知识库配置</div>
@@ -80,8 +108,8 @@ function handleInlineSave(kb: any) {
       </div>
 
       <div class="filter-bar">
-        <el-input v-model="searchName" placeholder="搜索知识库名称" clearable style="width: 200px" @input="handleSearch" />
-        <el-select v-model="filterType" placeholder="类型" clearable style="width: 120px" @change="handleSearch">
+        <el-input v-model="searchName" placeholder="搜索知识库名称" clearable style="width: 200px" />
+        <el-select v-model="filterType" placeholder="类型" clearable style="width: 120px">
           <el-option label="团队" value="团队" />
           <el-option label="个人" value="个人" />
         </el-select>

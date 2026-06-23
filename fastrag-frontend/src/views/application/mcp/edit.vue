@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import McpForm from './McpForm.vue'
 import type { McpService } from '@/mock/mcp'
-import { getMcpService, updateMcpService, deleteMcpService } from '@/mock/mcp'
+import * as api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,8 +19,7 @@ const id = route.params.id as string
 async function loadService() {
   loading.value = true
   try {
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    const data = getMcpService(id)
+    const data = (await api.getMcpServiceDetail(id)) as any
     if (!data) {
       ElMessage.error('MCP 服务不存在')
       router.push('/application/mcp-management')
@@ -35,11 +34,7 @@ async function loadService() {
 async function handleSubmit(data: McpService) {
   saving.value = true
   try {
-    const updated = updateMcpService(id, data)
-    if (!updated) {
-      ElMessage.error('保存失败：MCP 服务不存在')
-      return
-    }
+    await api.updateMcpService(id, data as any)
     ElMessage.success('保存成功')
     router.push('/application/mcp-management')
   } finally {
@@ -62,7 +57,7 @@ async function handleDelete() {
         type: 'warning',
       },
     )
-    deleteMcpService(id)
+    await api.deleteMcpService(id)
     ElMessage.success('删除成功')
     router.push('/application/mcp-management')
   } catch {

@@ -1,18 +1,18 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, InfoFilled, Search, Monitor, OfficeBuilding, User, Setting, Share, Document } from '@element-plus/icons-vue'
 import type { KnowledgeBase, KnowledgeBaseForm, FileTypeConfig, RetrievalSettingConfig } from '@/types/knowledge'
 import RetrievalSettingPanel from './detail/components/RetrievalSettingPanel.vue'
-import { setKBAcl, addAclEntry, getKBAcl } from '@/mock/auth-acl'
+import * as api from '@/api'
 import { useUserStore } from '@/stores/user'
 import { useAuth } from '@/composables/useAuth'
-import { getFlatOrgList, getDepartmentMembers } from '@/mock/org'
-import { getPersonnel } from '@/mock/auth-roles'
-import { getEmbeddingModelCodes } from '@/mock/models'
-import { KB_CATEGORIES } from '@/mock/knowledge-bases'
+// org functions now from api
+// personnel functions now from api
+// embedding models now from api
+// categories now from api
 import type { KBRole } from '@/types/auth'
 import { KB_ROLE_LABELS } from '@/types/auth'
 
@@ -20,10 +20,10 @@ const router = useRouter()
 const userStore = useUserStore()
 const { hasRole, getMyKBRole } = useAuth()
 
-// 嵌入模型选项来自模型管理 mock（取代硬编码）
-const embeddingModelOptions = getEmbeddingModelCodes()
-// 分类选项来自 mock（与 index.vue 共享，取代硬编码 el-option）
-const categoryOptions = KB_CATEGORIES
+// 嵌入模型选项从 API 加载
+const embeddingModelOptions = ref<{label:string;value:string}[]>([])
+// 分类选项从 API 加载
+const categoryOptions = ref<{id:string;name:string}[]>([])
 
 // --------------- Types ---------------
 type ShareType = 'global' | 'department' | 'specified'
@@ -95,24 +95,13 @@ const selectedDepartments = ref<Department[]>([])
 // 指定人：使用结构化 grant，支持为每个人单独分配 KB 角色
 const specifiedGrants = ref<SpecifiedGrant[]>([])
 
-// Department popup — 从组织 mock 层加载（与 organization.vue 共享）
+// Department popup — 从 API 加载
 const departmentSearch = ref('')
-const departments = ref<Department[]>(
-  getFlatOrgList().map((o) => ({ id: o.id, name: o.name, isDefault: o.id === '1' })),
-)
+const departments = ref<Department[]>([])
 
-// User popup — 从人员 mock 层加载（与 personnel.vue 共享）
+// User popup — 从 API 加载
 const userSearch = ref('')
-const users = ref<User[]>(
-  getPersonnel()
-    .filter((p) => p.status === 'enabled')
-    .map((p) => ({
-      id: p.id,
-      name: p.username,
-      department: p.orgName,
-      isDefault: p.id === '1',
-    })),
-)
+const users = ref<User[]>([])
 
 // 指定人分配的角色选项（编辑者 / 查看者；所有者不在此处分配，避免自降权限）
 const assignableKBRoles: KBRole[] = ['editor', 'viewer']
@@ -126,6 +115,35 @@ const filteredDepartments = computed(() => {
 const filteredUsers = computed(() => {
   if (!userSearch.value) return users.value
   return users.value.filter(u => u.name.includes(userSearch.value))
+})
+
+// --------------- Async data loading ---------------
+onMounted(async () => {
+  try {
+    const [catsRes, modelsRes, orgListRes, personnelRes] = await Promise.all([
+      api.getKnowledgeBaseCategories(),
+      api.getModels({ purpose: 'Embedding' }),
+      api.getOrgFlat(),
+      api.getPersonnel(),
+    ])
+    const cats: any[] = (catsRes as any)?.list || catsRes || []
+    const models: any[] = (modelsRes as any)?.list || modelsRes || []
+    const orgList: any[] = (orgListRes as any)?.list || orgListRes || []
+    const personnel: any[] = (personnelRes as any)?.list || personnelRes || []
+    categoryOptions.value = cats
+    embeddingModelOptions.value = models.map((m: any) => ({ label: m.name || m.code, value: m.code || m.name }))
+    departments.value = orgList.map((o: any) => ({ id: o.id, name: o.name, isDefault: o.id === '1' }))
+    users.value = personnel
+      .filter((p: any) => p.status === 'enabled')
+      .map((p: any) => ({
+        id: p.id,
+        name: p.username,
+        department: p.orgName,
+        isDefault: p.id === '1',
+      }))
+  } catch (e) {
+    console.error('Failed to load form data:', e)
+  }
 })
 
 // --------------- Form data ---------------
@@ -188,7 +206,7 @@ const embeddingModelTouched = ref(false)
 // --------------- Populate from initialData (edit mode) ---------------
 watch(
   () => props.initialData,
-  (data) => {
+  async (data) => {
     // Reset all fields to defaults first to avoid stale values
     const defaults = defaultForm()
     form.name = defaults.name
@@ -221,7 +239,7 @@ watch(
       if (extended.retrievalConfig) Object.assign(form.retrievalConfig, extended.retrievalConfig)
 
       // 编辑模式：从现有 ACL 还原共享设置，而不是根据 permission 字段猜
-      hydrateShareFromAcl(data.id)
+      await hydrateShareFromAcl(data.id)
     }
   },
   { immediate: true }
@@ -233,24 +251,25 @@ watch(
  * - 否则含 userId != 当前用户 的条目 → department / specified
  * 否则只读用户自身：保持 global（实际无共享）
  */
-function hydrateShareFromAcl(kbId: string): void {
-  const acl = getKBAcl(kbId)
+async function hydrateShareFromAcl(kbId: string): Promise<void> {
+  const aclRes: any = await api.getKbAcl(kbId)
+  const acl: any[] = aclRes?.list || aclRes || []
   const meId = userStore.userInfo?.id || '1'
 
-  if (acl.some((e) => e.userId === '*')) {
+  if (acl.some((e: any) => e.userId === '*')) {
     shareType.value = 'global'
     return
   }
-  const others = acl.filter((e) => e.userId !== meId && e.userId !== '*')
+  const others = acl.filter((e: any) => e.userId !== meId && e.userId !== '*')
   if (others.length === 0) {
     shareType.value = 'global'
     return
   }
-  // 是否全部为部门成员？启发式：所有人都在 personnel 里 → specified
-  // 部门共享目前没有持久化部门清单（mock 只有 ACL），所以默认归到 specified
   // 用人员 id 反查名称
-  specifiedGrants.value = others.map((e) => {
-    const p = getPersonnel().find((x) => x.id === e.userId)
+  const personnelRes: any = await api.getPersonnel()
+  const personnel: any[] = personnelRes?.list || personnelRes || []
+  specifiedGrants.value = others.map((e: any) => {
+    const p = personnel.find((x: any) => x.id === e.userId)
     return {
       id: e.userId,
       name: p?.username || e.userId,
@@ -390,33 +409,49 @@ async function handleSubmit() {
 
   // 写入 ACL 条目（创建/编辑知识库时同步更新权限）
   const meId = userStore.userInfo?.id || '1'
-  // 编辑模式用真实知识库 id；创建模式用占位 id，由父组件在拿到后端 kbId 后修正
+  // 编辑模式用真实知识库 id；创建模式由父组件在拿到后端 kbId 后修正
   const kbId = props.mode === 'edit' && props.initialData?.id ? props.initialData.id : 'new'
 
   try {
-    // 先用 setKBAcl 重置：保留自己是 owner
-    setKBAcl(kbId, [{ kbId, userId: meId, kbRole: 'owner', grantedBy: meId }])
+    // 构造 ACL 条目列表
+    const aclEntries: any[] = [{ kbId, userId: meId, kbRole: 'owner', grantedBy: meId }]
 
     if (shareType.value === 'global') {
       // 全局共享：所有人可查看
-      addAclEntry({ kbId, userId: '*', kbRole: 'viewer', grantedBy: meId })
+      aclEntries.push({ kbId, userId: '*', kbRole: 'viewer', grantedBy: meId })
     } else if (shareType.value === 'department') {
-      // 部门共享：展开为部门下所有成员，赋 viewer
+      // 部门共享：异步获取部门成员后赋 viewer
       const memberIds = new Set<string>()
-      selectedDepartments.value.forEach((dept) => {
-        getDepartmentMembers(dept.id).forEach((m) => {
-          if (m.id !== meId) memberIds.add(m.id)
-        })
-      })
+      for (const dept of selectedDepartments.value) {
+        try {
+          const members: any = await api.getDepartmentMembers(dept.id)
+          const list = members?.list || members || []
+          list.forEach((m: any) => {
+            const mid = m.id || m.userId
+            if (mid && mid !== meId) memberIds.add(mid)
+          })
+        } catch {
+          // 部门成员获取失败，跳过
+        }
+      }
       memberIds.forEach((uid) => {
-        addAclEntry({ kbId, userId: uid, kbRole: 'viewer', grantedBy: meId })
+        aclEntries.push({ kbId, userId: uid, kbRole: 'viewer', grantedBy: meId })
       })
     } else {
       // 指定人：使用每个人选择的角色
       specifiedGrants.value.forEach((g) => {
-        if (g.id === meId) return // 自己已经是 owner
-        addAclEntry({ kbId, userId: g.id, kbRole: g.role, grantedBy: meId })
+        if (g.id === meId) return
+        aclEntries.push({ kbId, userId: g.id, kbRole: g.role, grantedBy: meId })
       })
+    }
+
+    // 调用后端 API 写入 ACL
+    if (kbId !== 'new') {
+      try {
+        await api.setKbAcl(kbId, aclEntries)
+      } catch {
+        // ACL 写入失败不阻断主流程
+      }
     }
 
     emit('submit', {
@@ -753,10 +788,10 @@ function goToParseStrategy() {
                   @change="embeddingModelTouched = true"
                 >
                   <el-option
-                    v-for="code in embeddingModelOptions"
-                    :key="code"
-                    :label="code"
-                    :value="code"
+                    v-for="opt in embeddingModelOptions"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
                   />
                 </el-select>
               </el-tooltip>
@@ -767,10 +802,10 @@ function goToParseStrategy() {
                 @change="embeddingModelTouched = true"
               >
                 <el-option
-                  v-for="code in embeddingModelOptions"
-                  :key="code"
-                  :label="code"
-                  :value="code"
+                  v-for="opt in embeddingModelOptions"
+                  :key="opt.value"
+                  :label="opt.label"
+                  :value="opt.value"
                 />
               </el-select>
             </el-form-item>

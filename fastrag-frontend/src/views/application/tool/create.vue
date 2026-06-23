@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import ToolForm from './ToolForm.vue'
 import type { Tool } from '@/mock/tools'
-import { createTool } from '@/mock/tools'
+import * as api from '@/api'
 
 const router = useRouter()
 const saving = ref(false)
@@ -13,8 +13,7 @@ const saving = ref(false)
 async function handleSubmit(data: Tool) {
   saving.value = true
   try {
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    const created = createTool({
+    const created: any = await api.createTool({
       name: data.name,
       identifier: data.identifier,
       description: data.description,
@@ -25,7 +24,7 @@ async function handleSubmit(data: Tool) {
       inputs: data.inputs,
       enabled: data.enabled,
     })
-    ElMessage.success(`HTTP 工具「${created.name}」创建成功`)
+    ElMessage.success(`HTTP 工具「${created?.name || data.name}」创建成功`)
     router.push('/application/my-tools')
   } finally {
     saving.value = false

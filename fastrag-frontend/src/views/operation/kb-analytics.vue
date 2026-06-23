@@ -1,34 +1,35 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import * as echarts from 'echarts'
+import * as api from '@/api'
 
 const chartRef = ref<HTMLElement>()
 const timeRange = ref('本周')
+const loading = ref(true)
 
-const metrics = ref([
-  { label: '总知识库数量', value: 128, change: '+12', trend: 'up' },
-  { label: '总文档数', value: 3560, change: '+156', trend: 'up' },
-  { label: '活跃文档数量', value: 2890, change: '+89', trend: 'up' },
-  { label: '知识引用率', value: '78.5%', change: '+2.3%', trend: 'up' },
-])
+const metrics = ref<any[]>([])
+const hotKBs = ref<any[]>([])
+const hotDocs = ref<any[]>([])
 
-const hotKBs = ref([
-  { rank: 1, name: '产品知识库', docCount: 156, viewCount: 3280 },
-  { rank: 2, name: '技术知识库', docCount: 89, viewCount: 2150 },
-  { rank: 3, name: '客户案例库', docCount: 45, viewCount: 1890 },
-  { rank: 4, name: '培训资料库', docCount: 32, viewCount: 1200 },
-  { rank: 5, name: '运营知识库', docCount: 28, viewCount: 980 },
-])
+async function loadAnalytics() {
+  loading.value = true
+  try {
+    const data: any = await api.getKbAnalytics()
+    if (data) {
+      metrics.value = data.metrics || []
+      hotKBs.value = data.hotKBs || []
+      hotDocs.value = data.hotDocs || []
+    }
+  } catch {
+    // 加载失败
+  } finally {
+    loading.value = false
+  }
+}
 
-const hotDocs = ref([
-  { rank: 1, name: 'AIS 平台用户手册.pdf', kbName: '产品知识库', viewCount: 1280 },
-  { rank: 2, name: 'API 接口文档.md', kbName: '技术知识库', viewCount: 856 },
-  { rank: 3, name: '产品使用指南.docx', kbName: '产品知识库', viewCount: 623 },
-  { rank: 4, name: '部署运维手册.pdf', kbName: '技术知识库', viewCount: 445 },
-  { rank: 5, name: '客户需求分析.xlsx', kbName: '客户案例库', viewCount: 320 },
-])
+onMounted(async () => {
+  await loadAnalytics()
 
-onMounted(() => {
   if (chartRef.value) {
     const chart = echarts.init(chartRef.value)
     chart.setOption({
@@ -58,10 +59,18 @@ onMounted(() => {
     })
   }
 })
+
+// 获取指标的数值显示（区分普通数值和百分比）
+function getMetricDisplay(m: any): string {
+  if (m.label === '知识引用率') {
+    return m.change || '0%'
+  }
+  return String(m.value)
+}
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="section-header">
       <h3>知识资产分析</h3>
       <el-radio-group v-model="timeRange" size="small">
@@ -75,8 +84,8 @@ onMounted(() => {
     <div class="metric-cards">
       <div v-for="m in metrics" :key="m.label" class="metric-card">
         <div class="metric-label">{{ m.label }}</div>
-        <div class="metric-value">{{ m.value }}</div>
-        <div class="metric-change" :class="m.trend">
+        <div class="metric-value">{{ getMetricDisplay(m) }}</div>
+        <div class="metric-change" :class="m.trend" v-if="m.change && m.label !== '知识引用率'">
           <el-icon><Top v-if="m.trend === 'up'" /><Bottom v-else /></el-icon>
           {{ m.change }}
         </div>
@@ -93,23 +102,29 @@ onMounted(() => {
       <!-- 热门知识库排行 -->
       <div class="card-panel">
         <div class="section-title">热门知识库排行</div>
-        <div v-for="kb in hotKBs" :key="kb.rank" class="rank-item">
-          <span class="rank" :class="{ 'top-3': kb.rank <= 3 }">{{ kb.rank }}</span>
-          <span class="name">{{ kb.name }}</span>
-          <span class="count">{{ kb.docCount }} 篇</span>
-          <span class="views">{{ kb.viewCount }} 次</span>
+        <div v-if="hotKBs.length">
+          <div v-for="kb in hotKBs" :key="kb.rank" class="rank-item">
+            <span class="rank" :class="{ 'top-3': kb.rank <= 3 }">{{ kb.rank }}</span>
+            <span class="name">{{ kb.name }}</span>
+            <span class="count">{{ kb.docCount }} 篇</span>
+            <span class="views">{{ kb.viewCount }} 次</span>
+          </div>
         </div>
+        <el-empty v-else description="暂无数据" :image-size="60" />
       </div>
 
       <!-- 热门文档排行 -->
       <div class="card-panel">
         <div class="section-title">热门文档排行</div>
-        <div v-for="doc in hotDocs" :key="doc.rank" class="rank-item">
-          <span class="rank" :class="{ 'top-3': doc.rank <= 3 }">{{ doc.rank }}</span>
-          <span class="name">{{ doc.name }}</span>
-          <span class="count">{{ doc.kbName }}</span>
-          <span class="views">{{ doc.viewCount }} 次</span>
+        <div v-if="hotDocs.length">
+          <div v-for="doc in hotDocs" :key="doc.rank" class="rank-item">
+            <span class="rank" :class="{ 'top-3': doc.rank <= 3 }">{{ doc.rank }}</span>
+            <span class="name">{{ doc.name }}</span>
+            <span class="count">{{ doc.kbName }}</span>
+            <span class="views">{{ doc.viewCount }} 次</span>
+          </div>
         </div>
+        <el-empty v-else description="暂无数据" :image-size="60" />
       </div>
     </div>
   </div>

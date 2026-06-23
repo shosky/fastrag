@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
-import { AUTH_TYPE_OPTIONS, parseMcpUrl } from '@/mock/mcp'
+import { AUTH_TYPE_OPTIONS } from '@/mock/mcp'
 import type { McpService, McpAuthType } from '@/mock/mcp'
 
 const props = withDefaults(
@@ -62,24 +62,13 @@ const activeTab = ref('basic')
 // --- 解析 MCP 地址 ---
 const parsing = ref(false)
 
-function handleParseUrl() {
+async function handleParseUrl() {
   if (!form.mcpUrl.trim()) {
     ElMessage.warning('请先输入 MCP 地址')
     return
   }
-  parsing.value = true
-  // 模拟异步解析
-  setTimeout(() => {
-    const { tools, message } = parseMcpUrl(form.mcpUrl.trim())
-    form.toolsList = tools
-    parsing.value = false
-    if (tools.length) {
-      activeTab.value = 'tools'
-      ElMessage.success(message)
-    } else {
-      ElMessage.warning(message)
-    }
-  }, 500)
+  // 无后端解析接口时，提示用户手动维护工具列表
+  ElMessage.info('暂不支持自动解析 MCP 地址，请手动添加工具列表')
 }
 
 // --- 提交 ---

@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import ToolForm from './ToolForm.vue'
 import type { Tool } from '@/mock/tools'
-import { getTool, updateTool, deleteTool } from '@/mock/tools'
+import * as api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,8 +19,7 @@ const id = route.params.id as string
 async function loadTool() {
   loading.value = true
   try {
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    const data = getTool(id)
+    const data = (await api.getToolDetail(id)) as any
     if (!data) {
       ElMessage.error('工具不存在')
       router.push('/application/my-tools')
@@ -35,11 +34,7 @@ async function loadTool() {
 async function handleSubmit(data: Tool) {
   saving.value = true
   try {
-    const updated = updateTool(id, data)
-    if (!updated) {
-      ElMessage.error('保存失败：工具不存在')
-      return
-    }
+    await api.updateTool(id, data as any)
     ElMessage.success('保存成功')
     router.push('/application/my-tools')
   } finally {
@@ -62,7 +57,7 @@ async function handleDelete() {
         type: 'warning',
       },
     )
-    deleteTool(id)
+    await api.deleteTool(id)
     ElMessage.success('删除成功')
     router.push('/application/my-tools')
   } catch {

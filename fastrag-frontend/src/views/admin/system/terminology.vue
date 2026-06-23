@@ -1,20 +1,28 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  getTermLibraries,
-  getTerms,
-  createTerm,
-  updateTerm,
-  deleteTerm,
-  deleteTermLibrary,
-  type TermLibrary,
-  type TermRecord,
-} from '@/mock/terminology'
+import * as api from '@/api'
+
+interface TermLibrary {
+  id: string
+  name: string
+  desc: string
+  count: number
+}
+
+interface TermRecord {
+  id: string
+  name: string
+  library: string
+  alias: string
+  status: string
+  definition: string
+}
 
 const activeTab = ref('library')
 const showDialog = ref(false)
 const dialogTitle = ref('新建术语库')
+const loading = ref(false)
 
 const formData = ref({
   name: '',
@@ -24,16 +32,24 @@ const formData = ref({
   definition: '',
 })
 
-// 术语库 —— 来自统一 mock 层
-const termLibraries = ref<TermLibrary[]>(getTermLibraries())
+const termLibraries = ref<TermLibrary[]>([])
+const termList = ref<TermRecord[]>([])
 
-// 术语列表 —— 来自统一 mock 层
-const termList = ref<TermRecord[]>(getTerms())
-
-function refreshData() {
-  termLibraries.value = getTermLibraries()
-  termList.value = getTerms()
+async function refreshData() {
+  loading.value = true
+  try {
+    const [libRes, termRes] = await Promise.all([
+      api.getTermLibraries(),
+      api.getTerms(),
+    ])
+    termLibraries.value = (libRes as any) || []
+    termList.value = (termRes as any)?.list || (termRes as any) || []
+  } finally {
+    loading.value = false
+  }
 }
+
+onMounted(refreshData)
 
 function handleAddLibrary() {
   dialogTitle.value = '新建术语库'
@@ -50,8 +66,8 @@ function handleEditLibrary(lib: TermLibrary) {
 async function handleDeleteLibrary(lib: TermLibrary) {
   try {
     await ElMessageBox.confirm('删除术语库后将同步删除其下所有词条，且不可恢复！', '删除确认', { type: 'warning' })
-    deleteTermLibrary(lib.id)
-    refreshData()
+    await api.deleteTermLibrary(lib.id)
+    await refreshData()
     ElMessage.success('删除成功')
   } catch {}
 }
@@ -64,34 +80,39 @@ function handleAddTerm() {
 
 function handleEditTerm(term: TermRecord) {
   dialogTitle.value = '编辑术语'
-  formData.value = { name: term.name, alias: term.alias, library: term.library, status: term.status, definition: term.definition }
+  formData.value = { name: term.name, alias: term.alias, library: term.library, status: (term.status as any) || '启用', definition: term.definition }
   showDialog.value = true
 }
 
 async function handleDeleteTerm(term: TermRecord) {
   try {
     await ElMessageBox.confirm('确定要删除这个术语吗？', '删除确认', { type: 'warning' })
-    deleteTerm(term.id)
-    refreshData()
+    await api.deleteTerm(term.id)
+    await refreshData()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleSave() {
+async function handleSave() {
   if (!formData.value.name) {
     ElMessage.warning('请输入名称')
     return
   }
   if (dialogTitle.value === '新建术语') {
-    createTerm({
+    await api.createTerm({
       name: formData.value.name,
       library: formData.value.library || termLibraries.value[0]?.name || '',
       alias: formData.value.alias,
       status: formData.value.status,
       definition: formData.value.definition,
     })
+  } else if (dialogTitle.value === '新建术语库') {
+    await api.createTermLibrary({
+      name: formData.value.name,
+      description: formData.value.definition,
+    })
   }
-  refreshData()
+  await refreshData()
   showDialog.value = false
   ElMessage.success('保存成功')
 }

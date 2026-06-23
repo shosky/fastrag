@@ -1,22 +1,8 @@
 <script setup lang="ts">
-import type { KnowledgeVersion, ReviewTask } from '@/types/audit'
 import { PUBLISH_STATUS_LABELS, PUBLISH_STATUS_COLORS } from '@/types/audit'
 import { CircleCheck, Select, CloseBold, RefreshRight, InfoFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getFiles } from '@/mock/files'
-import { getKnowledgeBase } from '@/mock/knowledge-bases'
-import { getUpdateLogs } from '@/mock/knowledge-update'
-import type { UpdateLog } from '@/mock/knowledge-update'
-import {
-  getVersionsByKb,
-  createVersion,
-  submitForReview,
-  transitionStatus,
-  getPublishedVersion,
-  getReviewTasks,
-  approveReview,
-  rejectReview,
-} from '@/mock/audit'
+import * as api from '@/api'
 import { useAuth } from '@/composables/useAuth'
 
 const props = defineProps<{
@@ -25,14 +11,25 @@ const props = defineProps<{
 }>()
 
 const { hasPermission } = useAuth()
-const versions = ref<KnowledgeVersion[]>([])
-const publishedVersion = ref<KnowledgeVersion | null>(null)
-const reviewTasks = ref<ReviewTask[]>([])
+const versions = ref<any[]>([])
+const publishedVersion = ref<any>(null)
+const reviewTasks = ref<any[]>([])
+const loading = ref(false)
 
-function refresh() {
-  versions.value = getVersionsByKb(props.kbId)
-  publishedVersion.value = getPublishedVersion(props.kbId)
-  reviewTasks.value = getReviewTasks(props.kbId)
+async function refresh() {
+  loading.value = true
+  try {
+    const [verRes, pubRes, reviewRes] = await Promise.all([
+      api.getVersions(props.kbId),
+      api.getPublishedVersion(props.kbId).catch(() => null),
+      api.getReviews({ kbId: props.kbId }),
+    ])
+    versions.value = (verRes as any)?.list || (verRes as any) || []
+    publishedVersion.value = pubRes || null
+    reviewTasks.value = (reviewRes as any)?.list || (reviewRes as any) || []
+  } finally {
+    loading.value = false
+  }
 }
 
 onMounted(refresh)
@@ -41,38 +38,40 @@ onMounted(refresh)
 const showCreateDialog = ref(false)
 const createForm = ref({ description: '', tags: '' })
 const changeSummary = ref({ fileAdded: 0, fileUpdated: 0, fileRemoved: 0, configChanged: 0 })
-const changeLogs = ref<UpdateLog[]>([])
+const changeLogs = ref<any[]>([])
 
-function openCreateDialog() {
+async function openCreateDialog() {
   // 计算自上次发布以来的变更
-  const logs = getUpdateLogs(props.kbId)
-  changeLogs.value = logs // 显示全部日志供预览
-  changeSummary.value = {
-    fileAdded: logs.filter((l) => l.updateType === 'file_added').length,
-    fileUpdated: logs.filter((l) => l.updateType === 'file_updated').length,
-    fileRemoved: logs.filter((l) => l.updateType === 'file_removed').length,
-    configChanged: logs.filter((l) => l.updateType === 'config_changed').length,
+  try {
+    const logRes = await api.getKbUpdateLogs(props.kbId)
+    const logs = (logRes as any)?.list || (logRes as any) || []
+    changeLogs.value = logs
+    changeSummary.value = {
+      fileAdded: logs.filter((l: any) => l.updateType === 'file_added').length,
+      fileUpdated: logs.filter((l: any) => l.updateType === 'file_updated').length,
+      fileRemoved: logs.filter((l: any) => l.updateType === 'file_removed').length,
+      configChanged: logs.filter((l: any) => l.updateType === 'config_changed').length,
+    }
+  } catch {
+    changeLogs.value = []
   }
   createForm.value = { description: '', tags: '' }
   showCreateDialog.value = true
 }
 
-function handleConfirmCreate() {
-  const files = getFiles(props.kbId)
-  const completedFiles = files.filter((f) => f.status === 'completed')
-  const totalChunks = completedFiles.reduce((sum, f) => sum + (f.chunkCount || 0), 0)
-  const kb = getKnowledgeBase(props.kbId)
-
-  const version = createVersion(props.kbId, {
-    name: props.kbName || kb?.name || '知识库',
-    description: createForm.value.description || '手动创建',
-    tags: createForm.value.tags ? createForm.value.tags.split(/[,，]/).map((s) => s.trim()) : kb?.tags || [],
-    fileCount: completedFiles.length,
-    chunkCount: totalChunks,
-  })
-  showCreateDialog.value = false
-  ElMessage.success(`已创建版本 v${version.version}（${completedFiles.length} 文件，${totalChunks} 切片）`)
-  refresh()
+async function handleConfirmCreate() {
+  try {
+    const version: any = await api.createVersion(props.kbId, {
+      name: props.kbName || '知识库',
+      description: createForm.value.description || '手动创建',
+      tags: createForm.value.tags ? createForm.value.tags.split(/[,，]/).map((s) => s.trim()) : [],
+    })
+    showCreateDialog.value = false
+    ElMessage.success(`已创建版本`)
+    await refresh()
+  } catch (e: any) {
+    ElMessage.error(e.message || '创建版本失败')
+  }
 }
 
 // ===== 审核备注弹窗 =====
@@ -82,72 +81,72 @@ const commentTarget = ref('')
 const commentText = ref('')
 
 // ===== 操作函数 =====
-async function handleSubmitReview(version: KnowledgeVersion) {
+async function handleSubmitReview(version: any) {
   try {
     await ElMessageBox.confirm(`将版本 v${version.version} 提交审核？`, '提交审核', {
       confirmButtonText: '提交', cancelButtonText: '取消', type: 'info',
     })
-    submitForReview(props.kbId, props.kbName || '知识库', version.id, version.version, '当前用户')
-    transitionStatus(props.kbId, version.id, 'pending_review', '当前用户')
+    await api.submitForReview({ kbId: props.kbId, versionId: version.id })
+    await api.transitionVersion(props.kbId, version.id, 'submit')
     ElMessage.success('已提交审核')
-    refresh()
+    await refresh()
   } catch {}
 }
 
-function handleInlineApprove(version: KnowledgeVersion) {
+function handleInlineApprove(version: any) {
   commentAction.value = 'approve'
   commentTarget.value = version.id
   commentText.value = ''
   showCommentDialog.value = true
 }
 
-function handleInlineReject(version: KnowledgeVersion) {
+function handleInlineReject(version: any) {
   commentAction.value = 'reject'
   commentTarget.value = version.id
   commentText.value = ''
   showCommentDialog.value = true
 }
 
-function handleCommentSubmit() {
-  const task = reviewTasks.value.find((t) => t.versionId === commentTarget.value && t.status === 'pending')
+async function handleCommentSubmit() {
+  const task = reviewTasks.value.find((t: any) => t.versionId === commentTarget.value && t.status === 'pending')
   if (task) {
     if (commentAction.value === 'approve') {
-      approveReview(task.id, commentText.value)
+      await api.approveReview(task.id)
     } else {
-      rejectReview(task.id, commentText.value)
+      await api.rejectReview(task.id, commentText.value)
     }
   } else {
-    const targetStatus = commentAction.value === 'approve' ? 'approved' : 'draft'
-    transitionStatus(props.kbId, commentTarget.value, targetStatus, '当前用户')
+    const action = commentAction.value === 'approve' ? 'approve' : 'reject'
+    await api.transitionVersion(props.kbId, commentTarget.value, action)
   }
   ElMessage.success(commentAction.value === 'approve' ? '审核通过' : '已驳回')
   showCommentDialog.value = false
-  refresh()
+  await refresh()
 }
 
-async function handlePublish(version: KnowledgeVersion) {
+async function handlePublish(version: any) {
   const oldPublished = publishedVersion.value
   if (oldPublished && oldPublished.id !== version.id) {
-    transitionStatus(props.kbId, oldPublished.id, 'draft', '当前用户')
+    await api.transitionVersion(props.kbId, oldPublished.id, 'draft')
   }
-  transitionStatus(props.kbId, version.id, 'published', '当前用户')
+  await api.transitionVersion(props.kbId, version.id, 'publish')
   ElMessage.success(`版本 v${version.version} 已发布`)
-  refresh()
+  await refresh()
 }
 
-async function handleRevertToDraft(version: KnowledgeVersion) {
+async function handleRevertToDraft(version: any) {
   try {
     await ElMessageBox.confirm(`将 v${version.version} 回退到草稿？回退后线上将无已发布版本。`, '回退确认', {
       confirmButtonText: '回退', cancelButtonText: '取消', type: 'warning',
     })
-    transitionStatus(props.kbId, version.id, 'draft', '当前用户')
+    await api.transitionVersion(props.kbId, version.id, 'draft')
     ElMessage.success('已回退到草稿')
-    refresh()
+    await refresh()
   } catch {}
 }
 
-function getReviewTask(versionId: string): ReviewTask | undefined {
-  return reviewTasks.value.find((t) => t.versionId === versionId)
+function getReviewTask(versionId: string): any {
+  return reviewTasks.value.find((t: any) => t.versionId === versionId)
 }
 
 const canReview = computed(() => hasPermission('review:approve'))
@@ -196,49 +195,49 @@ const changeTypeColors: Record<string, 'success' | 'danger' | 'primary' | 'warni
     <el-table :data="versions" stripe>
       <el-table-column label="版本" width="80" align="center">
         <template #default="{ row }">
-          <span class="publish-panel__ver">v{{ (row as KnowledgeVersion).version }}</span>
+          <span class="publish-panel__ver">v{{ (row as any).version }}</span>
         </template>
       </el-table-column>
 
       <el-table-column label="状态" width="100" align="center">
         <template #default="{ row }">
-          <el-tag :type="(PUBLISH_STATUS_COLORS as any)[(row as KnowledgeVersion).publishStatus]" size="small">
-            {{ (PUBLISH_STATUS_LABELS as any)[(row as KnowledgeVersion).publishStatus] }}
+          <el-tag :type="(PUBLISH_STATUS_COLORS as any)[(row as any).publishStatus]" size="small">
+            {{ (PUBLISH_STATUS_LABELS as any)[(row as any).publishStatus] }}
           </el-tag>
         </template>
       </el-table-column>
 
       <el-table-column label="文件/切片" width="100" align="center">
         <template #default="{ row }">
-          {{ (row as KnowledgeVersion).fileCount }} / {{ (row as KnowledgeVersion).chunkCount }}
+          {{ (row as any).fileCount }} / {{ (row as any).chunkCount }}
         </template>
       </el-table-column>
 
       <el-table-column label="说明" min-width="140">
         <template #default="{ row }">
-          {{ (row as KnowledgeVersion).description || '-' }}
+          {{ (row as any).description || '-' }}
         </template>
       </el-table-column>
 
       <el-table-column label="创建人" width="90">
-        <template #default="{ row }">{{ (row as KnowledgeVersion).createdBy }}</template>
+        <template #default="{ row }">{{ (row as any).createdBy }}</template>
       </el-table-column>
 
       <el-table-column label="创建时间" width="160">
-        <template #default="{ row }">{{ (row as KnowledgeVersion).createdAt }}</template>
+        <template #default="{ row }">{{ (row as any).createdAt }}</template>
       </el-table-column>
 
       <el-table-column label="状态说明" min-width="180">
         <template #default="{ row }">
           <span class="publish-panel__hint">
-            <template v-if="(row as KnowledgeVersion).publishStatus === 'draft'">可提交审核</template>
-            <template v-else-if="(row as KnowledgeVersion).publishStatus === 'pending_review'">
-              等待 {{ getReviewTask((row as KnowledgeVersion).id)?.reviewer || '管理员' }} 审核
+            <template v-if="(row as any).publishStatus === 'draft'">可提交审核</template>
+            <template v-else-if="(row as any).publishStatus === 'pending_review'">
+              等待 {{ getReviewTask((row as any).id)?.reviewer || '管理员' }} 审核
             </template>
-            <template v-else-if="(row as KnowledgeVersion).publishStatus === 'approved'">审核通过，可发布</template>
-            <template v-else-if="(row as KnowledgeVersion).publishStatus === 'published'">线上版本，用户可见</template>
-            <template v-else-if="(row as KnowledgeVersion).publishStatus === 'rejected'">
-              已驳回{{ getReviewTask((row as KnowledgeVersion).id)?.comment ? '：' + getReviewTask((row as KnowledgeVersion).id)!.comment : '' }}
+            <template v-else-if="(row as any).publishStatus === 'approved'">审核通过，可发布</template>
+            <template v-else-if="(row as any).publishStatus === 'published'">线上版本，用户可见</template>
+            <template v-else-if="(row as any).publishStatus === 'rejected'">
+              已驳回{{ getReviewTask((row as any).id)?.comment ? '：' + getReviewTask((row as any).id)!.comment : '' }}
             </template>
           </span>
         </template>
@@ -246,24 +245,24 @@ const changeTypeColors: Record<string, 'success' | 'danger' | 'primary' | 'warni
 
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
-          <el-button v-if="(row as KnowledgeVersion).publishStatus === 'draft'" type="primary" link size="small" @click="handleSubmitReview(row as KnowledgeVersion)">
+          <el-button v-if="(row as any).publishStatus === 'draft'" type="primary" link size="small" @click="handleSubmitReview(row as any)">
             提交审核
           </el-button>
-          <template v-if="(row as KnowledgeVersion).publishStatus === 'pending_review' && canReview">
-            <el-button type="success" link size="small" @click="handleInlineApprove(row as KnowledgeVersion)">
+          <template v-if="(row as any).publishStatus === 'pending_review' && canReview">
+            <el-button type="success" link size="small" @click="handleInlineApprove(row as any)">
               <el-icon><Select /></el-icon> 通过
             </el-button>
-            <el-button type="danger" link size="small" @click="handleInlineReject(row as KnowledgeVersion)">
+            <el-button type="danger" link size="small" @click="handleInlineReject(row as any)">
               <el-icon><CloseBold /></el-icon> 驳回
             </el-button>
           </template>
-          <el-button v-if="(row as KnowledgeVersion).publishStatus === 'approved'" type="success" link size="small" @click="handlePublish(row as KnowledgeVersion)">
+          <el-button v-if="(row as any).publishStatus === 'approved'" type="success" link size="small" @click="handlePublish(row as any)">
             <el-icon><CircleCheck /></el-icon> 发布
           </el-button>
-          <el-button v-if="(row as KnowledgeVersion).publishStatus === 'published'" type="warning" link size="small" @click="handleRevertToDraft(row as KnowledgeVersion)">
+          <el-button v-if="(row as any).publishStatus === 'published'" type="warning" link size="small" @click="handleRevertToDraft(row as any)">
             <el-icon><RefreshRight /></el-icon> 回退
           </el-button>
-          <el-button v-if="(row as KnowledgeVersion).publishStatus === 'rejected'" type="warning" link size="small" @click="handleSubmitReview(row as KnowledgeVersion)">
+          <el-button v-if="(row as any).publishStatus === 'rejected'" type="warning" link size="small" @click="handleSubmitReview(row as any)">
             <el-icon><RefreshRight /></el-icon> 重新提交
           </el-button>
         </template>

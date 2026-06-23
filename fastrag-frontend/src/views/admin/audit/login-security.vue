@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const config = ref({
   lockEnabled: true,
@@ -10,10 +11,29 @@ const config = ref({
   whitelistEnabled: false,
 })
 
-const whitelistUsers = ref<string[]>(['admin', 'zgf'])
+const whitelistUsers = ref<string[]>([])
 const searchUser = ref('')
+const loading = ref(false)
 
-const candidateUsers = ['16666666666', '谢三妹', 'zgf', 'huchenghao', 'lanhaichen', 'xiaoymin', 'liuyang']
+async function loadConfig() {
+  loading.value = true
+  try {
+    const res: any = await api.getDictionaries({ type: '登录安全' })
+    const settings = res?.['登录安全'] || []
+    settings.forEach((item: any) => {
+      if (item.key === 'lock_enabled') config.value.lockEnabled = item.value === 'true'
+      if (item.key === 'max_failures') config.value.maxFailures = parseInt(item.value) || 5
+      if (item.key === 'lock_duration') config.value.lockDuration = parseInt(item.value) || 30
+      if (item.key === 'max_devices') config.value.maxDevices = parseInt(item.value) || 3
+      if (item.key === 'whitelist_enabled') config.value.whitelistEnabled = item.value === 'true'
+      if (item.key === 'whitelist_users') whitelistUsers.value = item.value ? item.value.split(',') : []
+    })
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadConfig)
 
 function handleAddWhitelist() {
   if (searchUser.value && !whitelistUsers.value.includes(searchUser.value)) {
@@ -39,17 +59,30 @@ async function handleRestoreDefault() {
   try {
     await ElMessageBox.confirm('确认恢复默认配置？', '恢复默认', { type: 'warning' })
     config.value = { lockEnabled: true, maxFailures: 5, lockDuration: 30, maxDevices: 3, whitelistEnabled: false }
+    whitelistUsers.value = []
     ElMessage.success('已恢复默认')
   } catch {}
 }
 
-function handleSave() {
-  ElMessage.success('保存成功')
+async function handleSave() {
+  try {
+    await Promise.all([
+      api.createDictionary({ type: '登录安全', key: 'lock_enabled', value: String(config.value.lockEnabled) }),
+      api.createDictionary({ type: '登录安全', key: 'max_failures', value: String(config.value.maxFailures) }),
+      api.createDictionary({ type: '登录安全', key: 'lock_duration', value: String(config.value.lockDuration) }),
+      api.createDictionary({ type: '登录安全', key: 'max_devices', value: String(config.value.maxDevices) }),
+      api.createDictionary({ type: '登录安全', key: 'whitelist_enabled', value: String(config.value.whitelistEnabled) }),
+      api.createDictionary({ type: '登录安全', key: 'whitelist_users', value: whitelistUsers.value.join(',') }),
+    ])
+    ElMessage.success('保存成功')
+  } catch (e: any) {
+    ElMessage.error(e.message || '保存失败')
+  }
 }
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="card-panel">
       <div class="section-title">登录安全配置</div>
 
@@ -80,14 +113,7 @@ function handleSave() {
         <template v-if="config.whitelistEnabled">
           <el-form-item label="添加用户">
             <div class="whitelist-input">
-              <el-select
-                v-model="searchUser"
-                filterable
-                placeholder="搜索用户名/姓名/手机号"
-                style="flex: 1"
-              >
-                <el-option v-for="u in candidateUsers" :key="u" :label="u" :value="u" />
-              </el-select>
+              <el-input v-model="searchUser" placeholder="输入用户名" style="flex: 1" />
               <el-button type="primary" @click="handleAddWhitelist">添加用户</el-button>
             </div>
           </el-form-item>

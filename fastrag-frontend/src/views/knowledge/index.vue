@@ -1,10 +1,9 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
-import { getAccessibleKBIds } from '@/mock/auth-acl'
 import { useUserStore } from '@/stores/user'
-import { getKnowledgeBases, getCategories } from '@/mock/knowledge-bases'
+import * as api from '@/api'
 
 const router = useRouter()
 const { hasPermission } = useAuth()
@@ -14,36 +13,53 @@ const searchKeyword = ref('')
 const selectedCategory = ref('')
 const showTagPanel = ref(false)
 const selectedTags = ref<string[]>([])
+const loading = ref(false)
 
-// 分类 —— 来自 mock 层（与 form.vue 共享）
-const categories = ref(getCategories())
+// 分类
+const categories = ref<any[]>([])
 
-// 标签列表（从知识库数据动态汇总，不再硬编码）
+// 知识库列表
+const knowledgeBases = ref<any[]>([])
+
+// 加载数据
+async function loadData() {
+  loading.value = true
+  try {
+    const [kbRes, catRes] = await Promise.all([
+      api.getKnowledgeBases(),
+      api.getKnowledgeBaseCategories(),
+    ])
+    knowledgeBases.value = (kbRes as any)?.list || (kbRes as any) || []
+    categories.value = (catRes as any) || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadData)
+
+// 标签列表（从知识库数据动态汇总）
 const allTags = computed(() => {
   const set = new Set<string>()
-  getKnowledgeBases().forEach((kb) => kb.tags.forEach((t) => set.add(t)))
+  knowledgeBases.value.forEach((kb: any) => (kb.tags || []).forEach((t: string) => set.add(t)))
   return Array.from(set)
 })
-
-// 知识库列表 —— 来自统一 mock 层
-const knowledgeBases = ref(getKnowledgeBases())
 
 const filteredKBs = computed(() => {
   let list = knowledgeBases.value
   if (activeTab.value === 'my') {
     // 用 ACL 过滤：只显示当前用户可访问的知识库
     const userId = userStore.userInfo?.id || ''
-    const accessibleIds = getAccessibleKBIds(userId)
-    list = list.filter((kb) => accessibleIds.includes(kb.id))
+    list = list.filter((kb: any) => kb.creator === userId || kb.creatorName === userStore.username)
   }
   if (searchKeyword.value) {
-    list = list.filter(kb => kb.name.includes(searchKeyword.value))
+    list = list.filter((kb: any) => kb.name?.includes(searchKeyword.value))
   }
   if (selectedCategory.value) {
-    list = list.filter((kb) => kb.category === selectedCategory.value)
+    list = list.filter((kb: any) => kb.category === selectedCategory.value)
   }
   if (selectedTags.value.length > 0) {
-    list = list.filter(kb => selectedTags.value.some(tag => kb.tags.includes(tag)))
+    list = list.filter((kb: any) => selectedTags.value.some(tag => (kb.tags || []).includes(tag)))
   }
   return list
 })
@@ -71,7 +87,7 @@ function goToCreate() {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="knowledge-header">
       <el-tabs v-model="activeTab">
         <el-tab-pane label="全部知识库" name="all" />
@@ -164,7 +180,7 @@ function goToCreate() {
           </div>
         </div>
 
-        <el-empty v-if="!filteredKBs.length" description="暂无知识库" />
+        <el-empty v-if="!filteredKBs.length && !loading" description="暂无知识库" />
       </div>
     </div>
   </div>
@@ -265,7 +281,6 @@ function goToCreate() {
     margin-bottom: $spacing-base;
   }
 
-  // 统一使用主题色，不再硬编码 Element Plus 默认蓝 #409eff
   &__icon {
     color: $color-primary;
   }

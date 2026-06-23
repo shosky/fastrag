@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const showDialog = ref(false)
 const dialogTitle = ref('添加敏感词')
+const loading = ref(false)
+const editingId = ref<string | null>(null)
 
 const formData = ref({
   word: '',
@@ -13,20 +16,30 @@ const formData = ref({
   replaceAnswer: false,
 })
 
-const wordList = ref([
-  { id: '1', word: '演示敏感词_01', reply: '该内容涉及敏感词，请修改后再提交。', blockInput: true, blockSearch: false, replaceAnswer: false },
-  { id: '2', word: '测试屏蔽词', reply: '', blockInput: false, blockSearch: true, replaceAnswer: false },
-  { id: '3', word: '替换词', reply: '', blockInput: false, blockSearch: false, replaceAnswer: true },
-])
+const wordList = ref<any[]>([])
+
+async function loadWords() {
+  loading.value = true
+  try {
+    const res = await api.getSensitiveWords()
+    wordList.value = (res as any) || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadWords)
 
 function handleAdd() {
   dialogTitle.value = '添加敏感词'
+  editingId.value = null
   formData.value = { word: '', reply: '', blockInput: false, blockSearch: false, replaceAnswer: false }
   showDialog.value = true
 }
 
 function handleEdit(row: any) {
   dialogTitle.value = '编辑敏感词'
+  editingId.value = row.id
   formData.value = { ...row }
   showDialog.value = true
 }
@@ -34,20 +47,31 @@ function handleEdit(row: any) {
 async function handleDelete(row: any) {
   try {
     await ElMessageBox.confirm('确定删除该敏感词？', '删除确认', { type: 'warning' })
-    wordList.value = wordList.value.filter(w => w.id !== row.id)
+    await api.deleteSensitiveWord(row.id)
+    await loadWords()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleSave() {
+async function handleSave() {
   if (!formData.value.word) {
     ElMessage.warning('请输入敏感词')
     return
   }
-  if (dialogTitle.value === '添加敏感词') {
-    wordList.value.push({ ...formData.value, id: String(Date.now()) })
+  const data = {
+    word: formData.value.word,
+    reply: formData.value.reply,
+    blockInput: formData.value.blockInput,
+    blockSearch: formData.value.blockSearch,
+    replaceAnswer: formData.value.replaceAnswer,
+  }
+  if (editingId.value) {
+    await api.updateSensitiveWord(editingId.value, data)
+  } else {
+    await api.createSensitiveWord(data)
   }
   showDialog.value = false
+  await loadWords()
   ElMessage.success('保存成功')
 }
 
@@ -61,7 +85,7 @@ function handleBatchImport() {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="card-panel">
       <div class="section-header">
         <div class="section-title">敏感词设置</div>
@@ -92,6 +116,7 @@ function handleBatchImport() {
           </template>
         </el-table-column>
       </el-table>
+      <el-empty v-if="!wordList.length && !loading" description="暂无敏感词" />
     </div>
 
     <el-dialog v-model="showDialog" :title="dialogTitle" width="500px">

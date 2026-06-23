@@ -1,19 +1,21 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  getMcpServices,
-  deleteMcpService,
-  toggleMcpEnabled,
-  getStatusLabel,
-} from '@/mock/mcp'
+import { getStatusLabel } from '@/mock/mcp'
 import type { McpService, McpStatus } from '@/mock/mcp'
+import * as api from '@/api'
 
 const router = useRouter()
 
 // --- 列表数据 ---
-const services = ref<McpService[]>(getMcpServices())
+const services = ref<McpService[]>([])
+
+async function loadServices() {
+  services.value = (await api.getMcpServices()) as any || []
+}
+
+onMounted(loadServices)
 
 const searchKeyword = ref('')
 const selectedStatus = ref<McpStatus | ''>('')
@@ -55,15 +57,15 @@ async function handleDelete(service: McpService) {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    deleteMcpService(service.id)
-    services.value = getMcpServices()
+    await api.deleteMcpService(service.id)
+    await loadServices()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleToggleEnabled(service: McpService) {
-  toggleMcpEnabled(service.id)
-  services.value = getMcpServices()
+async function handleToggleEnabled(service: McpService) {
+  await api.toggleMcpService(service.id)
+  await loadServices()
   ElMessage.success(service.enabled ? '已禁用' : '已启用')
 }
 </script>

@@ -1,13 +1,15 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const router = useRouter()
 const activeTab = ref('my')
 const searchKeyword = ref('')
 const selectedTag = ref('')
 const showAddDialog = ref(false)
+const loading = ref(false)
 
 const newApp = ref({
   type: 'ChatBot 智能问答',
@@ -18,50 +20,63 @@ const newApp = ref({
 })
 
 // 应用列表
-const apps = ref([
-  { id: '1', name: '智能问答助手', type: 'ChatBot', description: '基于知识库的智能问答应用', tags: ['测试', '应用中心'], status: 'published', icon: '#409eff' },
-  { id: '2', name: '文档写作助手', type: 'Editor', description: 'AI 辅助的文档创作工具', tags: ['写作', '创作'], status: 'draft', icon: '#67c23a' },
-  { id: '3', name: '客服机器人', type: 'LiteAgent', description: '企业客服智能体应用', tags: ['客服', '机器人'], status: 'published', icon: '#e6a23c' },
-  { id: '4', name: '手册演示_ChatBot', type: 'ChatBot', description: '用于演示应用中心操作手册的创建流程', tags: ['测试', '应用中心'], status: 'published', icon: '#f56c6c' },
-])
+const apps = ref<any[]>([])
 
 // 模板市场
-const templates = ref([
-  { id: '1', name: '强知识库问答助手', type: 'ChatBot', description: '基于知识库的专业问答模板', usageCount: 1280 },
-  { id: '2', name: '智能写作助手', type: 'Editor', description: 'AI 辅助的写作创作模板', usageCount: 856 },
-  { id: '3', name: '多轮对话助手', type: 'ChatBot', description: '支持上下文的多轮对话模板', usageCount: 623 },
-])
+const templates = ref<any[]>([])
+
+async function loadApps() {
+  loading.value = true
+  try {
+    const [appRes, tplRes] = await Promise.all([
+      api.getApps(),
+      api.getAppTemplates().catch(() => []),
+    ])
+    apps.value = (appRes as any)?.list || (appRes as any) || []
+    templates.value = (tplRes as any)?.list || (tplRes as any) || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadApps)
 
 const filteredApps = computed(() => {
   let list = apps.value
   if (searchKeyword.value) {
-    list = list.filter(app => app.name.includes(searchKeyword.value))
+    list = list.filter((app: any) => app.name?.includes(searchKeyword.value))
   }
   if (selectedTag.value) {
-    list = list.filter(app => app.tags.includes(selectedTag.value))
+    list = list.filter((app: any) => (app.tags || []).includes(selectedTag.value))
   }
   return list
 })
 
-const allTags = ['测试', '应用中心', '写作', '创作', '客服', '机器人']
+const allTags = computed(() => {
+  const set = new Set<string>()
+  apps.value.forEach((app: any) => (app.tags || []).forEach((t: string) => set.add(t)))
+  return Array.from(set)
+})
 
-function handleAddApp() {
+async function handleAddApp() {
   if (!newApp.value.name) {
     ElMessage.warning('请输入应用名称')
     return
   }
-  apps.value.push({
-    id: String(Date.now()),
-    name: newApp.value.name,
-    type: newApp.value.type.split(' ')[0],
-    description: newApp.value.description,
-    tags: newApp.value.tags,
-    status: 'draft',
-    icon: '#409eff',
-  })
-  showAddDialog.value = false
-  newApp.value = { type: 'ChatBot 智能问答', name: '', description: '', icon: '', tags: [] }
-  ElMessage.success('创建成功')
+  try {
+    await api.createApp({
+      name: newApp.value.name,
+      type: newApp.value.type.split(' ')[0],
+      description: newApp.value.description,
+      tags: newApp.value.tags,
+    })
+    showAddDialog.value = false
+    newApp.value = { type: 'ChatBot 智能问答', name: '', description: '', icon: '', tags: [] }
+    ElMessage.success('创建成功')
+    await loadApps()
+  } catch (e: any) {
+    ElMessage.error(e.message || '创建失败')
+  }
 }
 
 async function handleDeleteApp(id: string) {
@@ -71,8 +86,9 @@ async function handleDeleteApp(id: string) {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    apps.value = apps.value.filter(app => app.id !== id)
+    await api.deleteApp(id)
     ElMessage.success('删除成功')
+    await loadApps()
   } catch {}
 }
 
@@ -85,13 +101,19 @@ function goToEditor(id: string) {
   router.push(`/application/${id}/editor`)
 }
 
-function handleCreateFromTemplate(templateId: string) {
-  ElMessage.success('添加成功')
+async function handleCreateFromTemplate(templateId: string) {
+  try {
+    await api.createApp({ templateId })
+    ElMessage.success('创建成功')
+    await loadApps()
+  } catch (e: any) {
+    ElMessage.error(e.message || '创建失败')
+  }
 }
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <el-tabs v-model="activeTab">
       <el-tab-pane label="应用市场" name="market">
         <div class="filter-bar">

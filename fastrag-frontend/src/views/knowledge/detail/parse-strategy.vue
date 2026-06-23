@@ -56,10 +56,13 @@ const advancedCollapsed = ref<string[]>([])
 // 自定义切片长度输入
 const customChunkLength = ref('')
 
-// 扩展名冲突检测（实时）
-const conflicts = computed(() => {
+// 扩展名冲突检测（实时，基于已加载的策略列表）
+const conflicts = computed<any[]>(() => {
   if (form.value.extensions.length === 0) return []
-  return detectConflicts(form.value.extensions, isEdit.value ? editingId.value : undefined)
+  return strategies.value.filter((s: any) => {
+    if (isEdit.value && s.id === editingId.value) return false
+    return form.value.extensions.some((ext: string) => (s.extensions || []).includes(ext))
+  })
 })
 
 const formRules = {
@@ -120,7 +123,7 @@ async function handleSetDefault(strategy: ParseStrategy) {
       '设为默认',
       { type: 'info', confirmButtonText: '确定', cancelButtonText: '取消' },
     )
-    const result = setDefault(strategy.id)
+    const result = await setDefault(strategy.id)
     if (result.success) {
       ElMessage.success(`已将「${strategy.name}」设为默认策略`)
     } else {
@@ -143,7 +146,7 @@ async function handleDelete(strategy: ParseStrategy) {
       '删除确认',
       { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
     )
-    const result = remove(strategy.id)
+    const result = await remove(strategy.id)
     if (result.success) {
       ElMessage.success('策略已删除')
     } else {

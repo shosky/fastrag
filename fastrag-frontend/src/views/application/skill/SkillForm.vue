@@ -1,12 +1,9 @@
 <script setup lang="ts">
-import { ref, reactive, computed, watch } from 'vue'
+import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import {
-  SKILL_CATEGORIES,
-  SCOPE_CANDIDATES,
-  DEPENDENCY_CANDIDATES,
-} from '@/mock/skills'
+import { SKILL_CATEGORIES } from '@/mock/skills'
 import type { Skill, SkillDependency, SkillSource, SkillCodeType } from '@/mock/skills'
+import * as api from '@/api'
 
 const props = withDefaults(
   defineProps<{
@@ -109,9 +106,31 @@ const activeTab = ref('basic')
 const depCandidateType = ref<SkillDependency['type']>('tool')
 const depCandidateName = ref('')
 
+// 从 API 动态加载候选列表
+const dependencyCandidates = ref<{ type: string; id: string; name: string }[]>([])
+
+onMounted(async () => {
+  try {
+    const [tools, skills, mcps, models] = await Promise.all([
+      api.getTools().catch(() => []),
+      api.getSkills().catch(() => []),
+      api.getMcpServices().catch(() => []),
+      api.getModels().catch(() => []),
+    ])
+    const list: { type: string; id: string; name: string }[] = []
+    ;((tools as any)?.list || tools || []).forEach((t: any) => list.push({ type: 'tool', id: t.id, name: t.name }))
+    ;((skills as any)?.list || skills || []).forEach((s: any) => list.push({ type: 'skill', id: s.id, name: s.name }))
+    ;((mcps as any)?.list || mcps || []).forEach((m: any) => list.push({ type: 'mcp', id: m.id, name: m.name }))
+    ;((models as any)?.list || models || []).forEach((m: any) => list.push({ type: 'model', id: m.id, name: m.name }))
+    dependencyCandidates.value = list
+  } catch {
+    // 加载失败保留空列表
+  }
+})
+
 const candidateOptions = computed(() => {
   if (!depCandidateType.value) return []
-  return DEPENDENCY_CANDIDATES.filter((c) => c.type === depCandidateType.value)
+  return dependencyCandidates.value.filter((c) => c.type === depCandidateType.value)
 })
 
 function addDependency() {
@@ -141,8 +160,20 @@ function removeDependency(id: string) {
 // --- 生效范围 ---
 const scopeAddId = ref('')
 
+// 从 API 加载范围候选（应用列表）
+const scopeCandidates = ref<{ id: string; name: string }[]>([])
+
+onMounted(async () => {
+  try {
+    const apps: any = await api.getApps()
+    scopeCandidates.value = ((apps?.list || apps || []) as any[]).map((a) => ({ id: a.id, name: a.name }))
+  } catch {
+    scopeCandidates.value = []
+  }
+})
+
 const availableScopeCandidates = computed(() => {
-  return SCOPE_CANDIDATES.filter((c) => !form.scopes.some((s) => s.id === c.id))
+  return scopeCandidates.value.filter((c) => !form.scopes.some((s) => s.id === c.id))
 })
 
 function addScopeBinding(id: string) {
@@ -151,7 +182,7 @@ function addScopeBinding(id: string) {
     ElMessage.warning('该范围已添加')
     return
   }
-  const candidate = SCOPE_CANDIDATES.find((c) => c.id === id)
+  const candidate = scopeCandidates.value.find((c) => c.id === id)
   if (!candidate) return
   form.scopes.push({ id: candidate.id, name: candidate.name, enabled: true })
 }
@@ -281,7 +312,7 @@ function handleSubmit() {
             <el-option
               v-for="c in availableScopeCandidates"
               :key="c.id"
-              :label="c.name + '（' + (c.type === 'app' ? '应用' : '知识库') + '）'"
+              :label="c.name + '（应用）'"
               :value="c.id"
             />
           </el-select>

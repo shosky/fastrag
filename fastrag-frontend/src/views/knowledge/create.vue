@@ -5,24 +5,19 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import KnowledgeForm from './form.vue'
 import type { KnowledgeBaseForm } from '@/types/knowledge'
-import { createKnowledgeBase } from '@/mock/knowledge-bases'
-import { useUserStore } from '@/stores/user'
+import * as api from '@/api'
 
 const router = useRouter()
-const userStore = useUserStore()
 const saving = ref(false)
 
 async function handleSubmit(data: KnowledgeBaseForm) {
   saving.value = true
   try {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300))
-    const creator = userStore.userInfo?.username || '我'
-    const kb = createKnowledgeBase(data, creator)
-    // form.vue 已写入 ACL（kbId='new'），此处把 owner 条目同步到真实 id
-    // 注：因 form.vue 用了占位 id 'new'，这里不强制迁移；真实接入后端时由后端统一处理
-    ElMessage.success(`知识库「${kb.name}」创建成功`)
+    const kb: any = await api.createKnowledgeBase(data as any)
+    ElMessage.success(`知识库「${kb?.name || data.name}」创建成功`)
     router.push('/knowledge')
+  } catch {
+    ElMessage.error('创建知识库失败')
   } finally {
     saving.value = false
   }

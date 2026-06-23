@@ -1,23 +1,52 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const platforms = ref([
-  { id: '1', name: '钉钉', status: '已绑定', icon: '#0089FF', config: { corpId: '', clientId: '', clientSecret: '' } },
+  { id: '1', name: '钉钉', status: '未绑定', icon: '#0089FF', config: { corpId: '', clientId: '', clientSecret: '' } },
   { id: '2', name: '企业微信', status: '未绑定', icon: '#07C160', config: { corpId: '', agentId: '', corpSecret: '' } },
   { id: '3', name: '飞书', status: '未绑定', icon: '#3370FF', config: { appId: '', appSecret: '' } },
   { id: '4', name: 'OAuth2', status: '未绑定', icon: '#666666', config: { clientId: '', clientSecret: '', scope: '' } },
 ])
 
 const activePlatform = ref('1')
+const loading = ref(false)
 
-function handleSave() {
-  ElMessage.success('保存成功')
+async function loadPlatforms() {
+  loading.value = true
+  try {
+    const res: any = await api.getDictionaries({ type: '三方平台' })
+    const settings = res?.['三方平台'] || []
+    settings.forEach((item: any) => {
+      const platform = platforms.value.find(p => p.name === item.key)
+      if (platform) {
+        platform.status = item.value ? '已绑定' : '未绑定'
+      }
+    })
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadPlatforms)
+
+async function handleSave() {
+  const platform = platforms.value.find(p => p.id === activePlatform.value)
+  if (!platform) return
+  try {
+    await api.createDictionary({ type: '三方平台', key: platform.name, value: JSON.stringify(platform.config) })
+    platform.status = '已绑定'
+    ElMessage.success('保存成功')
+  } catch (e: any) {
+    ElMessage.error(e.message || '保存失败')
+  }
 }
 
 async function handleUnbind(platform: any) {
   try {
     await ElMessageBox.confirm(`确认解绑${platform.name}平台吗？`, '解绑确认', { type: 'warning' })
+    await api.createDictionary({ type: '三方平台', key: platform.name, value: '' })
     platform.status = '未绑定'
     ElMessage.success('已解绑')
   } catch {}
@@ -25,7 +54,7 @@ async function handleUnbind(platform: any) {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="card-panel">
       <div class="section-title">三方平台</div>
       <p class="desc">维护免登平台配置，用于外部组织源、外部账号免密登录和平台联通。</p>
@@ -61,11 +90,6 @@ async function handleUnbind(platform: any) {
             <el-form-item label="ClientSecret">
               <el-input v-model="p.config.clientSecret" type="password" placeholder="请输入 ClientSecret" show-password />
             </el-form-item>
-            <el-form-item label="回调地址">
-              <el-input value="https://ais.example.com/callback/dingtalk" disabled>
-                <template #append><el-button>复制</el-button></template>
-              </el-input>
-            </el-form-item>
           </template>
           <template v-else-if="p.name === '企业微信'">
             <el-form-item label="企业CorpId">
@@ -85,7 +109,6 @@ async function handleUnbind(platform: any) {
             <el-form-item label="App Secret">
               <el-input v-model="p.config.appSecret" type="password" placeholder="请输入 App Secret" show-password />
             </el-form-item>
-            <el-alert title="当前平台暂未开放" type="warning" :closable="false" />
           </template>
           <template v-else>
             <el-form-item label="ClientId">

@@ -7,7 +7,7 @@ spring:
   application:
     name: fastrag-backend
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:mysql}:3306/fastrag?useUnicode=true&characterEncoding=utf-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true
+    url: jdbc:mysql://${MYSQL_HOST:192.168.1.44}:3306/fastrag?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:fastrag}
     password: ${MYSQL_PASSWORD:fastrag123}
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -16,14 +16,14 @@ spring:
       minimum-idle: 5
   data:
     redis:
-      host: ${REDIS_HOST:redis}
+      host: ${REDIS_HOST:192.168.1.44}
       port: 6379
       password: ${REDIS_PASSWORD:}
       database: 0
     elasticsearch:
-      uris: http://${ES_HOST:elasticsearch}:9200
+      uris: http://${ES_HOST:192.168.1.44}:9200
   rabbitmq:
-    host: ${RABBITMQ_HOST:rabbitmq}
+    host: ${RABBITMQ_HOST:192.168.1.44}
     port: 5672
     username: ${RABBITMQ_USER:fastrag}
     password: ${RABBITMQ_PASSWORD:fastrag123}
@@ -49,16 +49,16 @@ jwt:
   expiration: 86400000
 
 milvus:
-  host: ${MILVUS_HOST:milvus}
+  host: ${MILVUS_HOST:192.168.1.44}
   port: 19530
 
 neo4j:
-  uri: bolt://${NEO4J_HOST:neo4j}:7687
+  uri: bolt://${NEO4J_HOST:192.168.1.44}:7687
   username: ${NEO4J_USER:neo4j}
   password: ${NEO4J_PASSWORD:fastrag123}
 
 minio:
-  endpoint: http://${MINIO_HOST:minio}:9000
+  endpoint: http://${MINIO_HOST:192.168.1.44}:9000
   access-key: ${MINIO_ACCESS_KEY:minioadmin}
   secret-key: ${MINIO_SECRET_KEY:minioadmin}
   bucket: fastrag

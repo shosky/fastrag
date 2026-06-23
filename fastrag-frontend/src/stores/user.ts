@@ -1,10 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref, computed } from 'vue'
 import type { UserInfo } from '@/types/user'
-import type { SystemRole } from '@/types/auth'
-import { ROLE_PERMISSIONS, ROLE_LABELS } from '@/types/auth'
-import { findByUsername } from '@/mock/auth-roles'
-import { getRole } from '@/mock/auth-roles'
+import * as api from '@/api'
 import { storage } from '@/utils/storage'
 
 export const useUserStore = defineStore('user', () => {
@@ -31,6 +28,8 @@ export const useUserStore = defineStore('user', () => {
   }
 
   function logout() {
+    // 调用后端登出接口（忽略错误）
+    api.logout().catch(() => {})
     token.value = ''
     userInfo.value = null
     storage.remove('token')
@@ -38,48 +37,48 @@ export const useUserStore = defineStore('user', () => {
   }
 
   /**
-   * 模拟登录
-   * 从人员 mock 中查找用户，分配真实角色和权限。
-   * 未注册用户默认为 readonly 角色。
+   * 真实登录：调用后端 /api/auth/login
    */
   async function login(loginUsername: string, password: string): Promise<boolean> {
     if (!loginUsername || !password) return false
 
-    const mockToken = 'mock_token_' + Date.now()
-    setToken(mockToken)
-
-    // 从人员表查找
-    const person = findByUsername(loginUsername)
-
-    if (person) {
-      // 已注册用户：使用其真实角色
-      const roleData = getRole(person.roleId)
-      const roleKey = (roleData?.key || 'readonly') as SystemRole
-      const perms = roleData?.permissions || ROLE_PERMISSIONS.readonly
-
-      setUserInfo({
-        id: person.id,
-        username: person.username,
-        realName: person.realName,
-        roles: [roleKey],
-        permissions: [...perms],
-        phone: person.phone,
-        email: person.email,
-      })
-    } else {
-      // 未注册用户：默认只读
-      setUserInfo({
-        id: '999',
-        username: loginUsername,
-        realName: loginUsername,
-        roles: ['readonly'],
-        permissions: [...ROLE_PERMISSIONS.readonly],
-        phone: '',
-        email: `${loginUsername}@example.com`,
-      })
+    try {
+      const res: any = await api.login(loginUsername, password)
+      // 后端返回 { token, userInfo } 或类似结构
+      if (res?.token) {
+        setToken(res.token)
+      }
+      if (res?.userInfo) {
+        setUserInfo(res.userInfo as UserInfo)
+      } else {
+        // 如果 login 只返回 token，再请求 userinfo
+        const info: any = await api.getUserInfo()
+        if (info) {
+          setUserInfo(info as UserInfo)
+        }
+      }
+      return true
+    } catch {
+      return false
     }
+  }
 
-    return true
+  /**
+   * 刷新用户信息（页面刷新后调用）
+   */
+  async function fetchUserInfo(): Promise<void> {
+    try {
+      const info: any = await api.getUserInfo()
+      if (info) {
+        setUserInfo(info as UserInfo)
+      }
+    } catch {
+      // token 失效，清除登录状态
+      token.value = ''
+      userInfo.value = null
+      storage.remove('token')
+      storage.remove('userInfo')
+    }
   }
 
   return {
@@ -94,5 +93,6 @@ export const useUserStore = defineStore('user', () => {
     setUserInfo,
     logout,
     login,
+    fetchUserInfo,
   }
 })

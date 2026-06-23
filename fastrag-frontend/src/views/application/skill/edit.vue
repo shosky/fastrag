@@ -5,7 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import SkillForm from './SkillForm.vue'
 import type { Skill } from '@/mock/skills'
-import { getSkill, updateSkill, deleteSkill } from '@/mock/skills'
+import * as api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -19,8 +19,7 @@ const id = route.params.id as string
 async function loadSkill() {
   loading.value = true
   try {
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    const data = getSkill(id)
+    const data = (await api.getSkillDetail(id)) as any
     if (!data) {
       ElMessage.error('技能不存在')
       router.push('/application/skill-management')
@@ -35,11 +34,7 @@ async function loadSkill() {
 async function handleSubmit(data: Skill) {
   saving.value = true
   try {
-    const updated = updateSkill(id, data)
-    if (!updated) {
-      ElMessage.error('保存失败：技能不存在')
-      return
-    }
+    await api.updateSkill(id, data as any)
     ElMessage.success('保存成功')
     router.push('/application/skill-management')
   } finally {
@@ -62,7 +57,7 @@ async function handleDelete() {
         type: 'warning',
       },
     )
-    deleteSkill(id)
+    await api.deleteSkill(id)
     ElMessage.success('删除成功')
     router.push('/application/skill-management')
   } catch {

@@ -1,24 +1,34 @@
 <script setup lang="ts">
-import type { QueryRule, RuleType, RuleStatus } from '@/mock/query-rules'
 import { Plus, Delete, Edit } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  getQueryRules,
-  createQueryRule,
-  updateQueryRule,
-  deleteQueryRule,
-  toggleRuleStatus,
-} from '@/mock/query-rules'
+import * as api from '@/api'
 
-const activeTab = ref<RuleType>('rewrite')
+interface QueryRule {
+  id: string
+  name: string
+  pattern: string
+  replacement: string
+  priority: number
+  status: string
+  type: string
+}
+
+const activeTab = ref('rewrite')
 const rules = ref<QueryRule[]>([])
 const showDialog = ref(false)
 const isEditing = ref(false)
 const editingId = ref('')
-const form = ref({ name: '', pattern: '', replacement: '', priority: 5, status: 'enabled' as RuleStatus })
+const loading = ref(false)
+const form = ref({ name: '', pattern: '', replacement: '', priority: 5, status: 'enabled' })
 
-function refresh() {
-  rules.value = getQueryRules(activeTab.value)
+async function refresh() {
+  loading.value = true
+  try {
+    const res = await api.getQueryRules({ type: activeTab.value })
+    rules.value = (res as any)?.list || (res as any) || []
+  } finally {
+    loading.value = false
+  }
 }
 
 watch(activeTab, refresh)
@@ -38,33 +48,33 @@ function handleEdit(rule: QueryRule) {
   showDialog.value = true
 }
 
-function handleSave() {
+async function handleSave() {
   if (!form.value.name || !form.value.pattern || !form.value.replacement) {
     ElMessage.warning('请填写完整信息')
     return
   }
   if (isEditing.value) {
-    updateQueryRule(editingId.value, form.value)
+    await api.createQueryRule({ id: editingId.value, ...form.value, type: activeTab.value })
   } else {
-    createQueryRule({ ...form.value, type: activeTab.value })
+    await api.createQueryRule({ ...form.value, type: activeTab.value })
   }
   showDialog.value = false
-  refresh()
+  await refresh()
   ElMessage.success('保存成功')
 }
 
 async function handleDelete(rule: QueryRule) {
   try {
     await ElMessageBox.confirm(`确定删除规则「${rule.name}」？`, '删除确认', { type: 'warning' })
-    deleteQueryRule(rule.id)
-    refresh()
+    await api.deleteQueryRule(rule.id)
+    await refresh()
     ElMessage.success('已删除')
   } catch {}
 }
 
-function handleToggleStatus(rule: QueryRule) {
-  toggleRuleStatus(rule.id)
-  refresh()
+async function handleToggleStatus(rule: QueryRule) {
+  await api.toggleQueryRule(rule.id)
+  await refresh()
 }
 
 // 测试规则

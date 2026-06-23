@@ -1,27 +1,13 @@
 import { ref } from 'vue'
 import type { KnowledgeFile } from '@/types/knowledge'
-import {
-  getFiles,
-  getDeletedFiles,
-  getFolders,
-  findFolderName,
-  createFolder as mockCreateFolder,
-  addFile,
-  updateFile,
-  deleteFile,
-  restoreFile as mockRestoreFile,
-  permanentlyDeleteFile,
-  emptyRecycleBin,
-  copyFile,
-  advanceProcessing,
-  type FolderNode,
-} from '@/mock/files'
+import * as api from '@/api'
+import type { FolderNode } from '@/mock/files'
 
 // ===========================================================================
 // 文件管理 composable
 //
-// 负责：加载文件/文件夹、CRUD、批量操作、上传后驱动处理进度仿真。
-// 进度仿真用 setInterval 按 category 走 PROCESS_STAGES，到达 completed 停止。
+// 负责：加载文件/文件夹、CRUD、批量操作。
+// 已切换为真实 API 调用。
 // ===========================================================================
 
 export function useFiles(kbId: string = 'default') {
@@ -31,14 +17,15 @@ export function useFiles(kbId: string = 'default') {
   const selectedFiles = ref<KnowledgeFile[]>([])
   const deletedFiles = ref<KnowledgeFile[]>([])
 
-  /** 正在仿真推进的文件 id -> timer，避免重复启动 */
-  const processingTimers = new Map<string, ReturnType<typeof setInterval>>()
-
   async function load() {
     loading.value = true
     try {
-      files.value = getFiles(kbId)
-      folders.value = getFolders(kbId)
+      const [fileRes, folderRes] = await Promise.all([
+        api.getFiles(kbId),
+        api.fetchFolders(kbId),
+      ])
+      files.value = (fileRes as any)?.list || (fileRes as any) || []
+      folders.value = (folderRes as any) || []
     } finally {
       loading.value = false
     }
@@ -48,51 +35,44 @@ export function useFiles(kbId: string = 'default') {
     return load()
   }
 
-  function remove(id: string) {
-    stopProcessing(id)
-    deleteFile(kbId, id)
-    files.value = getFiles(kbId)
+  async function remove(id: string) {
+    await api.deleteFile(kbId, id)
+    await load()
   }
 
-  function bulkDelete() {
-    selectedFiles.value.forEach((f) => stopProcessing(f.id))
-    selectedFiles.value.forEach((f) => deleteFile(kbId, f.id))
-    files.value = getFiles(kbId)
+  async function bulkDelete() {
+    await Promise.all(selectedFiles.value.map((f) => api.deleteFile(kbId, f.id)))
     selectedFiles.value = []
+    await load()
   }
 
-  function rename(id: string, newName: string) {
-    updateFile(kbId, id, { name: newName })
-    files.value = getFiles(kbId)
+  async function rename(id: string, newName: string) {
+    await api.updateFile(kbId, id, { name: newName })
+    await load()
   }
 
-  function move(id: string, targetFolderId: string) {
-    updateFile(kbId, id, { folderId: targetFolderId })
-    files.value = getFiles(kbId)
+  async function move(id: string, targetFolderId: string) {
+    await api.updateFile(kbId, id, { folderId: targetFolderId })
+    await load()
   }
 
-  function bulkMove(targetFolderId: string) {
-    selectedFiles.value.forEach((f) => updateFile(kbId, f.id, { folderId: targetFolderId }))
-    files.value = getFiles(kbId)
+  async function bulkMove(targetFolderId: string) {
+    await Promise.all(selectedFiles.value.map((f) => api.updateFile(kbId, f.id, { folderId: targetFolderId })))
     selectedFiles.value = []
+    await load()
   }
 
-  function copy(id: string) {
-    const copied = copyFile(kbId, id)
-    files.value = getFiles(kbId)
-    // 副本也走处理流程
-    if (copied) startProcessing(copied.id)
+  async function copy(id: string) {
+    await api.copyFile(kbId, id)
+    await load()
   }
 
-  /** 重试：重置为 pending 并重新启动仿真 */
-  function retry(id: string) {
-    updateFile(kbId, id, { status: 'pending', progress: 0, stage: undefined })
-    files.value = getFiles(kbId)
-    startProcessing(id)
+  async function retry(id: string) {
+    await api.updateFile(kbId, id, { status: 'pending', progress: 0, stage: undefined })
+    await load()
   }
 
-  /** 上传：批量新增文件并启动各自的处理仿真 */
-  function upload(
+  async function upload(
     metas: Array<{
       name: string
       category: KnowledgeFile['category']
@@ -102,85 +82,52 @@ export function useFiles(kbId: string = 'default') {
       parseStrategyName?: string
     }>,
   ) {
-    metas.forEach((meta) => {
-      const file = addFile(kbId, meta)
-      startProcessing(file.id)
-    })
-    files.value = getFiles(kbId)
+    // 上传文件元数据（实际项目中应配合 FormData 上传文件二进制）
+    for (const meta of metas) {
+      const formData = new FormData()
+      Object.entries(meta).forEach(([key, value]) => {
+        if (value !== undefined) formData.append(key, String(value))
+      })
+      await api.uploadFile(kbId, formData)
+    }
+    await load()
   }
 
-  /** 修改解析策略 */
-  function changeStrategy(id: string, strategyId: string, strategyName: string) {
-    updateFile(kbId, id, { parseStrategyId: strategyId, parseStrategyName: strategyName })
-    files.value = getFiles(kbId)
+  async function changeStrategy(id: string, strategyId: string, strategyName: string) {
+    await api.updateFile(kbId, id, { parseStrategyId: strategyId, parseStrategyName: strategyName })
+    await load()
   }
 
-  /** 新建文件夹 */
-  function createFolder(name: string, parentId: string = 'root') {
-    mockCreateFolder(kbId, name, parentId)
-    folders.value = getFolders(kbId)
+  async function createFolder(name: string, parentId: string = 'root') {
+    await api.createFolderApi(kbId, name, parentId)
+    const folderRes = await api.fetchFolders(kbId)
+    folders.value = (folderRes as any) || []
   }
 
-  /** 获取文件夹名 */
-  function getFolderName(folderId: string): string {
-    return findFolderName(kbId, folderId)
+  async function getFolderName(folderId: string): Promise<string> {
+    return api.fetchFolderName(kbId, folderId)
   }
 
   // --- 回收站 ---
-  function loadDeletedFiles() {
-    deletedFiles.value = getDeletedFiles(kbId)
+  async function loadDeletedFiles() {
+    const res = await api.getDeletedFiles(kbId)
+    deletedFiles.value = (res as any)?.list || (res as any) || []
   }
 
-  function restore(id: string) {
-    mockRestoreFile(kbId, id)
-    deletedFiles.value = getDeletedFiles(kbId)
-    files.value = getFiles(kbId)
+  async function restore(id: string) {
+    await api.restoreFile(kbId, id)
+    await loadDeletedFiles()
+    await load()
   }
 
-  function permanentDelete(id: string) {
-    permanentlyDeleteFile(kbId, id)
-    deletedFiles.value = getDeletedFiles(kbId)
+  async function permanentDelete(id: string) {
+    await api.permanentDeleteFile(kbId, id)
+    await loadDeletedFiles()
   }
 
-  function emptyBin() {
-    emptyRecycleBin(kbId)
+  async function emptyBin() {
+    await api.emptyRecycleBin(kbId)
     deletedFiles.value = []
-  }
-
-  // --- 处理进度仿真 ---
-  function startProcessing(fileId: string) {
-    if (processingTimers.has(fileId)) return
-    const timer = setInterval(() => {
-      const file = files.value.find((f) => f.id === fileId)
-      if (!file) {
-        stopProcessing(fileId)
-        return
-      }
-      const patch = advanceProcessing(file)
-      if (Object.keys(patch).length === 0) {
-        stopProcessing(fileId)
-        return
-      }
-      updateFile(kbId, fileId, patch)
-      files.value = getFiles(kbId)
-      if (patch.status === 'completed' || patch.status === 'failed') {
-        stopProcessing(fileId)
-      }
-    }, 1500)
-    processingTimers.set(fileId, timer)
-  }
-
-  function stopProcessing(fileId: string) {
-    const timer = processingTimers.get(fileId)
-    if (timer) {
-      clearInterval(timer)
-      processingTimers.delete(fileId)
-    }
-  }
-
-  function stopAllProcessing() {
-    processingTimers.forEach((t) => clearInterval(t))
-    processingTimers.clear()
   }
 
   return {
@@ -206,6 +153,6 @@ export function useFiles(kbId: string = 'default') {
     restore,
     permanentDelete,
     emptyBin,
-    stopAllProcessing,
+    stopAllProcessing: () => {}, // 保留接口兼容，真实场景由后端驱动
   }
 }

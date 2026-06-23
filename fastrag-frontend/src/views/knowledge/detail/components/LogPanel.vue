@@ -1,21 +1,27 @@
 <script setup lang="ts">
-import type { KBLog, LogCategory } from '@/mock/kb-logs'
-import { getKBLogs, getKBLogsByCategory } from '@/mock/kb-logs'
+import * as api from '@/api'
 
 const props = defineProps<{
   kbId: string
 }>()
 
 // --- 筛选 ---
-const activeCategory = ref<LogCategory | 'all'>('all')
+const activeCategory = ref<string>('all')
 const searchKeyword = ref('')
 
-const allLogs = ref<KBLog[]>([])
+const allLogs = ref<any[]>([])
+const loading = ref(false)
 
-function refresh() {
-  allLogs.value = activeCategory.value === 'all'
-    ? getKBLogs(props.kbId)
-    : getKBLogsByCategory(props.kbId, activeCategory.value)
+async function refresh() {
+  loading.value = true
+  try {
+    const params: any = { page: 1, pageSize: 100 }
+    if (activeCategory.value !== 'all') params.category = activeCategory.value
+    const res = await api.getKbLogs(props.kbId, params)
+    allLogs.value = (res as any)?.list || (res as any) || []
+  } finally {
+    loading.value = false
+  }
 }
 
 watch(activeCategory, refresh)
@@ -24,26 +30,26 @@ onMounted(refresh)
 const filteredLogs = computed(() => {
   if (!searchKeyword.value) return allLogs.value
   const kw = searchKeyword.value.toLowerCase()
-  return allLogs.value.filter((l) =>
-    l.target.toLowerCase().includes(kw) ||
-    l.detail.toLowerCase().includes(kw) ||
-    l.operator.toLowerCase().includes(kw),
+  return allLogs.value.filter((l: any) =>
+    (l.target || '').toLowerCase().includes(kw) ||
+    (l.detail || '').toLowerCase().includes(kw) ||
+    (l.operator || '').toLowerCase().includes(kw),
   )
 })
 
 // --- 统计 ---
 const stats = computed(() => {
-  const all = getKBLogs(props.kbId)
+  const all = allLogs.value
   return {
     total: all.length,
-    operation: all.filter((l) => l.category === 'operation').length,
-    retrieval: all.filter((l) => l.category === 'retrieval').length,
-    publish: all.filter((l) => l.category === 'publish').length,
+    operation: all.filter((l: any) => l.category === 'operation').length,
+    retrieval: all.filter((l: any) => l.category === 'retrieval').length,
+    publish: all.filter((l: any) => l.category === 'publish').length,
   }
 })
 
 // --- 类型配置 ---
-const categoryConfig: Record<LogCategory, { label: string; color: 'primary' | 'success' | 'warning' | 'danger' | 'info' }> = {
+const categoryConfig: Record<string, { label: string; color: 'primary' | 'success' | 'warning' | 'danger' | 'info' }> = {
   operation: { label: '操作', color: 'primary' },
   retrieval: { label: '检索', color: 'success' },
   publish: { label: '发布', color: 'warning' },
@@ -93,43 +99,43 @@ function getActionLabel(action: string): string {
     </div>
 
     <!-- 日志表格 -->
-    <el-table :data="filteredLogs" stripe size="small">
+    <el-table v-loading="loading" :data="filteredLogs" stripe size="small">
       <el-table-column label="类型" width="80" align="center">
         <template #default="{ row }">
-          <el-tag :type="categoryConfig[(row as KBLog).category].color" size="small">
-            {{ categoryConfig[(row as KBLog).category].label }}
+          <el-tag :type="categoryConfig[(row as any).category]?.color || 'info'" size="small">
+            {{ categoryConfig[(row as any).category]?.label || (row as any).category }}
           </el-tag>
         </template>
       </el-table-column>
 
       <el-table-column label="操作" width="100">
         <template #default="{ row }">
-          {{ getActionLabel((row as KBLog).action) }}
+          {{ getActionLabel((row as any).action) }}
         </template>
       </el-table-column>
 
       <el-table-column label="对象" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">
-          {{ (row as KBLog).target }}
+          {{ (row as any).target }}
         </template>
       </el-table-column>
 
       <el-table-column label="详情" min-width="200">
         <template #default="{ row }">
           <div class="log-panel__detail">
-            <span>{{ (row as KBLog).detail }}</span>
+            <span>{{ (row as any).detail }}</span>
             <!-- 检索日志扩展信息 -->
-            <template v-if="(row as KBLog).category === 'retrieval' && (row as KBLog).extra">
+            <template v-if="(row as any).category === 'retrieval' && (row as any).extra">
               <span class="log-panel__extra">
-                模式: {{ (row as KBLog).extra?.mode }} · TopK: {{ (row as KBLog).extra?.topK }} · 耗时: {{ ((row as KBLog).extra?.duration / 1000)?.toFixed(1) }}s
+                模式: {{ (row as any).extra?.mode }} · TopK: {{ (row as any).extra?.topK }} · 耗时: {{ ((row as any).extra?.duration / 1000)?.toFixed(1) }}s
               </span>
             </template>
             <!-- diff 信息 -->
-            <template v-if="(row as KBLog).extra?.oldValue">
+            <template v-if="(row as any).extra?.oldValue">
               <span class="log-panel__diff">
-                <span class="log-panel__diff-old">{{ (row as KBLog).extra?.oldValue }}</span>
+                <span class="log-panel__diff-old">{{ (row as any).extra?.oldValue }}</span>
                 →
-                <span class="log-panel__diff-new">{{ (row as KBLog).extra?.newValue }}</span>
+                <span class="log-panel__diff-new">{{ (row as any).extra?.newValue }}</span>
               </span>
             </template>
           </div>
@@ -138,18 +144,18 @@ function getActionLabel(action: string): string {
 
       <el-table-column label="操作人" width="90">
         <template #default="{ row }">
-          {{ (row as KBLog).operator }}
+          {{ (row as any).operator }}
         </template>
       </el-table-column>
 
       <el-table-column label="状态" width="80" align="center">
         <template #default="{ row }">
           <el-tag
-            v-if="(row as KBLog).status"
-            :type="(row as KBLog).status === 'success' ? 'success' : (row as KBLog).status === '已发布' ? 'primary' : 'info'"
+            v-if="(row as any).status"
+            :type="(row as any).status === 'success' ? 'success' : (row as any).status === '已发布' ? 'primary' : 'info'"
             size="small"
           >
-            {{ (row as KBLog).status }}
+            {{ (row as any).status }}
           </el-tag>
           <span v-else>-</span>
         </template>
@@ -157,12 +163,12 @@ function getActionLabel(action: string): string {
 
       <el-table-column label="时间" width="160">
         <template #default="{ row }">
-          {{ (row as KBLog).timestamp }}
+          {{ (row as any).timestamp || (row as any).createdAt }}
         </template>
       </el-table-column>
     </el-table>
 
-    <el-empty v-if="filteredLogs.length === 0" description="暂无日志记录" />
+    <el-empty v-if="filteredLogs.length === 0 && !loading" description="暂无日志记录" />
   </div>
 </template>
 

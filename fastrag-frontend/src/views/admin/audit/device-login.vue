@@ -1,32 +1,34 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import * as api from '@/api'
 
 const timeRange = ref('今天')
 const filterStatus = ref('')
 const filterDevice = ref('')
+const loading = ref(false)
 
 const stats = ref({
-  onlineUsers: 23,
-  activeDevices: 45,
-  todayLogins: 156,
-  failedLogins: 8,
+  onlineUsers: 0,
+  activeDevices: 0,
+  todayLogins: 0,
+  failedLogins: 0,
 })
 
-const deviceDistribution = ref([
-  { type: 'Windows', count: 35, percentage: 45 },
-  { type: 'Mac', count: 28, percentage: 36 },
-  { type: 'iOS', count: 8, percentage: 10 },
-  { type: 'Android', count: 7, percentage: 9 },
-])
+const deviceDistribution = ref<any[]>([])
+const loginDetails = ref<any[]>([])
 
-const loginDetails = ref([
-  { id: '1', username: 'admin', device: 'Windows PC', browser: 'Chrome 120', ip: '192.168.1.100', status: '成功', time: '2026-06-04 10:30:00' },
-  { id: '2', username: '张三', device: 'MacBook Pro', browser: 'Safari 17', ip: '192.168.1.101', status: '成功', time: '2026-06-04 09:15:00' },
-  { id: '3', username: '李四', device: 'iPhone 15', browser: 'Safari Mobile', ip: '10.0.0.50', status: '成功', time: '2026-06-04 08:45:00' },
-  { id: '4', username: '王五', device: 'Windows PC', browser: 'Edge 120', ip: '192.168.1.102', status: '失败', time: '2026-06-04 08:30:00' },
-  { id: '5', username: 'admin', device: 'MacBook Air', browser: 'Chrome 120', ip: '192.168.1.100', status: '成功', time: '2026-06-03 17:20:00' },
-])
+async function loadLoginLogs() {
+  loading.value = true
+  try {
+    const res: any = await api.getLoginLogs()
+    loginDetails.value = (res as any)?.list || (res as any) || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadLoginLogs)
 
 function handleExport() {
   ElMessage.success('导出成功')
@@ -34,7 +36,7 @@ function handleExport() {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="section-header">
       <h3>设备登录分析</h3>
       <el-button @click="handleExport">导出</el-button>
@@ -69,6 +71,7 @@ function handleExport() {
           </div>
           <el-progress :percentage="d.percentage" :show-text="false" />
         </div>
+        <el-empty v-if="!deviceDistribution.length" description="暂无数据" :image-size="40" />
       </div>
 
       <div class="card-panel">
@@ -99,6 +102,7 @@ function handleExport() {
           </el-table-column>
           <el-table-column prop="time" label="时间" />
         </el-table>
+        <el-empty v-if="!loginDetails.length && !loading" description="暂无登录记录" />
       </div>
     </div>
   </div>

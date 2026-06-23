@@ -1,13 +1,16 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
-const activeType = ref('系统信息')
+const activeType = ref('')
 const searchKeyword = ref('')
 const showDialog = ref(false)
 const dialogTitle = ref('新建字典条目')
+const loading = ref(false)
+const editingId = ref<string | null>(null)
 
-const dictTypes = ['系统信息', '系统登录配置', '业务配置']
+const dictTypes = ref<string[]>([])
 
 const formData = ref({
   key: '',
@@ -17,28 +20,34 @@ const formData = ref({
   remark: '',
 })
 
-const dictData: Record<string, any[]> = {
-  '系统信息': [
-    { key: 'system_name', label: '系统名称', value: 'AIS 智能知识服务平台', enabled: true, remark: '系统展示名称', updatedAt: '2026-06-04' },
-    { key: 'system_slogan', label: '宣传语', value: '让知识触手可及', enabled: true, remark: '首页展示', updatedAt: '2026-06-04' },
-    { key: 'copyright', label: '版权信息', value: '© 2026 TorchV', enabled: true, remark: '页脚版权', updatedAt: '2026-06-03' },
-  ],
-  '系统登录配置': [
-    { key: 'login_title', label: '登录标题', value: '欢迎登录', enabled: true, remark: '登录页标题', updatedAt: '2026-06-01' },
-    { key: 'max_retry', label: '最大重试次数', value: '5', enabled: true, remark: '登录失败锁定', updatedAt: '2026-05-20' },
-  ],
-  '业务配置': [
-    { key: 'default_model', label: '默认模型', value: 'qwen3-32b', enabled: true, remark: '默认大模型', updatedAt: '2026-06-02' },
-  ],
+const dictData = ref<Record<string, any[]>>({})
+
+async function loadDictionaries() {
+  loading.value = true
+  try {
+    const [typesRes, dataRes] = await Promise.all([
+      api.getDictionaryTypes(),
+      api.getDictionaries(),
+    ])
+    dictTypes.value = (typesRes as any) || []
+    dictData.value = (dataRes as any) || {}
+    if (!activeType.value && dictTypes.value.length > 0) {
+      activeType.value = dictTypes.value[0]
+    }
+  } finally {
+    loading.value = false
+  }
 }
 
+onMounted(loadDictionaries)
+
 const currentList = computed(() => {
-  let list = dictData[activeType.value] || []
+  let list = dictData.value[activeType.value] || []
   if (searchKeyword.value) {
-    list = list.filter(item =>
-      item.key.includes(searchKeyword.value) ||
-      item.label.includes(searchKeyword.value) ||
-      item.value.includes(searchKeyword.value)
+    list = list.filter((item: any) =>
+      item.key?.includes(searchKeyword.value) ||
+      item.label?.includes(searchKeyword.value) ||
+      item.value?.includes(searchKeyword.value)
     )
   }
   return list
@@ -46,12 +55,14 @@ const currentList = computed(() => {
 
 function handleAdd() {
   dialogTitle.value = '新建字典条目'
+  editingId.value = null
   formData.value = { key: '', label: '', value: '', enabled: true, remark: '' }
   showDialog.value = true
 }
 
 function handleEdit(row: any) {
   dialogTitle.value = '编辑字典条目'
+  editingId.value = row.id
   formData.value = { ...row }
   showDialog.value = true
 }
@@ -59,22 +70,35 @@ function handleEdit(row: any) {
 async function handleDelete(row: any) {
   try {
     await ElMessageBox.confirm(`确定要删除条目 "${row.label}" 吗？`, '删除确认', { type: 'warning' })
+    await api.deleteDictionary(row.id)
+    await loadDictionaries()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleSave() {
+async function handleSave() {
   if (!formData.value.key) {
     ElMessage.warning('请输入条目键')
     return
   }
+  const data = {
+    type: activeType.value,
+    key: formData.value.key,
+    value: formData.value.value,
+  }
+  if (editingId.value) {
+    await api.updateDictionary(editingId.value, data)
+  } else {
+    await api.createDictionary(data)
+  }
   showDialog.value = false
+  await loadDictionaries()
   ElMessage.success('保存成功')
 }
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="dict-layout">
       <div class="dict-types">
         <div class="types-title">字典类型</div>
@@ -87,11 +111,12 @@ function handleSave() {
         >
           {{ t }}
         </div>
+        <el-empty v-if="!dictTypes.length" description="暂无字典类型" :image-size="40" />
       </div>
       <div class="dict-content">
         <div class="section-header">
-          <div class="section-title">{{ activeType }}</div>
-          <el-button type="primary" @click="handleAdd">新建条目</el-button>
+          <div class="section-title">{{ activeType || '请选择字典类型' }}</div>
+          <el-button type="primary" @click="handleAdd" :disabled="!activeType">新建条目</el-button>
         </div>
         <div class="filter-bar">
           <el-input v-model="searchKeyword" placeholder="搜索键、名称、值或备注" clearable style="width: 300px" />
@@ -108,7 +133,6 @@ function handleSave() {
             </template>
           </el-table-column>
           <el-table-column prop="remark" label="备注" width="150" />
-          <el-table-column prop="updatedAt" label="更新时间" width="120" />
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
@@ -116,6 +140,7 @@ function handleSave() {
             </template>
           </el-table-column>
         </el-table>
+        <el-empty v-if="!currentList.length && !loading && activeType" description="暂无条目" />
       </div>
     </div>
 

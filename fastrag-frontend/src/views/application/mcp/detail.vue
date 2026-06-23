@@ -3,14 +3,9 @@ import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft, Refresh, Edit, Delete } from '@element-plus/icons-vue'
-import {
-  getMcpService,
-  deleteMcpService,
-  toggleMcpEnabled,
-  refreshMcpService,
-  getStatusLabel,
-} from '@/mock/mcp'
+import { getStatusLabel } from '@/mock/mcp'
 import type { McpService } from '@/mock/mcp'
+import * as api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -25,8 +20,7 @@ const id = route.params.id as string
 async function loadService() {
   loading.value = true
   try {
-    await new Promise((resolve) => setTimeout(resolve, 200))
-    const data = getMcpService(id)
+    const data = (await api.getMcpServiceDetail(id)) as any
     if (!data) {
       ElMessage.error('MCP 服务不存在')
       router.push('/application/mcp-management')
@@ -43,11 +37,10 @@ async function handleRefresh() {
   if (!service.value) return
   refreshing.value = true
   try {
-    await new Promise((resolve) => setTimeout(resolve, 600))
-    const refreshed = refreshMcpService(id)
+    const refreshed = (await api.getMcpServiceDetail(id)) as any
     if (refreshed) {
       service.value = refreshed
-      ElMessage.success(`已刷新，当前状态：${getStatusLabel(refreshed.status)}，工具 ${refreshed.toolsList.length} 个`)
+      ElMessage.success(`已刷新，当前状态：${getStatusLabel(refreshed.status)}，工具 ${(refreshed.toolsList || []).length} 个`)
     }
   } finally {
     refreshing.value = false
@@ -55,11 +48,11 @@ async function handleRefresh() {
 }
 
 /** 切换启用状态 */
-function handleToggleEnabled() {
+async function handleToggleEnabled() {
   if (!service.value) return
   const wasEnabled = service.value.enabled
-  toggleMcpEnabled(id)
-  service.value = getMcpService(id)
+  await api.toggleMcpService(id)
+  service.value = (await api.getMcpServiceDetail(id)) as any
   ElMessage.success(wasEnabled ? '已禁用' : '已启用')
 }
 
@@ -83,7 +76,7 @@ async function handleDelete() {
         type: 'warning',
       },
     )
-    deleteMcpService(id)
+    await api.deleteMcpService(id)
     ElMessage.success('删除成功')
     router.push('/application/mcp-management')
   } catch {

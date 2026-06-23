@@ -1,11 +1,11 @@
 import { ref } from 'vue'
-import { expandQueryWithSynonyms } from '@/mock/terminology'
+import * as api from '@/api'
 
 // ===========================================================================
 // 同义词联想 composable
 //
 // 在检索前对 query 进行同义词扩展，提升召回率。
-// 返回扩展后的查询词 + 联想词详情，供 SearchTestPanel 展示。
+// 已切换为真实 API 调用。
 // ===========================================================================
 
 export function useSynonyms() {
@@ -17,12 +17,18 @@ export function useSynonyms() {
    * 对 query 进行同义词扩展。
    * 返回扩展后的查询词（含同义词），同时更新 reactive 状态供 UI 展示。
    */
-  function expandQuery(query: string): string {
-    const result = expandQueryWithSynonyms(query)
-    matchedTerms.value = result.matchedTerms
-    addedTerms.value = result.addedTerms
-    expandedQuery.value = result.expandedQuery
-    return result.expandedQuery
+  async function expandQuery(query: string): Promise<string> {
+    try {
+      const synonyms = await api.expandSynonyms(query)
+      addedTerms.value = (synonyms as string[]) || []
+      matchedTerms.value = (synonyms as string[]) || []
+      expandedQuery.value = synonyms.length > 0
+        ? `${query} ${synonyms.join(' ')}`
+        : query
+    } catch {
+      expandedQuery.value = query
+    }
+    return expandedQuery.value
   }
 
   /** 清除联想状态 */

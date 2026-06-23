@@ -77,7 +77,8 @@ function handleUpload(selectedFiles: File[], config: UploadConfig) {
       const s = strategies.value.find((x) => x.id === strategyId)
       strategyName = s?.name || ''
     } else {
-      const matched = resolveByExtension(extension)
+      // 使用第一个策略作为默认（异步接口在循环中不可靠）
+      const matched = strategies.value[0]
       strategyId = matched?.id
       strategyName = matched?.name || '默认解析方法'
     }

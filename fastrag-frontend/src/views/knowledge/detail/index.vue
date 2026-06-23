@@ -28,8 +28,7 @@ import RagEvaluationPanel from './components/RagEvaluationPanel.vue'
 import EvaluationBenchmarkPanel from './components/EvaluationBenchmarkPanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import PublishPanel from './components/PublishPanel.vue'
-import { getKnowledgeBase, deleteKnowledgeBase } from '@/mock/knowledge-bases'
-import { setKBAcl } from '@/mock/auth-acl'
+import * as api from '@/api'
 import { useAuth } from '@/composables/useAuth'
 
 const route = useRoute()
@@ -37,18 +36,37 @@ const router = useRouter()
 const kbId = route.params.id as string
 const { hasRole, getMyKBRole } = useAuth()
 
-// --- 从统一 mock 层加载知识库信息 ---
-const kbData = getKnowledgeBase(kbId)
-
+// --- 从 API 加载知识库信息 ---
 const kbInfo = ref({
   id: kbId,
-  name: kbData?.name || '未知知识库',
-  creator: kbData?.creator || '未知',
-  createdAt: kbData?.createdAt || '',
-  model: kbData?.embeddingModel || 'text-embedding-v4',
-  dimension: kbData?.dimension || 1024,
-  usedSize: kbData?.usedSize || '0 GB',
+  name: '加载中...',
+  creator: '未知',
+  createdAt: '',
+  model: 'text-embedding-v4',
+  dimension: 1024,
+  usedSize: '0 GB',
 })
+
+async function loadKbInfo() {
+  try {
+    const data: any = await api.getKnowledgeBaseDetail(kbId)
+    if (data) {
+      kbInfo.value = {
+        id: kbId,
+        name: data.name || '未知知识库',
+        creator: data.creator || '未知',
+        createdAt: data.createdAt || '',
+        model: data.embeddingModel || 'text-embedding-v4',
+        dimension: data.dimension || 1024,
+        usedSize: data.usedSize || '0 GB',
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+loadKbInfo()
 
 // --- Active tab ---
 const activeTab = ref('files')

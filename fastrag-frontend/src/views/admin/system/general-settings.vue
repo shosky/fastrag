@@ -1,22 +1,51 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import * as api from '@/api'
 
 const form = ref({
-  systemName: 'AIS 智能知识服务平台',
-  slogan: '让知识触手可及',
-  copyright: '© 2026 TorchV. All rights reserved.',
+  systemName: '',
+  slogan: '',
+  copyright: '',
 })
 
-const logoUrl = ref('https://via.placeholder.com/120x120?text=AIS')
+const logoUrl = ref('')
 const showPreview = ref(false)
+const loading = ref(false)
 
-function handleSubmit() {
+async function loadSettings() {
+  loading.value = true
+  try {
+    const res: any = await api.getDictionaries({ type: '系统信息' })
+    const settings = res?.['系统信息'] || []
+    settings.forEach((item: any) => {
+      if (item.key === 'system_name') form.value.systemName = item.value
+      if (item.key === 'system_slogan') form.value.slogan = item.value
+      if (item.key === 'copyright') form.value.copyright = item.value
+      if (item.key === 'logo_url') logoUrl.value = item.value
+    })
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadSettings)
+
+async function handleSubmit() {
   if (!form.value.systemName) {
     ElMessage.warning('请输入系统名称')
     return
   }
-  ElMessage.success('更新成功')
+  try {
+    await Promise.all([
+      api.createDictionary({ type: '系统信息', key: 'system_name', value: form.value.systemName }),
+      api.createDictionary({ type: '系统信息', key: 'system_slogan', value: form.value.slogan }),
+      api.createDictionary({ type: '系统信息', key: 'copyright', value: form.value.copyright }),
+    ])
+    ElMessage.success('更新成功')
+  } catch (e: any) {
+    ElMessage.error(e.message || '更新失败')
+  }
 }
 
 function handleDeleteLogo() {
@@ -29,7 +58,7 @@ function handlePreview() {
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="card-panel">
       <div class="section-title">通用设置</div>
       <p class="desc">统一维护系统对外展示的基础品牌信息，包括系统名称、宣传语、系统 Logo 和版权信息。</p>
@@ -62,14 +91,14 @@ function handlePreview() {
           <el-input v-model="form.copyright" placeholder="请输入版权信息" />
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="handleSubmit">提交</el-button>
+          <el-button type="primary" @click="handleSubmit">保存配置</el-button>
         </el-form-item>
       </el-form>
     </div>
 
     <el-dialog v-model="showPreview" title="Logo 预览" width="400px">
       <div style="text-align: center">
-        <img :src="logoUrl" alt="Logo Preview" style="max-width: 100%" />
+        <img :src="logoUrl" alt="Logo Preview" style="max-width: 100%; max-height: 400px" />
       </div>
     </el-dialog>
   </div>
@@ -79,42 +108,40 @@ function handlePreview() {
 @use '@/assets/styles/variables' as *;
 
 .desc {
-  color: $text-secondary;
   font-size: 13px;
-  margin-bottom: $spacing-base;
+  color: $text-secondary;
+  margin: $spacing-sm 0 $spacing-lg;
 }
 
 .logo-area {
   display: flex;
-  align-items: flex-start;
-  gap: $spacing-base;
+  flex-direction: column;
+  gap: $spacing-sm;
 }
 
 .logo-preview {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: $spacing-sm;
+  gap: $spacing-base;
 
   img {
-    width: 120px;
-    height: 120px;
+    width: 80px;
+    height: 80px;
+    object-fit: contain;
     border: 1px solid $border-lighter;
     border-radius: $radius-base;
-    object-fit: contain;
   }
 
   .logo-actions {
     display: flex;
+    flex-direction: column;
     gap: $spacing-xs;
   }
 }
 
-.logo-upload {
-  .upload-tip {
-    font-size: 12px;
-    color: $text-secondary;
-    margin-top: $spacing-xs;
-  }
+.upload-tip {
+  font-size: 12px;
+  color: $text-secondary;
+  margin-top: $spacing-xs;
 }
 </style>

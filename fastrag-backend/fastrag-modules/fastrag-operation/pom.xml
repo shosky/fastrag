@@ -15,6 +15,9 @@
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-common</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-security</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-infra</artifactId></dependency>
+        <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-knowledge</artifactId></dependency>
+        <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-application</artifactId></dependency>
+        <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-publish</artifactId></dependency>
             <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
     </dependencies>
 </project>

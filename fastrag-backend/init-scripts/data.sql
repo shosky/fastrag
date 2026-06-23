@@ -73,7 +73,7 @@ INSERT INTO sys_role_permission (role_id, permission_key) VALUES
 
 -- Default admin user (password: admin123)
 INSERT INTO sys_user (id, username, real_name, email, password_hash, role_id, status) VALUES
-('user_admin', 'admin', '超级管理员', 'admin@fastrag.com', '$2a$10$N.zmdr9k7uOCQb376NoUnuTJ8iAt6Z5EHsM8lE9lBOsl7iAt6Z5EH', 'role_super_admin', 'enabled');
+('user_admin', 'admin', '超级管理员', 'admin@fastrag.com', '$2b$10$kwtu6144DqB4Q4IqDbbsROvyxm.gYLLizL0Qbvm0otat.MBfaoJiG', 'role_super_admin', 'enabled');
 
 -- Default org
 INSERT INTO sys_org (id, name, alias, parent_id, level, sort) VALUES

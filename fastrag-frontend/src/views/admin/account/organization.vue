@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { OrgNode } from '@/mock/org'
-import { getOrgTree, createOrg, updateOrg, deleteOrg, getFlatOrgList } from '@/mock/org'
+import * as api from '@/api'
 
 const searchName = ref('')
 const showDrawer = ref(false)
@@ -15,11 +15,11 @@ const formData = ref({
   parentId: '',
 })
 
-// --- 从 mock 层加载组织树 ---
+// --- 从 API 加载组织树 ---
 const orgTree = ref<OrgNode[]>([])
 
-function loadOrgTree() {
-  orgTree.value = getOrgTree()
+async function loadOrgTree() {
+  orgTree.value = (await api.getOrgTree()) as any || []
 }
 
 onMounted(() => {
@@ -29,32 +29,32 @@ onMounted(() => {
 // --- 上级组织选项（扁平列表，排除自身） ---
 const parentOptions = ref<{ id: string; name: string; path: string }[]>([])
 
-function refreshParentOptions() {
-  parentOptions.value = getFlatOrgList().filter((o) => o.id !== editingId.value)
+async function refreshParentOptions() {
+  parentOptions.value = ((await api.getOrgFlat()) as any || []).filter((o: any) => o.id !== editingId.value)
 }
 
 // --- CRUD ---
-function handleAdd() {
+async function handleAdd() {
   drawerTitle.value = '新增组织'
   editingId.value = ''
   formData.value = { name: '', alias: '', parentId: '' }
-  refreshParentOptions()
+  await refreshParentOptions()
   showDrawer.value = true
 }
 
-function handleAddChild(parentId: string) {
+async function handleAddChild(parentId: string) {
   drawerTitle.value = '新增下级组织'
   editingId.value = ''
   formData.value = { name: '', alias: '', parentId }
-  refreshParentOptions()
+  await refreshParentOptions()
   showDrawer.value = true
 }
 
-function handleEdit(row: OrgNode) {
+async function handleEdit(row: OrgNode) {
   drawerTitle.value = '编辑组织'
   editingId.value = row.id
   formData.value = { name: row.name, alias: row.alias || '', parentId: row.parentId || '' }
-  refreshParentOptions()
+  await refreshParentOptions()
   showDrawer.value = true
 }
 
@@ -65,27 +65,23 @@ async function handleDelete(row: OrgNode) {
       '删除确认',
       { type: 'warning' },
     )
-    const result = deleteOrg(row.id)
-    if (result.success) {
-      loadOrgTree()
-      ElMessage.success('删除成功')
-    } else {
-      ElMessage.warning(result.message || '删除失败')
-    }
+    await api.deleteOrg(row.id)
+    loadOrgTree()
+    ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleSave() {
+async function handleSave() {
   if (!formData.value.name.trim()) {
     ElMessage.warning('请输入组织名称')
     return
   }
 
   if (editingId.value) {
-    updateOrg(editingId.value, { name: formData.value.name, alias: formData.value.alias })
+    await api.updateOrg(editingId.value, { name: formData.value.name, alias: formData.value.alias })
     ElMessage.success('更新成功')
   } else {
-    createOrg({ name: formData.value.name, alias: formData.value.alias, parentId: formData.value.parentId })
+    await api.createOrg({ name: formData.value.name, alias: formData.value.alias, parentId: formData.value.parentId })
     ElMessage.success('创建成功')
   }
   loadOrgTree()

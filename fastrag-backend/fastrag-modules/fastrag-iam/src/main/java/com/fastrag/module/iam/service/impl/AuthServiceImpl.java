@@ -20,18 +20,18 @@ public class AuthServiceImpl implements AuthService {
         if ("disabled".equals(user.getStatus())) throw BusinessException.forbidden("账号已被禁用");
         if (!passwordEncoder.matches(req.getPassword(),user.getPasswordHash())) throw BusinessException.badRequest("用户名或密码错误");
         SysRole role = roleMapper.selectById(user.getRoleId());
-        List<String> roleName = role!=null?List.of(role.getName()):List.of();
+        List<String> roleKeys = role!=null?List.of(role.getRoleKey()):List.of();
         List<String> perms = loadPerms(user.getRoleId());
-        String token = jwtUtil.generateToken(user.getId(),user.getUsername(),roleName,perms);
+        String token = jwtUtil.generateToken(user.getId(),user.getUsername(),roleKeys,perms);
         var ui = LoginResponse.UserInfoDto.builder().id(user.getId()).username(user.getUsername())
-            .realName(user.getRealName()).phone(user.getPhone()).email(user.getEmail()).roles(roleName).permissions(perms).build();
+            .realName(user.getRealName()).phone(user.getPhone()).email(user.getEmail()).roles(roleKeys).permissions(perms).build();
         return LoginResponse.builder().token(token).userInfo(ui).build();
     }
     @Override public LoginResponse.UserInfoDto getUserInfo(String userId) {
         SysUser u = userMapper.selectById(userId); if(u==null) throw BusinessException.notFound("用户不存在");
         SysRole r = roleMapper.selectById(u.getRoleId());
         return LoginResponse.UserInfoDto.builder().id(u.getId()).username(u.getUsername()).realName(u.getRealName())
-            .phone(u.getPhone()).email(u.getEmail()).roles(r!=null?List.of(r.getName()):List.of()).permissions(loadPerms(u.getRoleId())).build();
+            .phone(u.getPhone()).email(u.getEmail()).roles(r!=null?List.of(r.getRoleKey()):List.of()).permissions(loadPerms(u.getRoleId())).build();
     }
     @Override public void logout(String token) { if(token!=null) redisTemplate.opsForValue().set("jwt:blacklist:"+token,"1",24,TimeUnit.HOURS); }
     private List<String> loadPerms(String roleId) {

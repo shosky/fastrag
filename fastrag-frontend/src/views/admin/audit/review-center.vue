@@ -3,7 +3,7 @@ import type { ReviewTask } from '@/types/audit'
 import { REVIEW_STATUS_LABELS, REVIEW_STATUS_COLORS } from '@/types/audit'
 import { Select, CloseBold } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getReviewTasks, approveReview, rejectReview } from '@/mock/audit'
+import * as api from '@/api'
 
 const activeTab = ref('pending')
 const reviewTasks = ref<ReviewTask[]>([])
@@ -12,8 +12,8 @@ const commentAction = ref<'approve' | 'reject'>('approve')
 const commentTarget = ref('')
 const commentText = ref('')
 
-function refresh() {
-  reviewTasks.value = getReviewTasks()
+async function refresh() {
+  reviewTasks.value = (await api.getReviews()) as any || []
 }
 
 onMounted(refresh)
@@ -39,16 +39,16 @@ function handleReject(task: ReviewTask) {
   showCommentDialog.value = true
 }
 
-function handleCommentSubmit() {
+async function handleCommentSubmit() {
   if (commentAction.value === 'approve') {
-    approveReview(commentTarget.value, commentText.value)
+    await api.approveReview(commentTarget.value)
     ElMessage.success('审核通过')
   } else {
-    rejectReview(commentTarget.value, commentText.value)
+    await api.rejectReview(commentTarget.value, commentText.value)
     ElMessage.success('已驳回')
   }
   showCommentDialog.value = false
-  refresh()
+  await refresh()
 }
 </script>
 

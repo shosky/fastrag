@@ -4,28 +4,24 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import KnowledgeForm from './form.vue'
-import type { KnowledgeBaseForm } from '@/types/knowledge'
-import { getKnowledgeBase, updateKnowledgeBase, deleteKnowledgeBase } from '@/mock/knowledge-bases'
-import { setKBAcl } from '@/mock/auth-acl'
+import type { KnowledgeBase, KnowledgeBaseForm } from '@/types/knowledge'
+import * as api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
 
-const knowledgeBase = ref<ReturnType<typeof getKnowledgeBase>>(null)
+const knowledgeBase = ref<KnowledgeBase | null>(null)
 const loading = ref(false)
 const saving = ref(false)
 
 /** Get the knowledge base ID from route params */
 const id = route.params.id as string
 
-/** Load knowledge base data by ID（来自统一 mock 层） */
+/** Load knowledge base data by ID */
 async function loadKnowledgeBase() {
   loading.value = true
   try {
-    // Simulate API delay
-    await new Promise(resolve => setTimeout(resolve, 300))
-
-    const data = getKnowledgeBase(id)
+    const data: any = await api.getKnowledgeBaseDetail(id)
     if (!data) {
       ElMessage.error('知识库不存在')
       router.push('/knowledge')
@@ -39,17 +35,15 @@ async function loadKnowledgeBase() {
   }
 }
 
-/** Handle form submit —— 写回 mock 数据层 */
-function handleSubmit(formData: KnowledgeBaseForm) {
+/** Handle form submit */
+async function handleSubmit(formData: KnowledgeBaseForm) {
   saving.value = true
   try {
-    const updated = updateKnowledgeBase(id, formData)
-    if (!updated) {
-      ElMessage.error('保存失败：知识库不存在')
-      return
-    }
+    await api.updateKnowledgeBase(id, formData as any)
     ElMessage.success('保存成功')
     router.push('/knowledge')
+  } catch {
+    ElMessage.error('保存失败')
   } finally {
     saving.value = false
   }
@@ -72,9 +66,7 @@ async function handleDelete() {
         type: 'warning',
       }
     )
-    deleteKnowledgeBase(id)
-    // 同步清理 ACL 条目：重置为空
-    setKBAcl(id, [])
+    await api.deleteKnowledgeBase(id)
     ElMessage.success('删除成功')
     router.push('/knowledge')
   } catch {

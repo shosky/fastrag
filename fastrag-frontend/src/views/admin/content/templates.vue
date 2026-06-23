@@ -1,28 +1,37 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const activeGroup = ref('')
 const showEditor = ref(false)
 const editorTitle = ref('创建模板')
 const templateName = ref('')
+const loading = ref(false)
+const editingId = ref<string | null>(null)
 
-const groups = ref([
-  { id: '1', name: 'TorchV管理', count: 5 },
-  { id: '2', name: '通用模板', count: 3 },
-])
-
-const templateList = ref([
-  { id: '1', name: '周报模板', group: 'TorchV管理', usageCount: 128 },
-  { id: '2', name: '会议纪要模板', group: 'TorchV管理', usageCount: 89 },
-  { id: '3', name: '需求文档模板', group: '通用模板', usageCount: 56 },
-  { id: '4', name: '测试报告模板', group: '通用模板', usageCount: 34 },
-])
+const groups = ref<any[]>([])
+const templateList = ref<any[]>([])
 
 const batchMode = ref(false)
 const selectedTemplates = ref<string[]>([])
 
-/** 切换模板的批量选中状态 */
+async function loadTemplates() {
+  loading.value = true
+  try {
+    const [groupsRes, templatesRes] = await Promise.all([
+      api.getDictionaries({ type: '模板分组' }),
+      api.getDictionaries({ type: '文档模板' }),
+    ])
+    groups.value = (groupsRes as any)?.['模板分组'] || []
+    templateList.value = (templatesRes as any)?.['文档模板'] || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadTemplates)
+
 function toggleTemplate(id: string, checked: boolean) {
   if (checked) {
     if (!selectedTemplates.value.includes(id)) selectedTemplates.value.push(id)
@@ -33,26 +42,40 @@ function toggleTemplate(id: string, checked: boolean) {
 
 function handleCreate() {
   editorTitle.value = '创建模板'
+  editingId.value = null
   templateName.value = ''
   showEditor.value = true
 }
 
 function handleEdit(tpl: any) {
   editorTitle.value = '编辑模板'
-  templateName.value = tpl.name
+  editingId.value = tpl.id
+  templateName.value = tpl.label || tpl.key
   showEditor.value = true
 }
 
 async function handleDelete(tpl: any) {
   try {
-    await ElMessageBox.confirm(`确定要删除模板「${tpl.name}」吗？`, '删除确认', { type: 'warning' })
-    templateList.value = templateList.value.filter(t => t.id !== tpl.id)
+    await ElMessageBox.confirm(`确定要删除模板吗？`, '删除确认', { type: 'warning' })
+    await api.deleteDictionary(tpl.id)
+    await loadTemplates()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleSave() {
+async function handleSave() {
+  if (!templateName.value) {
+    ElMessage.warning('请输入模板名称')
+    return
+  }
+  const data = { type: '文档模板', key: templateName.value, value: '' }
+  if (editingId.value) {
+    await api.updateDictionary(editingId.value, data)
+  } else {
+    await api.createDictionary(data)
+  }
   showEditor.value = false
+  await loadTemplates()
   ElMessage.success('保存成功')
 }
 
@@ -63,13 +86,16 @@ async function handleBatchDelete() {
   }
   try {
     await ElMessageBox.confirm('确定要删除选中的模板吗？', '批量删除', { type: 'warning' })
+    await Promise.all(selectedTemplates.value.map(id => api.deleteDictionary(id)))
+    selectedTemplates.value = []
+    await loadTemplates()
     ElMessage.success('删除成功')
   } catch {}
 }
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="template-layout">
       <div class="template-sidebar">
         <div class="sidebar-header">
@@ -78,7 +104,7 @@ async function handleBatchDelete() {
         </div>
         <div class="group-item" :class="{ active: activeGroup === '' }" @click="activeGroup = ''">全部</div>
         <div v-for="g in groups" :key="g.id" class="group-item" :class="{ active: activeGroup === g.id }" @click="activeGroup = g.id">
-          {{ g.name }}
+          {{ g.key || g.label }}
         </div>
       </div>
       <div class="template-content">
@@ -101,16 +127,15 @@ async function handleBatchDelete() {
               <el-icon :size="48" color="#c0c4cc"><Document /></el-icon>
             </div>
             <div class="card-info">
-              <span class="name">{{ tpl.name }}</span>
-              <span class="count">{{ tpl.usageCount }} 人使用</span>
+              <span class="name">{{ tpl.label || tpl.key }}</span>
             </div>
             <div class="card-actions">
               <el-button link size="small" @click="handleEdit(tpl)">编辑</el-button>
-              <el-button link size="small">预览</el-button>
               <el-button link type="danger" size="small" @click="handleDelete(tpl)">删除</el-button>
             </div>
           </div>
         </div>
+        <el-empty v-if="!templateList.length && !loading" description="暂无模板" />
         <div v-if="batchMode" class="batch-bar">
           <span>已选 {{ selectedTemplates.length }} 项</span>
           <el-button type="danger" size="small" @click="handleBatchDelete">批量删除</el-button>
@@ -118,26 +143,20 @@ async function handleBatchDelete() {
       </div>
     </div>
 
-    <el-dialog v-model="showEditor" :title="editorTitle" width="800px">
+    <el-dialog v-model="showEditor" :title="editorTitle" width="600px">
       <el-form label-width="80px">
-        <el-form-item label="模板名称">
+        <el-form-item label="模板名称" required>
           <el-input v-model="templateName" placeholder="请输入模板名称" />
         </el-form-item>
         <el-form-item label="分组">
           <el-select style="width: 100%">
-            <el-option v-for="g in groups" :key="g.id" :label="g.name" :value="g.id" />
+            <el-option v-for="g in groups" :key="g.id" :label="g.key || g.label" :value="g.id" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="模板内容">
-          <div class="editor-placeholder">
-            <el-icon :size="48" color="#c0c4cc"><EditPen /></el-icon>
-            <p>富文本编辑器区域</p>
-          </div>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showEditor = false">取消</el-button>
-        <el-button type="primary" @click="handleSave">更新</el-button>
+        <el-button type="primary" @click="handleSave">保存</el-button>
       </template>
     </el-dialog>
   </div>
@@ -199,7 +218,7 @@ async function handleBatchDelete() {
 
   .batch-checkbox { position: absolute; top: $spacing-sm; left: $spacing-sm; }
   .card-preview { padding: $spacing-lg; background: $bg-hover; border-radius: $radius-sm; margin-bottom: $spacing-sm; }
-  .card-info { .name { display: block; font-weight: 600; } .count { font-size: 12px; color: $text-secondary; } }
+  .card-info { .name { display: block; font-weight: 600; } }
   .card-actions { margin-top: $spacing-sm; display: flex; justify-content: center; gap: $spacing-sm; }
 }
 
@@ -212,17 +231,5 @@ async function handleBatchDelete() {
   display: flex;
   align-items: center;
   gap: $spacing-base;
-}
-
-.editor-placeholder {
-  width: 100%;
-  height: 300px;
-  border: 1px dashed $border-base;
-  border-radius: $radius-base;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  color: $text-secondary;
 }
 </style>

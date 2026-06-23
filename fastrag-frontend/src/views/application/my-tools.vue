@@ -1,20 +1,21 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  getTools,
-  deleteTool,
-  toggleToolEnabled,
-  getTypeLabel,
-  TOOL_CATEGORIES,
-} from '@/mock/tools'
+import { getTypeLabel, TOOL_CATEGORIES } from '@/mock/tools'
 import type { Tool, ToolType } from '@/mock/tools'
+import * as api from '@/api'
 
 const router = useRouter()
 
 // --- 列表数据 ---
-const tools = ref<Tool[]>(getTools())
+const tools = ref<Tool[]>([])
+
+async function loadTools() {
+  tools.value = (await api.getTools()) as any || []
+}
+
+onMounted(loadTools)
 
 const searchKeyword = ref('')
 const selectedType = ref<ToolType | ''>('')
@@ -52,15 +53,15 @@ async function handleDelete(tool: Tool) {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    deleteTool(tool.id)
-    tools.value = getTools()
+    await api.deleteTool(tool.id)
+    await loadTools()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleToggleEnabled(tool: Tool) {
-  toggleToolEnabled(tool.id)
-  tools.value = getTools()
+async function handleToggleEnabled(tool: Tool) {
+  await api.toggleTool(tool.id)
+  await loadTools()
   ElMessage.success(tool.enabled ? '已禁用' : '已启用')
 }
 </script>

@@ -23,3 +23,8 @@ fastrag-frontend/.env.*.local
 
 # Claude
 .claude/
+
+
+# Windows 保留设备名
+nul
+NUL

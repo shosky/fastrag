@@ -2,8 +2,7 @@
 import { useRouter, useRoute } from 'vue-router'
 import { ArrowLeft, Download, Search, Edit, Grid, ArrowDown, ArrowUp, Delete, Upload, Setting } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getFiles } from '@/mock/files'
-import { mockChunks } from '@/mock/chunks'
+import * as api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -32,24 +31,43 @@ interface ChunkMetadata {
   updatedAt: string
 }
 
-// --- 从 mock 层加载文件信息 ---
+// --- 从 API 加载文件信息 ---
 const routeCategory = (route.query.category as string) || 'document'
-const fileFromMock = getFiles(kbId).find((f) => f.id === fileId)
 
 const fileInfo = ref({
   id: fileId,
-  name: fileFromMock?.name || `文件_${fileId.slice(-6)}`,
+  name: `文件_${fileId.slice(-6)}`,
   category: routeCategory as 'video' | 'audio' | 'document' | 'image',
-  extension: fileFromMock?.extension || '.pdf',
-  size: fileFromMock?.size || 0,
-  chunkCount: fileFromMock?.chunkCount || 0,
+  extension: '.pdf',
+  size: 0,
+  chunkCount: 0,
   strategy: 'General',
   chunkSize: 500,
   overlapSize: 50,
   embeddingModel: 'text-embedding-v4',
-  createdAt: fileFromMock?.createdAt || '',
-  updatedAt: fileFromMock?.updatedAt || '',
+  createdAt: '',
+  updatedAt: '',
 })
+
+async function loadFileInfo() {
+  try {
+    const res: any = await api.getFiles(kbId)
+    const files = res?.list || res || []
+    const file = files.find((f: any) => f.id === fileId)
+    if (file) {
+      fileInfo.value.name = file.name || fileInfo.value.name
+      fileInfo.value.extension = file.extension || fileInfo.value.extension
+      fileInfo.value.size = file.size || fileInfo.value.size
+      fileInfo.value.chunkCount = file.chunkCount || fileInfo.value.chunkCount
+      fileInfo.value.createdAt = file.createdAt || fileInfo.value.createdAt
+      fileInfo.value.updatedAt = file.updatedAt || fileInfo.value.updatedAt
+    }
+  } catch {
+    // ignore
+  }
+}
+
+loadFileInfo()
 
 // --- Active tab ---
 const activeTab = ref<'markdown' | 'chunks'>('chunks')
@@ -76,30 +94,39 @@ const mediaCurrentTime = ref(0)
 const mediaDuration = ref(300) // 5 minutes mock
 const mediaSelectedChunkId = ref<string | null>(null)
 
-// --- Mock markdown content ---
+// --- Markdown 内容 ---
 const markdownContent = ref('')
 
-// --- 从 mock/chunks.ts 加载 chunks ---
-const fileChunks = mockChunks.filter((c) => c.fileId === fileId)
+// --- 从 API 加载 chunks ---
+const chunks = ref<Chunk[]>([])
 
-const chunks = ref<Chunk[]>(fileChunks.map((mc, i) => ({
-  id: `chunk_${mc.chunkIndex}`,
-  index: mc.chunkIndex,
-  content: mc.content,
-  metadata: {
-    fileId: mc.fileId,
-    fileName: mc.fileName,
-    chunkIndex: mc.chunkIndex,
-    tokenCount: mc.content.length,
-    createdAt: '2026-06-08 15:05:00',
-    updatedAt: '2026-06-08 15:05:00',
-  },
-})))
-
-// 生成 markdown 内容
-if (fileChunks.length > 0) {
-  markdownContent.value = fileChunks.map((c) => `## 切片 ${c.chunkIndex}\n\n${c.content}`).join('\n\n---\n\n')
+async function loadChunks() {
+  try {
+    const res: any = await api.getChunks(kbId, { fileId, page: 1, pageSize: 100 })
+    const list = res?.list || res || []
+    chunks.value = list.map((mc: any, i: number) => ({
+      id: mc.id || `chunk_${mc.chunkIndex || i}`,
+      index: mc.chunkIndex || i,
+      content: mc.content || '',
+      metadata: {
+        fileId: mc.fileId || fileId,
+        fileName: mc.fileName || '',
+        chunkIndex: mc.chunkIndex || i,
+        tokenCount: (mc.content || '').length,
+        createdAt: mc.createdAt || '',
+        updatedAt: mc.updatedAt || '',
+      },
+    }))
+    // 生成 markdown 内容
+    if (chunks.value.length > 0) {
+      markdownContent.value = chunks.value.map((c) => `## 切片 ${c.index}\n\n${c.content}`).join('\n\n---\n\n')
+    }
+  } catch {
+    // ignore
+  }
 }
+
+loadChunks()
 
 // --- Mock media chunks (for video/audio) ---
 const mediaChunks = ref<Chunk[]>([

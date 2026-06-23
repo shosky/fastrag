@@ -1,28 +1,37 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
+import * as api from '@/api'
 
 const searchKeyword = ref('')
 const filterModule = ref('')
+const loading = ref(false)
 
 const modules = ['登录认证', '首页管理', '知识仓库管理', '应用中心', '系统与权限管理', '智能问答与交互', '监测中心', '知识加工']
 
-const logList = ref([
-  { id: '1', username: 'admin', module: '应用中心', detail: '创建应用「智能问答助手」', ip: '192.168.1.100', time: '2026-06-04 10:30:00', status: '成功', browser: 'Chrome', platform: 'Windows' },
-  { id: '2', username: '张三', module: '知识仓库管理', detail: '上传文档「API接口文档.md」', ip: '192.168.1.101', time: '2026-06-04 09:15:00', status: '成功', browser: 'Edge', platform: 'Windows' },
-  { id: '3', username: 'admin', module: '登录认证', detail: '用户登录成功', ip: '192.168.1.100', time: '2026-06-04 08:30:00', status: '成功', browser: 'Chrome', platform: 'Windows' },
-  { id: '4', username: '李四', module: '智能问答与交互', detail: '执行问答调试', ip: '192.168.1.102', time: '2026-06-03 16:45:00', status: '失败', browser: 'Firefox', platform: 'Mac' },
-  { id: '5', username: 'admin', module: '系统与权限管理', detail: '修改角色权限「知识库用户」', ip: '192.168.1.100', time: '2026-06-03 14:20:00', status: '成功', browser: 'Chrome', platform: 'Windows' },
-])
+const logList = ref<any[]>([])
+
+async function loadLogs() {
+  loading.value = true
+  try {
+    const res = await api.getAuditLogs({ limit: 100 })
+    logList.value = (res as any)?.list || (res as any) || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadLogs)
 
 const expandedRows = ref<string[]>([])
 
-function handleSearch() {
-  // 搜索逻辑
+async function handleSearch() {
+  await loadLogs()
 }
 
 function handleReset() {
   searchKeyword.value = ''
   filterModule.value = ''
+  loadLogs()
 }
 
 function toggleExpand(id: string) {

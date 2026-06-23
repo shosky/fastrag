@@ -1,46 +1,57 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const activeGroup = ref('')
 const searchKeyword = ref('')
 const showTagDialog = ref(false)
 const showGroupDialog = ref(false)
 const dialogTitle = ref('新增标签')
+const loading = ref(false)
+const editingId = ref<string | null>(null)
 
 const tagForm = ref({ type: '知识库', name: '', group: '' })
 const groupForm = ref({ name: '' })
 
-const tagGroups = ref([
-  { id: '1', name: '产品标签', count: 5 },
-  { id: '2', name: '技术标签', count: 8 },
-  { id: '3', name: '业务标签', count: 3 },
-])
+const tagGroups = ref<any[]>([])
+const tagList = ref<any[]>([])
 
-const tagList = ref([
-  { id: '1', name: '产品', type: '知识库', group: '产品标签' },
-  { id: '2', name: '文档', type: '页面文档', group: '产品标签' },
-  { id: '3', name: 'API', type: '知识库', group: '技术标签' },
-  { id: '4', name: '测试', type: '应用中心', group: '业务标签' },
-  { id: '5', name: '演示', type: '提示词', group: '业务标签' },
-])
+async function loadTags() {
+  loading.value = true
+  try {
+    const [groupsRes, tagsRes] = await Promise.all([
+      api.getDictionaries({ type: '标签组' }),
+      api.getDictionaries({ type: '标签' }),
+    ])
+    tagGroups.value = (groupsRes as any)?.['标签组'] || []
+    tagList.value = (tagsRes as any)?.['标签'] || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadTags)
 
 function handleAddTag() {
   dialogTitle.value = '新增标签'
+  editingId.value = null
   tagForm.value = { type: '知识库', name: '', group: '' }
   showTagDialog.value = true
 }
 
 function handleEditTag(tag: any) {
   dialogTitle.value = '编辑标签'
-  tagForm.value = { ...tag }
+  editingId.value = tag.id
+  tagForm.value = { type: tag.key || '知识库', name: tag.label || '', group: tag.value || '' }
   showTagDialog.value = true
 }
 
 async function handleDeleteTag(tag: any) {
   try {
     await ElMessageBox.confirm('是否删除该标签？', '删除确认', { type: 'warning' })
-    tagList.value = tagList.value.filter(t => t.id !== tag.id)
+    await api.deleteDictionary(tag.id)
+    await loadTags()
     ElMessage.success('删除成功')
   } catch {}
 }
@@ -50,19 +61,36 @@ function handleAddGroup() {
   showGroupDialog.value = true
 }
 
-function handleSaveTag() {
+async function handleSaveTag() {
+  if (!tagForm.value.name) {
+    ElMessage.warning('请输入标签名称')
+    return
+  }
+  const data = { type: '标签', key: tagForm.value.type, value: tagForm.value.group, label: tagForm.value.name }
+  if (editingId.value) {
+    await api.updateDictionary(editingId.value, data)
+  } else {
+    await api.createDictionary(data)
+  }
   showTagDialog.value = false
+  await loadTags()
   ElMessage.success('保存成功')
 }
 
-function handleSaveGroup() {
+async function handleSaveGroup() {
+  if (!groupForm.value.name) {
+    ElMessage.warning('请输入标签组名称')
+    return
+  }
+  await api.createDictionary({ type: '标签组', key: groupForm.value.name, value: '0' })
   showGroupDialog.value = false
+  await loadTags()
   ElMessage.success('保存成功')
 }
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="tag-layout">
       <div class="tag-sidebar">
         <div class="sidebar-header">
@@ -83,16 +111,7 @@ function handleSaveGroup() {
           :class="{ active: activeGroup === g.id }"
           @click="activeGroup = g.id"
         >
-          <span>{{ g.name }} ({{ g.count }})</span>
-          <el-dropdown trigger="click">
-            <el-button link size="small"><el-icon><MoreFilled /></el-icon></el-button>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item>编辑</el-dropdown-item>
-                <el-dropdown-item>删除</el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+          <span>{{ g.key || g.label }}</span>
         </div>
       </div>
       <div class="tag-content">
@@ -100,21 +119,10 @@ function handleSaveGroup() {
           <div class="section-title">标签管理</div>
           <el-button type="primary" @click="handleAddTag">新增标签</el-button>
         </div>
-        <div class="filter-bar">
-          <el-input v-model="searchKeyword" placeholder="搜索标签" clearable style="width: 200px" />
-          <el-select placeholder="标签类型" clearable style="width: 120px">
-            <el-option label="知识库" value="知识库" />
-            <el-option label="页面文档" value="页面文档" />
-            <el-option label="应用中心" value="应用中心" />
-            <el-option label="提示词" value="提示词" />
-          </el-select>
-          <el-button type="primary">查询</el-button>
-          <el-button>重置</el-button>
-        </div>
         <el-table :data="tagList" stripe>
-          <el-table-column prop="name" label="标签名称" />
-          <el-table-column prop="type" label="标签类型" width="120" />
-          <el-table-column prop="group" label="所属标签组" width="120" />
+          <el-table-column prop="label" label="标签名称" />
+          <el-table-column prop="key" label="标签类型" width="120" />
+          <el-table-column prop="value" label="所属标签组" width="120" />
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="handleEditTag(row)">编辑</el-button>
@@ -122,6 +130,7 @@ function handleSaveGroup() {
             </template>
           </el-table-column>
         </el-table>
+        <el-empty v-if="!tagList.length && !loading" description="暂无标签" />
       </div>
     </div>
 
@@ -140,7 +149,7 @@ function handleSaveGroup() {
         </el-form-item>
         <el-form-item label="标签组">
           <el-select v-model="tagForm.group" style="width: 100%">
-            <el-option v-for="g in tagGroups" :key="g.id" :label="g.name" :value="g.name" />
+            <el-option v-for="g in tagGroups" :key="g.id" :label="g.key || g.label" :value="g.key || g.label" />
           </el-select>
         </el-form-item>
       </el-form>

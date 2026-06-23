@@ -2,9 +2,8 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PersonnelRecord } from '@/mock/auth-roles'
-import { getPersonnel, createPersonnel, updatePersonnel, assignRole, getRoles } from '@/mock/auth-roles'
 import type { RoleMeta } from '@/types/auth'
-import { getDepartmentNames } from '@/mock/org'
+import * as api from '@/api'
 
 // --- State ---
 const searchName = ref('')
@@ -24,18 +23,23 @@ const formData = ref({
   email: '',
 })
 
-// --- 从 mock 层加载数据 ---
+// --- 从 API 加载数据 ---
 const personnelList = ref<PersonnelRecord[]>([])
 const roleOptions = ref<RoleMeta[]>([])
 const selectedRole = ref('')
 
-function loadData() {
-  personnelList.value = getPersonnel()
-  roleOptions.value = getRoles()
+async function loadData() {
+  const [personnelRes, roleRes] = await Promise.all([
+    api.getPersonnel(),
+    api.getRoles(),
+  ])
+  personnelList.value = (personnelRes as any)?.list || (personnelRes as any) || []
+  roleOptions.value = (roleRes as any)?.list || (roleRes as any) || []
 }
 
 onMounted(() => {
   loadData()
+  loadOrgOptions()
 })
 
 // --- 搜索过滤 ---
@@ -54,8 +58,12 @@ const filteredPersonnel = computed(() => {
   })
 })
 
-// --- 组织选项（从组织 mock 层加载，与 organization.vue 共享） ---
-const orgOptions = getDepartmentNames()
+// --- 组织选项（从 API 加载） ---
+const orgOptions = ref<string[]>([])
+
+async function loadOrgOptions() {
+  orgOptions.value = (await api.getDepartments()) as any || []
+}
 
 // --- CRUD ---
 function handleAdd() {
@@ -89,8 +97,8 @@ async function handleDisable(row: PersonnelRecord) {
   const action = row.status === 'enabled' ? '禁用' : '启用'
   try {
     await ElMessageBox.confirm(`确定要${action}「${row.realName}」吗？`, `${action}确认`, { type: 'warning' })
-    updatePersonnel(row.id, { status: row.status === 'enabled' ? 'disabled' : 'enabled' })
-    loadData()
+    await api.updatePersonnel(row.id, { status: row.status === 'enabled' ? 'disabled' : 'enabled' })
+    await loadData()
     ElMessage.success(`${action}成功`)
   } catch {}
 }
@@ -102,7 +110,7 @@ async function handleResetPassword(row: PersonnelRecord) {
   } catch {}
 }
 
-function handleSave() {
+async function handleSave() {
   if (!formData.value.username.trim() || !formData.value.realName.trim()) {
     ElMessage.warning('请输入用户名和姓名')
     return
@@ -110,41 +118,41 @@ function handleSave() {
 
   if (editingId.value) {
     // 编辑
-    updatePersonnel(editingId.value, {
+    await api.updatePersonnel(editingId.value, {
       realName: formData.value.realName,
       phone: formData.value.phone,
       orgName: formData.value.orgName,
       email: formData.value.email,
     })
-    loadData()
+    await loadData()
     ElMessage.success('更新成功')
   } else {
     // 新增
-    createPersonnel({
+    await api.createPersonnel({
       username: formData.value.username,
       realName: formData.value.realName,
       phone: formData.value.phone,
       email: formData.value.email,
       orgName: formData.value.orgName,
-      roleId: roleOptions.value[2]?.id || '3', // 默认 kb_user
+      roleId: roleOptions.value[2]?.id || '3',
       roleName: roleOptions.value[2]?.name || '知识库用户',
       status: 'enabled',
     })
-    loadData()
+    await loadData()
     ElMessage.success('添加成功')
   }
   showDrawer.value = false
 }
 
-function handleSaveRole() {
+async function handleSaveRole() {
   if (!selectedRole.value) {
     ElMessage.warning('请选择角色')
     return
   }
   const role = roleOptions.value.find((r) => r.id === selectedRole.value)
   if (role) {
-    assignRole(editingId.value, role.id, role.name)
-    loadData()
+    await api.assignRole(editingId.value, role.id)
+    await loadData()
     ElMessage.success('角色配置成功')
   }
   showRoleDialog.value = false

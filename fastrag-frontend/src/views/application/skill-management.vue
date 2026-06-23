@@ -1,22 +1,25 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  getSkills,
-  createSkill,
-  deleteSkill,
-  toggleSkillEnabled,
   getCategoryLabel,
   getSourceMeta,
   SKILL_CATEGORIES,
 } from '@/mock/skills'
 import type { Skill, SkillDependency } from '@/mock/skills'
+import * as api from '@/api'
 
 const router = useRouter()
 
 // --- 列表数据 ---
-const skills = ref<Skill[]>(getSkills())
+const skills = ref<Skill[]>([])
+
+async function loadSkills() {
+  skills.value = (await api.getSkills()) as any || []
+}
+
+onMounted(loadSkills)
 
 const searchKeyword = ref('')
 const selectedCategory = ref('')
@@ -88,15 +91,15 @@ async function handleDelete(skill: Skill) {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    deleteSkill(skill.id)
-    skills.value = getSkills()
+    await api.deleteSkill(skill.id)
+    await loadSkills()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleToggleEnabled(skill: Skill) {
-  toggleSkillEnabled(skill.id)
-  skills.value = getSkills()
+async function handleToggleEnabled(skill: Skill) {
+  await api.toggleSkill(skill.id)
+  await loadSkills()
   ElMessage.success(skill.enabled ? '已禁用' : '已启用')
 }
 
@@ -130,7 +133,7 @@ function handleUploadRemove() {
   uploadFileList.value = []
 }
 
-function handleUploadSubmit() {
+async function handleUploadSubmit() {
   if (!uploadFileList.value.length) {
     ElMessage.warning('请先选择技能包文件')
     return
@@ -140,10 +143,9 @@ function handleUploadSubmit() {
     return
   }
   uploadSubmitting.value = true
-  // mock：模拟解析上传包后创建一条插件技能
-  const fileName = uploadFileList.value[0]?.name || 'skill.zip'
-  setTimeout(() => {
-    const created = createSkill({
+  try {
+    const fileName = uploadFileList.value[0]?.name || 'skill.zip'
+    const created: any = await api.createSkill({
       name: uploadForm.value.name.trim(),
       identifier: uploadForm.value.identifier.trim(),
       description: uploadForm.value.description.trim() || `从 ${fileName} 安装的技能`,
@@ -163,11 +165,12 @@ function handleUploadSubmit() {
       author: '本地上传',
       version: uploadForm.value.version || '1.0.0',
     })
-    skills.value = getSkills()
-    uploadSubmitting.value = false
+    await loadSkills()
     showUploadDialog.value = false
-    ElMessage.success(`技能「${created.name}」安装成功`)
-  }, 600)
+    ElMessage.success(`技能「${created?.name || uploadForm.value.name}」安装成功`)
+  } finally {
+    uploadSubmitting.value = false
+  }
 }
 
 // --- 远程安装 ---
@@ -184,18 +187,17 @@ function openRemote() {
   remoteForm.value = { url: '', name: '', version: '' }
 }
 
-function handleRemoteInstall() {
+async function handleRemoteInstall() {
   if (!remoteForm.value.url.trim()) {
     ElMessage.warning('请输入技能包地址')
     return
   }
   remoteInstalling.value = true
-  // mock：模拟拉取远程包
-  setTimeout(() => {
+  try {
     const url = remoteForm.value.url.trim()
     const lastSegment = url.split('/').pop()?.split('?')[0] || 'remote_skill'
     const base = lastSegment.replace(/\.(zip|tar|gz|tgz|skill)$/i, '')
-    const created = createSkill({
+    const created: any = await api.createSkill({
       name: remoteForm.value.name.trim() || base,
       identifier: base.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_|_$/g, ''),
       description: `从远程地址安装：${url}`,
@@ -215,11 +217,12 @@ function handleRemoteInstall() {
       author: '远程安装',
       version: remoteForm.value.version.trim() || '1.0.0',
     })
-    skills.value = getSkills()
-    remoteInstalling.value = false
+    await loadSkills()
     showRemoteDialog.value = false
-    ElMessage.success(`技能「${created.name}」安装成功`)
-  }, 800)
+    ElMessage.success(`技能「${created?.name || base}」安装成功`)
+  } finally {
+    remoteInstalling.value = false
+  }
 }
 
 /** 复制代码到剪贴板 */

@@ -5,7 +5,7 @@ import { ArrowLeft } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 import type { RoleMeta } from '@/types/auth'
 import { PERMISSION_TREE } from '@/types/auth'
-import { getRole, updateRole } from '@/mock/auth-roles'
+import * as api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -35,15 +35,15 @@ const permGroups = computed<PermGroup[]>(() => {
   }))
 })
 
-onMounted(() => {
-  const data = getRole(roleId)
+onMounted(async () => {
+  const data = (await api.getRoleDetail(roleId)) as any
   if (!data) {
     ElMessage.error('角色不存在')
     router.push('/admin/account/roles')
     return
   }
   role.value = data
-  checkedPerms.value = [...data.permissions]
+  checkedPerms.value = [...(data.permissions || [])]
   loading.value = false
 })
 
@@ -86,7 +86,7 @@ function togglePerm(permKey: string) {
 }
 
 // 保存
-function handleSave() {
+async function handleSave() {
   if (!role.value) return
   // 过滤掉分组 key（只保留叶子节点权限）
   const leafKeys = PERMISSION_TREE.flatMap((g) =>
@@ -94,7 +94,7 @@ function handleSave() {
   )
   const perms = checkedPerms.value.filter((k) => leafKeys.includes(k) || k === '*')
 
-  updateRole(roleId, {
+  await api.updateRole(roleId, {
     name: role.value.name,
     description: role.value.description,
     permissions: perms,

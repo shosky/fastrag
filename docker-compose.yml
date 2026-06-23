@@ -28,8 +28,8 @@ services:
         condition: service_healthy
       rabbitmq:
         condition: service_healthy
-      milvus:
-        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     networks:
       - fastrag-net
     restart: unless-stopped
@@ -38,6 +38,7 @@ services:
   mysql:
     image: mysql:8.0
     container_name: fastrag-mysql
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci
     environment:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: fastrag
@@ -117,7 +118,7 @@ services:
       - fastrag-net
     restart: unless-stopped
 
-  # ==================== Milvus (Fixed) ====================
+  # ==================== Milvus ====================
   milvus:
     image: milvusdb/milvus:v2.3.4
     container_name: fastrag-milvus

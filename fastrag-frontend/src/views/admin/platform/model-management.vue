@@ -1,36 +1,56 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import {
-  getModels,
-  createModel,
-  updateModel,
-  deleteModel,
-  toggleModelStatus,
-  getTrainingRecords,
-  getTestReports,
-  getCallLogs,
-  MODEL_PURPOSES,
-  MODEL_BRANDS,
-  MODEL_PURPOSE_COLORS,
-} from '@/mock/models'
-import type { ModelPurpose, ModelStatus, ModelRecord, TrainingRecord, TestReport, CallLog } from '@/mock/models'
+import * as api from '@/api'
 
-// 列表 —— 来自统一 mock 层（与知识库表单共享）
-const models = ref<ModelRecord[]>(getModels())
+interface ModelRecord {
+  id: string
+  name: string
+  code: string
+  purpose: string
+  brand: string
+  apiUrl: string
+  status: string
+}
+
+const MODEL_PURPOSES = ['LLM', 'Embedding', 'Rerank', 'ASR', 'TTS', 'OCR']
+const MODEL_BRANDS = ['OpenAI', '阿里云', '百度', '智谱', '深度求索', '月之暗面', 'BAAI']
+const MODEL_PURPOSE_COLORS: Record<string, string> = {
+  'LLM': '',
+  'Embedding': 'success',
+  'Rerank': 'warning',
+  'ASR': 'info',
+  'TTS': 'danger',
+  'OCR': 'info',
+}
+
+const models = ref<ModelRecord[]>([])
 const activeTab = ref('list')
+const loading = ref(false)
 
-// 生命周期数据
 const selectedModelId = ref<string | null>(null)
-const trainingRecords = ref<TrainingRecord[]>([])
-const testReports = ref<TestReport[]>([])
-const callLogs = ref<CallLog[]>([])
+const trainingRecords = ref<any[]>([])
+const testReports = ref<any[]>([])
+const callLogs = ref<any[]>([])
 
-function loadLifecycle(modelId: string) {
+async function loadModels() {
+  loading.value = true
+  try {
+    const res = await api.getModels()
+    models.value = (res as any)?.list || (res as any) || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadModels)
+
+async function loadLifecycle(modelId: string) {
   selectedModelId.value = modelId
-  trainingRecords.value = getTrainingRecords(modelId)
-  testReports.value = getTestReports(modelId)
-  callLogs.value = getCallLogs(modelId)
+  // 生命周期数据暂用空数组，后端可后续补充
+  trainingRecords.value = []
+  testReports.value = []
+  callLogs.value = []
   activeTab.value = 'lifecycle'
 }
 
@@ -40,11 +60,11 @@ const editingId = ref<string | null>(null)
 const formData = ref({
   name: '',
   code: '',
-  purpose: '大语言模型' as ModelPurpose,
+  purpose: '大语言模型' as any,
   brand: '',
   apiUrl: '',
   apiKey: '',
-  status: 'online' as ModelStatus,
+  status: 'online' as any,
 })
 
 function handleAdd() {
@@ -75,25 +95,25 @@ async function handleDelete(model: ModelRecord) {
       cancelButtonText: '取消',
       type: 'warning',
     })
-    deleteModel(model.id)
-    models.value = getModels()
+    await api.deleteModel(model.id)
+    await loadModels()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleToggleStatus(model: ModelRecord) {
-  toggleModelStatus(model.id)
-  models.value = getModels()
+async function handleToggleStatus(model: ModelRecord) {
+  await api.updateModel(model.id, { status: model.status === 'online' ? 'offline' : 'online' })
+  await loadModels()
   ElMessage.success(model.status === 'online' ? '已下架' : '已上架')
 }
 
-function handleSave() {
+async function handleSave() {
   if (!formData.value.name || !formData.value.code) {
     ElMessage.warning('请填写必填项')
     return
   }
   if (editingId.value) {
-    updateModel(editingId.value, {
+    await api.updateModel(editingId.value, {
       name: formData.value.name,
       code: formData.value.code,
       purpose: formData.value.purpose,
@@ -102,7 +122,7 @@ function handleSave() {
       status: formData.value.status,
     })
   } else {
-    createModel({
+    await api.createModel({
       name: formData.value.name,
       code: formData.value.code,
       purpose: formData.value.purpose,
@@ -111,7 +131,7 @@ function handleSave() {
       status: formData.value.status,
     })
   }
-  models.value = getModels()
+  await loadModels()
   showDialog.value = false
   ElMessage.success('保存成功')
 }
@@ -136,7 +156,7 @@ function handleSave() {
         </div>
         <h4>{{ model.name }}</h4>
         <div class="model-meta">
-          <el-tag :type="MODEL_PURPOSE_COLORS[model.purpose]" size="small">{{ model.purpose }}</el-tag>
+          <el-tag :type="(MODEL_PURPOSE_COLORS[model.purpose] as any) || 'info'" size="small">{{ model.purpose }}</el-tag>
           <el-tag :type="model.status === 'online' ? 'success' : 'info'" size="small">
             {{ model.status === 'online' ? '已上架' : '已下架' }}
           </el-tag>

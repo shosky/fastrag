@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { RoleMeta } from '@/types/auth'
 import { PERMISSION_TREE, ROLE_LABELS } from '@/types/auth'
-import { getRoles, createRole, updateRole, deleteRole, setDefaultRole } from '@/mock/auth-roles'
+import * as api from '@/api'
 
 const router = useRouter()
 
@@ -21,11 +21,11 @@ const formData = ref({
   permissions: [] as string[],
 })
 
-// --- 从 mock 层加载角色列表 ---
+// --- 从 API 加载角色列表 ---
 const roleList = ref<RoleMeta[]>([])
 
-function loadRoles() {
-  roleList.value = getRoles()
+async function loadRoles() {
+  roleList.value = (await api.getRoles()) as any || []
 }
 
 onMounted(() => {
@@ -73,26 +73,22 @@ async function handleDelete(row: RoleMeta) {
   }
   try {
     await ElMessageBox.confirm('删除后不可恢复，确认删除？', '删除确认', { type: 'warning' })
-    const result = deleteRole(row.id)
-    if (result.success) {
-      loadRoles()
-      ElMessage.success('删除成功')
-    } else {
-      ElMessage.error(result.message || '删除失败')
-    }
+    await api.deleteRole(row.id)
+    await loadRoles()
+    ElMessage.success('删除成功')
   } catch {}
 }
 
 async function handleSetDefault(row: RoleMeta) {
   try {
     await ElMessageBox.confirm(`确认将「${row.name}」设为默认角色？`, '设为默认', { type: 'warning' })
-    setDefaultRole(row.id)
-    loadRoles()
+    await api.setDefaultRole(row.id)
+    await loadRoles()
     ElMessage.success('设置成功')
   } catch {}
 }
 
-function handleSave() {
+async function handleSave() {
   if (!formData.value.name.trim()) {
     ElMessage.warning('请输入角色名称')
     return
@@ -106,22 +102,20 @@ function handleSave() {
   )
 
   if (editingId.value) {
-    const result = updateRole(editingId.value, {
+    await api.updateRole(editingId.value, {
       name: formData.value.name,
       description: formData.value.description,
       permissions: isEditingDefault.value ? formData.value.permissions : allPerms,
     })
-    if (result) {
-      loadRoles()
-      ElMessage.success('更新成功')
-    }
+    await loadRoles()
+    ElMessage.success('更新成功')
   } else {
-    createRole({
+    await api.createRole({
       name: formData.value.name,
       description: formData.value.description,
       permissions: allPerms,
     })
-    loadRoles()
+    await loadRoles()
     ElMessage.success('创建成功')
   }
   showDialog.value = false

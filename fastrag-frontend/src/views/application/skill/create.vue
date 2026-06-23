@@ -5,7 +5,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
 import SkillForm from './SkillForm.vue'
 import type { Skill } from '@/mock/skills'
-import { createSkill } from '@/mock/skills'
+import * as api from '@/api'
 
 const router = useRouter()
 const saving = ref(false)
@@ -13,28 +13,8 @@ const saving = ref(false)
 async function handleSubmit(data: Skill) {
   saving.value = true
   try {
-    await new Promise((resolve) => setTimeout(resolve, 300))
-    const created = createSkill({
-      name: data.name,
-      identifier: data.identifier,
-      description: data.description,
-      icon: data.icon,
-      source: data.source,
-      category: data.category,
-      trigger: data.trigger,
-      content: data.content,
-      codeType: data.codeType,
-      code: data.code,
-      inputs: data.inputs,
-      outputs: data.outputs,
-      enabled: data.enabled,
-      recommended: data.recommended,
-      dependencies: data.dependencies,
-      scopes: data.scopes,
-      author: data.author,
-      version: data.version,
-    })
-    ElMessage.success(`技能「${created.name}」创建成功`)
+    const created: any = await api.createSkill(data as any)
+    ElMessage.success(`技能「${created?.name || data.name}」创建成功`)
     router.push('/application/skill-management')
   } finally {
     saving.value = false

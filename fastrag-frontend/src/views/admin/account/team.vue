@@ -1,73 +1,98 @@
 <script setup lang="ts">
-import { ref } from 'vue'
+import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const searchName = ref('')
 const showDrawer = ref(false)
 const drawerTitle = ref('新增团队')
 const showMemberDialog = ref(false)
+const loading = ref(false)
+const currentTeamId = ref('')
 
 const formData = ref({
   name: '',
   description: '',
-  members: [] as string[],
 })
 
-const teamList = ref([
-  { id: '1', name: '项目管理团队', description: '负责项目管理和协调', memberCount: 8 },
-  { id: '2', name: '产品研发团队', description: '负责产品研发和迭代', memberCount: 15 },
-  { id: '3', name: '客户成功团队', description: '负责客户支持和成功', memberCount: 6 },
-])
+const teamList = ref<any[]>([])
+const memberList = ref<any[]>([])
 
-const memberList = ref([
-  { id: '1', name: '张三', username: 'zhangsan' },
-  { id: '2', name: '李四', username: 'lisi' },
-  { id: '3', name: '王五', username: 'wangwu' },
-])
+async function loadTeams() {
+  loading.value = true
+  try {
+    const res = await api.getTeams()
+    teamList.value = (res as any) || []
+  } finally {
+    loading.value = false
+  }
+}
+
+onMounted(loadTeams)
 
 function handleAdd() {
   drawerTitle.value = '新增团队'
-  formData.value = { name: '', description: '', members: [] }
+  currentTeamId.value = ''
+  formData.value = { name: '', description: '' }
   showDrawer.value = true
 }
 
 function handleEdit(team: any) {
   drawerTitle.value = '编辑团队'
-  formData.value = { name: team.name, description: team.description, members: ['1', '2'] }
+  currentTeamId.value = team.id
+  formData.value = { name: team.name, description: team.description }
   showDrawer.value = true
 }
 
 async function handleDelete(team: any) {
   try {
     await ElMessageBox.confirm('是否删除当前团队?', '删除确认', { type: 'warning' })
-    teamList.value = teamList.value.filter(t => t.id !== team.id)
+    await api.deleteTeam(team.id)
+    await loadTeams()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleViewMembers(team: any) {
+async function handleViewMembers(team: any) {
+  currentTeamId.value = team.id
+  try {
+    const res = await api.getTeamMembers(team.id)
+    memberList.value = (res as any) || []
+  } catch {
+    memberList.value = []
+  }
   showMemberDialog.value = true
 }
 
 async function handleDeleteMember(member: any) {
   try {
     await ElMessageBox.confirm(`是否删除人员：${member.name}？`, '删除确认', { type: 'warning' })
+    await api.removeTeamMember(currentTeamId.value, member.id)
+    const res = await api.getTeamMembers(currentTeamId.value)
+    memberList.value = (res as any) || []
+    await loadTeams()
     ElMessage.success('删除成功')
   } catch {}
 }
 
-function handleSave() {
+async function handleSave() {
   if (!formData.value.name) {
     ElMessage.warning('请输入团队名称')
     return
   }
+  if (drawerTitle.value === '新增团队') {
+    await api.createTeam({ name: formData.value.name, description: formData.value.description })
+  } else {
+    await api.updateTeam(currentTeamId.value, { name: formData.value.name, description: formData.value.description })
+  }
   showDrawer.value = false
+  await loadTeams()
   ElMessage.success('保存成功')
 }
 </script>
 
 <template>
-  <div class="page-container">
+  <div class="page-container" v-loading="loading">
     <div class="card-panel">
       <div class="section-header">
         <div class="section-title">团队管理</div>
@@ -93,6 +118,7 @@ function handleSave() {
           </div>
         </div>
       </div>
+      <el-empty v-if="!teamList.length && !loading" description="暂无团队" />
     </div>
 
     <el-drawer v-model="showDrawer" :title="drawerTitle" size="400px">
@@ -103,11 +129,6 @@ function handleSave() {
         <el-form-item label="描述">
           <el-input v-model="formData.description" type="textarea" :rows="3" placeholder="请输入描述" />
         </el-form-item>
-        <el-form-item label="团队成员">
-          <el-select v-model="formData.members" multiple placeholder="请选择成员" style="width: 100%">
-            <el-option v-for="m in memberList" :key="m.id" :label="m.name" :value="m.id" />
-          </el-select>
-        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="showDrawer = false">取消</el-button>
@@ -116,18 +137,16 @@ function handleSave() {
     </el-drawer>
 
     <el-dialog v-model="showMemberDialog" title="团队成员" width="500px">
-      <div class="filter-bar">
-        <el-input placeholder="搜索成员" clearable style="width: 200px" />
-        <el-button type="primary">查询</el-button>
-      </div>
       <el-table :data="memberList" stripe size="small">
-        <el-table-column prop="name" label="人员名称" />
+        <el-table-column prop="name" label="姓名" />
+        <el-table-column prop="username" label="用户名" />
         <el-table-column label="操作" width="80">
           <template #default="{ row }">
-            <el-button link type="danger" size="small" @click="handleDeleteMember(row)">删除</el-button>
+            <el-button link type="danger" size="small" @click="handleDeleteMember(row)">移除</el-button>
           </template>
         </el-table-column>
       </el-table>
+      <el-empty v-if="!memberList.length" description="暂无成员" :image-size="60" />
     </el-dialog>
   </div>
 </template>

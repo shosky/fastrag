@@ -5,8 +5,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ArrowLeft, Search, ChatDotRound, FolderOpened } from '@element-plus/icons-vue'
 import { useConversation } from '@/composables/useConversation'
 import { searchRetrieval } from '@/api'
-import { getSuggestion } from '@/mock/search-correction'
-import { applyQueryRules } from '@/mock/query-rules'
+import { querySuggest, applyQueryRules as apiApplyQueryRules } from '@/api'
 
 const route = useRoute()
 const router = useRouter()
@@ -38,16 +37,24 @@ async function handleRetrievalSearch() {
   try {
     // 纠错
     let effectiveQuery = retrievalQuery.value
-    const { suggestedQuery, reason } = getSuggestion(retrievalQuery.value)
-    if (suggestedQuery) {
-      correctionHint.value = reason
-      effectiveQuery = suggestedQuery
+    try {
+      const suggestions = await querySuggest(retrievalQuery.value)
+      if (suggestions && suggestions.length > 0) {
+        correctionHint.value = '自动纠错'
+        effectiveQuery = suggestions[0]
+      }
+    } catch {
+      // 纠错失败，继续使用原查询
     }
 
     // 查询重写
-    const { rewritten, appliedRules } = applyQueryRules(effectiveQuery)
-    if (appliedRules.length > 0) {
-      effectiveQuery = rewritten
+    try {
+      const rewritten = await apiApplyQueryRules(effectiveQuery)
+      if (rewritten && rewritten !== effectiveQuery) {
+        effectiveQuery = rewritten
+      }
+    } catch {
+      // 重写失败，继续使用原查询
     }
 
     // 真实检索

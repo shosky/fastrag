@@ -6,9 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useGraphExpansion } from '@/composables/useGraphExpansion'
 import { useSynonyms } from '@/composables/useSynonyms'
-import { searchRetrieval } from '@/api'
-import { getSuggestion } from '@/mock/search-correction'
-import { applyQueryRules } from '@/mock/query-rules'
+import { searchRetrieval, querySuggest, applyQueryRules as apiApplyQueryRules } from '@/api'
 
 const router = useRouter()
 
@@ -170,18 +168,26 @@ async function handleSearch() {
   correctionSuggestion.value = null
   correctionReason.value = ''
   if (!isImageSearch && preprocess.value.autoCorrection) {
-    const { suggestedQuery, reason } = getSuggestion(searchQuery.value)
-    if (suggestedQuery) {
-      correctionSuggestion.value = suggestedQuery
-      correctionReason.value = reason
-      effectiveQuery = suggestedQuery
+    try {
+      const suggestions = await querySuggest(searchQuery.value)
+      if (suggestions && suggestions.length > 0) {
+        correctionSuggestion.value = suggestions[0]
+        correctionReason.value = '自动纠错'
+        effectiveQuery = suggestions[0]
+      }
+    } catch {
+      // 纠错失败，继续使用原查询
     }
   }
 
   // 查询重写
   if (!isImageSearch && preprocess.value.queryRewrite) {
-    const { rewritten, appliedRules } = applyQueryRules(effectiveQuery)
-    if (appliedRules.length > 0) effectiveQuery = rewritten
+    try {
+      const rewritten = await apiApplyQueryRules(effectiveQuery)
+      if (rewritten && rewritten !== effectiveQuery) effectiveQuery = rewritten
+    } catch {
+      // 重写失败，继续使用原查询
+    }
   }
 
   searchLoading.value = true
@@ -200,7 +206,7 @@ async function handleSearch() {
     // 同义词扩展
     let finalQuery = graphExpandedQuery
     if (!isImageSearch && preprocess.value.synonymExpansion) {
-      finalQuery = synonymExpand(graphExpandedQuery)
+      finalQuery = await synonymExpand(graphExpandedQuery)
     } else {
       clearSynonyms()
     }

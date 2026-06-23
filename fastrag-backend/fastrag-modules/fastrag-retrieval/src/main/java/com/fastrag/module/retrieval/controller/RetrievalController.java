@@ -6,7 +6,7 @@ import java.util.Map;
 public class RetrievalController {
     private final RetrievalService retrievalService; private final QueryEnhanceService queryService;
     @PostMapping("/api/retrieval/search") public ApiResponse<?> search(@RequestBody RetrievalRequest req) { return ApiResponse.success(retrievalService.search(req)); }
-    @GetMapping("/api/kb/{kbId}/chunks/count") public ApiResponse<?> count(@PathVariable String kbId) { return ApiResponse.success(retrievalService.getChunkCount(kbId)); }
+    @GetMapping("/api/retrieval/kb/{kbId}/chunks/count") public ApiResponse<?> count(@PathVariable String kbId) { return ApiResponse.success(retrievalService.getChunkCount(kbId)); }
     @PostMapping("/api/query/suggest") public ApiResponse<?> suggest(@RequestBody Map<String,String> b) { return ApiResponse.success(queryService.suggest(b.get("query"))); }
     @PostMapping("/api/query/expand-synonyms") public ApiResponse<?> synonyms(@RequestBody Map<String,String> b) { return ApiResponse.success(queryService.expandSynonyms(b.get("query"))); }
     @PostMapping("/api/query-rules/apply") public ApiResponse<?> applyRules(@RequestBody Map<String,String> b) { return ApiResponse.success(queryService.applyQueryRules(b.get("query"))); }
