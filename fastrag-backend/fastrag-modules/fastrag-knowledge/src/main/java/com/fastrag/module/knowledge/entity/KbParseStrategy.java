@@ -16,6 +16,8 @@ public class KbParseStrategy {
     private String parseMethod; // default / pptx / pdf / video / audio
     private Integer isDefault;
     private String advanced; // JSON
+    private String llmModel; // 解析用 LLM 模型
+    private String vlmModel; // 解析用 VLM 模型
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

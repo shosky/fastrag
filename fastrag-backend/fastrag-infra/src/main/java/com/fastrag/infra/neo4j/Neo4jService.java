@@ -58,4 +58,29 @@ public class Neo4jService {
         String expandedQuery = String.join(" ", entities) + " " + expEntities.stream().map(e -> (String) e.get("name")).reduce("", (a, b) -> a + " " + b);
         return Map.of("entities", expEntities, "relations", relations, "expandedQuery", expandedQuery.trim());
     }
+
+    public void createEntity(String kbId, String name, String type) {
+        try (Session session = driver.session()) {
+            session.writeTransaction(tx -> {
+                tx.run("MERGE (e:Entity {name: $name, kbId: $kbId}) SET e.type = $type, e.label = $type",
+                        Map.of("name", name, "kbId", kbId, "type", type != null ? type : "unknown"));
+                return null;
+            });
+        } catch (Exception e) {
+            log.warn("Failed to create entity: {} - {}", name, e.getMessage());
+        }
+    }
+
+    public void createRelation(String kbId, String source, String target, String label) {
+        try (Session session = driver.session()) {
+            String safeLabel = label.replaceAll("[^a-zA-Z0-9_\\u4e00-\\u9fa5]", "_");
+            session.writeTransaction(tx -> {
+                tx.run("MATCH (a:Entity {name: $source, kbId: $kbId}) MATCH (b:Entity {name: $target, kbId: $kbId}) MERGE (a)-[r:" + safeLabel + "]->(b)",
+                        Map.of("source", source, "target", target, "kbId", kbId));
+                return null;
+            });
+        } catch (Exception e) {
+            log.warn("Failed to create relation: {} -> {} - {}", source, target, e.getMessage());
+        }
+    }
 }

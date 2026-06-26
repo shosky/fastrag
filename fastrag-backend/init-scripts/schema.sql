@@ -160,6 +160,8 @@ CREATE TABLE IF NOT EXISTS kb_parse_strategy (
     parse_method VARCHAR(16) DEFAULT 'default',
     is_default TINYINT DEFAULT 0,
     advanced JSON,
+    llm_model VARCHAR(128),
+    vlm_model VARCHAR(128),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_kb_id (kb_id)

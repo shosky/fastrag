@@ -9,6 +9,7 @@ import { Plus, Edit, Delete, Search, Refresh, ArrowLeft, Star } from '@element-p
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter, useRoute } from 'vue-router'
 import { useParseStrategy } from '@/composables/useParseStrategy'
+import * as api from '@/api'
 
 const router = useRouter()
 const route = useRoute()
@@ -49,6 +50,25 @@ const form = ref<ParseStrategyForm>({
   extensions: [],
   parseMethod: 'default',
   advanced: { ...DEFAULT_ADVANCED },
+  llmModel: '',
+  vlmModel: '',
+})
+
+// 模型列表（从 API 加载）
+const llmModels = ref<any[]>([])
+const vlmModels = ref<any[]>([])
+
+onMounted(async () => {
+  try {
+    const [llmRes, vlmRes] = await Promise.all([
+      api.getModels({ purpose: 'LLM' }).catch(() => []),
+      api.getModels({ purpose: 'VLM' }).catch(() => []),
+    ])
+    llmModels.value = (llmRes as any)?.list || llmRes || []
+    vlmModels.value = (vlmRes as any)?.list || vlmRes || []
+  } catch {
+    // ignore
+  }
 })
 
 // 高级参数折叠状态（el-collapse v-model 需要 string[]）
@@ -383,6 +403,35 @@ onMounted(() => {
           </el-select>
         </el-form-item>
 
+        <!-- 模型配置 -->
+        <el-divider>解析模型配置</el-divider>
+
+        <el-form-item label="LLM 模型（智能分段/内容提取）">
+          <el-select v-model="form.llmModel" clearable placeholder="选择用于智能解析的 LLM 模型" style="width: 100%">
+            <el-option label="不使用 LLM" value="" />
+            <el-option
+              v-for="m in llmModels"
+              :key="m.id"
+              :label="`${m.name} (${m.brand || m.code})`"
+              :value="m.code || m.name"
+            />
+          </el-select>
+          <div class="form-tip">用于智能分段、内容提取、摘要生成等</div>
+        </el-form-item>
+
+        <el-form-item label="VLM 模型（图片/表格理解）">
+          <el-select v-model="form.vlmModel" clearable placeholder="选择用于图片理解的 VLM 模型" style="width: 100%">
+            <el-option label="不使用 VLM" value="" />
+            <el-option
+              v-for="m in vlmModels"
+              :key="m.id"
+              :label="`${m.name} (${m.brand || m.code})`"
+              :value="m.code || m.name"
+            />
+          </el-select>
+          <div class="form-tip">用于理解文档中的图片、表格、图表等视觉内容</div>
+        </el-form-item>
+
         <!-- 高级参数（可折叠） -->
         <el-collapse v-model="advancedCollapsed" class="parse-strategy-page__advanced-collapse">
           <el-collapse-item title="高级参数（切片/索引/增强）" name="advanced">
@@ -642,5 +691,11 @@ onMounted(() => {
     font-size: 14px;
     color: $text-regular;
   }
+}
+
+.form-tip {
+  font-size: 12px;
+  color: $text-secondary;
+  margin-top: $spacing-xs;
 }
 </style>

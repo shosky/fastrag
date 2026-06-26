@@ -73,7 +73,8 @@ export function useFiles(kbId: string = 'default') {
   }
 
   async function upload(
-    metas: Array<{
+    files: File[],
+    metas?: Array<{
       name: string
       category: KnowledgeFile['category']
       extension: string
@@ -82,12 +83,11 @@ export function useFiles(kbId: string = 'default') {
       parseStrategyName?: string
     }>,
   ) {
-    // 上传文件元数据（实际项目中应配合 FormData 上传文件二进制）
-    for (const meta of metas) {
+    // 上传文件二进制
+    for (let i = 0; i < files.length; i++) {
+      const file = files[i]
       const formData = new FormData()
-      Object.entries(meta).forEach(([key, value]) => {
-        if (value !== undefined) formData.append(key, String(value))
-      })
+      formData.append('file', file)
       await api.uploadFile(kbId, formData)
     }
     await load()

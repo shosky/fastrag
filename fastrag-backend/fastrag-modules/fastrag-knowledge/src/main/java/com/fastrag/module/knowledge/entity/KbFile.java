@@ -25,7 +25,6 @@ public class KbFile {
     private Integer chunkCount;
     private String folderId;
     private Long viewCount;
-    @TableField(fill = FieldFill.INSERT)
     private LocalDateTime deletedAt;
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;

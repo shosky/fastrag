@@ -1,14 +1,48 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import BasicConfig from './components/BasicConfig.vue'
 import KnowledgeConfig from './components/KnowledgeConfig.vue'
+import * as api from '@/api'
 
 const route = useRoute()
 const router = useRouter()
 const appId = route.params.id as string
 const activeMenu = ref('basic')
+
+// 模型列表（从 API 加载）
+const llmModels = ref<any[]>([])
+const embeddingModels = ref<any[]>([])
+const rerankModels = ref<any[]>([])
+
+// 选中的模型
+const selectedLlmModel = ref('')
+const selectedEmbeddingModel = ref('')
+const selectedRerankModel = ref('')
+
+onMounted(async () => {
+  try {
+    const [llmRes, embRes, rerankRes] = await Promise.all([
+      api.getModels({ purpose: 'LLM' }).catch(() => []),
+      api.getModels({ purpose: 'Embedding' }).catch(() => []),
+      api.getModels({ purpose: 'Rerank' }).catch(() => []),
+    ])
+    llmModels.value = (llmRes as any)?.list || llmRes || []
+    embeddingModels.value = (embRes as any)?.list || embRes || []
+    rerankModels.value = (rerankRes as any)?.list || rerankRes || []
+
+    // 默认选中第一个
+    if (llmModels.value.length) selectedLlmModel.value = llmModels.value[0].code || llmModels.value[0].name
+    if (embeddingModels.value.length) selectedEmbeddingModel.value = embeddingModels.value[0].code || embeddingModels.value[0].name
+    if (rerankModels.value.length) {
+      selectedRerankModel.value = rerankModels.value[0].code || rerankModels.value[0].name
+      retrievalParams.value.rerankModelName = selectedRerankModel.value
+    }
+  } catch {
+    // 加载失败
+  }
+})
 
 const appInfo = ref({
   id: appId,
@@ -314,7 +348,7 @@ const retrievalParams = ref({
   knowledgeAlpha: 0.50,
   documentAggregation: true,
   rerankModel: true,
-  rerankModelName: 'bge-reranker-v2-m3',
+  rerankModelName: '',
   adjacentTextCount: 0,
   qaQms: 0.91,
   knowledgeKms: 0.51,
@@ -322,11 +356,6 @@ const retrievalParams = ref({
   conversationMode: 'multi',
   conversationRounds: 5,
 })
-
-const rerankModels = [
-  { label: 'bge-reranker-v2-m3', value: 'bge-reranker-v2-m3' },
-  { label: 'bge-reranker-v2-gemma', value: 'bge-reranker-v2-gemma' },
-]
 
 // Prompt配置
 const activePromptStep = ref('system')
@@ -1017,7 +1046,12 @@ function handlePublish() {
 
             <el-form-item label="选择重排模型：" v-if="retrievalParams.rerankModel">
               <el-select v-model="retrievalParams.rerankModelName" style="width: 100%">
-                <el-option v-for="model in rerankModels" :key="model.value" :label="model.label" :value="model.value" />
+                <el-option
+                  v-for="m in rerankModels"
+                  :key="m.id"
+                  :label="`${m.name} (${m.brand || m.code})`"
+                  :value="m.code || m.name"
+                />
               </el-select>
             </el-form-item>
 
@@ -1080,7 +1114,45 @@ function handlePublish() {
         </div>
 
         <div v-if="activeParamTab === 'model'" class="config-sub">
-          <el-empty description="大模型配置" />
+          <el-form label-width="120px">
+            <el-form-item label="对话模型">
+              <el-select v-model="selectedLlmModel" style="width: 100%">
+                <el-option
+                  v-for="m in llmModels"
+                  :key="m.id"
+                  :label="`${m.name} (${m.brand || m.code})`"
+                  :value="m.code || m.name"
+                />
+              </el-select>
+              <div class="form-tip">选择用于生成回答的大语言模型</div>
+            </el-form-item>
+            <el-form-item label="向量模型">
+              <el-select v-model="selectedEmbeddingModel" style="width: 100%">
+                <el-option
+                  v-for="m in embeddingModels"
+                  :key="m.id"
+                  :label="`${m.name} (${m.brand || m.code})`"
+                  :value="m.code || m.name"
+                />
+              </el-select>
+              <div class="form-tip">选择用于知识库向量化的 Embedding 模型</div>
+            </el-form-item>
+            <el-form-item label="重排模型">
+              <el-select v-model="selectedRerankModel" style="width: 100%" clearable>
+                <el-option label="不使用重排" value="" />
+                <el-option
+                  v-for="m in rerankModels"
+                  :key="m.id"
+                  :label="`${m.name} (${m.brand || m.code})`"
+                  :value="m.code || m.name"
+                />
+              </el-select>
+              <div class="form-tip">选择用于检索结果重排序的 Rerank 模型（可选）</div>
+            </el-form-item>
+          </el-form>
+          <div class="param-actions">
+            <el-button type="primary" @click="handleSave">保 存</el-button>
+          </div>
         </div>
 
         <div v-if="activeParamTab === 'prompt'" class="config-sub">
@@ -1635,6 +1707,12 @@ function handlePublish() {
   display: flex;
   justify-content: flex-end;
   gap: $spacing-sm;
+}
+
+.form-tip {
+  font-size: 12px;
+  color: $text-secondary;
+  margin-top: $spacing-xs;
 }
 
 // Prompt配置样式

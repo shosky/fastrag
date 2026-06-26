@@ -3,9 +3,12 @@ package com.fastrag.infra.config;
 import org.neo4j.driver.AuthTokens;
 import org.neo4j.driver.Driver;
 import org.neo4j.driver.GraphDatabase;
+import org.neo4j.driver.Config;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
+
+import java.util.concurrent.TimeUnit;
 
 @Configuration
 public class Neo4jConfig {
@@ -15,6 +18,11 @@ public class Neo4jConfig {
 
     @Bean
     public Driver neo4jDriver() {
-        return GraphDatabase.driver(uri, AuthTokens.basic(username, password));
+        Config config = Config.builder()
+            .withConnectionTimeout(10, TimeUnit.SECONDS)
+            .withMaxConnectionLifetime(1, TimeUnit.HOURS)
+            .withMaxConnectionPoolSize(50)
+            .build();
+        return GraphDatabase.driver(uri, AuthTokens.basic(username, password), config);
     }
 }

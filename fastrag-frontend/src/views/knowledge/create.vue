@@ -10,10 +10,47 @@ import * as api from '@/api'
 const router = useRouter()
 const saving = ref(false)
 
+// 策略模板缓存
+let strategyTemplates: any[] = []
+
+// 加载策略模板
+async function loadTemplates() {
+  try {
+    const res: any = await api.fetchParseStrategyTemplates()
+    strategyTemplates = res || []
+  } catch {
+    strategyTemplates = []
+  }
+}
+
 async function handleSubmit(data: KnowledgeBaseForm) {
   saving.value = true
   try {
+    // 确保模板已加载
+    if (strategyTemplates.length === 0) {
+      await loadTemplates()
+    }
+
     const kb: any = await api.createKnowledgeBase(data as any)
+    const kbId = kb?.id
+
+    // 创建成功后，自动创建默认解析策略
+    if (kbId) {
+      const template = strategyTemplates.find(t => t.key === (data.parseMode || 'auto')) || strategyTemplates[0]
+      if (template) {
+        try {
+          await api.createStrategyApi(kbId, {
+            name: template.name,
+            description: template.description,
+            extensions: template.extensions,
+            parseMethod: template.parseMethod,
+          })
+        } catch {
+          // 策略创建失败不阻断主流程
+        }
+      }
+    }
+
     ElMessage.success(`知识库「${kb?.name || data.name}」创建成功`)
     router.push('/knowledge')
   } catch {

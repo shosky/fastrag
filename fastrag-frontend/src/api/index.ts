@@ -92,6 +92,10 @@ export async function uploadFile(kbId: string, formData: FormData) {
   })
 }
 
+export async function processFile(kbId: string, fileId: string) {
+  return request.post(`/kb/${kbId}/files/${fileId}/process`)
+}
+
 export async function updateFile(kbId: string, fileId: string, data: Record<string, unknown>) {
   return request.put(`/kb/${kbId}/files/${fileId}`, data)
 }
@@ -179,6 +183,10 @@ export async function qaExtract(kbId: string, data: { fileId?: string }) {
 // ===========================================================================
 // 解析策略 API
 // ===========================================================================
+
+export async function fetchParseStrategyTemplates() {
+  return request.get('/parse-strategy-templates')
+}
 
 export async function fetchStrategies(kbId: string): Promise<ParseStrategy[]> {
   return request.get(`/kb/${kbId}/parse-strategies`)

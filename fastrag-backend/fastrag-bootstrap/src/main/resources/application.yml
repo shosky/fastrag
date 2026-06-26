@@ -7,26 +7,26 @@ spring:
   application:
     name: fastrag-backend
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:192.168.1.44}:3306/fastrag?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
-    username: ${MYSQL_USER:fastrag}
-    password: ${MYSQL_PASSWORD:fastrag123}
+    url: jdbc:mysql://${MYSQL_HOST}:3306/fastrag?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER}
+    password: ${MYSQL_PASSWORD}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 20
       minimum-idle: 5
   data:
     redis:
-      host: ${REDIS_HOST:192.168.1.44}
+      host: ${REDIS_HOST}
       port: 6379
-      password: ${REDIS_PASSWORD:}
+      password: ${REDIS_PASSWORD}
       database: 0
-    elasticsearch:
-      uris: http://${ES_HOST:192.168.1.44}:9200
+  elasticsearch:
+    uris: http://${ES_HOST}:9200
   rabbitmq:
-    host: ${RABBITMQ_HOST:192.168.1.44}
+    host: ${RABBITMQ_HOST}
     port: 5672
-    username: ${RABBITMQ_USER:fastrag}
-    password: ${RABBITMQ_PASSWORD:fastrag123}
+    username: ${RABBITMQ_USER}
+    password: ${RABBITMQ_PASSWORD}
     virtual-host: /
   servlet:
     multipart:
@@ -39,33 +39,30 @@ mybatis-plus:
     log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     db-config:
-      logic-delete-field: deletedAt
-      logic-delete-value: "NOW()"
-      logic-not-delete-value: "null"
       id-type: assign_id
 
 jwt:
-  secret: ${JWT_SECRET:FastRAGDefaultSecretKey2024!PleaseChangeInProductionAndMakeItAtLeast32Bytes!}
+  secret: ${JWT_SECRET}
   expiration: 86400000
 
 milvus:
-  host: ${MILVUS_HOST:192.168.1.44}
+  host: ${MILVUS_HOST}
   port: 19530
 
 neo4j:
-  uri: bolt://${NEO4J_HOST:192.168.1.44}:7687
-  username: ${NEO4J_USER:neo4j}
-  password: ${NEO4J_PASSWORD:fastrag123}
+  uri: bolt://${NEO4J_HOST}:7687
+  username: ${NEO4J_USER}
+  password: ${NEO4J_PASSWORD}
 
 minio:
-  endpoint: http://${MINIO_HOST:192.168.1.44}:9000
-  access-key: ${MINIO_ACCESS_KEY:minioadmin}
-  secret-key: ${MINIO_SECRET_KEY:minioadmin}
+  endpoint: http://${MINIO_HOST}:9000
+  access-key: ${MINIO_ACCESS_KEY}
+  secret-key: ${MINIO_SECRET_KEY}
   bucket: fastrag
 
 ai:
   gateway:
-    url: ${AI_GATEWAY_URL:http://localhost:11434}
+    url: ${AI_GATEWAY_URL}
 
 springdoc:
   api-docs:

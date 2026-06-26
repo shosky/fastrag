@@ -286,6 +286,10 @@ export interface ParseStrategy {
   updatedAt: string
   /** 高级参数（可选，旧数据可能没有） */
   advanced?: ParseStrategyAdvanced
+  /** 解析用 LLM 模型（智能分段、内容提取） */
+  llmModel?: string
+  /** 解析用 VLM 模型（图片/表格理解） */
+  vlmModel?: string
 }
 
 /** 解析策略表单数据 */
@@ -296,6 +300,10 @@ export interface ParseStrategyForm {
   parseMethod: ParseMethodType
   /** 高级参数（可选） */
   advanced?: ParseStrategyAdvanced
+  /** 解析用 LLM 模型 */
+  llmModel?: string
+  /** 解析用 VLM 模型 */
+  vlmModel?: string
 }
 
 /** 解析方法类型选项 */

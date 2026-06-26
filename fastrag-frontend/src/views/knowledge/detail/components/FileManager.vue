@@ -4,6 +4,7 @@ import { getFileCategory } from '@/types/knowledge'
 import { Document, CircleCheck, TrendCharts, Upload, FolderAdd, Delete, Rank } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
+import * as api from '@/api'
 import FileTable from './FileTable.vue'
 import FileUploader from './FileUploader.vue'
 import type { UploadConfig } from './FileUploader.vue'
@@ -66,26 +67,20 @@ function openUploader() {
   uploaderVisible.value = true
 }
 
-function handleUpload(selectedFiles: File[], config: UploadConfig) {
-  // 解析策略：优先用用户在向导里选的；否则按扩展名匹配；都没有则用默认
-  const metas = selectedFiles.map((file) => {
-    const category = getFileCategory(file.name)
-    const extension = '.' + (file.name.split('.').pop()?.toLowerCase() || '')
-    let strategyId: string | undefined = config.parseStrategyId || undefined
-    let strategyName = ''
-    if (strategyId) {
-      const s = strategies.value.find((x) => x.id === strategyId)
-      strategyName = s?.name || ''
-    } else {
-      // 使用第一个策略作为默认（异步接口在循环中不可靠）
-      const matched = strategies.value[0]
-      strategyId = matched?.id
-      strategyName = matched?.name || '默认解析方法'
+async function handleUpload(selectedFiles: File[], config: UploadConfig & { fileIds?: string[] }) {
+  // 触发已上传文件的处理流程
+  const fileIds = config.fileIds || []
+  if (fileIds.length > 0) {
+    for (const fileId of fileIds) {
+      try {
+        await api.processFile(kbId, fileId)
+      } catch (e) {
+        console.error('Failed to process file:', fileId, e)
+      }
     }
-    return { name: file.name, category, extension, size: file.size, parseStrategyId: strategyId, parseStrategyName: strategyName }
-  })
-  upload(metas)
-  ElMessage.success(`已添加 ${selectedFiles.length} 个文件到知识库`)
+    ElMessage.success(`已触发 ${fileIds.length} 个文件的处理流程`)
+  }
+  await load()
 }
 
 // --- New folder ---

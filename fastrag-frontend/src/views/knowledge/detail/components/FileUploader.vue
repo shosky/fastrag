@@ -13,8 +13,8 @@ export interface FileMeta {
   progress: number
   status: 'uploading' | 'completed' | 'error' | 'pending'
   error?: string
-  /** 加密文件的密码 */
-  password?: string
+  /** 上传后的文件ID */
+  fileId?: string
   /** 音视频时间裁剪范围（秒） */
   timeRange?: { start: number; end: number }
 }
@@ -53,8 +53,6 @@ export interface UploadConfig {
     /** per-file 时间裁剪范围（秒），key 为文件名 */
     timeRanges?: Record<string, { start: number; end: number }>
   }
-  /** 加密文件密码（per-file，FileMeta.password 优先） */
-  filePasswords?: Record<string, string>
   qaConfig?: {
     llmModel: string
     prompt: string
@@ -77,7 +75,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
-  (e: 'upload', files: File[], config: UploadConfig): void
+  (e: 'upload', files: File[], config: UploadConfig & { fileIds?: string[] }): void
 }>()
 
 // --- Dialog visibility ---
@@ -129,12 +127,6 @@ function getFileExtension(filename: string): string {
 function isAcceptedFile(filename: string): boolean {
   const ext = getFileExtension(filename)
   return ACCEPTED_EXTENSIONS.includes(ext)
-}
-
-/** PDF/DOCX/PPTX 可能加密，显示密码输入提示 */
-function isLikelyEncrypted(filename: string): boolean {
-  const ext = getFileExtension(filename)
-  return ['.pdf', '.docx', '.pptx'].includes(ext)
 }
 
 /** 音视频文件可设置时间裁剪 */
@@ -242,6 +234,8 @@ async function addFiles(files: File[]) {
     }
   }
 
+  // 添加文件到列表
+  const startIndex = uploadFiles.value.length
   filesToAdd.forEach(file => {
     const item: FileMeta = {
       file,
@@ -249,39 +243,76 @@ async function addFiles(files: File[]) {
       size: file.size,
       progress: 0,
       status: 'uploading',
-      // 音视频文件初始化时间裁剪范围（默认不裁剪）
       ...(isAudioOrVideo(file.name) ? { timeRange: { start: 0, end: 0 } } : {}),
     }
     uploadFiles.value.push(item)
-    const index = uploadFiles.value.length - 1
-    simulateUpload(index)
   })
+
+  // 立即开始上传
+  for (let i = startIndex; i < uploadFiles.value.length; i++) {
+    simulateUpload(i) // 异步启动，不阻塞
+  }
 }
 
-function simulateUpload(index: number) {
-  const interval = setInterval(() => {
-    const item = uploadFiles.value[index]
-    if (!item) {
-      clearInterval(interval)
-      return
-    }
-    if (item.status === 'error') {
-      clearInterval(interval)
-      return
-    }
-    if (item.progress < 100) {
-      // 稳定推进，不再随机失败（演示场景上传应稳定成功）
-      const newProgress = Math.min(100, item.progress + Math.random() * 30)
-      uploadFiles.value[index] = {
-        ...item,
-        progress: newProgress,
-        status: newProgress >= 100 ? 'completed' : 'uploading',
+async function simulateUpload(index: number) {
+  const item = uploadFiles.value[index]
+  if (!item) return
+
+  const kbId = props.kbId || 'kb_sample'
+  const formData = new FormData()
+  formData.append('file', item.file)
+
+  try {
+    const response = await new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('POST', `/api/kb/${kbId}/files`)
+
+      const token = localStorage.getItem('ais_token')
+      if (token) {
+        const cleanToken = token.replace(/^"|"$/g, '')
+        xhr.setRequestHeader('Authorization', `Bearer ${cleanToken}`)
       }
-      if (newProgress >= 100) {
-        clearInterval(interval)
+
+      xhr.upload.addEventListener('progress', (e) => {
+        if (e.lengthComputable) {
+          const progress = Math.round((e.loaded / e.total) * 100)
+          uploadFiles.value[index] = {
+            ...uploadFiles.value[index],
+            progress,
+            status: 'uploading',
+          }
+        }
+      })
+
+      xhr.onload = () => {
+        if (xhr.status >= 200 && xhr.status < 300) {
+          resolve(JSON.parse(xhr.responseText))
+        } else {
+          reject(new Error(xhr.responseText || '上传失败'))
+        }
       }
+
+      xhr.onerror = () => reject(new Error('网络错误'))
+      xhr.send(formData)
+    })
+
+    // 上传成功，保存文件ID
+    const responseData = response as any
+    const fileId = responseData?.data?.id || responseData?.id || responseData?.fileId
+    uploadFiles.value[index] = {
+      ...uploadFiles.value[index],
+      progress: 100,
+      status: 'completed',
+      fileId,
     }
-  }, 200)
+  } catch (error: any) {
+    // 上传失败
+    uploadFiles.value[index] = {
+      ...uploadFiles.value[index],
+      status: 'error',
+      error: error.message || '上传失败',
+    }
+  }
 }
 
 function retryUpload(index: number) {
@@ -616,20 +647,18 @@ function resetState() {
   previewFileIndex.value = 0
 }
 
-function handleStartUpload() {
+async function handleStartUpload() {
   if (uploadFiles.value.length === 0) return
 
-  const files = uploadFiles.value.map(item => item.file)
+  // 等待正在上传的文件完成
+  const pendingUploads = uploadFiles.value.filter(f => f.status === 'uploading')
+  if (pendingUploads.length > 0) {
+    ElMessage.info(`等待 ${pendingUploads.length} 个文件上传完成...`)
+    // 等待一段时间让上传完成
+    await new Promise(resolve => setTimeout(resolve, 2000))
+  }
 
-  // 收集加密文件密码
-  const filePasswords: Record<string, string> = {}
-  uploadFiles.value.forEach((item) => {
-    if (item.password) {
-      filePasswords[item.name] = item.password
-    }
-  })
-
-  // 收集音视频时间裁剪范围（仅 end > start 时有效）
+  // 收集配置信息
   const timeRanges: Record<string, { start: number; end: number }> = {}
   uploadFiles.value.forEach((item) => {
     if (item.timeRange && item.timeRange.end > item.timeRange.start) {
@@ -638,6 +667,8 @@ function handleStartUpload() {
   })
 
   const hasMedia = hasAudio.value || hasVideo.value
+  const files = uploadFiles.value.map(item => item.file)
+  const fileIds = uploadFiles.value.map(item => item.fileId).filter(Boolean) as string[]
 
   emit('upload', files, {
     mode: uploadMode.value,
@@ -649,14 +680,14 @@ function handleStartUpload() {
     priority: processingPriority.value,
     retryCount: retryCount.value,
     engineConfig: { ...engineConfig.value },
-    ...(Object.keys(filePasswords).length > 0 ? { filePasswords } : {}),
+    fileIds,
     ...(hasMedia ? { mediaConfig: { speakerDiarize: speakerDiarize.value, ...(Object.keys(timeRanges).length > 0 ? { timeRanges } : {}) } } : {}),
     ...(processingMode.value === 'qa' ? { qaConfig: { ...qaConfig.value } } : {}),
   })
 
+  ElMessage.success('上传完成')
   resetState()
   dialogVisible.value = false
-  ElMessage.success('上传任务已提交')
 }
 
 // 对话框打开时加载策略列表
@@ -813,25 +844,7 @@ watch(dialogVisible, (val) => {
               <div class="file-uploader__file-name-cell">
                 <el-icon class="file-uploader__file-icon"><Document /></el-icon>
                 <span>{{ row.name }}</span>
-                <el-tag v-if="isLikelyEncrypted(row.name)" size="small" type="warning" class="file-uploader__encrypted-tag">
-                  🔒 加密
-                </el-tag>
               </div>
-            </template>
-          </el-table-column>
-          <!-- 密码列：仅 PDF/DOCX 显示输入框 -->
-          <el-table-column label="密码" width="220">
-            <template #default="{ row }">
-              <el-input
-                v-if="isLikelyEncrypted(row.name)"
-                v-model="row.password"
-                type="password"
-                placeholder="如文件加密请输入密码"
-                size="small"
-                show-password
-                style="width: 200px"
-              />
-              <span v-else class="file-uploader__no-password">-</span>
             </template>
           </el-table-column>
           <!-- 时间裁剪列：仅音视频显示 -->
@@ -1171,8 +1184,12 @@ watch(dialogVisible, (val) => {
           </el-button>
         </template>
         <template v-else-if="currentStep === 4">
-          <el-button type="primary" :disabled="uploadFiles.length === 0 || !allFilesCompleted" @click="handleStartUpload">
-            共 {{ uploadFiles.length }} 个文件 | 开始上传
+          <el-button
+            type="primary"
+            :disabled="uploadFiles.length === 0"
+            @click="handleStartUpload"
+          >
+            {{ uploadFiles.some(f => f.status === 'uploading') ? '上传中...' : `共 ${uploadFiles.length} 个文件 | 确认上传` }}
           </el-button>
         </template>
         <template v-else>
@@ -1514,11 +1531,6 @@ watch(dialogVisible, (val) => {
     font-size: 12px;
     color: $text-secondary;
     margin-left: 8px;
-  }
-
-  &__encrypted-tag {
-    margin-left: 8px;
-    font-size: 11px;
   }
 
   &__no-password {

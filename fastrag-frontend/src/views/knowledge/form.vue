@@ -86,6 +86,20 @@ function defaultFileTypeConfig(): FileTypeConfig {
 
 const fileTypeConfig = reactive<FileTypeConfig>(defaultFileTypeConfig())
 
+// --------------- 解析策略模板（从接口加载） ---------------
+const strategyTemplates = ref<{ key: string; name: string; description: string; extensions: string[]; parseMethod: string }[]>([])
+
+async function loadStrategyTemplates() {
+  try {
+    const res: any = await api.fetchParseStrategyTemplates()
+    strategyTemplates.value = res || []
+  } catch {
+    strategyTemplates.value = []
+  }
+}
+
+onMounted(loadStrategyTemplates)
+
 // --------------- Share settings ---------------
 const shareType = ref<ShareType>('global')
 // 弹窗显隐与选中的共享类型解耦：点空白处可关闭弹窗，但不改变已选共享模式
@@ -472,12 +486,12 @@ function handleDelete() {
   emit('delete')
 }
 
-/** 跳转到解析策略管理页（编辑模式有效） */
+/** 跳转到解析策略管理页 */
 function goToParseStrategy() {
   if (props.mode === 'edit' && props.initialData?.id) {
     router.push(`/knowledge/${props.initialData.id}/parse-strategy`)
   } else {
-    ElMessage.info('请先创建知识库后再配置解析策略')
+    ElMessage.warning('请先保存知识库，保存后可配置解析策略')
   }
 }
 </script>
@@ -810,18 +824,26 @@ function goToParseStrategy() {
               </el-select>
             </el-form-item>
 
-            <!-- 解析策略说明 —— 取代重复的"解析配置/切分模式"下拉 -->
+            <!-- 解析策略 -->
             <el-form-item label="解析策略">
-              <div class="parse-strategy-hint">
-                <el-icon><InfoFilled /></el-icon>
-                <span>
-                  知识库创建后，可在
-                  <el-link type="primary" :underline="false" @click="goToParseStrategy">
-                    解析策略管理
-                  </el-link>
-                  中为不同文件类型配置解析方法、切片长度、分隔符等参数。
-                </span>
-              </div>
+              <template v-if="props.mode === 'edit'">
+                <el-button type="primary" link @click="goToParseStrategy">
+                  <el-icon><Setting /></el-icon>
+                  管理解析策略
+                </el-button>
+                <span class="parse-strategy-desc">为不同文件类型配置解析方法、切片长度、分隔符等参数</span>
+              </template>
+              <template v-else>
+                <el-select v-model="form.parseMode" style="width: 100%">
+                  <el-option
+                    v-for="tpl in strategyTemplates"
+                    :key="tpl.key"
+                    :label="tpl.name"
+                    :value="tpl.key"
+                  />
+                </el-select>
+                <span class="parse-strategy-desc">创建后可在解析策略管理中进一步自定义</span>
+              </template>
             </el-form-item>
 
             <!-- File Type Configuration（创建/编辑均可配置，移除仅 edit 可见的限制） -->
@@ -990,22 +1012,11 @@ function goToParseStrategy() {
   gap: $spacing-sm;
 }
 
-// 解析策略说明（取代重复的解析配置下拉）
-.parse-strategy-hint {
-  display: flex;
-  align-items: flex-start;
-  gap: $spacing-xs;
-  padding: $spacing-sm $spacing-base;
-  background: $bg-hover;
-  border-radius: $radius-base;
+// 解析策略描述
+.parse-strategy-desc {
   font-size: 12px;
   color: $text-secondary;
-  line-height: 1.6;
-
-  :deep(.el-icon) {
-    margin-top: 2px;
-    flex-shrink: 0;
-  }
+  margin-left: $spacing-sm;
 }
 
 // --- Bottom sticky action bar ---

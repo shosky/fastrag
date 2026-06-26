@@ -1,14 +1,20 @@
 <script setup lang="ts">
-import { ref, reactive } from 'vue'
+import { ref, reactive, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
+import { useSystemStore } from '@/stores/system'
 import { ElMessage } from 'element-plus'
 import type { FormInstance, FormRules } from 'element-plus'
 
 const router = useRouter()
 const userStore = useUserStore()
+const systemStore = useSystemStore()
 const formRef = ref<FormInstance>()
 const loading = ref(false)
+
+onMounted(() => {
+  systemStore.loadConfig()
+})
 
 const loginForm = reactive({
   username: 'admin',
@@ -43,8 +49,8 @@ async function handleLogin() {
   <div class="login-page">
     <div class="login-card">
       <div class="login-header">
-        <h1>AIS 智能知识服务平台</h1>
-        <p>AI Knowledge Service Platform</p>
+        <h1>{{ systemStore.systemName }}</h1>
+        <p>{{ systemStore.slogan }}</p>
       </div>
       <el-form
         ref="formRef"

@@ -80,6 +80,24 @@ public class SchemaInitializer {
             log.error("Failed to create sys_dictionary: {}", e.getMessage());
         }
 
+        // 添加解析策略模型字段（MySQL 不支持 IF NOT EXISTS，逐个尝试）
+        addColumnIfNotExists("kb_parse_strategy", "llm_model", "VARCHAR(128)");
+        addColumnIfNotExists("kb_parse_strategy", "vlm_model", "VARCHAR(128)");
+
         log.info("Schema initialization completed.");
+    }
+
+    private void addColumnIfNotExists(String table, String column, String type) {
+        try {
+            jdbc.execute("ALTER TABLE " + table + " ADD COLUMN " + column + " " + type);
+            log.info("Added column {}.{}", table, column);
+        } catch (Exception e) {
+            // Column already exists - MySQL error code 1060
+            if (e.getMessage() != null && e.getMessage().contains("1060")) {
+                log.info("Column {}.{} already exists", table, column);
+            } else {
+                log.warn("Failed to add column {}.{}: {}", table, column, e.getMessage());
+            }
+        }
     }
 }
