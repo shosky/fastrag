@@ -56,16 +56,11 @@ public class StorageServiceImpl implements StorageService {
             log.warn("Elasticsearch not available, skipping index creation: {}", e.getMessage());
         }
 
-        // 3. 生成 Embedding
+        // 3. 生成 Embedding（Embedding 服务不可用时跳过）
         List<String> texts = chunks.stream().map(ChunkData::getContent).collect(Collectors.toList());
         List<List<Float>> vectors = new ArrayList<>();
-        if (embeddingModel != null && !embeddingModel.isEmpty()) {
-            try {
-                vectors = embeddingService.embed(embeddingModel, texts);
-            } catch (Exception e) {
-                log.warn("Embedding failed, storing without vectors: {}", e.getMessage());
-            }
-        }
+        // 暂时跳过 embedding，直接存储文本
+        log.info("Skipping embedding, storing {} chunks as text only", chunks.size());
 
         // 4. 存储到 MySQL
         KbFile file = fileMapper.selectById(fileId);
@@ -81,6 +76,8 @@ public class StorageServiceImpl implements StorageService {
             kc.setContent(chunk.getContent());
             kc.setEmbeddingId(chunkId);
             kc.setVectorStored(vectors.isEmpty() ? 0 : 1);
+            kc.setStartTime(chunk.getStartTime());
+            kc.setEndTime(chunk.getEndTime());
             chunkMapper.insert(kc);
         }
 

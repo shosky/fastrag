@@ -3,6 +3,7 @@ package com.fastrag.module.knowledge.chunking;
 import cn.hutool.json.JSONUtil;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
+import com.fastrag.module.knowledge.parser.ParseResult;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -36,6 +37,33 @@ public class ChunkingServiceImpl implements ChunkingService {
         }
 
         return ruleBasedChunk(text, chunkLength, delimiter, overlap);
+    }
+
+    @Override
+    public List<ChunkData> chunkBySegments(List<ParseResult.ChunkTimeSegment> segments) {
+        List<ChunkData> chunks = new ArrayList<>();
+        if (segments == null || segments.isEmpty()) {
+            return chunks;
+        }
+
+        for (int i = 0; i < segments.size(); i++) {
+            ParseResult.ChunkTimeSegment seg = segments.get(i);
+            String text = seg.getText() != null ? seg.getText().trim() : "";
+            if (text.isEmpty()) {
+                continue;
+            }
+
+            chunks.add(ChunkData.builder()
+                    .id("chunk_" + i)
+                    .index(i)
+                    .content(text)
+                    .startTime(seg.getStartTime())
+                    .endTime(seg.getEndTime())
+                    .build());
+        }
+
+        log.info("Created {} time-based chunks from {} segments", chunks.size(), segments.size());
+        return chunks;
     }
 
     private List<ChunkData> ruleBasedChunk(String text, int chunkLength, String delimiter, int overlap) {

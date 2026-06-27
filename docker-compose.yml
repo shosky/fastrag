@@ -8,15 +8,10 @@ services:
     ports:
       - "8080:8080"
     environment:
-      - MYSQL_HOST=mysql
-      - MYSQL_USER=fastrag
-      - MYSQL_PASSWORD=fastrag123
-      - REDIS_HOST=redis
-      - ES_HOST=elasticsearch
-      - RABBITMQ_HOST=rabbitmq
-      - MILVUS_HOST=milvus
-      - NEO4J_HOST=neo4j
-      - MINIO_HOST=minio
+      - SPRING_DATASOURCE_URL=jdbc:mysql://mysql:3306/fastrag?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
+      - SPRING_DATASOURCE_USERNAME=root
+      - SPRING_DATASOURCE_PASSWORD=root123
+      - SPRING_DATA_REDIS_HOST=redis
       - AI_GATEWAY_URL=http://host.docker.internal:11434
       - JWT_SECRET=FastRAGSecretKeyForJWT2024PleaseChangeInProd!
     depends_on:
@@ -24,12 +19,10 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
-      elasticsearch:
-        condition: service_healthy
-      rabbitmq:
-        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    volumes:
+      - upload-data:/app/uploads
     networks:
       - fastrag-net
     restart: unless-stopped
@@ -42,8 +35,6 @@ services:
     environment:
       MYSQL_ROOT_PASSWORD: root123
       MYSQL_DATABASE: fastrag
-      MYSQL_USER: fastrag
-      MYSQL_PASSWORD: fastrag123
     ports:
       - "3306:3306"
     volumes:
@@ -76,122 +67,10 @@ services:
       - fastrag-net
     restart: unless-stopped
 
-  # ==================== Elasticsearch ====================
-  elasticsearch:
-    image: elasticsearch:8.12.0
-    container_name: fastrag-elasticsearch
-    environment:
-      - discovery.type=single-node
-      - xpack.security.enabled=false
-      - ES_JAVA_OPTS=-Xms512m -Xmx512m
-    ports:
-      - "9200:9200"
-    volumes:
-      - es-data:/usr/share/elasticsearch/data
-    healthcheck:
-      test: ["CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-    networks:
-      - fastrag-net
-    restart: unless-stopped
-
-  # ==================== RabbitMQ ====================
-  rabbitmq:
-    image: rabbitmq:3-management-alpine
-    container_name: fastrag-rabbitmq
-    environment:
-      RABBITMQ_DEFAULT_USER: fastrag
-      RABBITMQ_DEFAULT_PASS: fastrag123
-    ports:
-      - "5672:5672"
-      - "15672:15672"
-    volumes:
-      - rabbitmq-data:/var/lib/rabbitmq
-    healthcheck:
-      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
-      interval: 15s
-      timeout: 10s
-      retries: 5
-    networks:
-      - fastrag-net
-    restart: unless-stopped
-
-  # ==================== Milvus ====================
-  milvus:
-    image: milvusdb/milvus:v2.3.4
-    container_name: fastrag-milvus
-    command: ["milvus", "run", "standalone"]
-    environment:
-      - ETCD_USE_EMBED=true
-      - MINIO_ADDRESS=minio:9000
-      - MINIO_ACCESS_KEY_ID=minioadmin
-      - MINIO_SECRET_ACCESS_KEY=minioadmin
-      - COMMON_STORAGETYPE=local
-    ports:
-      - "19530:19530"
-      - "9091:9091"
-    volumes:
-      - milvus-data:/var/lib/milvus
-    depends_on:
-      - minio
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-      start_period: 30s
-    networks:
-      - fastrag-net
-    restart: unless-stopped
-
-  # ==================== Neo4j ====================
-  neo4j:
-    image: neo4j:5-community
-    container_name: fastrag-neo4j
-    environment:
-      NEO4J_AUTH: neo4j/fastrag123
-      NEO4J_PLUGINS: '["apoc"]'
-    ports:
-      - "7474:7474"
-      - "7687:7687"
-    volumes:
-      - neo4j-data:/data
-    networks:
-      - fastrag-net
-    restart: unless-stopped
-
-  # ==================== MinIO ====================
-  minio:
-    image: minio/minio:latest
-    container_name: fastrag-minio
-    command: server /data --console-address ":9001"
-    environment:
-      MINIO_ROOT_USER: minioadmin
-      MINIO_ROOT_PASSWORD: minioadmin
-    ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - minio-data:/data
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - fastrag-net
-    restart: unless-stopped
-
 volumes:
   mysql-data:
   redis-data:
-  es-data:
-  rabbitmq-data:
-  milvus-data:
-  neo4j-data:
-  minio-data:
+  upload-data:
 
 networks:
   fastrag-net:

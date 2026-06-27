@@ -147,6 +147,8 @@ CREATE TABLE IF NOT EXISTS kb_chunk (
     content MEDIUMTEXT,
     embedding_id VARCHAR(64),
     vector_stored TINYINT DEFAULT 0,
+    start_time DOUBLE DEFAULT NULL COMMENT '开始时间(秒)',
+    end_time DOUBLE DEFAULT NULL COMMENT '结束时间(秒)',
     INDEX idx_kb_id (kb_id),
     INDEX idx_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

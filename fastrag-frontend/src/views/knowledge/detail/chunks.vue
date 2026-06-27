@@ -45,6 +45,7 @@ const fileInfo = ref({
   chunkSize: 500,
   overlapSize: 50,
   embeddingModel: 'text-embedding-v4',
+  url: '',
   createdAt: '',
   updatedAt: '',
 })
@@ -59,6 +60,7 @@ async function loadFileInfo() {
       fileInfo.value.extension = file.extension || fileInfo.value.extension
       fileInfo.value.size = file.size || fileInfo.value.size
       fileInfo.value.chunkCount = file.chunkCount || fileInfo.value.chunkCount
+      fileInfo.value.url = file.url || ''
       fileInfo.value.createdAt = file.createdAt || fileInfo.value.createdAt
       fileInfo.value.updatedAt = file.updatedAt || fileInfo.value.updatedAt
     }
@@ -67,7 +69,7 @@ async function loadFileInfo() {
   }
 }
 
-loadFileInfo()
+loadFileInfo().then(() => loadImage())
 
 // --- Active tab ---
 const activeTab = ref<'markdown' | 'chunks'>('chunks')
@@ -97,17 +99,45 @@ const mediaSelectedChunkId = ref<string | null>(null)
 // --- Markdown 内容 ---
 const markdownContent = ref('')
 
+// --- 图片预览 URL（带 token 加载） ---
+const imageUrl = ref('')
+
+async function loadImage() {
+  if (!fileInfo.value.url || fileInfo.value.category !== 'image') return
+  try {
+    const raw = localStorage.getItem('ais_token') || ''
+    const token = raw.startsWith('"') ? JSON.parse(raw) : raw
+    const resp = await fetch(fileInfo.value.url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    if (resp.ok) {
+      const blob = await resp.blob()
+      imageUrl.value = URL.createObjectURL(blob)
+    }
+  } catch {
+    // ignore
+  }
+}
+
+// --- 分页状态 ---
+const currentPage = ref(1)
+const pageSize = ref(10)
+const totalChunks = ref(0)
+
 // --- 从 API 加载 chunks ---
 const chunks = ref<Chunk[]>([])
 
 async function loadChunks() {
   try {
-    const res: any = await api.getChunks(kbId, { fileId, page: 1, pageSize: 100 })
+    const res: any = await api.getChunks(kbId, { fileId, page: currentPage.value, pageSize: pageSize.value })
     const list = res?.list || res || []
+    totalChunks.value = res?.total || 0
     chunks.value = list.map((mc: any, i: number) => ({
       id: mc.id || `chunk_${mc.chunkIndex || i}`,
       index: mc.chunkIndex || i,
       content: mc.content || '',
+      startTime: mc.startTime ?? undefined,
+      endTime: mc.endTime ?? undefined,
       metadata: {
         fileId: mc.fileId || fileId,
         fileName: mc.fileName || '',
@@ -126,81 +156,26 @@ async function loadChunks() {
   }
 }
 
+function handlePageChange(page: number) {
+  currentPage.value = page
+  loadChunks()
+}
+
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  loadChunks()
+}
+
 loadChunks()
 
-// --- Mock media chunks (for video/audio) ---
-const mediaChunks = ref<Chunk[]>([
-  {
-    id: 'media_001',
-    index: 0,
-    content: '该切片未识别到说话声音',
-    startTime: 0,
-    endTime: 30,
-    metadata: { fileId: 'file_video_001', fileName: '产品演示视频.mp4', chunkIndex: 0, tokenCount: 15, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-  {
-    id: 'media_002',
-    index: 1,
-    content: '演示Knowledge settings页面配置，包括文档上传、解析策略选择等基本操作流程。',
-    startTime: 30,
-    endTime: 60,
-    metadata: { fileId: 'file_video_001', fileName: '产品演示视频.mp4', chunkIndex: 1, tokenCount: 45, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-  {
-    id: 'media_003',
-    index: 2,
-    content: '讲解分块结构和索引设置，演示如何配置分块大小、重叠参数以及向量索引类型。',
-    startTime: 60,
-    endTime: 90,
-    metadata: { fileId: 'file_video_001', fileName: '产品演示视频.mp4', chunkIndex: 2, tokenCount: 52, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-  {
-    id: 'media_004',
-    index: 3,
-    content: '展示检索测试功能，输入查询语句并查看返回结果，对比不同检索模式的效果。',
-    startTime: 90,
-    endTime: 120,
-    metadata: { fileId: 'file_video_001', fileName: '产品演示视频.mp4', chunkIndex: 3, tokenCount: 48, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-  {
-    id: 'media_005',
-    index: 4,
-    content: '演示知识图谱功能，展示实体关系图和图谱可视化效果。',
-    startTime: 120,
-    endTime: 150,
-    metadata: { fileId: 'file_video_001', fileName: '产品演示视频.mp4', chunkIndex: 4, tokenCount: 38, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-  {
-    id: 'media_006',
-    index: 5,
-    content: '总结产品核心功能和优势，介绍后续更新计划和用户反馈渠道。',
-    startTime: 150,
-    endTime: 180,
-    metadata: { fileId: 'file_video_001', fileName: '产品演示视频.mp4', chunkIndex: 5, tokenCount: 42, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-])
+// --- 音视频 chunks（从 API 加载） ---
+const mediaChunks = computed(() => chunks.value.filter(c => c.startTime != null))
 
-// --- Mock image OCR results ---
-const imageChunks = ref<Chunk[]>([
-  {
-    id: 'img_001',
-    index: 0,
-    content: '系统架构图',
-    metadata: { fileId: 'file_img_001', fileName: '架构图.png', chunkIndex: 0, tokenCount: 8, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-  {
-    id: 'img_002',
-    index: 1,
-    content: '前端层：Vue.js + Element Plus\n后端层：Spring Boot + MyBatis\n数据库：MySQL + Redis\n消息队列：RabbitMQ',
-    metadata: { fileId: 'file_img_001', fileName: '架构图.png', chunkIndex: 1, tokenCount: 45, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-  {
-    id: 'img_003',
-    index: 2,
-    content: '用户请求 → Nginx → API网关 → 微服务集群 → 数据层',
-    metadata: { fileId: 'file_img_001', fileName: '架构图.png', chunkIndex: 2, tokenCount: 28, createdAt: '2026-06-08 15:05:00', updatedAt: '2026-06-08 15:05:00' },
-  },
-])
+// --- 传递给播放器的 ASR transcripts ---
+const asrTranscripts = computed(() =>
+  mediaChunks.value.map(c => ({ time: c.startTime || 0, text: c.content }))
+)
 
 // --- Image info ---
 const imageInfo = ref({
@@ -213,14 +188,7 @@ const imageInfo = ref({
 const selectedChunk = ref<Chunk | null>(null)
 
 // --- Computed ---
-const chunkCount = computed(() => {
-  let count = 0
-  chunks.value.forEach(c => {
-    count++
-    if (c.children) count += c.children.length
-  })
-  return count
-})
+const chunkCount = computed(() => totalChunks.value || chunks.value.length)
 
 const parentChunkCount = computed(() => chunks.value.length)
 
@@ -378,7 +346,7 @@ async function deleteMediaChunk(chunkId: string) {
       '删除确认',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
-    mediaChunks.value = mediaChunks.value.filter(c => c.id !== chunkId)
+    chunks.value = chunks.value.filter(c => c.id !== chunkId)
     if (mediaSelectedChunkId.value === chunkId) {
       mediaSelectedChunkId.value = null
     }
@@ -556,7 +524,7 @@ function batchExport() {
 
             <!-- Chunks view -->
             <div v-else class="chunks-page__chunks">
-              <div class="chunks-page__chunks-list">
+              <div class="chunks-page__chunks-list" style="flex: 1; overflow-y: auto;">
                 <div
                   v-for="chunk in filteredChunks"
                   :key="chunk.id"
@@ -635,6 +603,18 @@ function batchExport() {
                     </div>
                   </div>
                 </div>
+              </div>
+              <!-- Pagination -->
+              <div class="chunks-page__pagination">
+                <el-pagination
+                  v-model:current-page="currentPage"
+                  v-model:page-size="pageSize"
+                  :page-sizes="[10, 20, 50, 100]"
+                  :total="totalChunks"
+                  layout="total, sizes, prev, pager, next, jumper"
+                  @current-change="handlePageChange"
+                  @size-change="handleSizeChange"
+                />
               </div>
             </div>
           </div>
@@ -754,10 +734,15 @@ function batchExport() {
           <!-- Left: Image preview -->
           <div class="chunks-page__image-left">
             <div class="chunks-page__image-preview">
-              <div class="chunks-page__image-placeholder">
+              <img
+                v-if="imageUrl"
+                :src="imageUrl"
+                :alt="fileInfo.name"
+                class="chunks-page__image-img"
+              />
+              <div v-else class="chunks-page__image-placeholder">
                 <el-icon :size="64"><ArrowLeft /></el-icon>
                 <span>图片预览</span>
-                <span class="chunks-page__image-info">{{ imageInfo.width }} x {{ imageInfo.height }} | {{ fileInfo.extension }}</span>
               </div>
             </div>
             <!-- Image metadata -->
@@ -781,11 +766,11 @@ function batchExport() {
           <div class="chunks-page__image-right">
             <div class="chunks-page__image-ocr-header">
               <span>OCR 识别结果</span>
-              <span class="chunks-page__image-ocr-count">共 {{ imageChunks.length }} 个文本块</span>
+              <span class="chunks-page__image-ocr-count">共 {{ chunks.length }} 个文本块</span>
             </div>
             <div class="chunks-page__image-ocr-list">
               <div
-                v-for="chunk in imageChunks"
+                v-for="chunk in chunks"
                 :key="chunk.id"
                 class="chunks-page__image-ocr-item"
                 :class="{ 'is-selected': selectedChunk?.id === chunk.id }"
@@ -1229,8 +1214,19 @@ function batchExport() {
   // --- Chunks view ---
   &__chunks {
     flex: 1;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
     padding: $spacing-base;
+  }
+
+  // --- Pagination ---
+  &__pagination {
+    display: flex;
+    justify-content: flex-end;
+    padding: $spacing-base 0;
+    border-top: 1px solid $border-lighter;
+    flex-shrink: 0;
   }
 
   &__chunks-list {
@@ -1634,6 +1630,13 @@ function batchExport() {
     align-items: center;
     justify-content: center;
     min-height: 300px;
+    overflow: hidden;
+  }
+
+  &__image-img {
+    max-width: 100%;
+    max-height: 100%;
+    object-fit: contain;
   }
 
   &__image-placeholder {

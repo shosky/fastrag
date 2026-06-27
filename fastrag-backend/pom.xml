@@ -25,9 +25,6 @@
         <jwt.version>0.12.5</jwt.version>
         <mapstruct.version>1.5.5.Final</mapstruct.version>
         <springdoc.version>2.5.0</springdoc.version>
-        <milvus.version>2.3.4</milvus.version>
-        <neo4j-driver.version>5.17.0</neo4j-driver.version>
-        <minio.version>8.5.7</minio.version>
         <hutool.version>5.8.26</hutool.version>
     </properties>
 
@@ -157,35 +154,12 @@
                 <version>${springdoc.version}</version>
             </dependency>
 
-            <!-- Milvus -->
-            <dependency>
-                <groupId>io.milvus</groupId>
-                <artifactId>milvus-sdk-java</artifactId>
-                <version>${milvus.version}</version>
-            </dependency>
-
-            <!-- Neo4j Driver -->
-            <dependency>
-                <groupId>org.neo4j.driver</groupId>
-                <artifactId>neo4j-java-driver</artifactId>
-                <version>${neo4j-driver.version}</version>
-            </dependency>
-
-            <!-- MinIO -->
-            <dependency>
-                <groupId>io.minio</groupId>
-                <artifactId>minio</artifactId>
-                <version>${minio.version}</version>
-            </dependency>
-
             <!-- Hutool -->
             <dependency>
                 <groupId>cn.hutool</groupId>
                 <artifactId>hutool-all</artifactId>
                 <version>${hutool.version}</version>
             </dependency>
-
-            <!-- Elasticsearch (version managed by spring-boot-starter-parent BOM) -->
         </dependencies>
     </dependencyManagement>
 

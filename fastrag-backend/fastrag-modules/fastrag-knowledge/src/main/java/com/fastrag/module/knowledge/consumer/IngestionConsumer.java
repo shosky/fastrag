@@ -1,8 +1,7 @@
 package com.fastrag.module.knowledge.consumer;
 
-import com.fastrag.infra.config.RabbitMQConfig;
+import com.fastrag.common.handler.IngestionHandler;
 import com.fastrag.infra.minio.MinioService;
-import com.fastrag.infra.rabbitmq.MessagePublisher;
 import com.fastrag.module.knowledge.chunking.ChunkData;
 import com.fastrag.module.knowledge.chunking.ChunkingService;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -12,26 +11,27 @@ import com.fastrag.module.knowledge.parser.ParseResult;
 import com.fastrag.module.knowledge.storage.StorageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 文档摄入处理服务 (原 RabbitMQ Consumer，现改为直接调用)
+ */
 @Slf4j
-@Component
+@Service
 @RequiredArgsConstructor
-public class IngestionConsumer {
+public class IngestionConsumer implements IngestionHandler {
 
     private final MinioService minioService;
     private final DocumentParser documentParser;
     private final ChunkingService chunkingService;
     private final StorageService storageService;
-    private final MessagePublisher messagePublisher;
     private final KbFileMapper fileMapper;
 
-    @RabbitListener(queues = RabbitMQConfig.INGESTION_QUEUE)
+    @Override
     public void handleIngestion(Map<String, Object> message) {
         String fileId = (String) message.get("fileId");
         String kbId = (String) message.get("kbId");
@@ -44,7 +44,7 @@ public class IngestionConsumer {
             // 1. 更新状态为 processing
             updateStatus(fileId, "processing", 10, "downloading");
 
-            // 2. 从 MinIO 下载文件
+            // 2. 从本地存储下载文件
             InputStream fileStream = minioService.download(objectKey);
             String extension = getFileExtension(fileId);
 
@@ -55,8 +55,16 @@ public class IngestionConsumer {
 
             // 4. 文本切片
             updateStatus(fileId, "processing", 60, "chunking");
-            List<ChunkData> chunks = chunkingService.chunk(parseResult.getText(), strategyId);
-            log.info("File {} chunked into {} pieces", fileId, chunks.size());
+            List<ChunkData> chunks;
+            if (parseResult.getSegments() != null && !parseResult.getSegments().isEmpty()) {
+                // 音视频文件：使用时间轴分片
+                chunks = chunkingService.chunkBySegments(parseResult.getSegments());
+                log.info("File {} chunked into {} time-based pieces", fileId, chunks.size());
+            } else {
+                // 文档文件：使用文本分片
+                chunks = chunkingService.chunk(parseResult.getText(), strategyId);
+                log.info("File {} chunked into {} pieces", fileId, chunks.size());
+            }
 
             // 5. 存储切片
             updateStatus(fileId, "processing", 80, "storing");
@@ -64,9 +72,6 @@ public class IngestionConsumer {
 
             // 6. 更新状态为 completed
             updateStatus(fileId, "completed", 100, "done");
-
-            // 7. 发送图谱构建消息
-            messagePublisher.publishGraphBuild(Map.of("kbId", kbId, "fileId", fileId));
 
             log.info("File processing completed: {}, chunks: {}", fileId, chunks.size());
 
@@ -82,7 +87,7 @@ public class IngestionConsumer {
             if (f != null) {
                 f.setStatus(status);
                 f.setProgress(progress);
-                f.setStage(stage);
+                f.setStage(stage != null && stage.length() > 60 ? stage.substring(0, 60) : stage);
                 fileMapper.updateById(f);
             }
         } catch (Exception e) {

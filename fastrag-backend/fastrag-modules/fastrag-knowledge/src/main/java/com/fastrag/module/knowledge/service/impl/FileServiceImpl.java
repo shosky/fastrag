@@ -205,7 +205,7 @@ public class FileServiceImpl implements FileService {
         d.setCategory(f.getCategory());
         d.setExtension(f.getExtension());
         d.setSize(f.getSize());
-        d.setUrl(f.getObjectKey());
+        d.setUrl("/api/kb/" + f.getKbId() + "/files/" + f.getId() + "/download");
         d.setStatus(f.getStatus());
         d.setProgress(f.getProgress());
         d.setStage(f.getStage());

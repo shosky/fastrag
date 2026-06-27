@@ -4,6 +4,7 @@ import { VideoPlay, VideoPause, Mute, Microphone } from '@element-plus/icons-vue
 const props = defineProps<{
   src: string
   title: string
+  transcripts?: Array<{ time: number; text: string }>
 }>()
 
 // ---------- Audio state ----------
@@ -15,13 +16,13 @@ const volume = ref(0.75)
 const isMuted = ref(false)
 const previousVolume = ref(0.75)
 
-// ---------- Mock ASR transcripts ----------
-const transcripts = ref([
-  { time: 0, text: '大家好，欢迎参加今天的会议。' },
-  { time: 15, text: '首先我们来看一下上季度的数据。' },
-  { time: 32, text: '接下来讨论新产品的开发计划。' },
-  { time: 48, text: '最后是关于团队建设的安排。' },
-])
+// ---------- ASR transcripts (from prop or mock) ----------
+const transcripts = computed(() => props.transcripts && props.transcripts.length > 0
+  ? props.transcripts
+  : [
+      { time: 0, text: '暂无 ASR 转写数据，请先处理文件。' },
+    ]
+)
 
 // ---------- Computed ----------
 const formattedCurrentTime = computed(() => formatTime(currentTime.value))

@@ -1,43 +1,60 @@
 package com.fastrag.infra.minio;
 
-import io.minio.*;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
-import java.io.InputStream;
 
+import java.io.*;
+import java.nio.file.*;
+
+/**
+ * 文件存储服务 - 使用本地文件系统替代 MinIO
+ */
 @Slf4j
 @Service
-@RequiredArgsConstructor
 public class MinioService {
-    private final MinioClient minioClient;
-    @Value("${minio.bucket:fastrag}") private String bucket;
 
-    public void ensureBucket() {
+    @Value("${storage.local.path:./uploads}")
+    private String basePath;
+
+    private Path getBasePath() {
+        Path path = Path.of(basePath);
         try {
-            if (!minioClient.bucketExists(BucketExistsArgs.builder().bucket(bucket).build())) {
-                minioClient.makeBucket(MakeBucketArgs.builder().bucket(bucket).build());
-            }
-        } catch (Exception e) { log.error("Failed to ensure bucket", e); }
+            Files.createDirectories(path);
+        } catch (IOException e) {
+            log.error("Failed to create storage directory: {}", path, e);
+        }
+        return path;
     }
 
     public String upload(String objectKey, InputStream stream, String contentType) {
         try {
-            ensureBucket();
-            minioClient.putObject(PutObjectArgs.builder().bucket(bucket).object(objectKey)
-                    .stream(stream, -1, 10485760).contentType(contentType).build());
+            Path target = getBasePath().resolve(objectKey);
+            Files.createDirectories(target.getParent());
+            Files.copy(stream, target, StandardCopyOption.REPLACE_EXISTING);
+            log.debug("File uploaded to local storage: {}", objectKey);
             return objectKey;
-        } catch (Exception e) { throw new RuntimeException("文件上传失败", e); }
+        } catch (IOException e) {
+            throw new RuntimeException("文件上传失败", e);
+        }
     }
 
     public InputStream download(String objectKey) {
-        try { return minioClient.getObject(GetObjectArgs.builder().bucket(bucket).object(objectKey).build()); }
-        catch (Exception e) { throw new RuntimeException("文件下载失败", e); }
+        try {
+            Path source = getBasePath().resolve(objectKey);
+            return Files.newInputStream(source);
+        } catch (IOException e) {
+            throw new RuntimeException("文件下载失败", e);
+        }
     }
 
     public void delete(String objectKey) {
-        try { minioClient.removeObject(RemoveObjectArgs.builder().bucket(bucket).object(objectKey).build()); }
-        catch (Exception e) { log.error("Failed to delete: {}", objectKey, e); }
+        try {
+            Path source = getBasePath().resolve(objectKey);
+            Files.deleteIfExists(source);
+            log.debug("File deleted from local storage: {}", objectKey);
+        } catch (IOException e) {
+            log.error("Failed to delete file: {}", objectKey, e);
+        }
     }
 }

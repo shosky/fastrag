@@ -15,4 +15,6 @@ public class KbChunk {
     private String content;
     private String embeddingId;
     private Integer vectorStored;
+    private Double startTime;
+    private Double endTime;
 }

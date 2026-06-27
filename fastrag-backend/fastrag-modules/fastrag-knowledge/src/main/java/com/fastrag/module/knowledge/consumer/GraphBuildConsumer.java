@@ -3,7 +3,7 @@ package com.fastrag.module.knowledge.consumer;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.llm.LlmService;
-import com.fastrag.infra.config.RabbitMQConfig;
+import com.fastrag.common.handler.GraphBuildHandler;
 import com.fastrag.infra.neo4j.Neo4jService;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -18,17 +18,19 @@ import com.fastrag.module.graph.mapper.KbGraphIndexMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
-import org.springframework.amqp.rabbit.annotation.RabbitListener;
-import org.springframework.stereotype.Component;
+import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 知识图谱构建服务 (原 RabbitMQ Consumer，现改为直接调用)
+ */
 @Slf4j
-@Component
+@Service
 @RequiredArgsConstructor
-public class GraphBuildConsumer {
+public class GraphBuildConsumer implements GraphBuildHandler {
 
     private final KbChunkMapper chunkMapper;
     private final Neo4jService neo4jService;
@@ -57,7 +59,7 @@ public class GraphBuildConsumer {
         private String label;
     }
 
-    @RabbitListener(queues = RabbitMQConfig.GRAPH_BUILD_QUEUE)
+    @Override
     public void handleGraphBuild(Map<String, Object> message) {
         String kbId = (String) message.get("kbId");
         String fileId = (String) message.get("fileId");

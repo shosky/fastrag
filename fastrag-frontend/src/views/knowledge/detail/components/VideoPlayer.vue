@@ -4,6 +4,7 @@ import { VideoPlay, VideoPause, Mute, Microphone, FullScreen } from '@element-pl
 const props = defineProps<{
   src: string
   title: string
+  transcripts?: Array<{ time: number; text: string }>
 }>()
 
 // ---------- Video state ----------
@@ -26,14 +27,13 @@ const keyframes = ref([
   { time: 120, thumbnail: '', description: '部署流程' },
 ])
 
-// ---------- Mock ASR transcripts ----------
-const transcripts = ref([
-  { time: 0, text: '今天我们来讲一下系统架构。' },
-  { time: 15, text: '首先是前端部分，使用 Vue 3 框架。' },
-  { time: 32, text: '后端采用 Python FastAPI。' },
-  { time: 48, text: '数据库使用 PostgreSQL。' },
-  { time: 65, text: '部署方面使用 Docker 容器化。' },
-])
+// ---------- ASR transcripts (from prop or mock) ----------
+const transcripts = computed(() => props.transcripts && props.transcripts.length > 0
+  ? props.transcripts
+  : [
+      { time: 0, text: '暂无 ASR 转写数据，请先处理文件。' },
+    ]
+)
 
 // ---------- Computed ----------
 const formattedCurrentTime = computed(() => formatTime(currentTime.value))
