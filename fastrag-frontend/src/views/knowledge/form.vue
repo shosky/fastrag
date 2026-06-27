@@ -86,6 +86,9 @@ function defaultFileTypeConfig(): FileTypeConfig {
 
 const fileTypeConfig = reactive<FileTypeConfig>(defaultFileTypeConfig())
 
+// --------------- 自定义属性 ---------------
+const customAttrs = ref<{ name: string; type: string; description: string; required: boolean }[]>([])
+
 // --------------- 解析策略模板（从接口加载） ---------------
 const strategyTemplates = ref<{ key: string; name: string; description: string; extensions: string[]; parseMethod: string }[]>([])
 
@@ -863,6 +866,23 @@ function goToParseStrategy() {
                 </el-checkbox>
               </div>
             </el-form-item>
+
+            <!-- 自定义属性 -->
+            <el-divider content-position="left">自定义属性</el-divider>
+            <div class="custom-attrs">
+              <div v-for="(attr, idx) in customAttrs" :key="idx" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center">
+                <el-input v-model="attr.name" placeholder="属性名" style="width: 150px" />
+                <el-select v-model="attr.type" style="width: 120px">
+                  <el-option label="文本" value="text" /><el-option label="数字" value="number" />
+                  <el-option label="下拉" value="select" /><el-option label="日期" value="date" />
+                </el-select>
+                <el-input v-model="attr.description" placeholder="描述" style="flex: 1" />
+                <el-checkbox v-model="attr.required">必填</el-checkbox>
+                <el-button link type="danger" @click="customAttrs.splice(idx, 1)">删除</el-button>
+              </div>
+              <el-button size="small" @click="customAttrs.push({ name: '', type: 'text', description: '', required: false })">添加属性</el-button>
+              <p class="parse-strategy-desc">定义知识条目的自定义元数据字段，可用于分类筛选和检索增强。</p>
+            </div>
           </el-form>
         </el-tab-pane>
 

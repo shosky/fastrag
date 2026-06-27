@@ -15,6 +15,7 @@ import {
   Operation,
   Promotion,
   Timer,
+  ChatDotRound,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import FileManager from './components/FileManager.vue'
@@ -28,6 +29,7 @@ import RagEvaluationPanel from './components/RagEvaluationPanel.vue'
 import EvaluationBenchmarkPanel from './components/EvaluationBenchmarkPanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import PublishPanel from './components/PublishPanel.vue'
+import QaPanel from './components/QaPanel.vue'
 import * as api from '@/api'
 import { useAuth } from '@/composables/useAuth'
 
@@ -240,27 +242,34 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
         <template #label>
           <span class="kb-detail__tab-label">
             <el-icon><TrendCharts /></el-icon>
-            RAG 评估
+            评估
           </span>
         </template>
-        <RagEvaluationPanel
-          :kb-id="kbId"
-          :preselect-benchmark="preselectBenchmark"
-          @consume-preselect="preselectBenchmark = ''"
-        />
+        <el-tabs type="border-card" style="margin-top: 8px">
+          <el-tab-pane label="评估基准">
+            <EvaluationBenchmarkPanel
+              :kb-id="kbId"
+              @start-evaluation="handleStartEvaluationFromBenchmark"
+            />
+          </el-tab-pane>
+          <el-tab-pane label="评估结果">
+            <RagEvaluationPanel
+              :kb-id="kbId"
+              :preselect-benchmark="preselectBenchmark"
+              @consume-preselect="preselectBenchmark = ''"
+            />
+          </el-tab-pane>
+        </el-tabs>
       </el-tab-pane>
 
-      <el-tab-pane name="benchmark">
+      <el-tab-pane name="qa">
         <template #label>
           <span class="kb-detail__tab-label">
-            <el-icon><Document /></el-icon>
-            评估基准
+            <el-icon><ChatDotRound /></el-icon>
+            问答对
           </span>
         </template>
-        <EvaluationBenchmarkPanel
-          :kb-id="kbId"
-          @start-evaluation="handleStartEvaluationFromBenchmark"
-        />
+        <QaPanel :kb-id="kbId" />
       </el-tab-pane>
 
       <el-tab-pane name="publish">
@@ -282,6 +291,7 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
         </template>
         <LogPanel :kb-id="kbId" />
       </el-tab-pane>
+
     </el-tabs>
   </div>
 </template>

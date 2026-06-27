@@ -10,6 +10,7 @@ interface ModelRecord {
   purpose: string
   brand: string
   apiUrl: string
+  contextWindow?: number
   status: string
 }
 
@@ -64,27 +65,28 @@ const formData = ref({
   brand: '',
   apiUrl: '',
   apiKey: '',
+  contextWindow: 4096,
   status: 'online' as any,
 })
 
 function handleAdd() {
   dialogTitle.value = '新增模型'
   editingId.value = null
-  formData.value = { name: '', code: '', purpose: '大语言模型', brand: '', apiUrl: '', apiKey: '', status: 'online' }
+  formData.value = { name: '', code: '', purpose: '大语言模型', brand: '', apiUrl: '', apiKey: '', contextWindow: 4096, status: 'online' }
   showDialog.value = true
 }
 
 function handleEdit(model: ModelRecord) {
   dialogTitle.value = '编辑模型'
   editingId.value = model.id
-  formData.value = { name: model.name, code: model.code, purpose: model.purpose, brand: model.brand, apiUrl: model.apiUrl, apiKey: '', status: model.status }
+  formData.value = { name: model.name, code: model.code, purpose: model.purpose, brand: model.brand, apiUrl: model.apiUrl, apiKey: '', contextWindow: (model as any).contextWindow || 4096, status: model.status }
   showDialog.value = true
 }
 
 function handleClone(model: ModelRecord) {
   dialogTitle.value = '复刻模型'
   editingId.value = null
-  formData.value = { name: model.name + '_副本', code: model.code + '_copy', purpose: model.purpose, brand: model.brand, apiUrl: model.apiUrl, apiKey: '', status: model.status }
+  formData.value = { name: model.name + '_副本', code: model.code + '_copy', purpose: model.purpose, brand: model.brand, apiUrl: model.apiUrl, apiKey: '', contextWindow: (model as any).contextWindow || 4096, status: model.status }
   showDialog.value = true
 }
 
@@ -119,6 +121,7 @@ async function handleSave() {
       purpose: formData.value.purpose,
       brand: formData.value.brand,
       apiUrl: formData.value.apiUrl,
+      contextWindow: formData.value.contextWindow,
       status: formData.value.status,
     })
   } else {
@@ -128,6 +131,7 @@ async function handleSave() {
       purpose: formData.value.purpose,
       brand: formData.value.brand,
       apiUrl: formData.value.apiUrl,
+      contextWindow: formData.value.contextWindow,
       status: formData.value.status,
     })
   }
@@ -162,6 +166,7 @@ async function handleSave() {
           </el-tag>
         </div>
         <div class="model-code">编码：{{ model.code }}</div>
+        <div v-if="model.contextWindow" class="model-code">上下文窗口：{{ model.contextWindow.toLocaleString() }} tokens</div>
         <div class="card-footer">
           <el-button size="small" @click="handleEdit(model)">编辑</el-button>
           <el-button size="small" @click="loadLifecycle(model.id)">生命周期</el-button>
@@ -274,6 +279,10 @@ async function handleSave() {
         </el-form-item>
         <el-form-item label="模型密钥">
           <el-input v-model="formData.apiKey" type="password" placeholder="请输入模型密钥" show-password />
+        </el-form-item>
+        <el-form-item label="上下文窗口">
+          <el-input-number v-model="formData.contextWindow" :min="512" :max="1000000" :step="1024" style="width: 100%" />
+          <div style="font-size: 12px; color: #909399; margin-top: 4px">模型支持的最大上下文 Token 数，常用值：4096、8192、32768、128000</div>
         </el-form-item>
         <el-form-item label="是否发布">
           <el-radio-group v-model="formData.status">

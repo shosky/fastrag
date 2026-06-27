@@ -88,25 +88,30 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '分片管理', hidden: true },
       },
       {
-        path: 'process',
-        name: 'Process',
-        component: () => import('@/views/knowledge-process/index.vue'),
-        meta: { title: '知识加工', icon: 'Setting' },
+        path: 'knowledge/categories',
+        name: 'KnowledgeCategories',
+        component: () => import('@/views/knowledge/categories.vue'),
+        meta: { title: '知识库分类' },
       },
       {
-        path: 'process/:id/editor',
-        name: 'ProcessEditor',
-        component: () => import('@/views/knowledge-process/editor.vue'),
-        meta: { title: '流程编辑器', hidden: true },
+        path: 'knowledge/tags',
+        name: 'KnowledgeTags',
+        component: () => import('@/views/knowledge/tags.vue'),
+        meta: { title: '知识库标签' },
       },
-
       // ===== 业务流 =====
       // ===== 应用与运营 =====
       {
         path: 'application',
         name: 'Application',
         component: () => import('@/views/application/index.vue'),
-        meta: { title: '应用中心', icon: 'Grid' },
+        meta: { title: '应用中心', icon: 'Grid', roles: ['super_admin', 'kb_admin', 'kb_user', 'readonly'] as const },
+      },
+      {
+        path: 'application/prompt-templates',
+        name: 'PromptTemplates',
+        component: () => import('@/views/answer-kb/templates.vue'),
+        meta: { title: 'Prompt模板', roles: ['super_admin', 'kb_admin', 'kb_user'] as const },
       },
       {
         path: 'application/my-tools',
@@ -370,6 +375,55 @@ const routes: RouteRecordRaw[] = [
             component: () => import('@/views/admin/platform/api-keys.vue'),
             meta: { title: '开放密钥', roles: ['super_admin'] as const },
           },
+        ],
+      },
+
+      // ===== 发布与评估（仅保留机器人发布） =====
+      {
+        path: 'publish-eval/release',
+        name: 'RobotRelease',
+        component: () => import('@/views/publish-eval/release.vue'),
+        meta: { title: '机器人发布' },
+      },
+
+      // ===== 机器人运营 =====
+      {
+        path: 'robot-operation',
+        name: 'RobotOperation',
+        redirect: '/robot-operation/faq-analysis',
+        meta: { title: '运营中心', icon: 'DataLine' },
+        children: [
+          { path: 'faq-analysis', name: 'FaqAnalysis', component: () => import('@/views/robot-operation/faq-analysis.vue'), meta: { title: 'FAQ知识分析' } },
+          { path: 'multi-turn', name: 'MultiTurnAnalysis', component: () => import('@/views/robot-operation/multi-turn.vue'), meta: { title: '多轮对话分析' } },
+          { path: 'intent', name: 'IntentAnalysis', component: () => import('@/views/robot-operation/intent.vue'), meta: { title: '意图知识分析' } },
+        ],
+      },
+
+      // ===== 知识审核管理 =====
+      {
+        path: 'knowledge-review',
+        name: 'KnowledgeReview',
+        redirect: '/knowledge-review/flows',
+        meta: { title: '知识审核', icon: 'Checked' },
+        children: [
+          { path: 'flows', name: 'ReviewFlows', component: () => import('@/views/knowledge-review/flows.vue'), meta: { title: '审核流程管理' } },
+          { path: 'flow-design', name: 'ReviewFlowDesign', component: () => import('@/views/knowledge-review/flow-design.vue'), meta: { title: '审核流程设计' } },
+          { path: 'listeners', name: 'ReviewListeners', component: () => import('@/views/knowledge-review/listeners.vue'), meta: { title: '监听管理' } },
+          { path: 'compliance', name: 'ReviewCompliance', component: () => import('@/views/knowledge-review/compliance.vue'), meta: { title: '合规性检查' } },
+          { path: 'reports', name: 'ReviewReports', component: () => import('@/views/knowledge-review/reports.vue'), meta: { title: '审核报告' } },
+          { path: 'quality', name: 'ReviewQuality', component: () => import('@/views/knowledge-review/quality.vue'), meta: { title: '质量评估' } },
+        ],
+      },
+
+      // ===== 插件与数据库管理 =====
+      {
+        path: 'plugin-db',
+        name: 'PluginDb',
+        redirect: '/plugin-db/plugins',
+        meta: { title: '插件与数据库', icon: 'Connection' },
+        children: [
+          { path: 'plugins', name: 'PluginManagement', component: () => import('@/views/plugin-db/plugins.vue'), meta: { title: '插件管理' } },
+          { path: 'databases', name: 'DatabaseManagement', component: () => import('@/views/plugin-db/databases.vue'), meta: { title: '数据库管理' } },
         ],
       },
     ],

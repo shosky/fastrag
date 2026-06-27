@@ -176,6 +176,30 @@ function handleSave() {
           <span class="retrieval-sidebar__hint">BM25 检索时丢弃低分稀疏项的比例，数值越大检索越快但可能降低召回</span>
         </div>
       </template>
+
+      <!-- 关键词匹配 -->
+      <el-divider style="margin: 12px 0" />
+      <div class="retrieval-sidebar__field">
+        <label class="retrieval-sidebar__label">关键词匹配</label>
+        <el-switch
+          :model-value="(localConfig as any).enableKeywordMatch ?? false"
+          @update:model-value="(v: boolean) => { (localConfig as any).enableKeywordMatch = v; emit('update:config', { ...localConfig }) }"
+        />
+        <span class="retrieval-sidebar__hint">启用后，用户输入命中问答对的触发关键词时优先返回匹配结果</span>
+      </div>
+      <div class="retrieval-sidebar__field">
+        <label class="retrieval-sidebar__label">QA 对召回数</label>
+        <el-input-number
+          :model-value="localConfig.qaRecallCount ?? 5"
+          :min="0"
+          :max="50"
+          :step="1"
+          controls-position="right"
+          style="width: 100%"
+          @update:model-value="(v: number | undefined) => { if (v !== undefined) updateField('qaRecallCount' as any, v) }"
+        />
+        <span class="retrieval-sidebar__hint">多路召回中问答对的最大召回数量</span>
+      </div>
     </div>
   </div>
 </template>

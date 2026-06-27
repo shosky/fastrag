@@ -32,21 +32,79 @@ interface SubMenuItem {
 }
 
 // 全部模块定义（静态），通过 computed 过滤后渲染
+// 三大顶级模块：知识库、应用、管理
 const allModules: NavModule[] = [
   { key: 'home', title: '首页', icon: 'HomeFilled', path: '/home' },
-  { key: 'knowledge', title: '知识库', icon: 'Collection', path: '/knowledge' },
+
+  // ===== 知识库 =====
+  {
+    key: 'knowledge',
+    title: '知识库',
+    icon: 'Collection',
+    children: [
+      {
+        path: '/knowledge',
+        title: '知识库管理',
+        children: [
+          { path: '/knowledge', title: '知识库列表' },
+          { path: '/knowledge/categories', title: '知识库分类' },
+          { path: '/knowledge/tags', title: '知识库标签' },
+        ],
+      },
+      {
+        path: '/knowledge-review',
+        title: '知识审核',
+        children: [
+          { path: '/knowledge-review/flows', title: '审核流程管理' },
+          { path: '/knowledge-review/flow-design', title: '审核流程设计' },
+          { path: '/knowledge-review/listeners', title: '监听管理' },
+          { path: '/knowledge-review/compliance', title: '合规性检查' },
+          { path: '/knowledge-review/reports', title: '审核报告' },
+          { path: '/knowledge-review/quality', title: '质量评估' },
+        ],
+      },
+    ],
+  },
+
+  // ===== 应用 =====
   {
     key: 'application',
     title: '应用',
     icon: 'Grid',
     children: [
-      { path: '/application', title: '应用中心' },
-      { path: '/application/my-tools', title: '我的工具' },
-      { path: '/application/mcp-management', title: 'MCP管理' },
-      { path: '/application/skill-management', title: '技能管理' },
-      { path: '/operation/kb-analytics', title: '运营中心' },
+      {
+        path: '/application',
+        title: '应用管理',
+        children: [
+          { path: '/application', title: '应用中心' },
+          { path: '/publish-eval/release', title: '发布与评估' },
+        ],
+      },
+      {
+        path: '/application/tools',
+        title: '工具与服务',
+        children: [
+          { path: '/application/my-tools', title: '我的工具' },
+          { path: '/application/mcp-management', title: 'MCP管理' },
+          { path: '/plugin-db/plugins', title: '插件管理' },
+          { path: '/application/skill-management', title: '技能管理' },
+          { path: '/plugin-db/databases', title: '数据库管理' },
+        ],
+      },
+      {
+        path: '/operation',
+        title: '运营中心',
+        children: [
+          { path: '/operation/feedback', title: '反馈管理' },
+          { path: '/robot-operation/faq-analysis', title: 'FAQ知识分析' },
+          { path: '/robot-operation/multi-turn', title: '多轮对话分析' },
+          { path: '/robot-operation/intent', title: '意图知识分析' },
+        ],
+      },
     ],
   },
+
+  // ===== 管理 =====
   {
     key: 'admin',
     title: '管理',
@@ -65,6 +123,7 @@ const allModules: NavModule[] = [
           { path: '/admin/system/dictionary', title: '字典管理' },
           { path: '/admin/system/terminology', title: '术语管理' },
           { path: '/admin/system/query-rules', title: '查询规则' },
+          { path: '/operation/model-monitor', title: '模型监控' },
         ],
       },
       {
@@ -95,10 +154,17 @@ const allModules: NavModule[] = [
         title: '内容与工具',
         children: [
           { path: '/admin/content/notification', title: '通知管理' },
-          { path: '/admin/content/tags', title: '标签管理' },
           { path: '/admin/content/prompts', title: '提示词' },
+          { path: '/application/prompt-templates', title: 'Prompt模板' },
           { path: '/admin/content/templates', title: '文档模板' },
           { path: '/admin/content/download', title: '下载中心' },
+        ],
+      },
+      {
+        path: '/admin/analytics',
+        title: '数据分析',
+        children: [
+          { path: '/operation/kb-analytics', title: '知识库分析' },
         ],
       },
       {
@@ -165,12 +231,24 @@ const navModules = computed<NavModule[]>(() => {
     .filter(Boolean) as NavModule[]
 })
 
-// 当前选中的模块
+// 当前选中的模块（三大顶级模块：knowledge / application / admin）
 const activeModule = computed(() => {
   const path = route.path
+  // 管理
   if (path.startsWith('/admin')) return 'admin'
-  if (path.startsWith('/application') || path.startsWith('/operation')) return 'application'
-  if (path.startsWith('/knowledge') || path.startsWith('/process')) return 'knowledge'
+  // 应用（含机器人配置、业务流、对话知识、发布评估、运营中心、工具/MCP/插件/技能/数据库）
+  if (
+    path.startsWith('/application') ||
+    path.startsWith('/publish-eval') ||
+    path.startsWith('/robot-operation') ||
+    path.startsWith('/plugin-db') ||
+    path.startsWith('/operation')
+  ) return 'application'
+  // 知识库（含应答知识库、知识引用、知识生产、知识存储、知识审核、知识更新、知识加工）
+  if (
+    path.startsWith('/knowledge') ||
+    path.startsWith('/knowledge-review')
+  ) return 'knowledge'
   return 'home'
 })
 
