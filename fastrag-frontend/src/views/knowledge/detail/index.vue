@@ -16,6 +16,13 @@ import {
   Promotion,
   Timer,
   ChatDotRound,
+  CollectionTag,
+  UploadFilled,
+  EditPen,
+  PriceTag,
+  Management,
+  DataBoard,
+  ChatLineSquare,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import FileManager from './components/FileManager.vue'
@@ -30,6 +37,14 @@ import EvaluationBenchmarkPanel from './components/EvaluationBenchmarkPanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import PublishPanel from './components/PublishPanel.vue'
 import QaPanel from './components/QaPanel.vue'
+// 新增功能面板
+import EntitiesPanel from './entities.vue'
+import ProductionPanel from './production.vue'
+import KnowledgeEditPanel from './knowledge-edit.vue'
+import TagsNotesPanel from './tags-notes.vue'
+import KnowledgeManagePanel from './knowledge-manage.vue'
+import SmartSearchPanel from './smart-search.vue'
+import KnowledgeQaPanel from './knowledge-qa.vue'
 import * as api from '@/api'
 import { useAuth } from '@/composables/useAuth'
 
@@ -290,6 +305,77 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
           </span>
         </template>
         <LogPanel :kb-id="kbId" />
+      </el-tab-pane>
+
+      <!-- ===== 新增功能页签 ===== -->
+      <el-tab-pane name="entities">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><CollectionTag /></el-icon>
+            实体库
+          </span>
+        </template>
+        <EntitiesPanel />
+      </el-tab-pane>
+
+      <el-tab-pane name="production">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><UploadFilled /></el-icon>
+            知识生产
+          </span>
+        </template>
+        <ProductionPanel />
+      </el-tab-pane>
+
+      <el-tab-pane name="knowledge-edit">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><EditPen /></el-icon>
+            知识采编
+          </span>
+        </template>
+        <KnowledgeEditPanel />
+      </el-tab-pane>
+
+      <el-tab-pane name="tags-notes">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><PriceTag /></el-icon>
+            标签与笔记
+          </span>
+        </template>
+        <TagsNotesPanel />
+      </el-tab-pane>
+
+      <el-tab-pane name="knowledge-manage">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><Management /></el-icon>
+            知识管理
+          </span>
+        </template>
+        <KnowledgeManagePanel />
+      </el-tab-pane>
+
+      <el-tab-pane name="smart-search">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><DataBoard /></el-icon>
+            智能搜索
+          </span>
+        </template>
+        <SmartSearchPanel />
+      </el-tab-pane>
+
+      <el-tab-pane name="knowledge-qa">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><ChatLineSquare /></el-icon>
+            知识问答
+          </span>
+        </template>
+        <KnowledgeQaPanel />
       </el-tab-pane>
 
     </el-tabs>

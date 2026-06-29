@@ -16,11 +16,15 @@ const formData = ref({
   titleColor: '#303133',
   titleBold: false,
   content: '',
+  notifyType: 'system',
+  targetUsers: [] as string[],
   publishTime: '',
   expiryType: 'long',
   expiryTime: '',
   isTop: false,
 })
+
+const reviewerOptions = ['张三', '李四', '王五', '赵六', '审核组', '管理员', '全部用户']
 
 const notificationList = ref<any[]>([])
 
@@ -39,14 +43,14 @@ onMounted(loadNotifications)
 function handleAdd() {
   isEdit.value = false
   editingId.value = null
-  formData.value = { title: '', titleColor: '#303133', titleBold: false, content: '', publishTime: '', expiryType: 'long', expiryTime: '', isTop: false }
+  formData.value = { title: '', titleColor: '#303133', titleBold: false, content: '', notifyType: 'system', targetUsers: [], publishTime: '', expiryType: 'long', expiryTime: '', isTop: false }
   showEditor.value = true
 }
 
 function handleEdit(row: any) {
   isEdit.value = true
   editingId.value = row.id
-  formData.value = { title: row.label || row.title, titleColor: '#303133', titleBold: false, content: row.value || '', publishTime: '', expiryType: 'long', expiryTime: '', isTop: false }
+  formData.value = { title: row.label || row.title, titleColor: '#303133', titleBold: false, content: row.value || '', notifyType: 'system', targetUsers: [], publishTime: '', expiryType: 'long', expiryTime: '', isTop: false }
   showEditor.value = true
 }
 
@@ -64,6 +68,15 @@ async function handleSave() {
     ElMessage.warning('请输入标题')
     return
   }
+  // 同时创建通知中心消息
+  const notifyData = {
+    title: formData.value.title,
+    content: formData.value.content,
+    notifyType: formData.value.notifyType,
+    targetUsers: formData.value.targetUsers,
+  }
+  try { await api.createNotification(notifyData) } catch { /* ignore */ }
+  
   const data = {
     type: '通知管理',
     key: formData.value.title,
@@ -76,7 +89,7 @@ async function handleSave() {
   }
   showEditor.value = false
   await loadNotifications()
-  ElMessage.success(isEdit.value ? '更新成功' : '新增成功')
+  ElMessage.success(isEdit.value ? '更新成功' : '新增成功，通知已发送')
 }
 </script>
 
@@ -108,6 +121,18 @@ async function handleSave() {
 
     <el-dialog v-model="showEditor" :title="isEdit ? '编辑通知' : '新增通知'" width="700px">
       <el-form label-width="80px">
+        <el-form-item label="通知类型">
+          <el-select v-model="formData.notifyType" style="width:160px">
+            <el-option label="系统通知" value="system" />
+            <el-option label="审核提醒" value="review_remind" />
+            <el-option label="发布完成" value="publish_done" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="提醒人员" v-if="formData.notifyType !== 'system'">
+          <el-select v-model="formData.targetUsers" multiple placeholder="选择提醒人员" style="width:100%">
+            <el-option v-for="u in reviewerOptions" :key="u" :label="u" :value="u" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="标题" required>
           <el-input v-model="formData.title" placeholder="请输入标题" />
         </el-form-item>

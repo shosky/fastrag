@@ -12,6 +12,7 @@ import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
 import com.fastrag.module.knowledge.model.FileDto;
 import com.fastrag.module.knowledge.service.FileService;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -98,6 +99,8 @@ public class FileServiceImpl implements FileService {
         msg.put("kbId", kbId);
         msg.put("objectKey", f.getObjectKey());
         msg.put("strategyId", strategyId);
+        msg.put("operator", SecurityUtil.getCurrentUser() != null
+                ? SecurityUtil.getCurrentUser().getUsername() : "system");
         messagePublisher.publishIngestion(msg);
 
         log.info("File processing triggered: {}", f.getId());

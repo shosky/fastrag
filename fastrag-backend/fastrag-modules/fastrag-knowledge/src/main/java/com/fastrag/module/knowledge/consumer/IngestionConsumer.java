@@ -9,6 +9,7 @@ import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.parser.DocumentParser;
 import com.fastrag.module.knowledge.parser.ParseResult;
 import com.fastrag.module.knowledge.storage.StorageService;
+import com.fastrag.module.publish.service.LogService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -30,6 +31,7 @@ public class IngestionConsumer implements IngestionHandler {
     private final ChunkingService chunkingService;
     private final StorageService storageService;
     private final KbFileMapper fileMapper;
+    private final LogService logService;
 
     @Override
     public void handleIngestion(Map<String, Object> message) {
@@ -37,6 +39,7 @@ public class IngestionConsumer implements IngestionHandler {
         String kbId = (String) message.get("kbId");
         String objectKey = (String) message.get("objectKey");
         String strategyId = (String) message.get("strategyId");
+        String operator = (String) message.getOrDefault("operator", "system");
 
         log.info("Start processing file: {}, kbId: {}", fileId, kbId);
 
@@ -70,7 +73,17 @@ public class IngestionConsumer implements IngestionHandler {
             updateStatus(fileId, "processing", 80, "storing");
             storageService.storeChunks(kbId, fileId, chunks);
 
-            // 6. 更新状态为 completed
+            // 6. 记录更新日志
+            try {
+                KbFile kf = fileMapper.selectById(fileId);
+                String fileName = kf != null ? kf.getName() : fileId;
+                logService.addUpdateLog(kbId, "ADD", fileName,
+                        "上传并处理了文档 " + fileName, operator);
+            } catch (Exception e) {
+                log.warn("Failed to record update log for file: {}", fileId, e);
+            }
+
+            // 7. 更新状态为 completed
             updateStatus(fileId, "completed", 100, "done");
 
             log.info("File processing completed: {}, chunks: {}", fileId, chunks.size());

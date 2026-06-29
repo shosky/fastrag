@@ -394,6 +394,16 @@ export function getFileCategory(filename: string): FileCategory {
   return (EXTENSION_TO_CATEGORY as Record<string, FileCategory>)[ext] || 'document'
 }
 
+/** 知识库文件切片 */
+export interface KbChunk {
+  id?: string
+  content: string
+  chunkIndex: number
+  fileName?: string
+  startTime?: number
+  endTime?: number
+}
+
 /** 格式化文件大小 */
 export function formatFileSize(bytes: number): string {
   if (bytes === 0) return '0 B'

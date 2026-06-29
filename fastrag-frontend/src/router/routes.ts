@@ -46,6 +46,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '知识库', icon: 'Collection' },
       },
       {
+        path: 'knowledge/categories',
+        name: 'KnowledgeCategories',
+        component: () => import('@/views/knowledge/categories.vue'),
+        meta: { title: '知识库分类', icon: 'FolderOpened' },
+      },
+      {
         path: 'knowledge/create',
         name: 'KnowledgeCreate',
         component: () => import('@/views/knowledge/create.vue'),
@@ -80,6 +86,54 @@ const routes: RouteRecordRaw[] = [
         name: 'KnowledgeApiDoc',
         component: () => import('@/views/knowledge/detail/api-doc.vue'),
         meta: { title: 'API 文档', hidden: true },
+      },
+      {
+        path: 'knowledge/:id/entities',
+        name: 'KnowledgeEntities',
+        component: () => import('@/views/knowledge/detail/entities.vue'),
+        meta: { title: '实体库管理', hidden: true },
+      },
+      {
+        path: 'knowledge/:id/production',
+        name: 'KnowledgeProduction',
+        component: () => import('@/views/knowledge/detail/production.vue'),
+        meta: { title: '知识生产与获取', hidden: true },
+      },
+      {
+        path: 'knowledge/:id/knowledge-edit',
+        name: 'KnowledgeEdit',
+        component: () => import('@/views/knowledge/detail/knowledge-edit.vue'),
+        meta: { title: '知识加工与采编', hidden: true },
+      },
+      {
+        path: 'knowledge/:id/tags-notes',
+        name: 'KnowledgeTagsNotes',
+        component: () => import('@/views/knowledge/detail/tags-notes.vue'),
+        meta: { title: '标签与笔记', hidden: true },
+      },
+      {
+        path: 'knowledge/:id/knowledge-manage',
+        name: 'KnowledgeManage',
+        component: () => import('@/views/knowledge/detail/knowledge-manage.vue'),
+        meta: { title: '知识管理与更新', hidden: true },
+      },
+      {
+        path: 'knowledge/:id/smart-search',
+        name: 'SmartSearch',
+        component: () => import('@/views/knowledge/detail/smart-search.vue'),
+        meta: { title: '智能搜索', hidden: true },
+      },
+      {
+        path: 'knowledge/:id/knowledge-qa',
+        name: 'KnowledgeQa',
+        component: () => import('@/views/knowledge/detail/knowledge-qa.vue'),
+        meta: { title: '知识问答', hidden: true },
+      },
+      {
+        path: 'knowledge-review/management',
+        name: 'ReviewManagement',
+        component: () => import('@/views/knowledge-review/review-management.vue'),
+        meta: { title: '知识审核管理', roles: ['super_admin', 'kb_admin'] as const },
       },
       {
         path: 'knowledge/:id/chunks/:fileId',
@@ -180,6 +234,18 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '应用编辑', hidden: true },
       },
       {
+        path: 'application/:id/config',
+        name: 'AppConfig',
+        component: () => import('@/views/application/app-config.vue'),
+        meta: { title: '应用配置', hidden: true },
+      },
+      {
+        path: 'application/:id/workflow-manage',
+        name: 'WorkflowManage',
+        component: () => import('@/views/application/workflow-manage.vue'),
+        meta: { title: '业务流管理', hidden: true },
+      },
+      {
         path: 'application/:id/runtime',
         name: 'AppRuntime',
         component: () => import('@/views/application/runtime.vue'),
@@ -207,13 +273,19 @@ const routes: RouteRecordRaw[] = [
             path: 'feedback',
             name: 'Feedback',
             component: () => import('@/views/operation/feedback.vue'),
-            meta: { title: '问答反馈分析' },
+            meta: { title: '用户反馈' },
           },
           {
             path: 'qa-detail',
             name: 'QaDetail',
             component: () => import('@/views/operation/qa-detail.vue'),
             meta: { title: '问答明细' },
+          },
+          {
+            path: 'retrieval-analysis',
+            name: 'RetrievalAnalysis',
+            component: () => import('@/views/operation/retrieval-analysis.vue'),
+            meta: { title: '检索日志分析' },
           },
         ],
       },
@@ -244,6 +316,12 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '通用设置', roles: ['super_admin'] as const },
           },
           {
+            path: 'system/config-management',
+            name: 'ConfigManagement',
+            component: () => import('@/views/admin/system/config-management.vue'),
+            meta: { title: '系统配置管理', roles: ['super_admin'] as const },
+          },
+          {
             path: 'system/sensitive-words',
             name: 'SensitiveWords',
             component: () => import('@/views/admin/system/sensitive-words.vue'),
@@ -266,6 +344,11 @@ const routes: RouteRecordRaw[] = [
             name: 'QueryRules',
             component: () => import('@/views/admin/system/query-rules.vue'),
             meta: { title: '查询规则', roles: ['super_admin', 'kb_admin'] as const },
+          },
+          {
+            path: 'notifications',
+            component: () => import('@/views/notification/index.vue'),
+            meta: { title: '通知中心', roles: ['super_admin', 'kb_admin'] as const },
           },
           {
             path: 'account/roles',
@@ -396,6 +479,7 @@ const routes: RouteRecordRaw[] = [
           { path: 'faq-analysis', name: 'FaqAnalysis', component: () => import('@/views/robot-operation/faq-analysis.vue'), meta: { title: 'FAQ知识分析' } },
           { path: 'multi-turn', name: 'MultiTurnAnalysis', component: () => import('@/views/robot-operation/multi-turn.vue'), meta: { title: '多轮对话分析' } },
           { path: 'intent', name: 'IntentAnalysis', component: () => import('@/views/robot-operation/intent.vue'), meta: { title: '意图知识分析' } },
+          { path: 'data-mining', name: 'DataMining', component: () => import('@/views/robot-operation/data-mining.vue'), meta: { title: '数据挖掘' } },
         ],
       },
 

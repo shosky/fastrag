@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ref, onMounted } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import * as api from '@/api'
 
 const metrics = ref([
   { label: '累计问答量', value: '12,345' },
@@ -49,12 +50,110 @@ const qaDetails = ref([
   { id: '3', question: '今天是几号？', user: '张三', time: '2026-06-03 16:00', answer: '抱歉，AI服务暂时不可用...' },
 ])
 
-// 反馈明细
-const feedbackSearch = ref({ source: '', question: '', type: '', status: '' })
-const feedbacks = ref([
-  { id: '1', source: '官网Bot', question: '今天是几号？', type: '不满意', status: '待处理', reporter: '张三', problemType: '无效回答' },
-  { id: '2', source: '企业Bot', question: '请假流程', type: '满意', status: '已处理', reporter: '李四', problemType: '' },
-])
+// 反馈明细（接入真实API）
+const feedbackSearch = ref({ kbId: '', feedback: '', status: '', page: 1, pageSize: 10 })
+const feedbacks = ref<any[]>([])
+const feedbackTotal = ref(0)
+const feedbackLoading = ref(false)
+const feedbackStats = ref<any>({})
+
+async function loadFeedbacks() {
+  feedbackLoading.value = true
+  try {
+    const res: any = await api.getFeedbackPage({
+      kbId: feedbackSearch.value.kbId || undefined,
+      feedback: feedbackSearch.value.feedback || undefined,
+      status: feedbackSearch.value.status || undefined,
+      page: feedbackSearch.value.page,
+      pageSize: feedbackSearch.value.pageSize,
+    })
+    feedbacks.value = res?.list || []
+    feedbackTotal.value = res?.total || 0
+  } finally {
+    feedbackLoading.value = false
+  }
+}
+
+async function loadFeedbackStats() {
+  const res: any = await api.getFeedbackStatistics(feedbackSearch.value.kbId || undefined)
+  feedbackStats.value = res || {}
+}
+
+function resetFeedbackSearch() {
+  feedbackSearch.value = { kbId: '', feedback: '', status: '', page: 1, pageSize: 10 }
+  loadFeedbacks()
+}
+
+function handleFeedbackPageChange(p: number) {
+  feedbackSearch.value.page = p
+  loadFeedbacks()
+}
+
+// 回复反馈
+const showReplyDialog = ref(false)
+const replyForm = ref({ id: 0, reply: '' })
+
+function handleProcessFeedback(row: any) {
+  replyForm.value = { id: row.id, reply: row.reply || '' }
+  showReplyDialog.value = true
+}
+
+async function handleReplySubmit() {
+  if (!replyForm.value.reply) {
+    ElMessage.warning('请输入回复内容')
+    return
+  }
+  await api.replyFeedback(replyForm.value.id, { reply: replyForm.value.reply, operator: 'admin' })
+  showReplyDialog.value = false
+  ElMessage.success('回复成功')
+  await loadFeedbacks()
+  await loadFeedbackStats()
+}
+
+// 新增/编辑反馈
+const showFeedbackFormDialog = ref(false)
+const feedbackForm = ref({ id: '', kbId: '', query: '', feedback: 'like', comment: '', score: 5 })
+const isEditingFeedback = ref(false)
+
+function handleAddFeedback() {
+  isEditingFeedback.value = false
+  feedbackForm.value = { id: '', kbId: '', query: '', feedback: 'like', comment: '', score: 5 }
+  showFeedbackFormDialog.value = true
+}
+function handleEditFeedback(row: any) {
+  isEditingFeedback.value = true
+  feedbackForm.value = { id: row.id, kbId: row.kbId || '', query: row.query || '', feedback: row.feedback || 'like', comment: row.comment || '', score: row.score || 5 }
+  showFeedbackFormDialog.value = true
+}
+async function handleSaveFeedback() {
+  if (!feedbackForm.value.query) { ElMessage.warning('请输入问题'); return }
+  try {
+    if (isEditingFeedback.value) {
+      await api.updateFeedback(feedbackForm.value.id, { query: feedbackForm.value.query, feedback: feedbackForm.value.feedback, comment: feedbackForm.value.comment, score: feedbackForm.value.score })
+      ElMessage.success('修改成功')
+    } else {
+      await api.submitFeedback({ kbId: feedbackForm.value.kbId || undefined, query: feedbackForm.value.query, feedback: feedbackForm.value.feedback, comment: feedbackForm.value.comment, score: feedbackForm.value.score })
+      ElMessage.success('新增成功')
+    }
+    showFeedbackFormDialog.value = false
+    await loadFeedbacks()
+    await loadFeedbackStats()
+  } catch { ElMessage.error('操作失败') }
+}
+
+async function handleDeleteFeedback(row: any) {
+  try {
+    await ElMessageBox.confirm('确定删除该反馈记录？', '删除确认', { type: 'warning' })
+    await api.deleteFeedback(row.id)
+    await loadFeedbacks()
+    ElMessage.success('删除成功')
+  } catch {}
+}
+
+onMounted(() => {
+  loadFeedbacks()
+  loadFeedbackStats()
+})
 
 const activeTab = ref('overview')
 const showDetailDialog = ref(false)
@@ -63,10 +162,6 @@ const currentDetail = ref<any>(null)
 function handleViewDetail(detail: any) {
   currentDetail.value = detail
   showDetailDialog.value = true
-}
-
-function handleProcessFeedback(feedback: any) {
-  ElMessage.info('处理反馈：' + feedback.question)
 }
 </script>
 
@@ -143,47 +238,69 @@ function handleProcessFeedback(feedback: any) {
 
       <el-tab-pane label="反馈明细" name="feedback">
         <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">反馈明细</div>
+            <el-button type="primary" @click="handleAddFeedback">
+              <el-icon><Plus /></el-icon>新增反馈
+            </el-button>
+          </div>
+          <div class="stats-row" v-if="feedbackStats.total !== undefined">
+            <div class="stat-item"><span class="stat-label">反馈总数</span><span class="stat-val">{{ feedbackStats.total }}</span></div>
+            <div class="stat-item"><span class="stat-label">满意度</span><span class="stat-val">{{ feedbackStats.satisfactionRate }}%</span></div>
+            <div class="stat-item"><span class="stat-label">已解决率</span><span class="stat-val">{{ feedbackStats.resolvedRate }}%</span></div>
+            <div class="stat-item"><span class="stat-label">待处理</span><span class="stat-val">{{ (feedbackStats.byStatus && feedbackStats.byStatus.pending) || 0 }}</span></div>
+          </div>
           <div class="filter-bar">
-            <el-input v-model="feedbackSearch.source" placeholder="反馈来源" clearable style="width: 150px" />
-            <el-input v-model="feedbackSearch.question" placeholder="提问问题" clearable style="width: 150px" />
-            <el-select v-model="feedbackSearch.type" placeholder="反馈类型" clearable style="width: 120px">
-              <el-option label="满意" value="满意" />
-              <el-option label="不满意" value="不满意" />
+            <el-input v-model="feedbackSearch.kbId" placeholder="知识库ID" clearable style="width: 150px" />
+            <el-select v-model="feedbackSearch.feedback" placeholder="反馈类型" clearable style="width: 120px">
+              <el-option label="赞" value="like" />
+              <el-option label="踩" value="dislike" />
+              <el-option label="报错" value="report" />
             </el-select>
             <el-select v-model="feedbackSearch.status" placeholder="处理状态" clearable style="width: 120px">
-              <el-option label="待处理" value="待处理" />
-              <el-option label="已处理" value="已处理" />
+              <el-option label="待处理" value="pending" />
+              <el-option label="已解决" value="resolved" />
+              <el-option label="已忽略" value="ignored" />
             </el-select>
-            <el-button type="primary">查询</el-button>
-            <el-button>重置</el-button>
+            <el-button type="primary" @click="feedbackSearch.page = 1; loadFeedbacks()">查询</el-button>
+            <el-button @click="resetFeedbackSearch">重置</el-button>
           </div>
-          <el-table :data="feedbacks" stripe>
-            <el-table-column type="expand">
+          <el-table :data="feedbacks" stripe v-loading="feedbackLoading">
+            <el-table-column prop="query" label="提问问题" show-overflow-tooltip />
+            <el-table-column prop="feedback" label="反馈类型" width="90">
               <template #default="{ row }">
-                <div class="expand-info">
-                  <p>反馈人：{{ row.reporter }}</p>
-                  <p>问题类型：{{ row.problemType || '-' }}</p>
-                </div>
+                <el-tag :type="row.feedback === 'like' ? 'success' : (row.feedback === 'report' ? 'danger' : 'warning')" size="small">
+                  {{ row.feedback === 'like' ? '赞' : (row.feedback === 'dislike' ? '踩' : (row.feedback === 'report' ? '报错' : row.feedback)) }}
+                </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="source" label="反馈来源" width="120" />
-            <el-table-column prop="question" label="提问问题" show-overflow-tooltip />
-            <el-table-column prop="type" label="反馈类型" width="100">
+            <el-table-column prop="comment" label="反馈内容" show-overflow-tooltip />
+            <el-table-column prop="status" label="状态" width="90">
               <template #default="{ row }">
-                <el-tag :type="row.type === '满意' ? 'success' : 'danger'" size="small">{{ row.type }}</el-tag>
+                <el-tag :type="row.status === 'resolved' ? 'success' : (row.status === 'ignored' ? 'info' : 'warning')" size="small">
+                  {{ row.status === 'resolved' ? '已解决' : (row.status === 'ignored' ? '已忽略' : '待处理') }}
+                </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="status" label="处理状态" width="100">
+            <el-table-column prop="createdAt" label="时间" width="160" />
+            <el-table-column label="操作" width="200">
               <template #default="{ row }">
-                <el-tag :type="row.status === '已处理' ? 'success' : 'warning'" size="small">{{ row.status }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="100">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="handleProcessFeedback(row)">处理</el-button>
+                <el-button link size="small" @click="handleEditFeedback(row)">编辑</el-button>
+                <el-button link type="primary" size="small" @click="handleProcessFeedback(row)">回复</el-button>
+                <el-button link type="danger" size="small" @click="handleDeleteFeedback(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
+          <el-pagination
+            v-if="feedbackTotal > 0"
+            class="table-footer"
+            background
+            layout="total, prev, pager, next"
+            :total="feedbackTotal"
+            :current-page="feedbackSearch.page"
+            :page-size="feedbackSearch.pageSize"
+            @current-change="handleFeedbackPageChange"
+          />
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -193,6 +310,41 @@ function handleProcessFeedback(feedback: any) {
         <h4>问题：{{ currentDetail.question }}</h4>
         <p>{{ currentDetail.answer }}</p>
       </div>
+    </el-dialog>
+
+    <el-dialog v-model="showReplyDialog" title="回复反馈" width="500px">
+      <el-form label-width="80px">
+        <el-form-item label="回复内容" required>
+          <el-input v-model="replyForm.reply" type="textarea" :rows="4" placeholder="请输入回复内容" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showReplyDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleReplySubmit">提交回复</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新增/编辑反馈 -->
+    <el-dialog v-model="showFeedbackFormDialog" :title="isEditingFeedback ? '编辑反馈' : '新增反馈'" width="550px">
+      <el-form label-width="100px">
+        <el-form-item label="问题" required><el-input v-model="feedbackForm.query" placeholder="请输入用户问题" /></el-form-item>
+        <el-form-item label="反馈内容"><el-input v-model="feedbackForm.comment" type="textarea" :rows="3" placeholder="请输入反馈内容" /></el-form-item>
+        <el-form-item label="反馈类型">
+          <el-select v-model="feedbackForm.feedback" style="width:200px">
+            <el-option label="赞" value="like" /><el-option label="踩" value="dislike" /><el-option label="报错" value="report" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="评分">
+          <el-rate v-model="feedbackForm.score" :max="5" />
+        </el-form-item>
+        <el-form-item label="知识库ID" v-if="!isEditingFeedback">
+          <el-input v-model="feedbackForm.kbId" placeholder="选填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showFeedbackFormDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveFeedback">{{ isEditingFeedback ? '保存' : '创建' }}</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -256,4 +408,12 @@ function handleProcessFeedback(feedback: any) {
 .ai-tip { font-size: 12px; color: $text-secondary; margin-top: $spacing-sm; }
 
 .expand-info { padding: $spacing-base; p { margin: $spacing-xs 0; } }
+
+.stats-row {
+  display: flex; gap: $spacing-lg; margin-bottom: $spacing-base; padding: $spacing-base; background: $bg-white; border-radius: $radius-base;
+  .stat-item { display: flex; flex-direction: column; gap: 4px; }
+  .stat-label { font-size: 12px; color: $text-secondary; }
+  .stat-val { font-size: 20px; font-weight: 700; }
+}
+.table-footer { margin-top: $spacing-base; display: flex; justify-content: flex-end; }
 </style>

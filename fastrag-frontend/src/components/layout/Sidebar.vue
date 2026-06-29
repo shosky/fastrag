@@ -55,6 +55,7 @@ const allModules: NavModule[] = [
         path: '/knowledge-review',
         title: '知识审核',
         children: [
+          { path: '/knowledge-review/management', title: '审核管理' },
           { path: '/knowledge-review/flows', title: '审核流程管理' },
           { path: '/knowledge-review/flow-design', title: '审核流程设计' },
           { path: '/knowledge-review/listeners', title: '监听管理' },
@@ -75,10 +76,11 @@ const allModules: NavModule[] = [
       {
         path: '/application',
         title: '应用管理',
-        children: [
-          { path: '/application', title: '应用中心' },
-          { path: '/publish-eval/release', title: '发布与评估' },
-        ],
+	        children: [
+	          { path: '/application', title: '应用中心' },
+	          { path: '/application/demo-flow/workflow-manage', title: '业务流管理' },
+	          { path: '/publish-eval/release', title: '发布与评估' },
+	        ],
       },
       {
         path: '/application/tools',
@@ -96,9 +98,12 @@ const allModules: NavModule[] = [
         title: '运营中心',
         children: [
           { path: '/operation/feedback', title: '反馈管理' },
+          { path: '/operation/qa-detail', title: '问答明细' },
+          { path: '/operation/retrieval-analysis', title: '检索日志分析' },
           { path: '/robot-operation/faq-analysis', title: 'FAQ知识分析' },
           { path: '/robot-operation/multi-turn', title: '多轮对话分析' },
           { path: '/robot-operation/intent', title: '意图知识分析' },
+          { path: '/robot-operation/data-mining', title: '数据挖掘' },
         ],
       },
     ],
@@ -117,12 +122,13 @@ const allModules: NavModule[] = [
         title: '系统管理',
         requirePerm: 'admin:system',
         children: [
-          { path: '/admin/system/general-settings', title: '通用设置' },
-          { path: '/admin/system/kb-config', title: '知识库配置' },
-          { path: '/admin/system/sensitive-words', title: '敏感词设置' },
-          { path: '/admin/system/dictionary', title: '字典管理' },
-          { path: '/admin/system/terminology', title: '术语管理' },
-          { path: '/admin/system/query-rules', title: '查询规则' },
+	          { path: '/admin/system/general-settings', title: '通用设置' },
+	          { path: '/admin/system/config-management', title: '配置管理' },
+	          { path: '/admin/system/kb-config', title: '知识库配置' },
+	          { path: '/admin/system/sensitive-words', title: '敏感词设置' },
+	          { path: '/admin/system/dictionary', title: '字典管理' },
+	          { path: '/admin/system/terminology', title: '术语管理' },
+	          { path: '/admin/system/query-rules', title: '查询规则' },
           { path: '/operation/model-monitor', title: '模型监控' },
         ],
       },
@@ -154,6 +160,7 @@ const allModules: NavModule[] = [
         title: '内容与工具',
         children: [
           { path: '/admin/content/notification', title: '通知管理' },
+          { path: '/admin/notifications', title: '通知中心' },
           { path: '/admin/content/prompts', title: '提示词' },
           { path: '/application/prompt-templates', title: 'Prompt模板' },
           { path: '/admin/content/templates', title: '文档模板' },

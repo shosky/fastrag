@@ -57,6 +57,40 @@ function handleSelectAll() {
 function handleSaveKB() {
   ElMessage.success('知识库配置保存成功')
 }
+
+// 导出/导入知识库绑定 (#4949~4950)
+function handleExportKB() {
+  const data = {
+    bindTeamKB: bindTeamKB.value,
+    bindPersonalKB: bindPersonalKB.value,
+    selectedKBs: availableKBs.value.filter(kb => kb.selected).map(kb => ({ id: kb.id, name: kb.name })),
+  }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'kb_bindings.json'
+  a.click(); URL.revokeObjectURL(url); ElMessage.success('知识库配置已导出')
+}
+
+function handleImportKB() {
+  const input = document.createElement('input'); input.type = 'file'; input.accept = '.json'
+  input.onchange = (e: any) => {
+    try {
+      const file = e.target.files[0]; if (!file) return
+      const reader = new FileReader()
+      reader.onload = (ev: any) => {
+        try {
+          const data = JSON.parse(ev.target.result)
+          if (data.bindTeamKB !== undefined) bindTeamKB.value = data.bindTeamKB
+          if (data.bindPersonalKB !== undefined) bindPersonalKB.value = data.bindPersonalKB
+          if (data.selectedKBs?.length) {
+            const selectedIds = new Set(data.selectedKBs.map((k: any) => k.id))
+            availableKBs.value.forEach(kb => { kb.selected = selectedIds.has(kb.id) })
+          }
+          ElMessage.success('知识库配置已导入')
+        } catch { ElMessage.error('导入文件格式错误') }
+      }; reader.readAsText(file)
+    } catch { ElMessage.error('读取文件失败') }
+  }; input.click()
+}
 </script>
 
 <template>
@@ -150,6 +184,8 @@ function handleSaveKB() {
 
     <div class="kb-footer">
       <el-button type="primary" @click="handleSaveKB">保 存</el-button>
+      <el-button style="margin-left:8px" @click="handleExportKB">导出配置</el-button>
+      <el-button @click="handleImportKB">导入配置</el-button>
     </div>
   </div>
 </template>

@@ -17,6 +17,7 @@
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-infra</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-ai</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-knowledge</artifactId></dependency>
+        <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-publish</artifactId></dependency>
             <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
     </dependencies>
 </project>

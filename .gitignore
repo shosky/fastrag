@@ -28,3 +28,6 @@ fastrag-frontend/.env.*.local
 # Windows 保留设备名
 nul
 NUL
+
+uploads
+docs

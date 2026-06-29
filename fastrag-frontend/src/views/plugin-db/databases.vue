@@ -1,133 +1,108 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import * as api from '@/mock/plugin-db'
-
+import * as api from '@/api'
 
 const loading = ref(false)
-const dataList = ref<any[]>([])
-const total = ref(0)
-const currentPage = ref(1)
-const pageSize = ref(20)
-const searchKeyword = ref('')
-const showDialog = ref(false)
-const dialogTitle = ref('')
-const editingId = ref<string | null>(null)
-const formData = ref<any>({})
-
-const _SL: Record<string, string> = {}
-const _SC: Record<string, string> = {}
-function statusText(v: string) { return _SL[v] || v }
-function statusColor(v: string) { return (_SC[v] || 'info') as any }
+const dbList = ref<any[]>([])
+const query = ref({ keyword: '', dbType: '' })
 
 async function loadData() {
   loading.value = true
-  try {
-    const res = (api as any).getDatabaseList({ page: currentPage.value, pageSize: pageSize.value, keyword: searchKeyword.value || undefined })
-    if (res && typeof res === 'object' && 'list' in res) {
-      dataList.value = res.list; total.value = res.total
-    } else if (Array.isArray(res)) {
-      dataList.value = res; total.value = res.length
-    } else {
-      dataList.value = res ? [res] : []; total.value = dataList.value.length
-    }
-  } finally { loading.value = false }
+  try { dbList.value = ((await api.getDatabases({ keyword: query.value.keyword || undefined, dbType: query.value.dbType || undefined })) as any) || [] } finally { loading.value = false }
 }
-onMounted(loadData)
 
-function handleSearch() { currentPage.value = 1; loadData() }
-function handlePageChange(p: number) { currentPage.value = p; loadData() }
-function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1; loadData() }
+const showDialog = ref(false)
+const editingId = ref<string | null>(null)
+const formData = ref({ name: '', dbType: 'mysql', host: '', port: 3306, username: 'root', password: '', dbName: '', status: 'connected' })
 
-function handleAdd() { editingId.value = null; formData.value = {}; dialogTitle.value = '新增'; showDialog.value = true }
-function handleEdit(row: any) { editingId.value = row.id; formData.value = { ...row }; dialogTitle.value = '编辑'; showDialog.value = true }
-async function handleDelete(row: any) {
-  try {
-    await ElMessageBox.confirm('确定要删除该记录吗？', '提示', { type: 'warning' })
-    const fn = (api as any)['deleteDatabases'] || (api as any).deleteFaq
-    if (fn) await fn(row.id)
-    ElMessage.success('删除成功'); loadData()
-  } catch {}
-}
+function handleAdd() { editingId.value = null; formData.value = { name: '', dbType: 'mysql', host: '', port: 3306, username: 'root', password: '', dbName: '', status: 'connected' }; showDialog.value = true }
+function handleEdit(row: any) { editingId.value = row.id; formData.value = { ...row }; showDialog.value = true }
+
 async function handleSave() {
-    if (!formData.value.name) { ElMessage.warning('请输入名称'); return }
-    if (!formData.value.type) { ElMessage.warning('请输入类型'); return }
-    if (!formData.value.host) { ElMessage.warning('请输入主机'); return }
-    if (!formData.value.port) { ElMessage.warning('请输入端口'); return }
-    if (!formData.value.database) { ElMessage.warning('请输入数据库名'); return }
-  try {
-    const cfn = (api as any)['createDatabases'] || (api as any).createFaq
-    const ufn = (api as any)['updateDatabases'] || (api as any).updateFaq
-    if (editingId.value) { if (ufn) await ufn(editingId.value, formData.value); ElMessage.success('更新成功') }
-    else { if (cfn) await cfn(formData.value); ElMessage.success('创建成功') }
-    showDialog.value = false; loadData()
-  } catch {}
+  if (!formData.value.name) { ElMessage.warning('请输入名称'); return }
+  if (editingId.value) await api.updateDatabase(editingId.value, formData.value)
+  else await api.createDatabase(formData.value)
+  showDialog.value = false; await loadData(); ElMessage.success('保存成功')
 }
+
+async function handleDelete(row: any) {
+  try { await ElMessageBox.confirm('确认删除该数据库实例？', '删除确认', { type: 'warning' })
+    await api.deleteDatabase(row.id); await loadData(); ElMessage.success('删除成功') } catch {}
+}
+
+async function handleTestConn(row: any) {
+  const res: any = await api.testDatabaseConnection(row.id)
+  ElMessage.success(res?.connected ? '连接成功' : '连接失败')
+}
+
+async function handleQuery(row: any) {
+  const { value } = await ElMessageBox.prompt('请输入SQL查询语句', '执行查询', { inputPlaceholder: 'SELECT * FROM ...' })
+  if (!value) return
+  const res: any = await api.queryDatabase(row.id, value)
+  ElMessage.success(`查询完成，返回 ${res?.rowCount || 0} 行`)
+}
+function handleDownloadTemplate() {
+  const csv = 'id,name,type,length,comment\nid,VARCHAR(32),,主键\nname,VARCHAR(128),,名称\nstatus,VARCHAR(16),,状态\ncreatedAt,DATETIME,,创建时间\n'
+  const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=UTF-8' })
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'table_template.csv'
+  a.click(); URL.revokeObjectURL(url); ElMessage.success('模板已下载')
+}
+
+onMounted(loadData)
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
     <div class="card-panel">
       <div class="section-header">
-        <div class="section-title">数据库管理</div>
-        <el-button type="primary" @click="handleAdd">新增</el-button>
+        <div class="section-title">数据库实例管理</div>
+        <div>
+          <el-button size="small" @click="handleDownloadTemplate">下载建表模板</el-button>
+          <el-button type="primary" @click="handleAdd">新增数据库</el-button>
+        </div>
       </div>
       <div class="filter-bar">
-        <el-input v-model="searchKeyword" placeholder="搜索..." clearable style="width: 240px" @keyup.enter="handleSearch" />
-        <el-button type="primary" @click="handleSearch">搜索</el-button>
+        <el-input v-model="query.keyword" placeholder="搜索名称" clearable style="width:200px" @keyup.enter="loadData" />
+        <el-select v-model="query.dbType" placeholder="类型" clearable style="width:140px" @change="loadData">
+          <el-option label="MySQL" value="mysql" /><el-option label="PostgreSQL" value="postgresql" /><el-option label="ClickHouse" value="clickhouse" /><el-option label="SQLite" value="sqlite" />
+        </el-select>
+        <el-button type="primary" @click="loadData">查询</el-button>
       </div>
-      <el-table :data="dataList" stripe>
-          <el-table-column prop="name" label="数据库名称" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
-          <el-table-column prop="type" label="类型" width="120" show-overflow-tooltip />
-          <el-table-column prop="host" label="主机" width="150" show-overflow-tooltip />
-          <el-table-column prop="port" label="端口" width="80" show-overflow-tooltip />
-          <el-table-column prop="status" label="状态" width="100">
-            <template #default="{ row }">
-              <el-tag :type="statusColor(row.status)" size="small">{{ statusText(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="createdAt" label="创建时间" width="160" show-overflow-tooltip />
-        <el-table-column label="操作" width="150" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
-          </template>
-        </el-table-column>
+      <el-table :data="dbList" stripe>
+        <el-table-column prop="name" label="名称" show-overflow-tooltip />
+        <el-table-column prop="dbType" label="类型" width="90" />
+        <el-table-column prop="host" label="主机" width="140" />
+        <el-table-column prop="port" label="端口" width="70" />
+        <el-table-column prop="dbName" label="库名" width="120" />
+        <el-table-column prop="status" label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status==='connected'?'success':'danger'" size="small">{{ row.status }}</el-tag></template></el-table-column>
+        <el-table-column label="操作" width="180"><template #default="{ row }">
+          <el-button link type="primary" size="small" @click="handleTestConn(row)">测试</el-button>
+          <el-button link type="success" size="small" @click="handleQuery(row)">查询</el-button>
+          <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
+          <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+        </template></el-table-column>
       </el-table>
-      <div class="table-footer" v-if="total > pageSize">
-        <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :total="total"
-          :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next"
-          @current-change="handlePageChange" @size-change="handleSizeChange" />
-      </div>
+      <el-empty v-if="!dbList.length && !loading" description="暂无数据库实例" />
     </div>
-    <el-dialog v-model="showDialog" :title="dialogTitle" width="600px" :close-on-click-modal="false">
-      <el-form label-width="100px">
-            <el-form-item label="名称" required>
-              <el-input v-model="formData.name" placeholder="请输入名称" />
-            </el-form-item>
-            <el-form-item label="描述" >
-              <el-input v-model="formData.description" type="textarea" :rows="3" placeholder="请输入描述" />
-            </el-form-item>
-            <el-form-item label="类型" required>
-              <el-select v-model="formData.type" placeholder="请选择类型" style="width: 100%">
-                <el-option v-for="opt in [{label:'MySQL',value:'mysql'},{label:'PostgreSQL',value:'postgresql'},{label:'MongoDB',value:'mongodb'},{label:'Redis',value:'redis'}]" :key="opt.value" :label="opt.label" :value="opt.value" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="主机" required>
-              <el-input v-model="formData.host" placeholder="请输入主机" />
-            </el-form-item>
-            <el-form-item label="端口" required>
-              <el-input-number v-model="formData.port" :min="0" style="width: 100%" />
-            </el-form-item>
-            <el-form-item label="数据库名" required>
-              <el-input v-model="formData.database" placeholder="请输入数据库名" />
-            </el-form-item>
+
+    <el-dialog v-model="showDialog" :title="editingId?'编辑数据库':'新增数据库'" width="560px">
+      <el-form label-width="80px">
+        <el-form-item label="名称" required><el-input v-model="formData.name" /></el-form-item>
+        <el-form-item label="类型"><el-select v-model="formData.dbType" style="width:160px"><el-option label="MySQL" value="mysql" /><el-option label="PostgreSQL" value="postgresql" /><el-option label="ClickHouse" value="clickhouse" /><el-option label="SQLite" value="sqlite" /></el-select></el-form-item>
+        <el-form-item label="主机"><el-input v-model="formData.host" /></el-form-item>
+        <el-form-item label="端口"><el-input-number v-model="formData.port" /></el-form-item>
+        <el-form-item label="用户名"><el-input v-model="formData.username" /></el-form-item>
+        <el-form-item label="密码"><el-input v-model="formData.password" type="password" /></el-form-item>
+        <el-form-item label="库名"><el-input v-model="formData.dbName" /></el-form-item>
       </el-form>
-      <template #footer>
-        <el-button @click="showDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleSave">保存</el-button>
-      </template>
+      <template #footer><el-button @click="showDialog=false">取消</el-button><el-button type="primary" @click="handleSave">保存</el-button></template>
     </el-dialog>
   </div>
 </template>
+
+<style lang="scss" scoped>
+@use '@/assets/styles/variables' as *;
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; }
+.section-title { font-size: 15px; font-weight: 600; }
+</style>

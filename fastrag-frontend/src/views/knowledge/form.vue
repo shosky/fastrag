@@ -23,7 +23,11 @@ const { hasRole, getMyKBRole } = useAuth()
 // 嵌入模型选项从 API 加载
 const embeddingModelOptions = ref<{label:string;value:string}[]>([])
 // 分类选项从 API 加载
-const categoryOptions = ref<{id:string;name:string}[]>([])
+const categoryOptions = ref<{id:string;name:string;color?:string}[]>([])
+const showAddCategoryDialog = ref(false)
+const newCategoryName = ref('')
+const newCategoryColor = ref('#1890ff')
+const colorPresets = ['#1890ff', '#52c41a', '#faad14', '#f56c6c', '#722ed1', '#13c2c2', '#eb2f96', '#5cdbd3']
 
 // --------------- Types ---------------
 type ShareType = 'global' | 'department' | 'specified'
@@ -147,7 +151,7 @@ onMounted(async () => {
     const models: any[] = (modelsRes as any)?.list || modelsRes || []
     const orgList: any[] = (orgListRes as any)?.list || orgListRes || []
     const personnel: any[] = (personnelRes as any)?.list || personnelRes || []
-    categoryOptions.value = cats
+    categoryOptions.value = (Array.isArray(cats) ? cats : []).map((c: any) => ({ id: c.id || c.name, name: c.name, color: c.color }))
     embeddingModelOptions.value = models.map((m: any) => ({ label: m.name || m.code, value: m.code || m.name }))
     departments.value = orgList.map((o: any) => ({ id: o.id, name: o.name, isDefault: o.id === '1' }))
     users.value = personnel
@@ -315,6 +319,26 @@ function handleAddTag() {
 
 function handleRemoveTag(tag: string) {
   form.tags = form.tags.filter(t => t !== tag)
+}
+
+// --------------- Category helpers ---------------
+async function handleCreateCategory() {
+  if (!newCategoryName.value.trim()) return
+  try {
+    await api.createKbCategory({ name: newCategoryName.value.trim(), color: newCategoryColor.value, sort: categoryOptions.value.length })
+    // 重新加载分类列表
+    const catsRes: any = await api.getKbCategories()
+    const cats: any[] = (catsRes as any)?.list || catsRes || []
+    categoryOptions.value = cats.map((c: any) => ({ id: c.id || c.name, name: c.name, color: c.color }))
+    // 自动选中新建的分类
+    const created = categoryOptions.value.find(c => c.name === newCategoryName.value.trim())
+    if (created) form.category = created.id
+    showAddCategoryDialog.value = false
+    newCategoryName.value = ''
+    newCategoryColor.value = '#1890ff'
+  } catch (e) {
+    console.error('Failed to create category:', e)
+  }
 }
 
 // --------------- Share helpers ---------------
@@ -530,18 +554,24 @@ function goToParseStrategy() {
 
             <!-- Category -->
             <el-form-item label="分类" prop="category">
-              <el-select
-                v-model="form.category"
-                placeholder="请选择分类"
-                style="width: 100%"
-              >
-                <el-option
-                  v-for="cat in categoryOptions"
-                  :key="cat.id"
-                  :label="cat.name"
-                  :value="cat.id"
-                />
-              </el-select>
+              <div style="display:flex;gap:8px;width:100%">
+                <el-select
+                  v-model="form.category"
+                  placeholder="请选择分类"
+                  filterable
+                  style="flex:1"
+                >
+                  <el-option
+                    v-for="cat in categoryOptions"
+                    :key="cat.id"
+                    :label="cat.name"
+                    :value="cat.id"
+                  />
+                </el-select>
+                <el-button @click="showAddCategoryDialog = true">
+                  <el-icon><Plus /></el-icon>
+                </el-button>
+              </div>
             </el-form-item>
 
             <!-- Description -->
@@ -972,6 +1002,31 @@ function goToParseStrategy() {
         </div>
       </template>
     </div>
+
+    <!-- 新建分类弹窗 -->
+    <el-dialog v-model="showAddCategoryDialog" title="新建分类" width="400px" :close-on-click-modal="false">
+      <el-form label-width="80px">
+        <el-form-item label="名称" required>
+          <el-input v-model="newCategoryName" placeholder="请输入分类名称" @keyup.enter="handleCreateCategory" />
+        </el-form-item>
+        <el-form-item label="颜色">
+          <div style="display:flex;gap:8px;flex-wrap:wrap">
+            <div
+              v-for="color in colorPresets"
+              :key="color"
+              class="color-dot"
+              :class="{ 'color-dot--active': newCategoryColor === color }"
+              :style="{ background: color }"
+              @click="newCategoryColor = color"
+            />
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddCategoryDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleCreateCategory">创建</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -1290,6 +1345,24 @@ function goToParseStrategy() {
     &--locked {
       color: $text-placeholder;
     }
+  }
+}
+
+.color-dot {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  cursor: pointer;
+  border: 2px solid transparent;
+  transition: all 0.2s;
+
+  &--active {
+    border-color: $text-primary;
+    transform: scale(1.1);
+  }
+
+  &:hover {
+    transform: scale(1.1);
   }
 }
 </style>

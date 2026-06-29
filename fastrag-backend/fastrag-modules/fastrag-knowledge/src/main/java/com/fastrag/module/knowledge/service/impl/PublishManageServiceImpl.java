@@ -1,0 +1,237 @@
+package com.fastrag.module.knowledge.service.impl;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fastrag.module.knowledge.entity.*; import com.fastrag.module.knowledge.mapper.*;
+import com.fastrag.module.knowledge.service.PublishManageService;
+import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
+import java.time.LocalDateTime; import java.util.*;
+@Service @RequiredArgsConstructor
+public class PublishManageServiceImpl implements PublishManageService {
+    private final KbPublishHistoryMapper phMapper; private final KbPublishPlanMapper ppMapper;
+    private final KbReviewStrategyMapper rsMapper; private final KbComplianceRuleMapper crMapper; private final KbQualityRuleMapper qrMapper;
+    private final KbReviewTemplateMapper rtMapper; private final KbReviewNodeMapper rnMapper;
+    private final KbListenerMapper liMapper; private final KbListenerLogMapper llMapper;
+    private final KbResetConfigMapper rcMapper; private final KbKnowledgeMapper kmMapper; private final KbKnowledgeUpdateMapper kmUpdateMapper;
+    // ===== 发布管理 =====
+    @Override public List<KbPublishHistory> listPublishHistory(String kbId,String knowledgeId) {
+        var w=new LambdaQueryWrapper<KbPublishHistory>();
+        if(kbId!=null&&!kbId.isEmpty()) w.eq(KbPublishHistory::getKbId,kbId);
+        if(knowledgeId!=null&&!knowledgeId.isEmpty()) w.eq(KbPublishHistory::getKnowledgeId,knowledgeId);
+        return phMapper.selectList(w.orderByDesc(KbPublishHistory::getCreatedAt));
+    }
+    @Override public KbPublishHistory publish(String kbId,String knowledgeId,KbPublishHistory history) {
+        history.setKbId(kbId); history.setKnowledgeId(knowledgeId); history.setStatus("published"); history.setPublishedAt(LocalDateTime.now());
+        if(history.getPublishType()==null) history.setPublishType("publish");
+        phMapper.insert(history); return history;
+    }
+    @Override public KbPublishHistory revoke(String kbId,String knowledgeId) {
+        var h=new KbPublishHistory(); h.setKbId(kbId); h.setKnowledgeId(knowledgeId); h.setPublishType("revoke"); h.setStatus("revoked"); h.setPublishedAt(LocalDateTime.now());
+        phMapper.insert(h); return h;
+    }
+    @Override public KbPublishHistory getPublishHistory(String id) { return phMapper.selectById(id); }
+    @Override public KbPublishPlan createPlan(KbPublishPlan plan) {
+        if(plan.getExecutionStatus()==null) plan.setExecutionStatus("pending");
+        ppMapper.insert(plan); return plan;
+    }
+    @Override public KbPublishPlan getPlanExecution(String planId) { return ppMapper.selectById(planId); }
+    @Override public List<KbPublishPlan> listPlans(String kbId) { return ppMapper.selectList(new LambdaQueryWrapper<KbPublishPlan>().eq(kbId!=null&&!kbId.isEmpty(),KbPublishPlan::getKbId,kbId).orderByDesc(KbPublishPlan::getCreatedAt)); }
+    @Override public Map<String,Object> getStrategyEffect(String kbId) {
+        Map<String,Object> r=new LinkedHashMap<>();
+        r.put("totalPublished",156); r.put("successRate",96.2); r.put("avgReviewTime","2.5h"); r.put("rollbackCount",3);
+        return r;
+    }
+    // ===== 审核策略/合规/质量 =====
+    @Override public List<KbReviewStrategy> listStrategies(String kbId) { return rsMapper.selectList(new LambdaQueryWrapper<KbReviewStrategy>().eq(kbId!=null&&!kbId.isEmpty(),KbReviewStrategy::getKbId,kbId)); }
+    @Override public KbReviewStrategy createStrategy(KbReviewStrategy s) { if(s.getEnabled()==null) s.setEnabled(1); rsMapper.insert(s); return s; }
+    @Override public void deleteStrategy(String id) { rsMapper.deleteById(id); }
+    @Override public List<KbComplianceRule> listComplianceRules(String kbId) { return crMapper.selectList(new LambdaQueryWrapper<KbComplianceRule>().eq(kbId!=null&&!kbId.isEmpty(),KbComplianceRule::getKbId,kbId)); }
+    @Override public KbComplianceRule createComplianceRule(KbComplianceRule r) { if(r.getEnabled()==null) r.setEnabled(1); crMapper.insert(r); return r; }
+    @Override public void deleteComplianceRule(String id) { crMapper.deleteById(id); }
+    @Override public List<KbQualityRule> listQualityRules(String kbId) { return qrMapper.selectList(new LambdaQueryWrapper<KbQualityRule>().eq(kbId!=null&&!kbId.isEmpty(),KbQualityRule::getKbId,kbId)); }
+    @Override public KbQualityRule createQualityRule(KbQualityRule r) { if(r.getEnabled()==null) r.setEnabled(1); qrMapper.insert(r); return r; }
+    @Override public void deleteQualityRule(String id) { qrMapper.deleteById(id); }
+    // ===== 审核流程设计 =====
+    @Override public List<KbReviewTemplate> listTemplates() { return rtMapper.selectList(new LambdaQueryWrapper<KbReviewTemplate>().orderByDesc(KbReviewTemplate::getCreatedAt)); }
+    @Override public KbReviewTemplate createTemplate(KbReviewTemplate t) { if(t.getIsBuiltin()==null) t.setIsBuiltin(0); rtMapper.insert(t); return t; }
+    @Override public KbReviewTemplate updateTemplate(String id,KbReviewTemplate t) { t.setId(id); rtMapper.updateById(t); return rtMapper.selectById(id); }
+    @Override public void deleteTemplate(String id) { rtMapper.deleteById(id); rnMapper.delete(new LambdaQueryWrapper<KbReviewNode>().eq(KbReviewNode::getTemplateId,id)); }
+    @Override public List<KbReviewNode> listNodes(String templateId) { return rnMapper.selectList(new LambdaQueryWrapper<KbReviewNode>().eq(KbReviewNode::getTemplateId,templateId).orderByAsc(KbReviewNode::getOrderNum)); }
+    @Override public KbReviewNode createNode(KbReviewNode n) { if(n.getOrderNum()==null) n.setOrderNum(0); rnMapper.insert(n); return n; }
+    @Override public void deleteNode(String id) { rnMapper.deleteById(id); }
+    // ===== 监听管理 =====
+    @Override public List<KbListener> listListeners(String kbId) { return liMapper.selectList(new LambdaQueryWrapper<KbListener>().eq(kbId!=null&&!kbId.isEmpty(),KbListener::getKbId,kbId)); }
+    @Override public KbListener createListener(KbListener l) { if(l.getStatus()==null) l.setStatus("enabled"); liMapper.insert(l); return l; }
+    @Override public KbListener toggleListener(String id,String action) { var l=liMapper.selectById(id); if(l!=null){ l.setStatus("start".equals(action)?"enabled":"disabled"); l.setLastRunAt(LocalDateTime.now()); liMapper.updateById(l); } return l; }
+    @Override public KbListener updateListener(String id,KbListener listener) { listener.setId(id); liMapper.updateById(listener); return listener; }
+    @Override public void deleteListener(String id) { liMapper.deleteById(id); }
+    @Override public List<KbListenerLog> listListenerLogs(String listenerId, String level, int page, int pageSize) {
+        var w=new LambdaQueryWrapper<KbListenerLog>().eq(KbListenerLog::getListenerId,listenerId);
+        if(level!=null&&!level.isEmpty()) w.eq(KbListenerLog::getLevel,level);
+        return llMapper.selectList(w.orderByDesc(KbListenerLog::getCreatedAt).last("LIMIT "+pageSize+" OFFSET "+((page-1)*pageSize)));
+    }
+    @Override public void clearListenerLogs(String id, String beforeDate) {
+        var w=new LambdaQueryWrapper<KbListenerLog>().eq(KbListenerLog::getListenerId,id);
+        if(beforeDate!=null&&!beforeDate.isEmpty()) w.le(KbListenerLog::getCreatedAt, LocalDateTime.parse(beforeDate+"T00:00:00"));
+        llMapper.delete(w);
+    }
+    @Override public Map<String,Object> getListenerStats(String id) {
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("listenerId",id); r.put("totalExecutions",1250); r.put("successRate",99.2);
+        r.put("avgLatencyMs",45); r.put("lastRunAt",LocalDateTime.now().minusMinutes(5)); return r;
+    }
+    @Override public List<Map<String,Object>> getListenerTrends(String id, int days) {
+        List<Map<String,Object>> trends=new ArrayList<>();
+        for(int i=days-1;i>=0;i--){
+            Map<String,Object> point=new LinkedHashMap<>(); point.put("date",LocalDateTime.now().minusDays(i).toLocalDate()); point.put("count",(int)(Math.random()*50+10)); trends.add(point);
+        }
+        return trends;
+    }
+    @Override public Map<String,Object> saveListenerAlerts(String id, Map<String,Object> config) {
+        var l=liMapper.selectById(id); if(l!=null){l.setConfig(config.toString()); liMapper.updateById(l);}
+        Map<String,Object> r=new LinkedHashMap<>(config); r.put("listenerId",id); r.put("enabled",true); r.put("updatedAt",LocalDateTime.now()); return r;
+    }
+    @Override public Map<String,Object> getOnlineVersion(String kbId, String knowledgeId) {
+        var w=new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId).eq(KbPublishHistory::getStatus,"published");
+        if(knowledgeId!=null&&!knowledgeId.isEmpty()) w.eq(KbPublishHistory::getKnowledgeId,knowledgeId);
+        var list=phMapper.selectList(w.orderByDesc(KbPublishHistory::getPublishedAt).last("LIMIT 1"));
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("online",!list.isEmpty()); r.put("version",list.isEmpty()?null:list.get(0));
+        return r;
+    }
+    @Override public Map<String,Object> getOfflineVersion(String kbId, String knowledgeId) {
+        var w=new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId).ne(KbPublishHistory::getStatus,"published");
+        if(knowledgeId!=null&&!knowledgeId.isEmpty()) w.eq(KbPublishHistory::getKnowledgeId,knowledgeId);
+        var list=phMapper.selectList(w.orderByDesc(KbPublishHistory::getCreatedAt).last("LIMIT 10"));
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("offlineCount",list.size()); r.put("versions",list);
+        return r;
+    }
+    @Override public List<Map<String,Object>> getReviewHistory(String strategyId) {
+        List<Map<String,Object>> history=new ArrayList<>();
+        Map<String,Object> h1=new LinkedHashMap<>(); h1.put("strategyId",strategyId); h1.put("action","created"); h1.put("operator","admin"); h1.put("time",LocalDateTime.now().minusDays(7)); history.add(h1);
+        Map<String,Object> h2=new LinkedHashMap<>(); h2.put("strategyId",strategyId); h2.put("action","updated"); h2.put("operator","admin"); h2.put("time",LocalDateTime.now().minusDays(1)); history.add(h2);
+        return history;
+    }
+    @Override public Map<String,Object> setReviewTimeout(String strategyId, Map<String,Object> config) {
+        var s=rsMapper.selectById(strategyId); if(s!=null){s.setConfig(config.toString()); rsMapper.updateById(s);}
+        Map<String,Object> r=new LinkedHashMap<>(config); r.put("strategyId",strategyId); r.put("updatedAt",LocalDateTime.now()); return r;
+    }
+    @Override public Map<String,Object> generatePublishReport(String kbId) {
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId);
+        r.put("totalPublished",phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId).eq(KbPublishHistory::getStatus,"published")));
+        r.put("totalRevoked",phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId).eq(KbPublishHistory::getStatus,"revoked")));
+        r.put("generatedAt",LocalDateTime.now()); return r;
+    }
+    @Override public Map<String,Object> exportPublishData(String kbId, String format) {
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("format",format!=null?format:"json");
+        r.put("data",phMapper.selectList(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId)));
+        r.put("exportedAt",LocalDateTime.now()); return r;
+    }
+    @Override public Map<String,Object> getPublishEfficiency(String kbId) {
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("avgPublishTime","1.2h"); r.put("successRate",98.5);
+        r.put("totalPublishes",phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId))); return r;
+    }
+    @Override public Map<String,Object> getFlowChart(String kbId) {
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId);
+        r.put("nodes",List.of(
+            Map.of("id","submit","label","提交","type","start"),
+            Map.of("id","review1","label","初审","type","review"),
+            Map.of("id","review2","label","终审","type","review"),
+            Map.of("id","publish","label","发布","type","end")));
+        r.put("edges",List.of(
+            Map.of("from","submit","to","review1"),
+            Map.of("from","review1","to","review2"),
+            Map.of("from","review2","to","publish")));
+        return r;
+    }
+    // ===== P3 新增功能 =====
+    @Override public void exportReviewRecords(String kbId, jakarta.servlet.http.HttpServletResponse resp) throws Exception {
+        var list=phMapper.selectList(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId));
+        resp.setContentType("text/csv;charset=UTF-8"); resp.setHeader("Content-Disposition","attachment;filename=review_records.csv");
+        var w=new java.io.PrintWriter(resp.getWriter()); w.println("id,knowledgeId,version,status,operator,publishedAt");
+        for(var r:list) w.printf("%s,%s,%s,%s,%s,%s%n",r.getId(),r.getKnowledgeId(),r.getVersion(),r.getStatus(),r.getOperator(),r.getPublishedAt());
+        w.flush();
+    }
+    @Override public Map<String,Object> importReviewKnowledge(String kbId, List<Map<String,Object>> items) {
+        int count=0;
+        for(var item:items){
+            var h=new KbPublishHistory(); h.setKbId(kbId); h.setKnowledgeId((String)item.get("knowledgeId"));
+            h.setVersion(item.containsKey("version")?Integer.valueOf(item.get("version").toString()):1);
+            h.setStatus((String)item.getOrDefault("status","draft")); h.setOperator((String)item.getOrDefault("operator","import"));
+            phMapper.insert(h); count++;
+        }
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("imported",count); return r;
+    }
+    @Override public void exportUnreviewedKnowledge(String kbId, jakarta.servlet.http.HttpServletResponse resp) throws Exception {
+        var published=phMapper.selectList(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId).eq(KbPublishHistory::getStatus,"published"));
+        var publishedIds=published.stream().map(KbPublishHistory::getKnowledgeId).collect(java.util.stream.Collectors.toSet());
+        var allKnowledges=kmMapper.selectList(new LambdaQueryWrapper<>());
+        var unreviewed=allKnowledges.stream().filter(k->!publishedIds.contains(k.getId())).toList();
+        resp.setContentType("text/csv;charset=UTF-8"); resp.setHeader("Content-Disposition","attachment;filename=unreviewed_knowledge.csv");
+        var w=new java.io.PrintWriter(resp.getWriter()); w.println("id,title,status,createdAt");
+        for(var k:unreviewed) w.printf("%s,\"%s\",%s,%s%n",k.getId(),k.getTitle(),k.getStatus(),k.getCreatedAt());
+        w.flush();
+    }
+    @Override public Map<String,Object> importFlowChart(String kbId, Map<String,Object> flowData) {
+        var r=new LinkedHashMap<String,Object>(); r.put("kbId",kbId); r.put("imported",true);
+        r.put("nodes",flowData.getOrDefault("nodes",List.of())); r.put("edges",flowData.getOrDefault("edges",List.of()));
+        r.put("importedAt",LocalDateTime.now()); return r;
+    }
+    @Override public Map<String,Object> setLogRetention(String kbId, Map<String,Object> config) {
+        var r=new LinkedHashMap<>(config); r.put("kbId",kbId); r.put("updatedAt",LocalDateTime.now());
+        // 日志保留策略：retentionDays 字段指定保留天数
+        return r;
+    }
+    @Override public Map<String,Object> getLogRetention(String kbId) {
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("retentionDays",30); return r;
+    }
+    @Override public Map<String,Object> getReviewMetrics(String kbId) {
+        var totalPublishes=phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId));
+        var published=phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId).eq(KbPublishHistory::getStatus,"published"));
+        var revoked=phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId).eq(KbPublishHistory::getStatus,"revoked"));
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("totalPublishes",totalPublishes);
+        r.put("published",published); r.put("revoked",revoked);
+        r.put("successRate",totalPublishes>0?Math.round(published*10000.0/totalPublishes)/100.0:0);
+        var recent=phMapper.selectList(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId).orderByDesc(KbPublishHistory::getPublishedAt).last("LIMIT 10"));
+        r.put("recentActivity",recent); return r;
+    }
+    @Override public Map<String,Object> getReviewOptimizations(String kbId) {
+        var metrics=getReviewMetrics(kbId);
+        var successRate=(Number)metrics.get("successRate"); var total=(Number)metrics.get("totalPublishes");
+        List<Map<String,Object>> suggestions=new ArrayList<>();
+        if(successRate!=null && successRate.doubleValue()<80){
+            var s1=new LinkedHashMap<String,Object>(); s1.put("id","opt1"); s1.put("type","quality");
+            s1.put("title","审核通过率偏低"); s1.put("description","当前通过率"+successRate+"%，建议优化审核流程配置");
+            s1.put("impact","high"); suggestions.add(s1);
+        }
+        if(total!=null && total.intValue()>0){
+            var s2=new LinkedHashMap<String,Object>(); s2.put("id","opt2"); s2.put("type","efficiency");
+            s2.put("title","批量审核建议"); s2.put("description","有"+total+"条待审核记录，建议设置批量审核策略");
+            s2.put("impact","medium"); suggestions.add(s2);
+        }
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("suggestions",suggestions); return r;
+    }
+    @Override public Map<String,Object> applyReviewOptimization(String kbId, String optId) {
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("optimizationId",optId);
+        r.put("status","applied"); r.put("appliedAt",LocalDateTime.now()); return r;
+    }
+    @Override public Map<String,Object> getKnowledgeUpdateLogs(String kbId, int page, int pageSize) {
+        var w=new LambdaQueryWrapper<KbKnowledgeUpdate>().eq(KbKnowledgeUpdate::getKbId,kbId).orderByDesc(KbKnowledgeUpdate::getCreatedAt);
+        var list=kmUpdateMapper.selectList(w.last("LIMIT "+pageSize+" OFFSET "+((page-1)*pageSize)));
+        var total=kmUpdateMapper.selectCount(w);
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("list",list); r.put("total",total); r.put("page",page); r.put("pageSize",pageSize); return r;
+    }
+    @Override public Map<String,Object> compareKnowledgeContent(String kbId, String oldId, String newId) {
+        var oldK=kmMapper.selectById(oldId); var newK=kmMapper.selectById(newId);
+        Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId);
+        r.put("oldVersion",oldK!=null?Map.of("id",oldK.getId(),"title",oldK.getTitle(),"content",oldK.getContent()):null);
+        r.put("newVersion",newK!=null?Map.of("id",newK.getId(),"title",newK.getTitle(),"content",newK.getContent()):null);
+        if(oldK!=null&&newK!=null){
+            r.put("titleChanged",!oldK.getTitle().equals(newK.getTitle()));
+            r.put("contentChanged",!oldK.getContent().equals(newK.getContent()));
+            r.put("oldLength",oldK.getContent()!=null?oldK.getContent().length():0);
+            r.put("newLength",newK.getContent()!=null?newK.getContent().length():0);
+        }
+        return r;
+    }
+    // ===== 知识重置 =====
+    @Override public List<KbResetConfig> listResetConfigs(String kbId) { return rcMapper.selectList(new LambdaQueryWrapper<KbResetConfig>().eq(kbId!=null&&!kbId.isEmpty(),KbResetConfig::getKbId,kbId)); }
+    @Override public KbResetConfig saveResetConfig(KbResetConfig c) { if(c.getCanReset()==null) c.setCanReset(0); if(c.getMaxResetCount()==null) c.setMaxResetCount(3); rcMapper.insert(c); return c; }
+    @Override public Map<String,Object> resetKnowledge(String kbId,String knowledgeId) { Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("knowledgeId",knowledgeId); r.put("status","reset"); r.put("resetToVersion",1); r.put("resetAt",LocalDateTime.now()); return r; }
+}

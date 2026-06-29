@@ -36,12 +36,12 @@ public class KbServiceImpl implements KbService {
         mapper.updateById(e); return toDto(e);
     }
     @Override public void delete(String id) { mapper.deleteById(id); }
-    @Override public List<Map<String,Object>> getCategories() {
-        var all=mapper.selectList(null);
-        var grouped=all.stream().filter(e->StrUtil.isNotBlank(e.getCategory())).collect(Collectors.groupingBy(KnowledgeBase::getCategory,Collectors.counting()));
-        var result=new ArrayList<Map<String,Object>>();
-        grouped.forEach((k,v)->{ var m=new HashMap<String,Object>(); m.put("name",k); m.put("count",v); result.add(m); });
-        return result;
-    }
+	    @Override public List<Map<String,Object>> getCategories() {
+	        var all=mapper.selectList(null);
+	        var grouped=all.stream().filter(e->StrUtil.isNotBlank(e.getCategory())).collect(Collectors.groupingBy(KnowledgeBase::getCategory,Collectors.counting()));
+	        var result=new ArrayList<Map<String,Object>>();
+	        grouped.forEach((k,v)->{ var m=new HashMap<String,Object>(); m.put("id",k); m.put("name",k); m.put("count",v); result.add(m); });
+	        return result;
+	    }
     private KbDto toDto(KnowledgeBase e) { var d=new KbDto(); d.setId(e.getId()); d.setName(e.getName()); d.setDescription(e.getDescription()); d.setCategory(e.getCategory()); d.setTags(StrUtil.isNotBlank(e.getTags())?JSONUtil.toList(e.getTags(),String.class):null); d.setEmbeddingModel(e.getEmbeddingModel()); d.setDimension(e.getDimension()); d.setCreator(e.getCreator()); d.setCreatedAt(e.getCreatedAt()); d.setUsedSize(e.getUsedSize()); d.setTotalSize(e.getTotalSize()); d.setType(e.getType()); return d; }
 }

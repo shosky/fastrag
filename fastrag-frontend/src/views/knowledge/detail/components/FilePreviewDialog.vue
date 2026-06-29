@@ -1,10 +1,15 @@
 <script setup lang="ts">
 import type { KnowledgeFile } from '@/types/knowledge'
 import DocumentPreviewPanel from './DocumentPreviewPanel.vue'
+import mammoth from 'mammoth'
+import * as XLSX from 'xlsx'
+import { init as initPptx } from 'pptx-preview'
+import { storage } from '@/utils/storage'
 
 const props = defineProps<{
   visible: boolean
   file: KnowledgeFile | null
+  kbId?: string
 }>()
 
 const emit = defineEmits<{
@@ -70,12 +75,7 @@ const previewType = computed<PreviewType>(() => {
   return EXTENSION_TO_PREVIEW[ext] ?? 'unknown'
 })
 
-// ---------- Office 预览：本地 fallback（不再依赖微软在线服务） ----------
-// 企业内网 RAG 文件多在鉴权后，view.officeapps.live.com 无法访问且涉及隐私，
-// 改为提示下载查看。
-
-// ---------- Document preview panel（仅文本走 DocumentPreviewPanel；
-// Office 因无在线预览服务，单独走 fallback） ----------
+// ---------- Document preview panel：仅文本文件（.md / .txt）走 DocumentPreviewPanel ----------
 const showDocumentPreview = computed(() => {
   return previewType.value === 'text'
 })
@@ -91,6 +91,109 @@ function openInNewTab() {
   if (props.file?.url) {
     window.open(props.file.url, '_blank')
   }
+}
+
+// ---------- Blob URL for authenticated media (PDF/image/audio/video) ----------
+// 浏览器原生 <iframe>/<video>/<audio>/<el-image> 无法携带 Authorization header，
+// 因此先通过 fetch 带 token 获取二进制数据，再用 URL.createObjectURL 生成 blob URL 作为 src。
+
+const objectUrl = ref('')
+const objectUrlError = ref(false)
+
+async function loadObjectUrl() {
+  if (!props.file?.url) return
+  // Revoke previous URL
+  if (objectUrl.value) {
+    URL.revokeObjectURL(objectUrl.value)
+    objectUrl.value = ''
+  }
+  objectUrlError.value = false
+
+  try {
+    const token = storage.get('token')
+    const response = await fetch(props.file.url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) {
+      // 如果带 token 失败，尝试不带 token（部分场景可匿名访问）
+      const retry = await fetch(props.file.url)
+      if (!retry.ok) {
+        objectUrlError.value = true
+        return
+      }
+      const blob = await retry.blob()
+      objectUrl.value = URL.createObjectURL(blob)
+      return
+    }
+    const blob = await response.blob()
+    objectUrl.value = URL.createObjectURL(blob)
+  } catch {
+    objectUrlError.value = true
+  }
+}
+
+// ---------- Office preview state ----------
+
+const officeHtml = ref('')
+const officeLoading = ref(false)
+const officeError = ref('')
+const officePptxRef = ref<HTMLDivElement | null>(null)
+let pptxPreviewer: any = null
+
+const isPptx = computed(() => {
+  if (!props.file) return false
+  const ext = '.' + props.file.name.split('.').pop()?.toLowerCase()
+  return ext === '.pptx' || ext === '.ppt'
+})
+
+async function loadOfficeContent() {
+  if (!props.file?.url) return
+  officeHtml.value = ''
+  officeError.value = ''
+  officeLoading.value = true
+
+  try {
+    const token = storage.get('token')
+    const response = await fetch(props.file.url, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!response.ok) {
+      officeError.value = `文件加载失败（HTTP ${response.status}）`
+      officeLoading.value = false
+      return
+    }
+    const arrayBuffer = await response.arrayBuffer()
+
+    const ext = '.' + props.file.name.split('.').pop()?.toLowerCase()
+
+    if (ext === '.docx' || ext === '.doc') {
+      const result = await mammoth.convertToHtml({ arrayBuffer })
+      officeHtml.value = result.value
+    } else if (ext === '.xlsx' || ext === '.xls') {
+      const workbook = XLSX.read(arrayBuffer, { type: 'array' })
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]]
+      officeHtml.value = XLSX.utils.sheet_to_html(worksheet)
+    } else if (ext === '.pptx' || ext === '.ppt') {
+      // 关闭 loading 状态，让模板渲染出 pptx 容器 div
+      officeLoading.value = false
+      await nextTick()
+      if (officePptxRef.value) {
+        if (!pptxPreviewer) {
+          pptxPreviewer = initPptx(officePptxRef.value, {
+            width: 960,
+            height: 540,
+          })
+        }
+        pptxPreviewer.preview(arrayBuffer)
+      } else {
+        officeError.value = 'PPTX 预览容器未就绪'
+      }
+      return // pptx 已设置 officeLoading = false
+    }
+  } catch (e: any) {
+    officeError.value = e.message || 'Office 文件预览加载失败'
+  }
+  officeLoading.value = false
 }
 
 function handleClose() {
@@ -109,7 +212,7 @@ async function loadTextContent() {
   textError.value = ''
   try {
     // 带 Authorization header + 检查状态码
-    const token = localStorage.getItem('ais_token')
+    const token = storage.get('token')
     const response = await fetch(props.file.url, {
       headers: token ? { Authorization: `Bearer ${token}` } : {},
     })
@@ -131,12 +234,19 @@ async function loadTextContent() {
   }
 }
 
-// Load text content when file changes and type is text
+// Load content when file changes and dialog is visible
 watch(
-  () => [props.file, previewType.value],
+  () => [props.file, previewType.value, props.visible],
   () => {
-    if (props.visible && previewType.value === 'text' && props.file) {
-      loadTextContent()
+    if (props.visible && props.file) {
+      const type = previewType.value
+      if (type === 'text') {
+        loadTextContent()
+      } else if (type === 'office') {
+        loadOfficeContent()
+      } else if (type === 'pdf' || type === 'image' || type === 'audio' || type === 'video') {
+        loadObjectUrl()
+      }
     }
   },
   { immediate: true },
@@ -148,6 +258,14 @@ watch(
   (val) => {
     if (!val) {
       textContent.value = ''
+      officeHtml.value = ''
+      officeError.value = ''
+      officeLoading.value = false
+      pptxPreviewer = null
+      if (objectUrl.value) {
+        URL.revokeObjectURL(objectUrl.value)
+        objectUrl.value = ''
+      }
     }
   },
 )
@@ -163,25 +281,51 @@ watch(
     class="file-preview-dialog"
   >
     <div v-if="file" class="file-preview-dialog__content">
-      <!-- Document preview panel for text and office files -->
+      <!-- Document preview panel for text files (.md, .txt) -->
       <DocumentPreviewPanel
         v-if="showDocumentPreview"
         :file="file"
+        :kb-id="kbId"
         @download="handleDownload"
         @close="handleClose"
       />
 
+      <!-- Office document preview (docx/xlsx/pptx via client-side libraries) -->
+      <div v-else-if="previewType === 'office'" class="file-preview-dialog__office-wrapper">
+        <div v-if="officeLoading" class="file-preview-dialog__office-loading">
+          <el-empty description="正在加载 Office 文档…" :image-size="80" />
+        </div>
+        <div v-else-if="officeError" class="file-preview-dialog__office-error">
+          <el-empty :description="officeError" :image-size="80" />
+          <div class="file-preview-dialog__office-actions">
+            <el-button type="primary" @click="handleDownload">下载文件</el-button>
+          </div>
+        </div>
+        <!-- PPTX slides rendered by pptx-preview -->
+        <div v-else-if="isPptx" ref="officePptxRef" class="file-preview-dialog__office-pptx" />
+        <!-- DOCX / XLSX rendered HTML -->
+        <div v-else-if="officeHtml" class="file-preview-dialog__office-html" v-html="officeHtml" />
+        <!-- Fallback -->
+        <div v-else class="file-preview-dialog__office-error">
+          <el-empty description="Office 文件预览加载失败" :image-size="80" />
+          <div class="file-preview-dialog__office-actions">
+            <el-button type="primary" @click="handleDownload">下载文件</el-button>
+          </div>
+        </div>
+      </div>
+
       <!-- PDF preview: iframe embed + 新窗口/下载 fallback -->
       <div v-else-if="previewType === 'pdf'" class="file-preview-dialog__pdf-wrapper">
         <iframe
-          v-if="file.url"
-          :src="file.url"
+          v-if="objectUrl"
+          :src="objectUrl"
           class="file-preview-dialog__iframe"
           frameborder="0"
         />
-        <!-- PDF 无 url 或内嵌失败时的 fallback -->
+        <!-- PDF 加载失败时的 fallback -->
         <div v-else class="file-preview-dialog__pdf-fallback">
-          <el-empty description="PDF 预览不可用（文件未就绪）" :image-size="120" />
+          <el-empty v-if="objectUrlError" description="PDF 预览加载失败" :image-size="120" />
+          <el-empty v-else description="正在加载 PDF…" :image-size="120" />
           <div class="file-preview-dialog__pdf-actions">
             <el-button v-if="file.url" @click="openInNewTab">在新窗口打开</el-button>
             <el-button type="primary" @click="handleDownload">下载文件</el-button>
@@ -195,7 +339,7 @@ watch(
         class="file-preview-dialog__image-wrapper"
       >
         <el-image
-          :src="file.url"
+          :src="objectUrl || file.url"
           :alt="file.name"
           fit="contain"
           class="file-preview-dialog__image"
@@ -208,28 +352,22 @@ watch(
         </el-image>
       </div>
 
-      <!-- Audio preview: AudioPlayer (lazy-loaded, available after Task 6) -->
+      <!-- Audio preview -->
       <div v-else-if="previewType === 'audio'" class="file-preview-dialog__media-wrapper">
         <AudioPlayer
-          v-if="file.url"
-          :src="file.url"
+          v-if="objectUrl || file.url"
+          :src="objectUrl || file.url"
           :title="file.name"
         />
       </div>
 
-      <!-- Video preview: VideoPlayer (lazy-loaded, available after Task 7) -->
+      <!-- Video preview -->
       <div v-else-if="previewType === 'video'" class="file-preview-dialog__media-wrapper">
         <VideoPlayer
-          v-if="file.url"
-          :src="file.url"
+          v-if="objectUrl || file.url"
+          :src="objectUrl || file.url"
           :title="file.name"
         />
-      </div>
-
-      <!-- Office 文档：本地 fallback（不依赖微软在线服务） -->
-      <div v-else-if="previewType === 'office'" class="file-preview-dialog__fallback">
-        <el-empty description="Office 文档暂不支持在线预览，请下载后查看" :image-size="120" />
-        <el-button type="primary" @click="handleDownload">下载文件</el-button>
       </div>
 
       <!-- Fallback: download link for unknown types -->
@@ -330,6 +468,76 @@ export default {
     justify-content: center;
     height: 200px;
     color: $text-secondary;
+  }
+
+  &__office-wrapper {
+    display: flex;
+    flex-direction: column;
+    width: 100%;
+    min-height: 400px;
+  }
+
+  &__office-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: $spacing-xxl;
+    min-height: 400px;
+  }
+
+  &__office-error {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: $spacing-lg;
+    padding: $spacing-xxl;
+    min-height: 400px;
+  }
+
+  &__office-actions {
+    display: flex;
+    gap: $spacing-base;
+  }
+
+  &__office-pptx {
+    width: 100%;
+    min-height: 400px;
+    overflow: auto;
+  }
+
+  &__office-html {
+    padding: $spacing-base;
+    min-height: 400px;
+    overflow: auto;
+
+    // DOCX mammoth 渲染样式
+    :deep(img) {
+      max-width: 100%;
+      height: auto;
+    }
+
+    :deep(table) {
+      border-collapse: collapse;
+      width: 100%;
+    }
+
+    :deep(td),
+    :deep(th) {
+      border: 1px solid $border-lighter;
+      padding: 6px 10px;
+      vertical-align: top;
+    }
+
+    :deep(th) {
+      background: $bg-page;
+      font-weight: 600;
+    }
+
+    // XLSX SheetJS 渲染表格
+    :deep(.xls-sheet) {
+      overflow: auto;
+    }
   }
 
   &__text-wrapper {

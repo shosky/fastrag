@@ -104,9 +104,33 @@ async function handleDelete(model: ModelRecord) {
 }
 
 async function handleToggleStatus(model: ModelRecord) {
-  await api.updateModel(model.id, { status: model.status === 'online' ? 'offline' : 'online' })
+  await api.toggleModel(model.id)
   await loadModels()
   ElMessage.success(model.status === 'online' ? '已下架' : '已上架')
+}
+
+// 批量导入模型
+const showImportDialog = ref(false)
+const importText = ref('')
+
+function openImport() {
+  importText.value = ''
+  showImportDialog.value = true
+}
+
+async function handleImport() {
+  let models: any[] = []
+  try {
+    models = JSON.parse(importText.value)
+    if (!Array.isArray(models)) throw new Error()
+  } catch {
+    ElMessage.warning('请输入有效的JSON数组')
+    return
+  }
+  await api.importModels(models)
+  showImportDialog.value = false
+  await loadModels()
+  ElMessage.success(`成功导入 ${models.length} 个模型`)
 }
 
 async function handleSave() {
@@ -145,9 +169,13 @@ async function handleSave() {
   <div class="page-container">
     <div class="section-header">
       <h3>模型管理</h3>
-      <el-button type="primary" @click="handleAdd">
-        <el-icon><Plus /></el-icon>新增模型
-      </el-button>
+      <div>
+        <el-button @click="openImport">导入模型</el-button>
+        <el-button @click="api.exportModels(); ElMessage.success('已导出')">导出模型</el-button>
+        <el-button type="primary" @click="handleAdd">
+          <el-icon><Plus /></el-icon>新增模型
+        </el-button>
+      </div>
     </div>
 
     <div v-if="activeTab === 'list'" class="model-grid">
@@ -192,6 +220,10 @@ async function handleSave() {
       <el-tabs>
         <!-- 训练记录 -->
         <el-tab-pane label="训练记录">
+          <div class="section-header">
+            <div class="section-title">训练记录</div>
+            <el-button size="small" type="primary" @click="api.trainModel(selectedModelId); ElMessage.success('训练任务已提交')">开始训练</el-button>
+          </div>
           <el-table :data="trainingRecords" stripe size="small">
             <el-table-column prop="status" label="状态" width="80" align="center">
               <template #default="{ row }">
@@ -216,6 +248,10 @@ async function handleSave() {
 
         <!-- 测试报告 -->
         <el-tab-pane label="测试报告">
+          <div class="section-header">
+            <div class="section-title">测试报告</div>
+            <el-button size="small" type="primary" @click="api.testModel(selectedModelId); ElMessage.success('测试任务已提交')">开始测试</el-button>
+          </div>
           <el-table :data="testReports" stripe size="small">
             <el-table-column prop="testSet" label="测试集" min-width="150" />
             <el-table-column label="准确率" width="80" align="right">
@@ -294,6 +330,19 @@ async function handleSave() {
       <template #footer>
         <el-button @click="showDialog = false">取消</el-button>
         <el-button type="primary" @click="handleSave">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showImportDialog" title="批量导入模型" width="600px">
+      <el-form label-width="100px">
+        <el-form-item label="模型JSON">
+          <el-input v-model="importText" type="textarea" :rows="10" placeholder='[{"name":"GLM-4","code":"glm-4","purpose":"LLM","brand":"智谱","apiUrl":"https://open.bigmodel.cn/api/paas/v4"}]' />
+        </el-form-item>
+        <p style="font-size:12px;color:#909399;">请输入JSON数组格式，每个对象包含 name/code/purpose/brand/apiUrl/apiKeyRef/status 字段</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="showImportDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleImport">导入</el-button>
       </template>
     </el-dialog>
   </div>

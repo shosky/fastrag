@@ -110,19 +110,29 @@ function handlePreview(file: KnowledgeFile) {
   previewVisible.value = true
 }
 
-function handleDownload(file: KnowledgeFile) {
-  // 真实下载：mock 场景生成一个文本 blob（含文件元信息）供下载
-  const content = `[演示下载] 文件：${file.name}\n类型：${file.category}\n大小：${file.size} bytes\n解析策略：${file.parseStrategyName || '默认'}\n切片数：${file.chunkCount || 0}\n\n（真实环境应从 ${file.url || '文件存储'} 拉取原始文件）`
-  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = file.name + '.txt'
-  document.body.appendChild(a)
-  a.click()
-  document.body.removeChild(a)
-  URL.revokeObjectURL(url)
-  ElMessage.success(`开始下载: ${file.name}`)
+async function handleDownload(file: KnowledgeFile) {
+  try {
+    const response = await api.downloadFile(kbId, file.id)
+    const blob = new Blob([response])
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    // 优先使用 Content-Disposition 中的文件名，否则回退到 file.name
+    const disposition = (response as any)?.headers?.['content-disposition']
+    let fileName = file.name
+    if (disposition) {
+      const match = disposition.match(/filename\*?=(?:UTF-8'')?([^;\s]+)/i)
+      if (match) fileName = decodeURIComponent(match[1])
+    }
+    a.download = fileName
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success(`开始下载: ${file.name}`)
+  } catch {
+    ElMessage.error(`下载失败: ${file.name}`)
+  }
 }
 
 async function handleDelete(file: KnowledgeFile) {
@@ -167,6 +177,36 @@ async function handleBulkDelete() {
 function handleBulkMove() {
   if (selectedFiles.value.length === 0) return
   bulkMoveTargetVisible.value = true
+}
+
+async function handleBulkExport() {
+  if (selectedFiles.value.length === 0) return
+  try {
+    await ElMessageBox.confirm(
+      `确认导出选中的 ${selectedFiles.value.length} 个文件？`,
+      '批量导出确认',
+      { type: 'info', confirmButtonText: '导出', cancelButtonText: '取消' },
+    )
+    for (const file of selectedFiles.value) {
+      try {
+        const response = await api.downloadFile(kbId, file.id)
+        const blob = new Blob([response])
+        const url = URL.createObjectURL(blob)
+        const a = document.createElement('a')
+        a.href = url
+        a.download = file.name
+        document.body.appendChild(a)
+        a.click()
+        document.body.removeChild(a)
+        URL.revokeObjectURL(url)
+      } catch {
+        ElMessage.error(`导出失败: ${file.name}`)
+      }
+    }
+    ElMessage.success(`共导出 ${selectedFiles.value.length} 个文件`)
+  } catch {
+    // 用户取消
+  }
 }
 
 // --- 批量移动对话框复用 MoveFileDialog 的文件夹树，简化为选目标文件夹 ---
@@ -326,6 +366,7 @@ onBeforeUnmount(() => {
         <span class="file-manager__bulk-count">已选 {{ selectedFiles.length }} 项</span>
         <el-button :icon="Rank" size="small" @click="handleBulkMove">批量移动</el-button>
         <el-button :icon="Delete" size="small" type="danger" @click="handleBulkDelete">批量删除</el-button>
+        <el-button size="small" @click="handleBulkExport">导出</el-button>
       </div>
     </div>
 
@@ -360,6 +401,7 @@ onBeforeUnmount(() => {
     <FilePreviewDialog
       v-model:visible="previewVisible"
       :file="previewFile"
+      :kb-id="kbId"
       @download="handleDownload"
     />
 

@@ -27,10 +27,10 @@ async function loadData() {
   try {
     const [kbRes, catRes] = await Promise.all([
       api.getKnowledgeBases(),
-      api.getKnowledgeBaseCategories(),
+      api.getKbCategories(),
     ])
     knowledgeBases.value = (kbRes as any)?.list || (kbRes as any) || []
-    categories.value = (catRes as any) || []
+    categories.value = (Array.isArray(catRes) ? catRes : (catRes as any)?.list || []).map((c: any) => ({ id: c.id || c.name, name: c.name, color: c.color, count: c.count || 0 }))
   } finally {
     loading.value = false
   }
@@ -113,7 +113,8 @@ function goToCreate() {
             :class="{ active: selectedCategory === cat.id }"
             @click="handleCategoryClick(cat.id)"
           >
-            <span>{{ cat.name }}</span>
+            <span v-if="cat.color" class="category-color-dot" :style="{ background: cat.color }" />
+            <span class="category-name">{{ cat.name }}</span>
             <el-badge :value="cat.count" type="info" />
           </div>
         </div>
@@ -221,7 +222,7 @@ function goToCreate() {
 .category-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: $spacing-xs;
   padding: $spacing-sm;
   border-radius: $radius-sm;
   cursor: pointer;
@@ -231,6 +232,20 @@ function goToCreate() {
   &.active {
     background: $bg-active;
     color: $color-primary;
+  }
+
+  .category-color-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .category-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 }
 

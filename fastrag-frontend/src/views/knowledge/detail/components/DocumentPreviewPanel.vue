@@ -1,11 +1,13 @@
 <script setup lang="ts">
 import type { KnowledgeFile } from '@/types/knowledge'
 import { formatFileSize } from '@/types/knowledge'
+import { getChunks } from '@/api'
 import { Document, Download, Close, CopyDocument, FullScreen } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
 
 const props = defineProps<{
   file: KnowledgeFile | null
+  kbId?: string
 }>()
 
 const emit = defineEmits<{
@@ -61,44 +63,29 @@ async function loadDocumentContent() {
   chunksContent.value = []
 
   try {
-    // Simulate API call to get document content
-    // In real app, this would call your backend API
-    await new Promise(resolve => setTimeout(resolve, 500))
-
-    // Mock data for demonstration
-    if (props.file.category === 'document') {
-      markdownContent.value = `# ${props.file.name.replace(/\.[^/.]+$/, '')}
-
-## 概述
-
-以下是关于该文档的详细介绍内容。文档包含了多个章节和详细的技术说明。
-
-### 第一部分：背景介绍
-
-本章节介绍了项目的背景信息和目标。在当前数字化转型的浪潮中，企业需要不断提升自身的信息化水平，以适应快速变化的市场需求。
-
-### 第二部分：核心内容
-
-详细说明了主要的技术方案和实施步骤。包括系统架构设计、模块划分、接口定义等关键内容。
-
-### 第三部分：实施计划
-
-制定了详细的项目实施计划，包括时间表、资源分配、风险评估等。
-
-## 总结
-
-本文档全面介绍了项目的各个方面，为相关人员提供了详细的指导和参考。`
-
-      // Mock chunks data
-      chunksContent.value = [
-        { index: 0, content: '本章节介绍了项目的背景信息和目标。在当前数字化转型的浪潮中，企业需要不断提升自身的信息化水平，以适应快速变化的市场需求。' },
-        { index: 1, content: '详细说明了主要的技术方案和实施步骤。包括系统架构设计、模块划分、接口定义等关键内容。' },
-        { index: 2, content: '制定了详细的项目实施计划，包括时间表、资源分配、风险评估等。' },
-        { index: 3, content: '本文档全面介绍了项目的各个方面，为相关人员提供了详细的指导和参考。' },
-      ]
-    } else {
-      error.value = '该文件类型暂不支持预览'
+    if (!props.kbId) {
+      error.value = '缺少知识库 ID，无法加载文档内容'
+      return
     }
+
+    const res = await getChunks(props.kbId, { fileId: props.file.id })
+    // getChunks 返回 axios Response 对象，实际数据在 .data 中
+    const chunks: { content: string; chunkIndex: number; fileName?: string; startTime?: number; endTime?: number }[] = res.data?.data ?? res.data ?? []
+
+    if (!Array.isArray(chunks) || chunks.length === 0) {
+      error.value = '该文档暂无切片数据'
+      return
+    }
+
+    // 构建 markdown 内容：按 chunkIndex 排序后拼接全部文本
+    const sorted = [...chunks].sort((a, b) => a.chunkIndex - b.chunkIndex)
+    markdownContent.value = sorted.map((c) => c.content).join('\n\n')
+
+    // 构建结构化的 chunks 数据用于 Chunks 视图
+    chunksContent.value = sorted.map((c) => ({
+      index: c.chunkIndex,
+      content: c.content,
+    }))
   } catch (e) {
     error.value = '加载文档内容失败'
     console.error('Failed to load document content:', e)

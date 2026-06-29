@@ -1,9 +1,16 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, reactive, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import BasicConfig from './components/BasicConfig.vue'
 import KnowledgeConfig from './components/KnowledgeConfig.vue'
+import DialogConfig from './components/DialogConfig.vue'
+import GlobalConfig from './components/GlobalConfig.vue'
+import DatabaseConfig from './components/DatabaseConfig.vue'
+import KnowledgeUpdate from './components/KnowledgeUpdate.vue'
+import DialogTest from './components/DialogTest.vue'
+import DialogOptimize from './components/DialogOptimize.vue'
+import MonitorPublishConfig from './components/MonitorPublishConfig.vue'
 import * as api from '@/api'
 
 const route = useRoute()
@@ -63,12 +70,19 @@ const menuGroups = reactive([
       { key: 'tool', label: '工具配置', icon: 'SetUp' },
       { key: 'mcp', label: 'MCP配置', icon: 'Connection' },
       { key: 'vm', label: '虚拟机配置', icon: 'Monitor' },
-      { key: 'ui', label: '界面配置', icon: 'Monitor' },
+	      { key: 'ui', label: '界面配置', icon: 'Monitor' },
+	      { key: 'dialog', label: '对话配置', icon: 'ChatDotRound' },
       { key: 'nav', label: '导航配置', icon: 'Menu' },
       { key: 'param', label: '参数配置', icon: 'Tools' },
       { key: 'prompt', label: 'Prompt编写', icon: 'EditPen' },
-      { key: 'debug', label: '对话调试', icon: 'ChatDotRound' },
-      { key: 'member', label: '成员管理', icon: 'User' },
+	      { key: 'debug', label: '对话调试', icon: 'ChatDotRound' },
+	      { key: 'member', label: '成员管理', icon: 'User' },
+	      { key: 'global', label: '全局策略', icon: 'Lock' },
+	      { key: 'db', label: '数据库配置', icon: 'Coin' },
+	      { key: 'kb-update', label: '知识更新', icon: 'Refresh' },
+	      { key: 'dialog-test', label: '对话测试', icon: 'CircleCheck' },
+	      { key: 'dialog-optimize', label: '对话优化', icon: 'TrendCharts' },
+	      { key: 'monitor-publish', label: '发布监控', icon: 'DataBoard' },
     ],
   },
   {
@@ -425,6 +439,303 @@ function handleDebugClear() {
   debugMessages.value = [{ role: 'assistant', content: '您好,有什么我可以帮助您' }]
 }
 
+// ===== 成员管理 =====
+const memberSearchKeyword = ref('')
+const showMemberDialog = ref(false)
+const showRoleDialog = ref(false)
+const editingMember = ref<any>(null)
+const memberForm = ref({ name: '', account: '', role: '查看者' })
+const memberRoleForm = ref({ role: '查看者' })
+
+const memberList = ref([
+  { id: '1', name: '张三', account: 'zhangsan@company.com', role: '管理员', status: '启用' },
+  { id: '2', name: '李四', account: 'lisi@company.com', role: '编辑', status: '启用' },
+  { id: '3', name: '王五', account: 'wangwu@company.com', role: '查看者', status: '启用' },
+  { id: '4', name: '赵六', account: 'zhaoliu@company.com', role: '查看者', status: '禁用' },
+])
+
+const filteredMemberList = computed(() => {
+  if (!memberSearchKeyword.value) return memberList.value
+  return memberList.value.filter(m => m.name.includes(memberSearchKeyword.value) || m.account.includes(memberSearchKeyword.value))
+})
+
+function handleEditMember(row: any) {
+  editingMember.value = row
+  memberForm.value = { name: row.name, account: row.account, role: row.role }
+  showMemberDialog.value = true
+}
+
+function handleAssignRole(row: any) {
+  editingMember.value = row
+  memberRoleForm.value = { role: row.role }
+  showRoleDialog.value = true
+}
+
+function handleSaveMember() {
+  if (!memberForm.value.name || !memberForm.value.account) {
+    ElMessage.warning('请填写完整信息')
+    return
+  }
+  if (editingMember.value) {
+    Object.assign(editingMember.value, memberForm.value)
+    ElMessage.success('成员信息已更新')
+  } else {
+    memberList.value.push({
+      id: String(Date.now()),
+      name: memberForm.value.name,
+      account: memberForm.value.account,
+      role: memberForm.value.role,
+      status: '启用',
+    })
+    ElMessage.success('成员添加成功')
+  }
+  showMemberDialog.value = false
+  editingMember.value = null
+  memberForm.value = { name: '', account: '', role: '查看者' }
+}
+
+function handleDeleteMember(id: string) {
+  memberList.value = memberList.value.filter(m => m.id !== id)
+  ElMessage.success('成员已移除')
+}
+
+function handleSaveRole() {
+  if (editingMember.value) {
+    editingMember.value.role = memberRoleForm.value.role
+    ElMessage.success('角色分配成功')
+  }
+  showRoleDialog.value = false
+  editingMember.value = null
+}
+
+// ===== 企业集成 =====
+const showApiKeyDialog = ref(false)
+const apiKeyForm = ref({ name: '', expiresIn: 'never' })
+
+const apiKeys = ref<any[]>([
+  { id: '1', name: '生产环境密钥', key: 'sk-prod-a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5', showKey: false, createdAt: '2026-01-15 10:30:00' },
+  { id: '2', name: '测试环境密钥', key: 'sk-test-p9o8i7u6y5t4r3e2w1q0', showKey: false, createdAt: '2026-03-20 14:20:00' },
+])
+
+const webhookConfig = ref({
+  url: '',
+  events: [] as string[],
+  enabled: false,
+})
+
+function handleCreateApiKey() {
+  if (!apiKeyForm.value.name) {
+    ElMessage.warning('请输入密钥名称')
+    return
+  }
+  const chars = 'abcdefghijklmnopqrstuvwxyz0123456789'
+  const key = 'sk-' + Array.from({ length: 32 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
+  apiKeys.value.push({
+    id: String(Date.now()),
+    name: apiKeyForm.value.name,
+    key,
+    showKey: false,
+    createdAt: new Date().toLocaleString(),
+  })
+  showApiKeyDialog.value = false
+  apiKeyForm.value = { name: '', expiresIn: 'never' }
+  ElMessage.success('密钥创建成功')
+}
+
+function deleteApiKey(id: string) {
+  apiKeys.value = apiKeys.value.filter(k => k.id !== id)
+  ElMessage.success('密钥已删除')
+}
+
+function handleSaveWebhook() {
+  ElMessage.success('Webhook 配置已保存')
+}
+
+// ===== 分享&发布 =====
+const activePublishTab = ref('share')
+const publishConfig = ref({
+  shareEnabled: false,
+  accessPassword: '',
+  expiresIn: 'never',
+  selectedChannels: [] as string[],
+})
+
+const embedOptions = ref({ width: 380, height: 560, themeColor: '#0167e5' })
+
+const publishChannels = [
+  { key: 'wechat', label: '微信', icon: 'ChatDotRound', desc: '集成到微信公众号' },
+  { key: 'web', label: '网站', icon: 'Monitor', desc: '嵌入到网页' },
+  { key: 'app', label: '移动App', icon: 'Iphone', desc: '集成到iOS/Android' },
+  { key: 'dingtalk', label: '钉钉', icon: 'ChatLineRound', desc: '集成到钉钉' },
+  { key: 'feishu', label: '飞书', icon: 'ChatSquare', desc: '集成到飞书' },
+  { key: 'api', label: 'API接口', icon: 'Connection', desc: '通过API调用' },
+]
+
+const shareUrl = computed(() => `https://app.ais.com/share/${appInfo.value.id || appId}${publishConfig.value.accessPassword ? '?pwd=' + publishConfig.value.accessPassword : ''}`)
+const embedCode = computed(() => `<iframe src="${shareUrl.value}" width="${embedOptions.value.width}" height="${embedOptions.value.height}" style="border:none;border-radius:8px" allow="clipboard-write" />`)
+
+function togglePublishChannel(key: string) {
+  const idx = publishConfig.value.selectedChannels.indexOf(key)
+  if (idx >= 0) publishConfig.value.selectedChannels.splice(idx, 1)
+  else publishConfig.value.selectedChannels.push(key)
+}
+
+function handleSavePublish() {
+  ElMessage.success('发布配置已保存')
+}
+
+// ===== 对话记录 =====
+const chatLogKeyword = ref('')
+const chatLogDateRange = ref<[Date, Date] | null>(null)
+const chatLogRating = ref('')
+const showChatDetail = ref(false)
+const chatDetail = ref<any>(null)
+
+const chatLogs = ref([
+  { id: '1', user: '匿名用户A', sessionId: 'sess_abc123', question: '你们的服务有哪些功能？', answer: '我们提供AI知识库问答...', rating: 5, tokens: 256, time: '2026-06-27 14:32:10', messages: [
+    { role: 'user', content: '你们的服务有哪些功能？', tokens: 12, latency: '0.1s' },
+    { role: 'assistant', content: '我们提供AI知识库问答、智能客服、文档助手等功能，支持多种模型和知识库配置。', tokens: 244, latency: '1.2s' },
+  ]},
+  { id: '2', user: '匿名用户B', sessionId: 'sess_def456', question: '如何配置知识库？', answer: '在知识库配置页面...', rating: 4, tokens: 189, time: '2026-06-27 15:10:45', messages: [
+    { role: 'user', content: '如何配置知识库？', tokens: 10, latency: '0.1s' },
+    { role: 'assistant', content: '在知识库配置页面，您可以绑定已有知识库或创建新的知识库。', tokens: 179, latency: '0.9s' },
+  ]},
+  { id: '3', user: '匿名用户C', sessionId: 'sess_ghi789', question: '支持哪些模型？', answer: '我们支持多种大语言模型...', rating: 3, tokens: 312, time: '2026-06-27 16:20:30', messages: [
+    { role: 'user', content: '支持哪些模型？', tokens: 8, latency: '0.1s' },
+    { role: 'assistant', content: '我们支持GPT-4、通义千问、文心一言等多种大语言模型。', tokens: 304, latency: '1.5s' },
+  ]},
+  { id: '4', user: '匿名用户D', sessionId: 'sess_jkl012', question: '应用发布后如何更新？', answer: '在编辑器中修改配置后...', rating: 5, tokens: 178, time: '2026-06-28 09:05:12', messages: [
+    { role: 'user', content: '应用发布后如何更新？', tokens: 11, latency: '0.1s' },
+    { role: 'assistant', content: '在编辑器中修改配置后，点击发布按钮即可更新已发布的应用。', tokens: 167, latency: '0.8s' },
+  ]},
+])
+
+const filteredChatLogs = computed(() => {
+  let list = chatLogs.value
+  if (chatLogKeyword.value) {
+    list = list.filter(l => l.question.includes(chatLogKeyword.value) || l.answer.includes(chatLogKeyword.value))
+  }
+  if (chatLogRating.value) {
+    list = list.filter(l => l.rating === Number(chatLogRating.value))
+  }
+  return list
+})
+
+function handleChatLogQuery() {
+  ElMessage.success('查询完成')
+}
+
+function handleChatLogReset() {
+  chatLogKeyword.value = ''
+  chatLogDateRange.value = null
+  chatLogRating.value = ''
+}
+
+function handleViewChatDetail(row: any) {
+  chatDetail.value = row
+  showChatDetail.value = true
+}
+
+function handleDeleteChatLog(id: string) {
+  chatLogs.value = chatLogs.value.filter(l => l.id !== id)
+  ElMessage.success('对话记录已删除')
+}
+
+function handleExportChatLog() {
+  ElMessage.success('对话记录导出中，请稍候...')
+}
+
+// ===== 反馈记录 =====
+const feedbackKeyword = ref('')
+const feedbackTypeFilter = ref('')
+const feedbackStatusFilter = ref('')
+const showFeedbackDetail = ref(false)
+const selectedFeedback = ref<any>(null)
+const feedbackProcessing = ref(false)
+const feedbackReply = ref('')
+
+const feedbacks = ref([
+  { id: '1', user: '匿名用户A', type: 'good', typeLabel: '好评', content: '回答非常准确，帮助很大！', rating: 5, status: 'resolved', statusLabel: '已处理', time: '2026-06-27 14:32:10', reply: '感谢您的反馈，我们会继续努力！' },
+  { id: '2', user: '匿名用户B', type: 'bad', typeLabel: '差评', content: '回答与问题不符，完全没有解决我的问题。', rating: 1, status: 'pending', statusLabel: '待处理', time: '2026-06-27 15:10:45', reply: '' },
+  { id: '3', user: '匿名用户C', type: 'suggestion', typeLabel: '建议', content: '希望能增加更多领域的知识库模板，比如医疗和法律方面的。', rating: 4, status: 'processing', statusLabel: '处理中', time: '2026-06-27 16:20:30', reply: '' },
+  { id: '4', user: '匿名用户D', type: 'good', typeLabel: '好评', content: '界面很友好，使用起来很流畅。', rating: 5, status: 'resolved', statusLabel: '已处理', time: '2026-06-28 09:05:12', reply: '感谢您的支持！' },
+  { id: '5', user: '匿名用户E', type: 'complaint', typeLabel: '投诉', content: '回复速度太慢了，等了很久。', rating: 2, status: 'pending', statusLabel: '待处理', time: '2026-06-28 10:30:00', reply: '' },
+])
+
+const feedbackStats = computed(() => {
+  const total = feedbacks.value.length
+  const good = feedbacks.value.filter(f => f.type === 'good').length
+  const bad = feedbacks.value.filter(f => f.type === 'bad').length
+  const pending = feedbacks.value.filter(f => f.status === 'pending').length
+  return { total, good, bad, pending }
+})
+
+const filteredFeedbacks = computed(() => {
+  let list = feedbacks.value
+  if (feedbackKeyword.value) {
+    list = list.filter(f => f.content.includes(feedbackKeyword.value))
+  }
+  if (feedbackTypeFilter.value) {
+    list = list.filter(f => f.type === feedbackTypeFilter.value)
+  }
+  if (feedbackStatusFilter.value) {
+    list = list.filter(f => f.status === feedbackStatusFilter.value)
+  }
+  return list
+})
+
+function handleFeedbackQuery() {
+  ElMessage.success('查询完成')
+}
+
+function handleFeedbackReset() {
+  feedbackKeyword.value = ''
+  feedbackTypeFilter.value = ''
+  feedbackStatusFilter.value = ''
+}
+
+function handleViewFeedback(row: any) {
+  selectedFeedback.value = row
+  feedbackProcessing.value = false
+  feedbackReply.value = ''
+  showFeedbackDetail.value = true
+}
+
+function handleProcessFeedback(row: any) {
+  selectedFeedback.value = row
+  feedbackProcessing.value = true
+  feedbackReply.value = row.reply || ''
+  showFeedbackDetail.value = true
+}
+
+function handleSubmitFeedbackReply() {
+  if (selectedFeedback.value) {
+    selectedFeedback.value.reply = feedbackReply.value
+    selectedFeedback.value.status = 'resolved'
+    selectedFeedback.value.statusLabel = '已处理'
+    ElMessage.success('回复已提交')
+  }
+  showFeedbackDetail.value = false
+  feedbackProcessing.value = false
+  feedbackReply.value = ''
+}
+
+function handleDeleteFeedback(id: string) {
+  feedbacks.value = feedbacks.value.filter(f => f.id !== id)
+  ElMessage.success('反馈已删除')
+}
+
+function handleExportFeedback() {
+  ElMessage.success('反馈数据导出中，请稍候...')
+}
+
+// ===== 应用首页 =====
+const previewMode = ref('chat')
+
+function handleOpenApp() {
+  window.open(`/app/${appInfo.value.id || appId}`, '_blank')
+}
+
 function handlePublishConfig() {
   ElMessage.success('配置已发布')
 }
@@ -477,8 +788,17 @@ function handlePublish() {
 
     <!-- 右侧内容区 -->
     <div class="editor-content">
-      <!-- 基础配置 -->
-      <BasicConfig v-if="activeMenu === 'basic'" :app-info="appInfo" />
+	      <!-- 基础配置 -->
+	      <BasicConfig v-if="activeMenu === 'basic'" :app-info="appInfo" />
+
+	      <!-- 对话配置 -->
+	      <DialogConfig v-if="activeMenu === 'dialog'" :app-info="appInfo" />
+	      <GlobalConfig v-if="activeMenu === 'global'" :app-info="appInfo" />
+	      <DatabaseConfig v-if="activeMenu === 'db'" :app-info="appInfo" />
+	      <KnowledgeUpdate v-if="activeMenu === 'kb-update'" :app-info="appInfo" />
+	      <DialogTest v-if="activeMenu === 'dialog-test'" :app-info="appInfo" />
+	      <DialogOptimize v-if="activeMenu === 'dialog-optimize'" :app-info="appInfo" />
+	      <MonitorPublishConfig v-if="activeMenu === 'monitor-publish'" :app-info="appInfo" />
 
       <!-- 知识库配置 -->
       <KnowledgeConfig v-if="activeMenu === 'kb'" />
@@ -1168,10 +1488,594 @@ function handlePublish() {
         </div>
       </div>
 
-      <!-- 其他配置页 -->
-      <div v-if="['member', 'integration', 'publish', 'chat-log', 'feedback', 'home'].includes(activeMenu)" class="config-section">
-        <h3>{{ menuItems.find(m => m.key === activeMenu)?.label }}</h3>
-        <el-empty description="功能开发中" />
+      <!-- ========== 成员管理 ========== -->
+      <div v-if="activeMenu === 'member'" class="config-section">
+        <div class="section-group">
+          <div class="section-title">成员管理</div>
+          <p class="desc">管理应用的成员及其角色权限</p>
+          <div style="margin-bottom:16px;display:flex;gap:8px;justify-content:space-between;align-items:center">
+            <el-button type="primary" size="small" @click="showMemberDialog = true">
+              <el-icon><Plus /></el-icon>添加成员
+            </el-button>
+            <el-input v-model="memberSearchKeyword" placeholder="搜索成员..." prefix-icon="Search" style="width:260px" size="small" clearable />
+          </div>
+          <el-table :data="filteredMemberList" border stripe size="small" style="width:100%">
+            <el-table-column type="index" label="#" width="50" />
+            <el-table-column prop="name" label="成员名称" min-width="140" />
+            <el-table-column prop="account" label="账号" min-width="160" />
+            <el-table-column prop="role" label="角色" width="120">
+              <template #default="{ row }">
+                <el-tag :type="row.role === '管理员' ? 'danger' : row.role === '编辑' ? 'warning' : 'info'" size="small">{{ row.role }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.status === '启用' ? 'success' : 'info'" size="small">{{ row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" fixed="right">
+              <template #default="{ row }">
+                <el-button type="primary" link size="small" @click="handleEditMember(row)">编辑</el-button>
+                <el-button type="warning" link size="small" @click="handleAssignRole(row)">角色</el-button>
+                <el-popconfirm title="确定移除该成员?" @confirm="handleDeleteMember(row.id)">
+                  <template #reference>
+                    <el-button type="danger" link size="small">移除</el-button>
+                  </template>
+                </el-popconfirm>
+              </template>
+            </el-table-column>
+          </el-table>
+        </div>
+        <!-- 添加/编辑成员对话框 -->
+        <el-dialog v-model="showMemberDialog" :title="editingMember ? '编辑成员' : '添加成员'" width="480px">
+          <el-form :model="memberForm" label-width="100px">
+            <el-form-item label="成员名称" required>
+              <el-input v-model="memberForm.name" placeholder="请输入成员名称" />
+            </el-form-item>
+            <el-form-item label="账号" required>
+              <el-input v-model="memberForm.account" placeholder="请输入账号" />
+            </el-form-item>
+            <el-form-item label="角色" required>
+              <el-select v-model="memberForm.role" style="width:100%">
+                <el-option label="管理员" value="管理员" />
+                <el-option label="编辑" value="编辑" />
+                <el-option label="查看者" value="查看者" />
+              </el-select>
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="showMemberDialog = false">取消</el-button>
+            <el-button type="primary" @click="handleSaveMember">保存</el-button>
+          </template>
+        </el-dialog>
+        <!-- 角色分配对话框 -->
+        <el-dialog v-model="showRoleDialog" title="分配角色" width="400px">
+          <el-form label-width="100px">
+            <el-form-item label="成员">
+              <span>{{ editingMember?.name }}</span>
+            </el-form-item>
+            <el-form-item label="角色" required>
+              <el-select v-model="memberRoleForm.role" style="width:100%">
+                <el-option label="管理员" value="管理员" />
+                <el-option label="编辑" value="编辑" />
+                <el-option label="查看者" value="查看者" />
+              </el-select>
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="showRoleDialog = false">取消</el-button>
+            <el-button type="primary" @click="handleSaveRole">保存</el-button>
+          </template>
+        </el-dialog>
+      </div>
+
+      <!-- ========== 企业集成 ========== -->
+      <div v-if="activeMenu === 'integration'" class="config-section">
+        <div class="section-group">
+          <div class="section-title">企业集成</div>
+          <p class="desc">配置 API 密钥、Webhook 和与企业系统的集成端点</p>
+          <!-- API密钥 -->
+          <div style="margin-bottom:24px">
+            <h4 style="margin:0 0 12px;font-size:14px;font-weight:600">API 密钥</h4>
+            <el-table :data="apiKeys" border stripe size="small" style="width:100%">
+              <el-table-column prop="name" label="名称" min-width="140" />
+              <el-table-column prop="key" label="密钥" min-width="240">
+                <template #default="{ row }">
+                  <div style="display:flex;align-items:center;gap:8px">
+                    <span v-if="!row.showKey">sk-****{{ row.key.slice(-8) }}</span>
+                    <span v-else style="font-family:monospace;font-size:12px">{{ row.key }}</span>
+                    <el-button link size="small" @click="row.showKey = !row.showKey">
+                      <el-icon><View v-if="!row.showKey" /><Hide v-else /></el-icon>
+                    </el-button>
+                    <el-button link size="small" @click="copyToClipboard(row.key)">复制</el-button>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column prop="createdAt" label="创建时间" width="160" />
+              <el-table-column label="操作" width="100">
+                <template #default="{ row }">
+                  <el-popconfirm title="确定删除此密钥?" @confirm="deleteApiKey(row.id)">
+                    <template #reference>
+                      <el-button type="danger" link size="small">删除</el-button>
+                    </template>
+                  </el-popconfirm>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-button size="small" style="margin-top:8px" @click="showApiKeyDialog = true">
+              <el-icon><Plus /></el-icon>新建密钥
+            </el-button>
+          </div>
+          <!-- Webhook 配置 -->
+          <div style="margin-bottom:24px">
+            <h4 style="margin:0 0 12px;font-size:14px;font-weight:600">Webhook 配置</h4>
+            <el-form label-width="140px" style="max-width:600px">
+              <el-form-item label="Webhook URL">
+                <el-input v-model="webhookConfig.url" placeholder="https://hooks.example.com/..." />
+              </el-form-item>
+              <el-form-item label="触发事件">
+                <el-checkbox-group v-model="webhookConfig.events">
+                  <el-checkbox label="message_sent" value="message_sent">消息发送</el-checkbox>
+                  <el-checkbox label="message_received" value="message_received">消息接收</el-checkbox>
+                  <el-checkbox label="feedback_created" value="feedback_created">反馈提交</el-checkbox>
+                  <el-checkbox label="app_published" value="app_published">应用发布</el-checkbox>
+                </el-checkbox-group>
+              </el-form-item>
+              <el-form-item label="启用">
+                <el-switch v-model="webhookConfig.enabled" />
+              </el-form-item>
+              <el-form-item>
+                <el-button type="primary" size="small" @click="handleSaveWebhook">保存配置</el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+        </div>
+        <el-dialog v-model="showApiKeyDialog" title="新建 API 密钥" width="450px">
+          <el-form label-width="100px">
+            <el-form-item label="密钥名称" required>
+              <el-input v-model="apiKeyForm.name" placeholder="输入密钥名称" />
+            </el-form-item>
+            <el-form-item label="过期时间">
+              <el-select v-model="apiKeyForm.expiresIn" style="width:100%">
+                <el-option label="永不过期" value="never" />
+                <el-option label="30天" value="30d" />
+                <el-option label="90天" value="90d" />
+                <el-option label="1年" value="1y" />
+              </el-select>
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="showApiKeyDialog = false">取消</el-button>
+            <el-button type="primary" @click="handleCreateApiKey">创建</el-button>
+          </template>
+        </el-dialog>
+      </div>
+
+      <!-- ========== 分享&发布 ========== -->
+      <div v-if="activeMenu === 'publish'" class="config-section">
+        <div class="section-group">
+          <div class="section-title">分享 & 发布</div>
+          <p class="desc">将应用发布到各个渠道，或生成分享链接/嵌入代码</p>
+          <el-tabs v-model="activePublishTab">
+            <el-tab-pane label="分享链接" name="share">
+              <el-form label-width="140px" style="max-width:600px;margin-top:16px">
+                <el-form-item label="分享状态">
+                  <el-switch v-model="publishConfig.shareEnabled" active-text="已开启" inactive-text="已关闭" />
+                </el-form-item>
+                <el-form-item label="分享链接" v-if="publishConfig.shareEnabled">
+                  <div style="display:flex;gap:8px;width:100%">
+                    <el-input :model-value="shareUrl" readonly>
+                      <template #prepend><el-icon><Link /></el-icon></template>
+                    </el-input>
+                    <el-button @click="copyToClipboard(shareUrl)">复制</el-button>
+                  </div>
+                  <div class="form-tip">任何人拥有此链接即可访问应用</div>
+                </el-form-item>
+                <el-form-item label="访问密码" v-if="publishConfig.shareEnabled">
+                  <el-input v-model="publishConfig.accessPassword" placeholder="设置访问密码（可选）" style="width:200px" />
+                </el-form-item>
+                <el-form-item label="有效期">
+                  <el-select v-model="publishConfig.expiresIn" style="width:200px">
+                    <el-option label="永久有效" value="never" />
+                    <el-option label="7天" value="7d" />
+                    <el-option label="30天" value="30d" />
+                    <el-option label="90天" value="90d" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item>
+                  <el-button type="primary" @click="handleSavePublish">保存分享设置</el-button>
+                </el-form-item>
+              </el-form>
+            </el-tab-pane>
+            <el-tab-pane label="嵌入代码" name="embed">
+              <div style="margin-top:16px">
+                <h4 style="margin:0 0 8px;font-size:14px;font-weight:500">HTML 嵌入代码</h4>
+                <p class="desc">将以下代码复制到您的网站页面中</p>
+                <el-input type="textarea" :model-value="embedCode" :rows="10" readonly style="font-family:monospace;font-size:12px" />
+                <el-button size="small" style="margin-top:8px" @click="copyToClipboard(embedCode)">复制代码</el-button>
+              </div>
+              <div style="margin-top:24px">
+                <h4 style="margin:0 0 8px;font-size:14px;font-weight:500">嵌入选项</h4>
+                <el-form label-width="120px" style="max-width:400px">
+                  <el-form-item label="宽">
+                    <el-input v-model.number="embedOptions.width" size="small">
+                      <template #append>px</template>
+                    </el-input>
+                  </el-form-item>
+                  <el-form-item label="高">
+                    <el-input v-model.number="embedOptions.height" size="small">
+                      <template #append>px</template>
+                    </el-input>
+                  </el-form-item>
+                  <el-form-item label="主题色">
+                    <el-color-picker v-model="embedOptions.themeColor" show-alpha />
+                  </el-form-item>
+                </el-form>
+              </div>
+            </el-tab-pane>
+            <el-tab-pane label="发布渠道" name="channel">
+              <div class="config-group" style="margin-top:16px">
+                <div class="group-title">选择发布渠道</div>
+                <div style="display:flex;flex-wrap:wrap;gap:16px">
+                  <el-card v-for="ch in publishChannels" :key="ch.key" :class="{ 'channel-selected': publishConfig.selectedChannels.includes(ch.key) }" shadow="hover" style="width:180px;cursor:pointer" @click="togglePublishChannel(ch.key)">
+                    <div style="text-align:center;padding:8px">
+                      <el-icon :size="32" :color="publishConfig.selectedChannels.includes(ch.key) ? '#409eff' : '#999'"><component :is="ch.icon" /></el-icon>
+                      <div style="margin-top:8px;font-weight:500">{{ ch.label }}</div>
+                      <div style="font-size:12px;color:#999;margin-top:4px">{{ ch.desc }}</div>
+                    </div>
+                  </el-card>
+                </div>
+                <div style="margin-top:16px">
+                  <el-button type="primary" @click="handleSavePublish">保存发布配置</el-button>
+                </div>
+              </div>
+            </el-tab-pane>
+          </el-tabs>
+        </div>
+      </div>
+
+      <!-- ========== 对话记录 ========== -->
+      <div v-if="activeMenu === 'chat-log'" class="config-section">
+        <div class="section-group">
+          <div class="section-title">对话记录</div>
+          <p class="desc">查看和搜索用户与应用的对话历史记录</p>
+          <!-- 搜索筛选栏 -->
+          <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+            <el-input v-model="chatLogKeyword" placeholder="搜索对话内容..." prefix-icon="Search" style="width:260px" size="small" clearable />
+            <el-date-picker v-model="chatLogDateRange" type="daterange" range-separator="至" start-placeholder="开始日期" end-placeholder="结束日期" size="small" style="width:260px" />
+            <el-select v-model="chatLogRating" placeholder="评分过滤" size="small" style="width:130px" clearable>
+              <el-option label="全部" value="" />
+              <el-option label="好评" value="good" />
+              <el-option label="中评" value="neutral" />
+              <el-option label="差评" value="bad" />
+            </el-select>
+            <el-button size="small" @click="handleChatLogQuery">查询</el-button>
+            <el-button size="small" @click="handleChatLogReset">重置</el-button>
+            <div style="flex:1" />
+            <el-button size="small" @click="handleExportChatLog">
+              <el-icon><Download /></el-icon>导出记录
+            </el-button>
+          </div>
+          <!-- 对话列表 -->
+          <el-table :data="filteredChatLogs" border stripe size="small" style="width:100%">
+            <el-table-column type="index" label="#" width="50" />
+            <el-table-column prop="user" label="用户" width="120" />
+            <el-table-column prop="sessionId" label="会话ID" width="160" />
+            <el-table-column label="消息摘要" min-width="300">
+              <template #default="{ row }">
+                <div style="display:flex;flex-direction:column;gap:2px">
+                  <div style="font-size:12px;color:#666">
+                    <el-tag size="small" type="info" round>Q</el-tag>
+                    <span style="margin-left:4px">{{ row.question }}</span>
+                  </div>
+                  <div style="font-size:12px;color:#333">
+                    <el-tag size="small" type="primary" round>A</el-tag>
+                    <span style="margin-left:4px">{{ row.answer }}</span>
+                  </div>
+                </div>
+              </template>
+            </el-table-column>
+            <el-table-column prop="rating" label="评分" width="80" align="center">
+              <template #default="{ row }">
+                <el-rate v-model="row.rating" disabled size="small" />
+              </template>
+            </el-table-column>
+            <el-table-column prop="tokens" label="Token消耗" width="110" />
+            <el-table-column prop="time" label="时间" width="160" />
+            <el-table-column label="操作" width="100">
+              <template #default="{ row }">
+                <el-button link size="small" type="primary" @click="handleViewChatDetail(row)">详情</el-button>
+                <el-popconfirm title="确定删除此对话?" @confirm="handleDeleteChatLog(row.id)">
+                  <template #reference>
+                    <el-button link size="small" type="danger">删除</el-button>
+                  </template>
+                </el-popconfirm>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
+            <span style="font-size:13px;color:#999">共 {{ filteredChatLogs.length }} 条记录</span>
+            <el-pagination background layout="prev, pager, next" :total="filteredChatLogs.length" :page-size="15" size="small" />
+          </div>
+        </div>
+        <!-- 对话详情抽屉 -->
+        <el-drawer v-model="showChatDetail" title="对话详情" size="500px">
+          <div v-if="chatDetail">
+            <div style="margin-bottom:16px">
+              <div style="font-size:13px;color:#999;margin-bottom:8px">用户：{{ chatDetail.user }} | 会话ID：{{ chatDetail.sessionId }} | 时间：{{ chatDetail.time }}</div>
+            </div>
+            <div v-for="(msg, i) in chatDetail.messages" :key="i" :class="['detail-msg', msg.role]">
+              <div class="detail-msg-label">
+                <el-tag :type="msg.role === 'user' ? 'info' : 'primary'" size="small" round>{{ msg.role === 'user' ? '用户' : 'AI' }}</el-tag>
+              </div>
+              <div class="detail-msg-content">{{ msg.content }}</div>
+              <div class="detail-msg-meta" v-if="msg.tokens">Token: {{ msg.tokens }} | 耗时: {{ msg.latency }}</div>
+            </div>
+          </div>
+          <el-empty v-else description="暂无数据" />
+        </el-drawer>
+      </div>
+
+      <!-- ========== 反馈记录 ========== -->
+      <div v-if="activeMenu === 'feedback'" class="config-section">
+        <div class="section-group">
+          <div class="section-title">反馈记录</div>
+          <p class="desc">查看用户对应用回复的反馈和评价</p>
+          <!-- 筛选栏 -->
+          <div style="display:flex;gap:12px;margin-bottom:16px;flex-wrap:wrap;align-items:center">
+            <el-input v-model="feedbackKeyword" placeholder="搜索反馈内容..." prefix-icon="Search" style="width:260px" size="small" clearable />
+            <el-select v-model="feedbackTypeFilter" placeholder="反馈类型" size="small" style="width:130px" clearable>
+              <el-option label="全部" value="" />
+              <el-option label="好评" value="good" />
+              <el-option label="差评" value="bad" />
+              <el-option label="建议" value="suggestion" />
+              <el-option label="投诉" value="complaint" />
+            </el-select>
+            <el-select v-model="feedbackStatusFilter" placeholder="处理状态" size="small" style="width:130px" clearable>
+              <el-option label="全部" value="" />
+              <el-option label="待处理" value="pending" />
+              <el-option label="处理中" value="processing" />
+              <el-option label="已处理" value="resolved" />
+              <el-option label="已关闭" value="closed" />
+            </el-select>
+            <el-button size="small" @click="handleFeedbackQuery">查询</el-button>
+            <el-button size="small" @click="handleFeedbackReset">重置</el-button>
+            <div style="flex:1" />
+            <el-button size="small" @click="handleExportFeedback">
+              <el-icon><Download /></el-icon>导出反馈
+            </el-button>
+          </div>
+          <!-- 统计卡片 -->
+          <div style="display:flex;gap:16px;margin-bottom:16px">
+            <el-card shadow="never" style="flex:1">
+              <div style="text-align:center;padding:8px 0">
+                <div style="font-size:28px;font-weight:600;color:#409eff">{{ feedbackStats.total }}</div>
+                <div style="font-size:13px;color:#999;margin-top:4px">总反馈数</div>
+              </div>
+            </el-card>
+            <el-card shadow="never" style="flex:1">
+              <div style="text-align:center;padding:8px 0">
+                <div style="font-size:28px;font-weight:600;color:#67c23a">{{ feedbackStats.good }}</div>
+                <div style="font-size:13px;color:#999;margin-top:4px">好评数</div>
+              </div>
+            </el-card>
+            <el-card shadow="never" style="flex:1">
+              <div style="text-align:center;padding:8px 0">
+                <div style="font-size:28px;font-weight:600;color:#e6a23c">{{ feedbackStats.pending }}</div>
+                <div style="font-size:13px;color:#999;margin-top:4px">待处理</div>
+              </div>
+            </el-card>
+            <el-card shadow="never" style="flex:1">
+              <div style="text-align:center;padding:8px 0">
+                <div style="font-size:28px;font-weight:600;color:#f56c6c">{{ feedbackStats.bad }}</div>
+                <div style="font-size:13px;color:#999;margin-top:4px">差评数</div>
+              </div>
+            </el-card>
+          </div>
+          <!-- 反馈列表 -->
+          <el-table :data="filteredFeedbacks" border stripe size="small" style="width:100%">
+            <el-table-column type="index" label="#" width="50" />
+            <el-table-column prop="user" label="用户" width="120" />
+            <el-table-column prop="type" label="类型" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.type === 'good' ? 'success' : row.type === 'bad' ? 'danger' : row.type === 'suggestion' ? 'warning' : 'info'" size="small">
+                  {{ row.typeLabel }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="content" label="反馈内容" min-width="280" show-overflow-tooltip />
+            <el-table-column prop="rating" label="评分" width="80" align="center">
+              <template #default="{ row }">
+                <el-rate v-model="row.rating" disabled size="small" />
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="处理状态" width="110">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'resolved' ? 'success' : row.status === 'processing' ? 'warning' : row.status === 'closed' ? 'info' : 'danger'" size="small">
+                  {{ row.statusLabel }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="time" label="提交时间" width="160" />
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="{ row }">
+                <el-button link size="small" type="primary" @click="handleViewFeedback(row)">查看</el-button>
+                <el-button v-if="row.status === 'pending'" link size="small" type="warning" @click="handleProcessFeedback(row)">处理</el-button>
+                <el-popconfirm title="确定删除此反馈?" @confirm="handleDeleteFeedback(row.id)">
+                  <template #reference>
+                    <el-button link size="small" type="danger">删除</el-button>
+                  </template>
+                </el-popconfirm>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-top:16px">
+            <span style="font-size:13px;color:#999">共 {{ filteredFeedbacks.length }} 条记录</span>
+            <el-pagination background layout="prev, pager, next" :total="filteredFeedbacks.length" :page-size="15" size="small" />
+          </div>
+        </div>
+        <!-- 反馈详情/处理对话框 -->
+        <el-dialog v-model="showFeedbackDetail" :title="feedbackProcessing ? '处理反馈' : '反馈详情'" width="560px">
+          <div v-if="selectedFeedback">
+            <div style="margin-bottom:16px">
+              <div><strong>用户：</strong>{{ selectedFeedback.user }}</div>
+              <div><strong>类型：</strong>
+                <el-tag :type="selectedFeedback.type === 'good' ? 'success' : selectedFeedback.type === 'bad' ? 'danger' : selectedFeedback.type === 'suggestion' ? 'warning' : 'info'" size="small">{{ selectedFeedback.typeLabel }}</el-tag>
+              </div>
+              <div><strong>评分：</strong><el-rate v-model="selectedFeedback.rating" disabled size="small" style="display:inline-flex;vertical-align:middle" /></div>
+              <div><strong>提交时间：</strong>{{ selectedFeedback.time }}</div>
+            </div>
+            <div style="margin-bottom:16px;padding:12px;background:#f5f7fa;border-radius:4px">
+              <div style="font-weight:500;margin-bottom:4px">反馈内容：</div>
+              <div>{{ selectedFeedback.content }}</div>
+            </div>
+            <div v-if="selectedFeedback.reply">
+              <div style="font-weight:500;margin-bottom:4px">回复内容：</div>
+              <div style="padding:12px;background:#ecf5ff;border-radius:4px">{{ selectedFeedback.reply }}</div>
+            </div>
+            <div v-if="feedbackProcessing" style="margin-top:16px">
+              <el-input v-model="feedbackReply" type="textarea" :rows="4" placeholder="输入回复内容..." />
+            </div>
+          </div>
+          <template #footer>
+            <el-button @click="showFeedbackDetail = false">关闭</el-button>
+            <el-button v-if="feedbackProcessing" type="primary" @click="handleSubmitFeedbackReply">提交回复</el-button>
+          </template>
+        </el-dialog>
+      </div>
+
+      <!-- ========== 应用首页 ========== -->
+      <div v-if="activeMenu === 'home'" class="config-section">
+        <div class="section-group">
+          <div class="section-title">应用首页预览</div>
+          <p class="desc">预览应用在最终用户端的显示效果</p>
+          <div style="display:flex;gap:24px">
+            <!-- 预览方式选择 -->
+            <div style="width:200px;flex-shrink:0">
+              <el-menu :default-active="previewMode" @select="(v: string) => previewMode = v" style="border-right:none">
+                <el-menu-item index="chat">
+                  <el-icon><ChatDotRound /></el-icon>
+                  <span>对话预览</span>
+                </el-menu-item>
+                <el-menu-item index="embed">
+                  <el-icon><Monitor /></el-icon>
+                  <span>嵌入视图</span>
+                </el-menu-item>
+                <el-menu-item index="mobile">
+                  <el-icon><Iphone /></el-icon>
+                  <span>移动端预览</span>
+                </el-menu-item>
+              </el-menu>
+              <div style="margin-top:16px;padding:12px;background:#f5f7fa;border-radius:4px">
+                <div style="font-size:13px;font-weight:500;margin-bottom:8px">快捷操作</div>
+                <el-button size="small" style="width:100%;margin-bottom:8px" @click="handleOpenApp">
+                  <el-icon><Link /></el-icon>打开应用
+                </el-button>
+                <el-button size="small" style="width:100%;margin-bottom:8px" @click="activeMenu = 'publish'">
+                  <el-icon><Share /></el-icon>分享应用
+                </el-button>
+                <el-button size="small" style="width:100%" @click="activeMenu = 'ui'">
+                  <el-icon><Monitor /></el-icon>界面配置
+                </el-button>
+              </div>
+            </div>
+            <!-- 预览区域 -->
+            <div style="flex:1;display:flex;justify-content:center;align-items:flex-start">
+              <!-- 对话预览 -->
+              <div v-if="previewMode === 'chat'" class="preview-chat-widget" style="width:380px;border:1px solid #e4e7ed;border-radius:8px;overflow:hidden;box-shadow:0 2px 12px rgba(0,0,0,0.08)">
+                <div class="preview-widget-header" :style="{ background: uiConfig.chatWindowColor || '#0167e5' }" style="padding:12px 16px;color:#fff;display:flex;justify-content:space-between;align-items:center">
+                  <span>{{ appInfo.name }}</span>
+                  <div class="header-actions">
+                    <el-icon><Refresh /></el-icon>
+                  </div>
+                </div>
+                <div class="preview-widget-body" style="min-height:320px;padding:12px;background:#f5f5f5">
+                  <div class="bot-message" style="display:flex;gap:8px;margin-bottom:12px">
+                    <div class="bot-avatar" :style="{ background: uiConfig.chatWindowColor || '#0167e5' }" style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                      <el-icon :size="18" color="#fff"><ChatDotRound /></el-icon>
+                    </div>
+                    <div class="message-bubble bot" :style="{ background: '#fff', color: uiConfig.replyFontColor || '#333', borderRadius: '8px' }" style="padding:8px 12px;max-width:260px;font-size:13px">
+                      {{ uiConfig.welcome || '您好,有什么我可以帮助您' }}
+                    </div>
+                  </div>
+                  <div class="user-message" style="display:flex;justify-content:flex-end;margin-bottom:12px">
+                    <div class="message-bubble user" :style="{ background: uiConfig.userMessageColor || 'rgba(1,103,229,0.12)', color: uiConfig.questionFontColor || '#333', borderRadius: '8px' }" style="padding:8px 12px;max-width:260px;font-size:13px">
+                      你好，请介绍一下你们的服务
+                    </div>
+                  </div>
+                  <div class="bot-message" style="display:flex;gap:8px;margin-bottom:12px">
+                    <div class="bot-avatar" :style="{ background: uiConfig.chatWindowColor || '#0167e5' }" style="width:32px;height:32px;border-radius:50%;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                      <el-icon :size="18" color="#fff"><ChatDotRound /></el-icon>
+                    </div>
+                    <div class="message-bubble bot" :style="{ background: '#fff', color: uiConfig.replyFontColor || '#333', borderRadius: '8px' }" style="padding:8px 12px;max-width:260px;font-size:13px">
+                      您好！我们提供基于AI的知识库问答服务，可以快速搭建智能客服、文档助手等应用。
+                    </div>
+                  </div>
+                </div>
+                <div class="preview-widget-footer" :style="{ background: uiConfig.chatWindowColor || '#0167e5' }" style="padding:12px 16px;display:flex;align-items:center;gap:8px">
+                  <el-input size="small" placeholder="请输入您的问题..." style="flex:1" :style="{ '--el-input-bg-color': 'rgba(255,255,255,0.2)' }" />
+                  <el-icon style="color:#fff;cursor:pointer"><Promotion /></el-icon>
+                </div>
+                <div class="widget-brand" style="text-align:center;padding:4px;font-size:11px;color:#999;background:#fff">
+                  {{ uiConfig.brandText || 'Powered by AIS' }}
+                </div>
+              </div>
+              <!-- 嵌入视图 -->
+              <div v-if="previewMode === 'embed'" style="width:100%;max-width:600px;border:1px solid #e4e7ed;border-radius:8px;overflow:hidden">
+                <div style="padding:8px 12px;background:#f5f7fa;border-bottom:1px solid #e4e7ed;display:flex;align-items:center;gap:8px">
+                  <el-icon :size="14"><Monitor /></el-icon>
+                  <span style="font-size:12px;color:#666">嵌入预览 — 在网页中显示的聊天控件</span>
+                </div>
+                <div style="position:relative;min-height:400px;background:#f0f2f5;display:flex;justify-content:center;align-items:center">
+                  <div style="width:320px;border:1px solid #e4e7ed;border-radius:8px;overflow:hidden;box-shadow:0 2px 8px rgba(0,0,0,0.06)">
+                    <div style="padding:8px 12px;background:#0167e5;color:#fff;font-size:13px;display:flex;justify-content:space-between;align-items:center">
+                      <span>{{ appInfo.name }}</span>
+                      <el-icon size="14"><Close /></el-icon>
+                    </div>
+                    <div style="min-height:200px;padding:12px;background:#f5f5f5">
+                      <div style="font-size:12px;color:#999;text-align:center;margin-top:80px">点击此处开始对话</div>
+                    </div>
+                    <div style="padding:8px 12px;background:#0167e5;display:flex;gap:4px">
+                      <el-input size="small" placeholder="输入问题..." style="flex:1" />
+                      <el-icon style="color:#fff;cursor:pointer"><Promotion /></el-icon>
+                    </div>
+                  </div>
+                </div>
+              </div>
+              <!-- 移动端预览 -->
+              <div v-if="previewMode === 'mobile'" style="width:280px;border:2px solid #333;border-radius:24px;overflow:hidden;box-shadow:0 4px 20px rgba(0,0,0,0.15);background:#fff">
+                <div style="padding:8px 12px;background:#0167e5;color:#fff;font-size:12px;text-align:center;position:relative">
+                  <span>{{ new Date().toLocaleTimeString() }}</span>
+                  <div style="position:absolute;right:12px;top:8px;display:flex;gap:4px">
+                    <div style="width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.8)" />
+                    <div style="width:14px;height:8px;border:1px solid rgba(255,255,255,0.8);border-radius:2px" />
+                  </div>
+                </div>
+                <div style="padding:8px;min-height:400px;background:#f5f5f5">
+                  <div style="display:flex;gap:6px;margin-bottom:8px">
+                    <div style="width:24px;height:24px;border-radius:50%;background:#0167e5;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                      <el-icon size="12" color="#fff"><ChatDotRound /></el-icon>
+                    </div>
+                    <div style="padding:6px 10px;background:#fff;border-radius:6px;font-size:12px;max-width:200px">{{ uiConfig.welcome || '您好,有什么我可以帮助您' }}</div>
+                  </div>
+                  <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+                    <div style="padding:6px 10px;background:#0167e5;color:#fff;border-radius:6px;font-size:12px;max-width:200px">你们有什么功能？</div>
+                  </div>
+                  <div style="display:flex;gap:6px;margin-bottom:8px">
+                    <div style="width:24px;height:24px;border-radius:50%;background:#0167e5;display:flex;align-items:center;justify-content:center;flex-shrink:0">
+                      <el-icon size="12" color="#fff"><ChatDotRound /></el-icon>
+                    </div>
+                    <div style="padding:6px 10px;background:#fff;border-radius:6px;font-size:12px;max-width:200px">我们提供AI知识库问答服务！</div>
+                  </div>
+                </div>
+                <div style="padding:8px;display:flex;gap:4px;border-top:1px solid #eee">
+                  <el-input size="small" placeholder="输入..." style="flex:1" />
+                  <el-icon style="color:#0167e5;cursor:pointer"><Promotion /></el-icon>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <!-- 底部操作栏 -->
