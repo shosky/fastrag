@@ -2,11 +2,13 @@ package com.fastrag.module.operation.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.operation.entity.DataMiningTask; import com.fastrag.module.operation.mapper.DataMiningTaskMapper;
 import com.fastrag.module.operation.service.DataMiningService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
 import java.time.LocalDateTime; import java.util.*;
 @Service @RequiredArgsConstructor
 public class DataMiningServiceImpl implements DataMiningService {
     private final DataMiningTaskMapper mapper;
+    private final ObjectMapper objectMapper;
     @Override public List<DataMiningTask> list(String kbId,String keyword) {
         var w=new LambdaQueryWrapper<DataMiningTask>();
         if(kbId!=null&&!kbId.isEmpty()) w.eq(DataMiningTask::getKbId,kbId);
@@ -29,7 +31,11 @@ public class DataMiningServiceImpl implements DataMiningService {
         summary.put("matchedCount",new Random().nextInt(100)+10);
         summary.put("topKeywords",List.of("退款","物流","质量"));
         summary.put("runStatus","success");
-        t.setResultSummary(summary.toString());
+        try {
+            t.setResultSummary(objectMapper.writeValueAsString(summary));
+        } catch (Exception e) {
+            t.setResultSummary("{\"error\":\"serialization failed\"}");
+        }
         mapper.updateById(t);
         return t;
     }

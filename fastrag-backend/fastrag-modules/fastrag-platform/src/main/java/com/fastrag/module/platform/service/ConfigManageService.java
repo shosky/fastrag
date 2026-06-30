@@ -17,4 +17,14 @@ public interface ConfigManageService {
     List<SysConfig> getDefaultConfigs();
     List<SysConfig> setDefault(List<String> configKeys);
     List<SysConfig> resetToDefault(List<String> configKeys,String operator);
+    // 安全策略 CRUD
+    List<SysSecurityPolicy> listSecurityPolicies(String policyType);
+    SysSecurityPolicy createSecurityPolicy(SysSecurityPolicy p);
+    SysSecurityPolicy updateSecurityPolicy(String id,SysSecurityPolicy p);
+    void deleteSecurityPolicy(String id);
+    // 发布策略 CRUD
+    List<SysPublishStrategy> listPublishStrategies(String strategyType);
+    SysPublishStrategy createPublishStrategy(SysPublishStrategy s);
+    SysPublishStrategy updatePublishStrategy(String id,SysPublishStrategy s);
+    void deletePublishStrategy(String id);
 }

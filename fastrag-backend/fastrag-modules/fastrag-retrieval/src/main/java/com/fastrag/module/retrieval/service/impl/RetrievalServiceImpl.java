@@ -1,8 +1,11 @@
 package com.fastrag.module.retrieval.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import cn.hutool.json.JSONUtil;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.mapper.KbChunkMapper;
+import com.fastrag.module.publish.entity.KbLog;
+import com.fastrag.module.publish.mapper.KbLogMapper;
 import com.fastrag.module.retrieval.entity.KbRetrievalLog;
 import com.fastrag.module.retrieval.model.RetrievalRequest;
 import com.fastrag.module.retrieval.model.SearchResultItem;
@@ -23,6 +26,7 @@ public class RetrievalServiceImpl implements RetrievalService {
 
     private final KbChunkMapper chunkMapper;
     private final RetrievalLogService logService;
+    private final KbLogMapper kbLogMapper;
 
     @Override
     public List<SearchResultItem> search(RetrievalRequest req) {
@@ -57,16 +61,36 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
 
         // 自动记录检索日志
+        long elapsed = System.currentTimeMillis() - startMs;
         try {
             KbRetrievalLog logEntry = new KbRetrievalLog();
             logEntry.setKbId(kbId);
             logEntry.setQuery(query);
             logEntry.setHitCount(results.size());
             logEntry.setHasResult(!results.isEmpty());
-            logEntry.setLatencyMs((int) (System.currentTimeMillis() - startMs));
+            logEntry.setLatencyMs((int) elapsed);
             logEntry.setUserId(SecurityUtil.getCurrentUserId());
             logEntry.setCreatedAt(LocalDateTime.now());
             logService.log(logEntry);
+
+            // 同步写入 kb_log 表，供知识库详情-日志管理页面展示
+            KbLog kbLog = new KbLog();
+            kbLog.setKbId(kbId);
+            kbLog.setCategory("retrieval");
+            kbLog.setAction("search");
+            kbLog.setTarget(query);
+            kbLog.setDetail("检索完成，命中 " + results.size() + " 条");
+            kbLog.setOperator(SecurityUtil.getCurrentUser() != null
+                ? SecurityUtil.getCurrentUser().getUsername() : "system");
+            kbLog.setStatus("success");
+            Map<String,Object> extra = new LinkedHashMap<>();
+            extra.put("mode", req.getConfig() != null ? req.getConfig().getMode() : "hybrid");
+            extra.put("topK", topK);
+            extra.put("hits", results.size());
+            extra.put("duration", elapsed);
+            kbLog.setExtra(JSONUtil.toJsonStr(extra));
+            kbLog.setTimestamp(LocalDateTime.now());
+            kbLogMapper.insert(kbLog);
         } catch (Exception e) {
             log.warn("记录检索日志失败", e);
         }

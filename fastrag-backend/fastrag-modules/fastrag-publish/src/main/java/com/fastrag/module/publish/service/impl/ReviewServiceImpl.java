@@ -12,4 +12,5 @@ public class ReviewServiceImpl implements ReviewService {
     @Override public KbReviewTask submitForReview(String kbId,String versionId,String applicant) { var r=new KbReviewTask(); r.setKbId(kbId); r.setVersionId(versionId); r.setApplicant(applicant); r.setStatus("pending"); r.setCreatedAt(LocalDateTime.now()); mapper.insert(r); return r; }
     @Override public void approveReview(String reviewId,String comment) { var r=mapper.selectById(reviewId); if(r!=null){r.setStatus("approved");r.setComment(comment);r.setReviewedAt(LocalDateTime.now());mapper.updateById(r);} }
     @Override public void rejectReview(String reviewId,String comment) { var r=mapper.selectById(reviewId); if(r!=null){r.setStatus("rejected");r.setComment(comment);r.setReviewedAt(LocalDateTime.now());mapper.updateById(r);} }
+    @Override public KbReviewTask getReview(String id) { return mapper.selectById(id); }
 }

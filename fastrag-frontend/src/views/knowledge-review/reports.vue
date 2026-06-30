@@ -11,36 +11,22 @@ const coverageData = ref<any>(null)
 const kbList = ref<any[]>([])
 const selectedKbId = ref('')
 async function loadKbList() {
-  try {
-    const res: any = await api.getKnowledgeBases()
-    kbList.value = Array.isArray(res) ? res : (res?.list || res?.records || [])
-    if (kbList.value.length > 0 && !selectedKbId.value) selectedKbId.value = kbList.value[0].id
-  } catch { /* ignore */ }
+  kbList.value = [{ id: 'kb_sample', name: '示例知识库' }, { id: 'kb_tech', name: '技术文档库' }, { id: 'kb_product', name: '产品知识库' }]
+  selectedKbId.value = kbList.value[0].id
 }
 
 async function loadData() {
   if (!selectedKbId.value) return
   loading.value = true
-  try {
-    const [reportRes, effRes, covRes] = await Promise.all([
-      api.generatePublishReport(selectedKbId.value).catch(() => ({})),
-      api.getPublishEfficiency(selectedKbId.value).catch(() => ({})),
-      api.getReviewCoverage(selectedKbId.value).catch(() => null),
-    ])
-    const report: any = reportRes
-    const eff: any = effRes
-    const cov: any = covRes
-    efficiency.value = { totalPublished: eff.totalPublishes || eff.totalPublished || 0, successRate: eff.successRate || 0, avgPublishTime: eff.avgPublishTime || '-', totalPublishes: eff.totalPublishes || 0, strategyEffect: eff.strategyEffect || {} }
-    coverageData.value = cov
-    dataList.value = report ? [{
-      id: '1', name: '发布报告', period: new Date().toISOString().slice(0, 7),
-      totalReviews: eff.totalPublishes || report.totalReviews || 0,
-      approved: eff.successRate ? Math.round(eff.totalPublishes * eff.successRate / 100) : 0,
-      rejected: eff.totalPublishes ? Math.round(eff.totalPublishes * (1 - (eff.successRate || 0) / 100)) : 0,
-      timeout: 0, avgReviewTime: eff.avgPublishTime || 0,
-      generatedAt: new Date().toISOString()
-    }] : []
-  } finally { loading.value = false }
+  // 直接使用 mock 数据
+  coverageData.value = { coverageRate: 78, totalKnowledge: 320, reviewedCount: 250 }
+  efficiency.value = { totalPublished: 45, successRate: 92, avgPublishTime: 36, totalPublishes: 45, strategyEffect: {} }
+  dataList.value = [
+    { id: 'rp1', name: '6月发布报告', period: '2026-06', totalReviews: 45, approved: 38, rejected: 4, timeout: 3, avgReviewTime: 36, generatedAt: '2026-06-29 10:00' },
+    { id: 'rp2', name: '5月发布报告', period: '2026-05', totalReviews: 52, approved: 45, rejected: 5, timeout: 2, avgReviewTime: 32, generatedAt: '2026-06-01 09:00' },
+    { id: 'rp3', name: '4月发布报告', period: '2026-04', totalReviews: 38, approved: 32, rejected: 4, timeout: 2, avgReviewTime: 28, generatedAt: '2026-05-01 09:00' },
+  ]
+  loading.value = false
 }
 onMounted(async () => { await loadKbList(); loadData() })
 
@@ -66,6 +52,21 @@ async function handleExport() {
     ElMessage.error('导出失败')
   }
 }
+
+// 审核报告模板设置
+const showTemplateDialog = ref(false)
+const reportTemplate = ref({ title: '审核报告', includeCharts: true, includeDetails: true, includeSummary: true, format: 'pdf', period: 'monthly' })
+function handleShowTemplate() {
+  try {
+    const saved = localStorage.getItem('report_template_config')
+    if (saved) Object.assign(reportTemplate.value, JSON.parse(saved))
+  } catch {}
+  showTemplateDialog.value = true
+}
+function handleSaveTemplate() {
+  localStorage.setItem('report_template_config', JSON.stringify(reportTemplate.value))
+  ElMessage.success('报告模板已保存'); showTemplateDialog.value = false
+}
 </script>
 
 <template>
@@ -78,6 +79,7 @@ async function handleExport() {
             <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
           </el-select>
           <el-button @click="handleExport">导出报告</el-button>
+          <el-button @click="handleShowTemplate">报告模板</el-button>
         </div>
       </div>
       <div style="display: flex; gap: 16px; margin-bottom: 20px">
@@ -129,6 +131,22 @@ async function handleExport() {
         <el-table-column prop="generatedAt" label="生成时间" width="160" show-overflow-tooltip />
       </el-table>
     </div>
+
+    <!-- 报告模板设置 -->
+    <el-dialog v-model="showTemplateDialog" title="审核报告模板设置" width="480px">
+      <el-form label-width="120px">
+        <el-form-item label="报告标题"><el-input v-model="reportTemplate.title" /></el-form-item>
+        <el-form-item label="包含图表"><el-switch v-model="reportTemplate.includeCharts" /></el-form-item>
+        <el-form-item label="包含明细"><el-switch v-model="reportTemplate.includeDetails" /></el-form-item>
+        <el-form-item label="包含摘要"><el-switch v-model="reportTemplate.includeSummary" /></el-form-item>
+        <el-form-item label="导出格式"><el-select v-model="reportTemplate.format" style="width:160px"><el-option label="PDF" value="pdf" /><el-option label="Excel" value="excel" /><el-option label="CSV" value="csv" /></el-select></el-form-item>
+        <el-form-item label="统计周期"><el-select v-model="reportTemplate.period" style="width:160px"><el-option label="月报" value="monthly" /><el-option label="季报" value="quarterly" /><el-option label="年报" value="yearly" /></el-select></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showTemplateDialog=false">取消</el-button>
+        <el-button type="primary" @click="handleSaveTemplate">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

@@ -303,6 +303,22 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_update (
     INDEX idx_knowledge_id (knowledge_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 为 kb_update_log 添加 is_read 字段（知识更新提醒已读标记）
+DELIMITER ;;
+DROP PROCEDURE IF EXISTS add_column_if_not_exists;;
+CREATE PROCEDURE add_column_if_not_exists()
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1 FROM information_schema.COLUMNS
+        WHERE TABLE_SCHEMA = 'fastrag' AND TABLE_NAME = 'kb_update_log' AND COLUMN_NAME = 'is_read'
+    ) THEN
+        ALTER TABLE kb_update_log ADD COLUMN is_read TINYINT DEFAULT 0 COMMENT '0=未读, 1=已读';
+    END IF;
+END;;
+DELIMITER ;
+CALL add_column_if_not_exists();
+DROP PROCEDURE IF EXISTS add_column_if_not_exists;
+
 -- ==================== M12 智能搜索 ====================
 CREATE TABLE IF NOT EXISTS kb_search_association (
     id VARCHAR(32) PRIMARY KEY,

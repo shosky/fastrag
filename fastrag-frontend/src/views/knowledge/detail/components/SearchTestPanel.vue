@@ -6,7 +6,8 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import { useGraphExpansion } from '@/composables/useGraphExpansion'
 import { useSynonyms } from '@/composables/useSynonyms'
-import { searchRetrieval, querySuggest, applyQueryRules as apiApplyQueryRules } from '@/api'
+import { searchRetrieval } from '@/api'
+import { autoCorrect as localAutoCorrect, rewriteQuery as localRewrite } from '@/services/query-preprocess'
 
 const router = useRouter()
 
@@ -36,6 +37,9 @@ const searchMode = ref<'text' | 'image'>('text')
 // --- 纠错 ---
 const correctionSuggestion = ref<string | null>(null)
 const correctionReason = ref('')
+
+// --- 重写 ---
+const rewriteRules = ref<string[]>([])
 
 // --- 图片检索（支持多图）---
 interface ImageItem {
@@ -164,29 +168,26 @@ async function handleSearch() {
     effectiveQuery = `[图片] ${names}`
   }
 
-  // 纠错
+  // 纠错（本地 mock）
   correctionSuggestion.value = null
   correctionReason.value = ''
+  rewriteRules.value = []
   if (!isImageSearch && preprocess.value.autoCorrection) {
-    try {
-      const suggestions = await querySuggest(searchQuery.value)
-      if (suggestions && suggestions.length > 0) {
-        correctionSuggestion.value = suggestions[0]
-        correctionReason.value = '自动纠错'
-        effectiveQuery = suggestions[0]
-      }
-    } catch {
-      // 纠错失败，继续使用原查询
+    const result = localAutoCorrect(searchQuery.value)
+    if (result) {
+      correctionSuggestion.value = result.corrected
+      correctionReason.value = result.reason
+      effectiveQuery = result.corrected
     }
   }
 
-  // 查询重写
+  // 查询重写（本地 mock）
+  rewriteRules.value = []
   if (!isImageSearch && preprocess.value.queryRewrite) {
-    try {
-      const rewritten = await apiApplyQueryRules(effectiveQuery)
-      if (rewritten && rewritten !== effectiveQuery) effectiveQuery = rewritten
-    } catch {
-      // 重写失败，继续使用原查询
+    const { rewritten, appliedRules } = localRewrite(effectiveQuery)
+    if (rewritten !== effectiveQuery) {
+      rewriteRules.value = appliedRules
+      effectiveQuery = rewritten
     }
   }
 
@@ -246,6 +247,7 @@ function handleClear() {
   clearSynonyms()
   correctionSuggestion.value = null
   correctionReason.value = ''
+  rewriteRules.value = []
 }
 
 function handleExampleClick(question: string) {
@@ -329,6 +331,16 @@ function handleKeydown(e: Event | KeyboardEvent) {
         <div v-if="correctionSuggestion && correctionReason" class="search-test__correction">
           <span>{{ correctionReason }}</span>
           <el-button type="primary" link size="small" @click="correctionSuggestion = null">已采用</el-button>
+        </div>
+
+        <!-- 重写提示 -->
+        <div v-if="rewriteRules.length > 0" class="search-test__rewrite">
+          <el-icon><Refresh /></el-icon>
+          <span>查询重写：</span>
+          <span v-for="(rule, idx) in rewriteRules" :key="idx">
+            <el-tag size="small" type="warning">{{ rule }}</el-tag>
+            <span v-if="idx < rewriteRules.length - 1"> </span>
+          </span>
         </div>
 
         <!-- 同义词联想 -->
@@ -619,6 +631,16 @@ function handleKeydown(e: Event | KeyboardEvent) {
   padding: 4px $spacing-sm;
   background: #fff8e1;
   border-radius: $radius-sm;
+}
+
+// --- 重写提示 ---
+.search-test__rewrite {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  font-size: 12px;
+  color: $text-secondary;
+  margin-top: $spacing-xs;
 }
 
 // --- 同义词联想 ---

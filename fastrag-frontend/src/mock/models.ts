@@ -160,10 +160,16 @@ function seedLifecycle() {
   trainingStore.push(
     { id: 'tr_1', modelId: '1', modelName: 'qwen3-32b', status: 'completed', dataSize: 100000, epochs: 3, metrics: { accuracy: 0.92, loss: 0.08 }, startedAt: '2026-05-01 08:00', completedAt: '2026-05-03 16:00' },
     { id: 'tr_2', modelId: '3', modelName: 'text-embedding-v4', status: 'completed', dataSize: 500000, epochs: 5, metrics: { accuracy: 0.95, loss: 0.05 }, startedAt: '2026-05-10 09:00', completedAt: '2026-05-12 18:00' },
+    { id: 'tr_3', modelId: '2', modelName: 'DeepSeek-V3', status: 'running', dataSize: 200000, epochs: 2, metrics: { accuracy: 0, loss: 0.32 }, startedAt: '2026-06-28 14:00' },
+    { id: 'tr_4', modelId: '5', modelName: 'bge-m3', status: 'completed', dataSize: 800000, epochs: 8, metrics: { accuracy: 0.97, loss: 0.03 }, startedAt: '2026-06-01 10:00', completedAt: '2026-06-05 22:00' },
+    { id: 'tr_5', modelId: '1', modelName: 'qwen3-32b', status: 'failed', dataSize: 50000, epochs: 1, metrics: { accuracy: 0, loss: 2.15 }, startedAt: '2026-04-15 09:00', completedAt: '2026-04-15 09:45' },
   )
   testStore.push(
     { id: 'ts_1', modelId: '1', modelName: 'qwen3-32b', testSet: '通用问答测试集', metrics: { accuracy: 0.89, precision: 0.91, recall: 0.87, f1: 0.89 }, testedAt: '2026-05-04 10:00' },
     { id: 'ts_2', modelId: '3', modelName: 'text-embedding-v4', testSet: '语义相似度测试集', metrics: { accuracy: 0.93, precision: 0.94, recall: 0.92, f1: 0.93 }, testedAt: '2026-05-13 14:00' },
+    { id: 'ts_3', modelId: '2', modelName: 'DeepSeek-V3', testSet: '代码生成测试集', metrics: { accuracy: 0.85, precision: 0.88, recall: 0.82, f1: 0.85 }, testedAt: '2026-06-20 16:00' },
+    { id: 'ts_4', modelId: '5', modelName: 'bge-m3', testSet: '文本检索测试集', metrics: { accuracy: 0.95, precision: 0.96, recall: 0.94, f1: 0.95 }, testedAt: '2026-06-10 11:00' },
+    { id: 'ts_5', modelId: '1', modelName: 'qwen3-32b', testSet: '推理能力测试集', metrics: { accuracy: 0.82, precision: 0.85, recall: 0.80, f1: 0.82 }, testedAt: '2026-05-05 09:00' },
   )
   callLogStore.push(
     { id: 'cl_1', modelId: '1', modelName: 'qwen3-32b', caller: '智能问答助手', inputTokens: 256, outputTokens: 512, duration: 1200, status: 'success', timestamp: '2026-06-17 09:15' },
@@ -171,6 +177,9 @@ function seedLifecycle() {
     { id: 'cl_3', modelId: '3', modelName: 'text-embedding-v4', caller: '知识库检索', inputTokens: 64, outputTokens: 0, duration: 50, status: 'success', timestamp: '2026-06-17 09:25' },
     { id: 'cl_4', modelId: '2', modelName: 'DeepSeek-V3', caller: '文档写作助手', inputTokens: 1024, outputTokens: 2048, duration: 3500, status: 'success', timestamp: '2026-06-17 10:00' },
     { id: 'cl_5', modelId: '1', modelName: 'qwen3-32b', caller: '智能问答助手', inputTokens: 512, outputTokens: 1024, duration: 0, status: 'error', timestamp: '2026-06-17 10:30' },
+    { id: 'cl_6', modelId: '2', modelName: 'DeepSeek-V3', caller: '代码审查工具', inputTokens: 2048, outputTokens: 4096, duration: 5200, status: 'success', timestamp: '2026-06-18 14:20' },
+    { id: 'cl_7', modelId: '4', modelName: 'text-embedding-v3', caller: '文档检索', inputTokens: 128, outputTokens: 0, duration: 45, status: 'success', timestamp: '2026-06-18 15:00' },
+    { id: 'cl_8', modelId: '1', modelName: 'qwen3-32b', caller: '报表生成', inputTokens: 3000, outputTokens: 1500, duration: 4800, status: 'success', timestamp: '2026-06-19 08:30' },
   )
 }
 

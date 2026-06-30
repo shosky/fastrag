@@ -4,9 +4,13 @@ import com.fastrag.common.response.ApiResponse;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
+import com.fastrag.module.knowledge.model.FileDto;
 import com.fastrag.module.knowledge.service.FileService;
+import com.fastrag.module.publish.service.LogService;
+import com.fastrag.security.util.SecurityUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.core.io.InputStreamResource;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.MediaType;
@@ -22,10 +26,12 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/kb/{kbId}/files")
 @RequiredArgsConstructor
+@Slf4j
 public class FileController {
     private final FileService svc;
     private final MinioService minioService;
     private final KbFileMapper fileMapper;
+    private final LogService logService;
 
     @GetMapping
     public ApiResponse<?> list(@PathVariable String kbId) {
@@ -50,11 +56,30 @@ public class FileController {
 
     @PutMapping("/{id}")
     public ApiResponse<?> update(@PathVariable String kbId, @PathVariable String id, @RequestBody Map<String, Object> p) {
-        return ApiResponse.success(svc.update(kbId, id, p));
+        FileDto result = svc.update(kbId, id, p);
+        // 记录文件更新日志
+        try {
+            KbFile kf = fileMapper.selectById(id);
+            String username = SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getUsername() : "system";
+            logService.addUpdateLog(kbId, "file_updated",
+                    kf != null ? kf.getName() : id, "更新文件信息", username);
+        } catch (Exception e) {
+            log.error("Failed to log file update", e);
+        }
+        return ApiResponse.success(result);
     }
 
     @DeleteMapping("/{id}")
     public ApiResponse<?> delete(@PathVariable String kbId, @PathVariable String id) {
+        // 先记录文件名，再删除
+        try {
+            KbFile kf = fileMapper.selectById(id);
+            String username = SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getUsername() : "system";
+            logService.addUpdateLog(kbId, "file_removed",
+                    kf != null ? kf.getName() : id, "删除文件", username);
+        } catch (Exception e) {
+            log.error("Failed to log file removal", e);
+        }
         svc.delete(kbId, id);
         return ApiResponse.success();
     }

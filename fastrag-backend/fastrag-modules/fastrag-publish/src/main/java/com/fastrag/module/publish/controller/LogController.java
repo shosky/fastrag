@@ -50,4 +50,10 @@ public class LogController {
         );
         return ApiResponse.success();
     }
+
+    @PutMapping("/api/kb/{kbId}/update-logs/{id}/read")
+    public ApiResponse<?> markUpdateLogRead(@PathVariable String id) {
+        svc.markUpdateLogRead(id);
+        return ApiResponse.success();
+    }
 }

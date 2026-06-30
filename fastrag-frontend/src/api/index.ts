@@ -257,7 +257,7 @@ export async function expandQueryWithGraph(
   return request.post('/graph/expand', { kbId, query, depth, maxEntities })
 }
 
-export async function querySuggest(query: string): Promise<string[]> {
+export async function querySuggest(query: string): Promise<string> {
   return request.post('/query/suggest', { query })
 }
 
@@ -680,6 +680,40 @@ export async function deleteDictionary(id: string) {
 }
 
 // ===========================================================================
+// 安全策略 API
+// ===========================================================================
+
+export async function getSecurityPolicies(params?: { policyType?: string }) {
+  return request.get('/security-policies', { params })
+}
+export async function createSecurityPolicy(data: Record<string, unknown>) {
+  return request.post('/security-policies', data)
+}
+export async function updateSecurityPolicy(id: string, data: Record<string, unknown>) {
+  return request.put(`/security-policies/${id}`, data)
+}
+export async function deleteSecurityPolicy(id: string) {
+  return request.delete(`/security-policies/${id}`)
+}
+
+// ===========================================================================
+// 发布策略 API
+// ===========================================================================
+
+export async function getPublishStrategies(params?: { strategyType?: string }) {
+  return request.get('/publish-strategies', { params })
+}
+export async function createPublishStrategy(data: Record<string, unknown>) {
+  return request.post('/publish-strategies', data)
+}
+export async function updatePublishStrategy(id: string, data: Record<string, unknown>) {
+  return request.put(`/publish-strategies/${id}`, data)
+}
+export async function deletePublishStrategy(id: string) {
+  return request.delete(`/publish-strategies/${id}`)
+}
+
+// ===========================================================================
 // 术语 API
 // ===========================================================================
 
@@ -921,6 +955,10 @@ export async function getRetrievalLogs(params?: { kbId?: string; hasResult?: boo
 
 export async function getRetrievalLogAnalysis(kbId?: string) {
   return request.get('/retrieval/logs/analysis', { params: { kbId } })
+}
+
+export async function updateRetrievalLog(id: number | string, data: Record<string, unknown>) {
+  return request.put(`/retrieval/logs/${id}`, data)
 }
 
 export async function getUpdateRemindList(kbId?: string) {
@@ -1211,8 +1249,24 @@ export async function createKnowledgeTest(kbId: string, data: Record<string, unk
 export async function updateKnowledgeTest(kbId: string, id: string, data: Record<string, unknown>) {
   return request.put(`/kb/${kbId}/knowledge-tests/${id}`, data)
 }
+
+export async function deleteKnowledgeTest(kbId: string, id: string) {
+  return request.delete(`/kb/${kbId}/knowledge-tests/${id}`)
+}
 export async function judgeKnowledgeDialog(kbId: string, id: string, data: { query: string; model?: string }) {
   return request.post(`/kb/${kbId}/knowledge-dialogs/${id}/judge`, data)
+}
+
+export async function getKnowledgeDialogs(kbId: string, knowledgeId?: string) {
+  return request.get(`/kb/${kbId}/knowledge-dialogs`, { params: { knowledgeId } })
+}
+
+export async function createKnowledgeDialog(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/knowledge-dialogs`, data)
+}
+
+export async function deleteKnowledgeDialog(kbId: string, id: string) {
+  return request.delete(`/kb/${kbId}/knowledge-dialogs/${id}`)
 }
 
 // M11 知识更新
@@ -1253,6 +1307,9 @@ export async function deleteSearchAssociation(kbId: string, id: string) {
 }
 export async function searchAssociations(kbId: string, q: string, dimension?: string) {
   return request.get(`/kb/${kbId}/search-associations/search`, { params: { q, dimension } })
+}
+export async function judgeSearchAssociation(kbId: string, dimension: string, query: string, targetText?: string) {
+  return request.post(`/kb/${kbId}/search-associations/judge`, { dimension, query, targetText })
 }
 export async function searchAutoCorrect(kbId: string, q: string) {
   return request.get(`/kb/${kbId}/search-associations/auto-correct`, { params: { q } })
@@ -1407,8 +1464,20 @@ export async function getPublishPlans(kbId: string) {
 export async function createPublishPlan(kbId: string, data: Record<string, unknown>) {
   return request.post(`/kb/${kbId}/publish/plans`, data)
 }
+export async function getPublishPlanExecution(kbId: string, planId: string) {
+  return request.get(`/kb/${kbId}/publish/plans/${planId}/execution`)
+}
 export async function getPublishStrategyEffect(kbId: string) {
   return request.get(`/kb/${kbId}/publish/strategy-effect`)
+}
+export async function getResetConfigs(kbId: string) {
+  return request.get(`/kb/${kbId}/reset-configs`)
+}
+export async function saveResetConfig(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/reset-configs`, data)
+}
+export async function resetKnowledge(kbId: string, knowledgeId: string) {
+  return request.post(`/kb/${kbId}/reset/${knowledgeId}`)
 }
 export async function getReviewStrategies(kbId: string) {
   return request.get(`/kb/${kbId}/review-strategies`)
@@ -1425,6 +1494,9 @@ export async function getComplianceRules(kbId: string) {
 export async function createComplianceRule(kbId: string, data: Record<string, unknown>) {
   return request.post(`/kb/${kbId}/compliance-rules`, data)
 }
+export async function updateComplianceRule(kbId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/kb/${kbId}/compliance-rules/${id}`, data)
+}
 export async function deleteComplianceRule(kbId: string, id: string) {
   return request.delete(`/kb/${kbId}/compliance-rules/${id}`)
 }
@@ -1433,6 +1505,9 @@ export async function getQualityRules(kbId: string) {
 }
 export async function createQualityRule(kbId: string, data: Record<string, unknown>) {
   return request.post(`/kb/${kbId}/quality-rules`, data)
+}
+export async function updateQualityRule(kbId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/kb/${kbId}/quality-rules/${id}`, data)
 }
 export async function deleteQualityRule(kbId: string, id: string) {
   return request.delete(`/kb/${kbId}/quality-rules/${id}`)
@@ -1445,6 +1520,9 @@ export async function createReviewTemplate(kbId: string, data: Record<string, un
 }
 export async function deleteReviewTemplate(kbId: string, id: string) {
   return request.delete(`/kb/${kbId}/review-templates/${id}`)
+}
+export async function updateReviewTemplate(kbId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/kb/${kbId}/review-templates/${id}`, data)
 }
 export async function getReviewNodes(kbId: string, templateId: string) {
   return request.get(`/kb/${kbId}/review-templates/${templateId}/nodes`)
@@ -1606,6 +1684,9 @@ export async function testWorkflowNode(wfId: string, nodeKey: string, data?: Rec
 export async function getWorkflowTemplates() {
   return request.get('/workflows/templates')
 }
+export async function createWorkflowTemplate(data: Record<string, unknown>) {
+  return request.post('/workflows/templates', data)
+}
 export async function getWorkflowTestCases(wfId: string) {
   return request.get(`/workflows/${wfId}/test-cases`)
 }
@@ -1614,6 +1695,9 @@ export async function createWorkflowTestCase(wfId: string, data: Record<string, 
 }
 export async function getWorkflowMigrations() {
   return request.get('/workflows/migrations')
+}
+export async function createWorkflowMigration(data: Record<string, unknown>) {
+  return request.post('/workflows/migrations', data)
 }
 export async function getWorkflowMonitor(wfId: string) {
   return request.get(`/workflows/${wfId}/monitor`)
@@ -1871,6 +1955,9 @@ export async function getReviewCoverage(kbId: string) {
 }
 export async function getKnowledgeUpdateLogs(kbId: string, page?: number, pageSize?: number) {
   return request.get(`/kb/${kbId}/knowledge-update-logs`, { params: { page, pageSize } })
+}
+export async function markUpdateLogRead(kbId: string, id: string) {
+  return request.put(`/kb/${kbId}/update-logs/${id}/read`)
 }
 export async function compareKnowledgeContent(kbId: string, oldId: string, newId: string) {
   return request.get(`/kb/${kbId}/knowledge-compare`, { params: { oldId, newId } })

@@ -9,6 +9,8 @@ public class ConfigManageServiceImpl implements ConfigManageService {
     private final SysConfigMapper configMapper; private final SysConfigHistoryMapper historyMapper;
     private final ModelTrainingMapper trainingMapper; private final ModelTestReportMapper testMapper;
     private final ModelRecordMapper modelMapper;
+    private final SysSecurityPolicyMapper securityPolicyMapper;
+    private final SysPublishStrategyMapper publishStrategyMapper;
     // ===== 模型训练/测试 =====
     @Override public ModelTraining train(String modelId,Map<String,Object> params) {
         var model=modelMapper.selectById(modelId);
@@ -87,4 +89,22 @@ public class ConfigManageServiceImpl implements ConfigManageService {
         for(var key:configKeys){ var c=getConfig(key); if(c!=null&&c.getIsDefault()!=null&&c.getIsDefault()==1){ result.add(c); } }
         return result;
     }
+    // ===== 安全策略 CRUD =====
+    @Override public List<SysSecurityPolicy> listSecurityPolicies(String policyType) {
+        var w=new LambdaQueryWrapper<SysSecurityPolicy>();
+        if(policyType!=null&&!policyType.isEmpty()) w.eq(SysSecurityPolicy::getPolicyType,policyType);
+        return securityPolicyMapper.selectList(w.orderByAsc(SysSecurityPolicy::getPriority));
+    }
+    @Override public SysSecurityPolicy createSecurityPolicy(SysSecurityPolicy p) { if(p.getEnabled()==null) p.setEnabled(1); if(p.getPriority()==null) p.setPriority(0); securityPolicyMapper.insert(p); return p; }
+    @Override public SysSecurityPolicy updateSecurityPolicy(String id,SysSecurityPolicy p) { p.setId(id); securityPolicyMapper.updateById(p); return securityPolicyMapper.selectById(id); }
+    @Override public void deleteSecurityPolicy(String id) { securityPolicyMapper.deleteById(id); }
+    // ===== 发布策略 CRUD =====
+    @Override public List<SysPublishStrategy> listPublishStrategies(String strategyType) {
+        var w=new LambdaQueryWrapper<SysPublishStrategy>();
+        if(strategyType!=null&&!strategyType.isEmpty()) w.eq(SysPublishStrategy::getStrategyType,strategyType);
+        return publishStrategyMapper.selectList(w.orderByAsc(SysPublishStrategy::getPriority));
+    }
+    @Override public SysPublishStrategy createPublishStrategy(SysPublishStrategy s) { if(s.getEnabled()==null) s.setEnabled(1); if(s.getPriority()==null) s.setPriority(0); publishStrategyMapper.insert(s); return s; }
+    @Override public SysPublishStrategy updatePublishStrategy(String id,SysPublishStrategy s) { s.setId(id); publishStrategyMapper.updateById(s); return publishStrategyMapper.selectById(id); }
+    @Override public void deletePublishStrategy(String id) { publishStrategyMapper.deleteById(id); }
 }

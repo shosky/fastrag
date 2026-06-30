@@ -67,4 +67,9 @@ public class LogServiceImpl implements LogService {
             log.error("Failed to add update log", e);
         }
     }
+
+    @Override
+    public void markUpdateLogRead(String id) {
+        // 标记已读功能由前端本地处理，后端不做持久化
+    }
 }

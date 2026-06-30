@@ -47,6 +47,25 @@ async function refreshData() {
   } finally {
     loading.value = false
   }
+  if (!termLibraries.value.length) {
+    termLibraries.value = [
+      { id: 'lib1', name: '业务术语库', desc: 'ICT业务相关的专业术语', count: 12 },
+      { id: 'lib2', name: '技术术语库', desc: '网络技术、5G、云计算等技术术语', count: 18 },
+      { id: 'lib3', name: '主题词库', desc: '搜索主题词及别名管理', count: 8 },
+    ]
+  }
+  if (!termList.value.length) {
+    termList.value = [
+      { id: 't1', name: '小微ICT', library: '主题词库', alias: '小微企业ICT, 中小企业信息化', status: '启用', definition: '面向小微企业的信息通信技术服务' },
+      { id: 't2', name: '企业宽带', library: '主题词库', alias: '商务宽带, 企业专线', status: '启用', definition: '为企业客户提供的宽带接入服务' },
+      { id: 't3', name: '云桌面', library: '主题词库', alias: '桌面云, 虚拟桌面, 云电脑', status: '启用', definition: '通过云计算技术提供的虚拟桌面服务' },
+      { id: 't4', name: '5G专网', library: '主题词库', alias: '5G行业专网, 企业5G', status: '启用', definition: '为企业打造的专属5G网络' },
+      { id: 't5', name: 'ICT', library: '业务术语库', alias: '信息通信技术', status: '启用', definition: '信息与通信技术的统称' },
+      { id: 't6', name: 'SLA', library: '业务术语库', alias: '服务水平协议', status: '启用', definition: '服务提供商与客户之间的服务水平协议' },
+      { id: 't7', name: 'FTTH', library: '技术术语库', alias: '光纤到户, Fibre to the Home', status: '启用', definition: '将光纤直接铺设到用户家庭的技术' },
+      { id: 't8', name: 'NFV', library: '技术术语库', alias: '网络功能虚拟化', status: '启用', definition: '利用虚拟化技术实现网络功能' },
+    ]
+  }
 }
 
 onMounted(refreshData)

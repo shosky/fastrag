@@ -9,7 +9,14 @@ const query = ref({ keyword: '', dbType: '' })
 
 async function loadData() {
   loading.value = true
-  try { dbList.value = ((await api.getDatabases({ keyword: query.value.keyword || undefined, dbType: query.value.dbType || undefined })) as any) || [] } finally { loading.value = false }
+  try {
+    const res = await api.getDatabases(query.value)
+    dbList.value = Array.isArray(res) ? res : (res as any)?.list || []
+  } catch {
+    dbList.value = []
+  } finally {
+    loading.value = false
+  }
 }
 
 const showDialog = ref(false)
@@ -46,7 +53,50 @@ function handleDownloadTemplate() {
   const csv = 'id,name,type,length,comment\nid,VARCHAR(32),,主键\nname,VARCHAR(128),,名称\nstatus,VARCHAR(16),,状态\ncreatedAt,DATETIME,,创建时间\n'
   const blob = new Blob(['\uFEFF' + csv], { type: 'text/csv;charset=UTF-8' })
   const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'table_template.csv'
-  a.click(); URL.revokeObjectURL(url); ElMessage.success('模板已下载')
+  a.click(); URL.revokeObjectURL(url); ElMessage.success('建表模板已下载')
+}
+function handleDownloadSample() {
+  const sample = {
+    name: '示例数据库',
+    dbType: 'mysql',
+    host: '192.168.1.200',
+    port: 3306,
+    username: 'admin',
+    password: 'password123',
+    dbName: 'sample_db',
+    description: '这是一个示例数据库配置',
+  }
+  const blob = new Blob([JSON.stringify(sample, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'database_sample.json'
+  a.click(); URL.revokeObjectURL(url); ElMessage.success('示例表单已下载')
+}
+function handleUploadConfig() {
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json'
+  input.onchange = async (e: any) => {
+    try {
+      const file = e.target.files[0]
+      if (!file) return
+      const text = await file.text()
+      const data = JSON.parse(text)
+      dbList.value.unshift({
+        id: 'db_imp_' + Date.now(),
+        name: data.name || '导入数据库',
+        dbType: data.dbType || 'mysql',
+        host: data.host || 'localhost',
+        port: data.port || 3306,
+        username: data.username || 'root',
+        dbName: data.dbName || '',
+        status: 'connected',
+        createdAt: new Date().toLocaleString('zh-CN'),
+      })
+      ElMessage.success(`数据库「${data.name || '导入数据库'}」已成功导入`)
+    } catch {
+      ElMessage.error('导入失败，请检查JSON格式是否正确')
+    }
+  }
+  input.click()
 }
 
 onMounted(loadData)
@@ -59,6 +109,8 @@ onMounted(loadData)
         <div class="section-title">数据库实例管理</div>
         <div>
           <el-button size="small" @click="handleDownloadTemplate">下载建表模板</el-button>
+          <el-button size="small" @click="handleDownloadSample">下载示例表单</el-button>
+          <el-button size="small" @click="handleUploadConfig">上传表单</el-button>
           <el-button type="primary" @click="handleAdd">新增数据库</el-button>
         </div>
       </div>

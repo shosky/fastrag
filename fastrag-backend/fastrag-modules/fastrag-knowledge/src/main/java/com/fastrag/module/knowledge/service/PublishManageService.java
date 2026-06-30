@@ -16,9 +16,11 @@ public interface PublishManageService {
     void deleteStrategy(String id);
     List<KbComplianceRule> listComplianceRules(String kbId);
     KbComplianceRule createComplianceRule(KbComplianceRule rule);
+    KbComplianceRule updateComplianceRule(String id,KbComplianceRule rule);
     void deleteComplianceRule(String id);
     List<KbQualityRule> listQualityRules(String kbId);
     KbQualityRule createQualityRule(KbQualityRule rule);
+    KbQualityRule updateQualityRule(String id,KbQualityRule rule);
     void deleteQualityRule(String id);
     // 审核流程设计
     List<KbReviewTemplate> listTemplates();

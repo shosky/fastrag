@@ -1,5 +1,7 @@
 package com.fastrag.module.platform.controller;
 import com.fastrag.common.response.ApiResponse;
+import com.fastrag.module.platform.entity.SysPublishStrategy;
+import com.fastrag.module.platform.entity.SysSecurityPolicy;
 import com.fastrag.module.platform.service.ConfigManageService;
 import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;
 import java.util.List; import java.util.Map;
@@ -19,7 +21,9 @@ public class ConfigManageController {
     @PostMapping("/config/import") public ApiResponse<?> importConfig(@RequestBody List<Map<String,Object>> items) { return ApiResponse.success(svc.importConfig(items,"admin")); }
     @GetMapping("/config/default") public ApiResponse<?> defaults() { return ApiResponse.success(svc.getDefaultConfigs()); }
     @PutMapping("/config/default") public ApiResponse<?> setDefault(@RequestBody Map<String,List<String>> body) { return ApiResponse.success(svc.setDefault(body.getOrDefault("configKeys",List.of()))); }
+    @PostMapping("/config/{configKey}/set-default") public ApiResponse<?> setDefaultSingle(@PathVariable String configKey) { return ApiResponse.success(svc.setDefault(List.of(configKey))); }
     @PostMapping("/config/reset-to-default") public ApiResponse<?> resetToDefault(@RequestBody Map<String,List<String>> body) { return ApiResponse.success(svc.resetToDefault(body.getOrDefault("configKeys",List.of()),"admin")); }
+    @PostMapping("/config/{configKey}/reset-default") public ApiResponse<?> resetToDefaultSingle(@PathVariable String configKey) { return ApiResponse.success(svc.resetToDefault(List.of(configKey),"admin")); }
     // 发布/审核开关等具体配置项
     @PutMapping("/config/publish-switch") public ApiResponse<?> publishSwitch(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("publish_switch",toJson(body),"publish","发布开关","admin")); }
     @PutMapping("/config/review-switch") public ApiResponse<?> reviewSwitch(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("review_switch",toJson(body),"review","审核开关","admin")); }
@@ -34,4 +38,14 @@ public class ConfigManageController {
         // 简易JSON序列化（避免引入额外依赖），复用Jackson
         try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(o); } catch(Exception e) { return "{}"; }
     }
+    // ===== 安全策略 CRUD =====
+    @GetMapping("/security-policies") public ApiResponse<?> listSecurityPolicies(@RequestParam(required=false) String policyType) { return ApiResponse.success(svc.listSecurityPolicies(policyType)); }
+    @PostMapping("/security-policies") public ApiResponse<?> createSecurityPolicy(@RequestBody SysSecurityPolicy p) { return ApiResponse.success(svc.createSecurityPolicy(p)); }
+    @PutMapping("/security-policies/{id}") public ApiResponse<?> updateSecurityPolicy(@PathVariable String id,@RequestBody SysSecurityPolicy p) { return ApiResponse.success(svc.updateSecurityPolicy(id,p)); }
+    @DeleteMapping("/security-policies/{id}") public ApiResponse<?> deleteSecurityPolicy(@PathVariable String id) { svc.deleteSecurityPolicy(id); return ApiResponse.success(); }
+    // ===== 发布策略 CRUD =====
+    @GetMapping("/publish-strategies") public ApiResponse<?> listPublishStrategies(@RequestParam(required=false) String strategyType) { return ApiResponse.success(svc.listPublishStrategies(strategyType)); }
+    @PostMapping("/publish-strategies") public ApiResponse<?> createPublishStrategy(@RequestBody SysPublishStrategy s) { return ApiResponse.success(svc.createPublishStrategy(s)); }
+    @PutMapping("/publish-strategies/{id}") public ApiResponse<?> updatePublishStrategy(@PathVariable String id,@RequestBody SysPublishStrategy s) { return ApiResponse.success(svc.updatePublishStrategy(id,s)); }
+    @DeleteMapping("/publish-strategies/{id}") public ApiResponse<?> deletePublishStrategy(@PathVariable String id) { svc.deletePublishStrategy(id); return ApiResponse.success(); }
 }

@@ -77,9 +77,8 @@ const allModules: NavModule[] = [
         path: '/application',
         title: '应用管理',
 	        children: [
-	          { path: '/application', title: '应用中心' },
-	          { path: '/application/demo-flow/workflow-manage', title: '业务流管理' },
-	          { path: '/publish-eval/release', title: '发布与评估' },
+		          { path: '/application', title: '应用中心' },
+		          { path: '/publish-eval/release', title: '发布与评估' },
 	        ],
       },
       {

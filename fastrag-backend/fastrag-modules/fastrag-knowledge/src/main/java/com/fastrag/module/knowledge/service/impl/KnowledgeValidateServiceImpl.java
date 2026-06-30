@@ -2,11 +2,13 @@ package com.fastrag.module.knowledge.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.knowledge.entity.KbKnowledgeValidate; import com.fastrag.module.knowledge.mapper.KbKnowledgeValidateMapper;
 import com.fastrag.module.knowledge.service.KnowledgeValidateService;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
 import java.time.LocalDateTime; import java.util.*;
 @Service @RequiredArgsConstructor
 public class KnowledgeValidateServiceImpl implements KnowledgeValidateService {
     private final KbKnowledgeValidateMapper mapper;
+    private final ObjectMapper objectMapper;
     @Override public List<KbKnowledgeValidate> list(String kbId) {
         var w=new LambdaQueryWrapper<KbKnowledgeValidate>();
         if(kbId!=null&&!kbId.isEmpty()) w.eq(KbKnowledgeValidate::getKbId,kbId);
@@ -27,7 +29,11 @@ public class KnowledgeValidateServiceImpl implements KnowledgeValidateService {
         detail.put("duplicateGroups",v.getValidateType()!=null&&v.getValidateType().equals("duplicate")?failed:0);
         detail.put("expiredItems",v.getValidateType()!=null&&v.getValidateType().equals("expired")?failed:0);
         detail.put("qualityIssues",v.getValidateType()!=null&&v.getValidateType().equals("quality")?failed:0);
-        v.setResult(detail.toString());
+        try {
+            v.setResult(objectMapper.writeValueAsString(detail));
+        } catch (Exception e) {
+            v.setResult("{\"error\":\"serialization failed\"}");
+        }
         v.setCompletedAt(LocalDateTime.now());
         mapper.insert(v); return v;
     }

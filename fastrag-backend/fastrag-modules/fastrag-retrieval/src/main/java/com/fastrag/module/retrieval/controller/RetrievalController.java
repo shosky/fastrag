@@ -34,6 +34,7 @@ public class RetrievalController {
         return ApiResponse.success(logService.analysis(kbId));
     }
     @PostMapping("/api/retrieval/logs") public ApiResponse<?> addLog(@RequestBody KbRetrievalLog log) { logService.log(log); return ApiResponse.success(); }
+    @PutMapping("/api/retrieval/logs/{id}") public ApiResponse<?> updateLog(@PathVariable Long id,@RequestBody KbRetrievalLog log) { log.setId(id); logService.update(log); return ApiResponse.success(); }
     @GetMapping("/api/kb/{kbId}/update-remind") public ApiResponse<?> remind(@PathVariable String kbId) { return ApiResponse.success(remindService.remind(kbId)); }
     @GetMapping("/api/update-remind") public ApiResponse<?> remindList(@RequestParam(required=false) String kbId) { return ApiResponse.success(remindService.list(kbId)); }
     @PostMapping("/api/update-remind") public ApiResponse<?> saveRemind(@RequestBody KbUpdateRemind remind) { return ApiResponse.success(remindService.save(remind)); }

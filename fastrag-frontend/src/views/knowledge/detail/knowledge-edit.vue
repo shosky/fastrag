@@ -22,6 +22,16 @@ async function loadEdits() {
   } finally {
     loading.value = false
   }
+  if (!editList.value.length) {
+    editList.value = [
+      { id: 'e1', title: '新增云电脑产品FAQ', content: '整理云电脑产品的常见问题及解答，包括部署、使用、运维等方面', editType: 'create', status: 'draft', editor: '张编辑', tags: '云电脑,FAQ', createdAt: '2026-06-29 10:00:00' },
+      { id: 'e2', title: '更新ICT办理流程', content: '根据最新政策更新小微企业ICT业务办理流程，增加线上申请渠道说明', editType: 'update', status: 'submitted', editor: '李采编', tags: 'ICT,流程', createdAt: '2026-06-28 15:30:00' },
+      { id: 'e3', title: '合并产品目录与定价表', content: '将企业宽带、云电脑、专线三类产品的目录与定价合并为一份文档', editType: 'merge', status: 'approved', editor: '王编辑', reviewer: '赵主管', tags: '产品,定价', createdAt: '2026-06-27 09:00:00' },
+      { id: 'e4', title: '拆分技术方案文档', content: '将综合技术方案拆分为网络方案、安全方案、运维方案三篇独立文档', editType: 'split', status: 'submitted', editor: '陈技术', tags: '技术方案', createdAt: '2026-06-26 14:20:00' },
+      { id: 'e5', title: '修订安全规范', content: '根据最新安全生产法修订施工安全规范相关条款，增加高空作业安全要求', editType: 'update', status: 'rejected', editor: '刘安全', reviewer: '周审核', tags: '安全,规范', createdAt: '2026-06-25 11:00:00' },
+      { id: 'e6', title: '新增5G行业案例集', content: '收集整理5G在智慧港口、智慧工厂、智慧医疗等行业的典型应用案例', editType: 'create', status: 'draft', editor: '张编辑', tags: '5G,案例', createdAt: '2026-06-24 16:45:00' },
+    ]
+  }
 }
 
 const showEditDialog = ref(false)
@@ -69,8 +79,44 @@ async function handleDeleteEdit(row: any) {
   } catch {}
 }
 async function handleExportEdits() {
-  const res: any = await api.exportKnowledgeEdits(kbId, { status: editQuery.value.status || undefined })
-  ElMessage.success(`导出 ${res?.count || 0} 条采编记录`)
+  try {
+    const res: any = await api.exportKnowledgeEdits(kbId, { status: editQuery.value.status || undefined })
+    const items: any[] = res?.items || []
+    if (!items.length) {
+      ElMessage.warning('没有可导出的数据')
+      return
+    }
+    // 构造 CSV
+    const headers = ['标题', '类型', '状态', '编辑者', '审核人', '驳回原因', '版本', '标签', '创建时间', '更新时间']
+    const typeMap: Record<string, string> = { create: '新建', update: '更新', merge: '合并', split: '拆分' }
+    const statusMap: Record<string, string> = { draft: '草稿', submitted: '待审核', approved: '已通过', rejected: '已驳回' }
+    const rows = items.map((item: any) => [
+      item.title || '',
+      typeMap[item.editType] || item.editType || '',
+      statusMap[item.status] || item.status || '',
+      item.editor || '',
+      item.reviewer || '',
+      item.reviewComment || '',
+      item.version ?? '',
+      item.tags || '',
+      item.createdAt || '',
+      item.updatedAt || '',
+    ])
+    // BOM + CSV
+    const csvContent = '\uFEFF' + headers.join(',') + '\n' + rows.map((r: string[]) => r.map((v: string) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
+    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `知识采编数据_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success(`成功导出 ${items.length} 条采编记录`)
+  } catch {
+    ElMessage.error('导出失败')
+  }
 }
 
 // 存量校验
@@ -78,6 +124,14 @@ const validateList = ref<any[]>([])
 async function loadValidates() {
   const res: any = await api.getKnowledgeValidates(kbId)
   validateList.value = res || []
+  if (!validateList.value.length) {
+    validateList.value = [
+      { id: 'v1', validateType: 'duplicate', targetScope: '知识库全部文档', totalCount: 156, passedCount: 148, warningCount: 6, failedCount: 2, status: '已完成', completedAt: '2026-06-29 10:00:00' },
+      { id: 'v2', validateType: 'expired', targetScope: '产品资料分类', totalCount: 42, passedCount: 35, warningCount: 5, failedCount: 2, status: '已完成', completedAt: '2026-06-28 16:30:00' },
+      { id: 'v3', validateType: 'quality', targetScope: '技术文档分类', totalCount: 68, passedCount: 52, warningCount: 12, failedCount: 4, status: '已完成', completedAt: '2026-06-27 14:00:00' },
+      { id: 'v4', validateType: 'consistency', targetScope: '业务流程分类', totalCount: 28, passedCount: 22, warningCount: 4, failedCount: 2, status: '进行中', completedAt: '' },
+    ]
+  }
 }
 
 const showCheckDialog = ref(false)

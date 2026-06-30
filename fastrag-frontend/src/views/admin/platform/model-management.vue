@@ -48,11 +48,77 @@ onMounted(loadModels)
 
 async function loadLifecycle(modelId: string) {
   selectedModelId.value = modelId
-  // 生命周期数据暂用空数组，后端可后续补充
-  trainingRecords.value = []
-  testReports.value = []
-  callLogs.value = []
   activeTab.value = 'lifecycle'
+  loading.value = true
+  try {
+    const [trainings, reports] = await Promise.all([
+      api.getModelTrainings(modelId),
+      api.getModelTestReports(modelId),
+    ])
+    trainingRecords.value = Array.isArray(trainings) ? trainings : (trainings as any)?.list || []
+    testReports.value = Array.isArray(reports) ? reports : (reports as any)?.list || []
+    // 调用日志 — 从 mock 模拟获取
+    const { getCallLogs } = await import('@/mock/models')
+    callLogs.value = getCallLogs(modelId)
+  } catch {
+    trainingRecords.value = []
+    testReports.value = []
+    callLogs.value = []
+  } finally {
+    loading.value = false
+  }
+}
+
+// 新增训练弹窗
+const showTrainDialog = ref(false)
+const trainForm = ref({
+  dataset: '',
+  epochs: 10,
+  learningRate: 0.001,
+  batchSize: 32,
+  description: '',
+})
+
+function handleShowTrain() {
+  trainForm.value = { dataset: '', epochs: 10, learningRate: 0.001, batchSize: 32, description: '' }
+  showTrainDialog.value = true
+}
+
+async function handleSubmitTrain() {
+  if (!trainForm.value.dataset) {
+    ElMessage.warning('请填写训练数据集')
+    return
+  }
+  try {
+    await api.trainModel(selectedModelId.value!, {
+      dataset: trainForm.value.dataset,
+      epochs: trainForm.value.epochs,
+      learningRate: trainForm.value.learningRate,
+      batchSize: trainForm.value.batchSize,
+      description: trainForm.value.description,
+    })
+    ElMessage.success('训练任务已提交')
+    showTrainDialog.value = false
+    // 刷新训练记录
+    const trainings = await api.getModelTrainings(selectedModelId.value!)
+    trainingRecords.value = Array.isArray(trainings) ? trainings : (trainings as any)?.list || []
+  } catch {
+    ElMessage.error('提交训练任务失败')
+  }
+}
+
+async function handleStartTrain() {
+  await api.trainModel(selectedModelId.value!)
+  ElMessage.success('训练任务已提交')
+  const trainings = await api.getModelTrainings(selectedModelId.value!)
+  trainingRecords.value = Array.isArray(trainings) ? trainings : (trainings as any)?.list || []
+}
+
+async function handleStartTest() {
+  await api.testModel(selectedModelId.value!)
+  ElMessage.success('测试任务已提交')
+  const reports = await api.getModelTestReports(selectedModelId.value!)
+  testReports.value = Array.isArray(reports) ? reports : (reports as any)?.list || []
 }
 
 const showDialog = ref(false)
@@ -222,7 +288,10 @@ async function handleSave() {
         <el-tab-pane label="训练记录">
           <div class="section-header">
             <div class="section-title">训练记录</div>
-            <el-button size="small" type="primary" @click="api.trainModel(selectedModelId); ElMessage.success('训练任务已提交')">开始训练</el-button>
+            <div style="display:flex;gap:8px">
+              <el-button size="small" type="primary" @click="handleShowTrain">新增训练</el-button>
+              <el-button size="small" @click="handleStartTrain">快速训练</el-button>
+            </div>
           </div>
           <el-table :data="trainingRecords" stripe size="small">
             <el-table-column prop="status" label="状态" width="80" align="center">
@@ -250,7 +319,7 @@ async function handleSave() {
         <el-tab-pane label="测试报告">
           <div class="section-header">
             <div class="section-title">测试报告</div>
-            <el-button size="small" type="primary" @click="api.testModel(selectedModelId); ElMessage.success('测试任务已提交')">开始测试</el-button>
+            <el-button size="small" type="primary" @click="handleStartTest">开始测试</el-button>
           </div>
           <el-table :data="testReports" stripe size="small">
             <el-table-column prop="testSet" label="测试集" min-width="150" />
@@ -343,6 +412,40 @@ async function handleSave() {
       <template #footer>
         <el-button @click="showImportDialog = false">取消</el-button>
         <el-button type="primary" @click="handleImport">导入</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 新增训练弹窗 -->
+    <el-dialog v-model="showTrainDialog" title="新增训练" width="520px">
+      <el-form label-width="100px">
+        <el-form-item label="训练模型">
+          <el-tag>{{ models.find(m => m.id === selectedModelId)?.name || selectedModelId }}</el-tag>
+        </el-form-item>
+        <el-form-item label="训练数据集" required>
+          <el-input v-model="trainForm.dataset" placeholder="请输入数据集名称或路径" />
+        </el-form-item>
+        <el-form-item label="训练轮次">
+          <el-input-number v-model="trainForm.epochs" :min="1" :max="1000" style="width:160px" />
+        </el-form-item>
+        <el-form-item label="学习率">
+          <el-input-number v-model="trainForm.learningRate" :min="0.00001" :max="1" :step="0.0001" :precision="5" style="width:160px" />
+        </el-form-item>
+        <el-form-item label="批大小">
+          <el-select v-model="trainForm.batchSize" style="width:160px">
+            <el-option :value="8" label="8" />
+            <el-option :value="16" label="16" />
+            <el-option :value="32" label="32" />
+            <el-option :value="64" label="64" />
+            <el-option :value="128" label="128" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注说明">
+          <el-input v-model="trainForm.description" type="textarea" :rows="3" placeholder="可选，训练任务备注" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showTrainDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSubmitTrain">提交训练</el-button>
       </template>
     </el-dialog>
   </div>

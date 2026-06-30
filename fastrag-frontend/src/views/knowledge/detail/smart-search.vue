@@ -39,6 +39,28 @@ async function handleTest() {
   testResult.value = await api.searchAssociations(kbId, testQuery.value)
 }
 
+// 判断（按维度校验联想规则）
+const showJudgeDialog = ref(false)
+const judgeForm = ref({ dimension: 'content', query: '', targetText: '' })
+const judgeResult = ref<any>(null)
+const judgeLoading = ref(false)
+function handleShowJudge(row: any) {
+  judgeForm.value = { dimension: row.dimension || 'content', query: '', targetText: row.name || '' }
+  judgeResult.value = null
+  showJudgeDialog.value = true
+}
+async function handleJudge() {
+  if (!judgeForm.value.query) { ElMessage.warning('请输入测试查询内容'); return }
+  judgeLoading.value = true
+  try {
+    judgeResult.value = await api.judgeSearchAssociation(kbId, judgeForm.value.dimension, judgeForm.value.query, judgeForm.value.targetText)
+  } catch {
+    ElMessage.error('判断请求失败')
+  } finally {
+    judgeLoading.value = false
+  }
+}
+
 // 自动纠错
 const correctionList = ref<any[]>([])
 async function loadCorrections() { correctionList.value = ((await api.getAutoCorrections(kbId)) as any) || [] }
@@ -76,20 +98,13 @@ async function loadUpdateLogs() {
   try {
     const res: any = await api.getKnowledgeUpdateLogs(kbId, updateLogPage.value, updateLogPageSize.value)
     const list = Array.isArray(res) ? res : (res?.list || [])
-    updateLogs.value = list
+    // 保持已有 read 状态，新数据默认为未读
+    const readMap = new Map(updateLogs.value.filter(l => l.read).map(l => [l.id, true]))
+    updateLogs.value = list.map((item: any) => ({ ...item, read: readMap.has(item.id) || false }))
     updateLogTotal.value = res?.total || list.length
   } catch {
     updateLogs.value = []
     updateLogTotal.value = 0
-  }
-  if (!updateLogs.value.length) {
-    updateLogs.value = [
-      { id: 'ul1', updateType: 'file_added', target: '产品手册v2.docx', detail: '新增文件，1024KB', operator: '张三', timestamp: '2026-06-29 10:30:00', read: false },
-      { id: 'ul2', updateType: 'file_updated', target: '技术规格.pdf', detail: '更新文件内容，新增第5章', operator: '李四', timestamp: '2026-06-29 09:15:00', read: false },
-      { id: 'ul3', updateType: 'chunk_updated', target: '切片#12（产品手册）', detail: '内容更新：修改产品参数', operator: '系统', timestamp: '2026-06-28 16:00:00', read: true },
-      { id: 'ul4', updateType: 'file_removed', target: '旧版说明.txt', detail: '删除过期文件', operator: '张三', timestamp: '2026-06-28 14:20:00', read: true },
-    ]
-    updateLogTotal.value = updateLogs.value.length
   }
 }
 
@@ -132,7 +147,7 @@ async function handleMarkAllRead() {
     // 批量标记所有未读更新日志为已读
     const unreadIds = updateLogs.value.filter(l => !l.read).map(l => l.id)
     for (const id of unreadIds) {
-      await api.updateUpdateRemind(id, { read: true })
+      await api.markUpdateLogRead(kbId, id)
     }
     await loadUpdateLogs()
     unreadUpdateCount.value = 0
@@ -145,7 +160,7 @@ async function handleMarkAllRead() {
 async function handleMarkRead(row: any) {
   if (row.read) return
   try {
-    await api.updateUpdateRemind(row.id, { read: true })
+    await api.markUpdateLogRead(kbId, row.id)
     row.read = true
     unreadUpdateCount.value = Math.max(0, unreadUpdateCount.value - 1)
   } catch { /* ignore */ }
@@ -172,7 +187,7 @@ onMounted(() => {
           <div class="section-header"><div class="section-title">搜索联想规则</div><el-button type="primary" @click="handleAddAssoc">新增联想</el-button></div>
           <div class="filter-bar">
             <el-select v-model="assocQuery.dimension" placeholder="维度" clearable style="width:140px" @change="loadAssoc">
-              <el-option label="搜索内容" value="content" /><el-option label="主题词" value="keyword" /><el-option label="搜索规则" value="rule" /><el-option label="附件" value="attachment" /><el-option label="发布时间" value="time" /><el-option label="知识类型" value="type" />
+              <el-option label="搜索内容" value="content" /><el-option label="搜索规则" value="rule" />
             </el-select>
             <el-input v-model="assocQuery.keyword" placeholder="名称搜索" clearable style="width:180px" @keyup.enter="loadAssoc" />
             <el-button type="primary" @click="loadAssoc">查询</el-button>
@@ -183,7 +198,7 @@ onMounted(() => {
             <el-table-column prop="pattern" label="匹配模式" show-overflow-tooltip />
             <el-table-column prop="priority" label="优先级" width="80" />
             <el-table-column prop="enabled" label="启用" width="70"><template #default="{ row }"><el-tag :type="row.enabled?'success':'info'" size="small">{{ row.enabled ? '是' : '否' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="120"><template #default="{ row }"><el-button link type="primary" size="small" @click="handleEditAssoc(row)">编辑</el-button><el-button link type="danger" size="small" @click="handleDeleteAssoc(row)">删除</el-button></template></el-table-column>
+            <el-table-column label="操作" width="180"><template #default="{ row }"><el-button link type="primary" size="small" @click="handleEditAssoc(row)">编辑</el-button><el-button link type="primary" size="small" @click="handleShowJudge(row)">判断</el-button><el-button link type="danger" size="small" @click="handleDeleteAssoc(row)">删除</el-button></template></el-table-column>
           </el-table>
         </div>
         <div class="card-panel" style="margin-top:16px">
@@ -274,7 +289,7 @@ onMounted(() => {
       <el-form label-width="80px">
         <el-form-item label="名称" required><el-input v-model="assocForm.name" /></el-form-item>
         <el-form-item label="维度">
-          <el-select v-model="assocForm.dimension" style="width:180px"><el-option label="搜索内容" value="content" /><el-option label="主题词" value="keyword" /><el-option label="搜索规则" value="rule" /><el-option label="附件" value="attachment" /><el-option label="发布时间" value="time" /><el-option label="知识类型" value="type" /></el-select>
+          <el-select v-model="assocForm.dimension" style="width:180px"><el-option label="搜索内容" value="content" /><el-option label="搜索规则" value="rule" /></el-select>
         </el-form-item>
         <el-form-item label="匹配模式"><el-input v-model="assocForm.pattern" placeholder="正则表达式，如：退款|退货" /></el-form-item>
         <el-form-item label="联想建议"><el-input v-model="assocForm.suggestions" type="textarea" :rows="3" placeholder='JSON数组' /></el-form-item>
@@ -291,6 +306,35 @@ onMounted(() => {
         <el-form-item label="优先级"><el-input-number v-model="correctionForm.priority" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showCorrectionDialog=false">取消</el-button><el-button type="primary" @click="handleSaveCorrection">保存</el-button></template>
+    </el-dialog>
+
+    <!-- 判断对话框 -->
+    <el-dialog v-model="showJudgeDialog" title="搜索联想判断" width="500px">
+      <el-form label-width="110px">
+        <el-form-item label="判断维度">
+          <el-select v-model="judgeForm.dimension" style="width:180px">
+            <el-option label="搜索内容" value="content" /><el-option label="搜索规则" value="rule" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="测试查询" required>
+          <el-input v-model="judgeForm.query" placeholder="输入用户查询内容" />
+        </el-form-item>
+        <el-form-item label="目标文本">
+          <el-input v-model="judgeForm.targetText" placeholder="可选，预期匹配的规则名称" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="handleJudge" :loading="judgeLoading">执行判断</el-button>
+        </el-form-item>
+      </el-form>
+      <div v-if="judgeResult" class="judge-result">
+        <p><b>判断结果：</b>
+          <el-tag :type="judgeResult.matched ? 'success' : 'info'" size="small">
+            {{ judgeResult.matched ? '匹配' : '不匹配' }}
+          </el-tag>
+        </p>
+        <p><b>置信度：</b>{{ (judgeResult.confidence * 100).toFixed(0) }}%</p>
+        <p v-if="judgeResult.matchedRule"><b>匹配规则：</b>{{ judgeResult.matchedRule.name }}（{{ judgeResult.matchedRule.dimension }}）</p>
+      </div>
     </el-dialog>
 
     <!-- 更新提醒设置对话框 -->
@@ -323,4 +367,5 @@ onMounted(() => {
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; }
 .section-title { font-size: 15px; font-weight: 600; }
 .result-box { margin-top: $spacing-base; padding: $spacing-base; background: $bg-white; border-radius: $radius-base; p { margin: 4px 0; } }
+.judge-result { margin-top: $spacing-base; padding: $spacing-base; background: #fafafa; border-radius: $radius-base; border: 1px solid $border-lighter; p { margin: 6px 0; } }
 </style>

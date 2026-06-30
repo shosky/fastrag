@@ -21,9 +21,11 @@ public class PublishManageController {
     @DeleteMapping("/review-strategies/{id}") public ApiResponse<?> deleteStrategy(@PathVariable String id) { svc.deleteStrategy(id); return ApiResponse.success(); }
     @GetMapping("/compliance-rules") public ApiResponse<?> complianceRules(@PathVariable String kbId) { return ApiResponse.success(svc.listComplianceRules(kbId)); }
     @PostMapping("/compliance-rules") public ApiResponse<?> createCompliance(@PathVariable String kbId,@RequestBody KbComplianceRule r) { r.setKbId(kbId); return ApiResponse.success(svc.createComplianceRule(r)); }
+    @PutMapping("/compliance-rules/{id}") public ApiResponse<?> updateCompliance(@PathVariable String id,@RequestBody KbComplianceRule r) { return ApiResponse.success(svc.updateComplianceRule(id,r)); }
     @DeleteMapping("/compliance-rules/{id}") public ApiResponse<?> deleteCompliance(@PathVariable String id) { svc.deleteComplianceRule(id); return ApiResponse.success(); }
     @GetMapping("/quality-rules") public ApiResponse<?> qualityRules(@PathVariable String kbId) { return ApiResponse.success(svc.listQualityRules(kbId)); }
     @PostMapping("/quality-rules") public ApiResponse<?> createQuality(@PathVariable String kbId,@RequestBody KbQualityRule r) { r.setKbId(kbId); return ApiResponse.success(svc.createQualityRule(r)); }
+    @PutMapping("/quality-rules/{id}") public ApiResponse<?> updateQuality(@PathVariable String id,@RequestBody KbQualityRule r) { return ApiResponse.success(svc.updateQualityRule(id,r)); }
     @DeleteMapping("/quality-rules/{id}") public ApiResponse<?> deleteQuality(@PathVariable String id) { svc.deleteQualityRule(id); return ApiResponse.success(); }
     // 审核流程设计
     @GetMapping("/review-templates") public ApiResponse<?> templates() { return ApiResponse.success(svc.listTemplates()); }

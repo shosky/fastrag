@@ -1,298 +1,421 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
-import { useRoute } from 'vue-router'
+import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 
-const route = useRoute()
-const wfId = (route.params.id as string) || ''
-const activeTab = ref('nodes')
 const loading = ref(false)
+const showWorkflowList = ref(false)
 
-// ===== 业务流创建 =====
+// ============================================================================
+// 业务流列表（弹窗形式）
+// ============================================================================
+const workflowList = ref<any[]>([])
 const showCreateDialog = ref(false)
 const createForm = ref({ name: '', description: '', category: '问答' })
-const workflowList = ref<any[]>([])
+
 async function loadWorkflows() {
-  workflowList.value = [
-    { id: 'wf_001', name: '智能问答工作流', description: '意图识别→知识库检索→LLM回答', category: '问答', status: 'published', version: 'v1.0', createdAt: '2026-06-28', updatedAt: '2026-06-29' },
-    { id: 'wf_002', name: '多轮对话工作流', description: '上下文管理→意图识别→知识检索→回答生成', category: '对话', status: 'draft', version: 'v0.9', createdAt: '2026-06-27', updatedAt: '2026-06-27' },
-  ]
-  try { const r: any = await api.getWorkflowTemplates(); if (Array.isArray(r) && r.length) workflowList.value = r } catch {}
+  try {
+    const res: any = await api.getWorkflows()
+    workflowList.value = Array.isArray(res) ? res : []
+  } catch { workflowList.value = [] }
 }
-function handleCreate() { showCreateDialog.value = true; createForm.value = { name: '', description: '', category: '问答' } }
+
+function handleCreate() {
+  showCreateDialog.value = true
+  createForm.value = { name: '', description: '', category: '问答' }
+}
+
 async function handleCreateWorkflow() {
   if (!createForm.value.name) { ElMessage.warning('请输入业务流名称'); return }
-  workflowList.value.unshift({ id: 'wf_new_' + Date.now(), ...createForm.value, status: 'draft', version: 'v0.1', createdAt: new Date().toISOString().slice(0, 16).replace('T', ' '), updatedAt: '-' })
-  ElMessage.success('业务流已创建'); showCreateDialog.value = false
+  try {
+    await api.createWorkflow(createForm.value)
+    await loadWorkflows()
+    ElMessage.success('业务流已创建')
+    showCreateDialog.value = false
+  } catch (e: any) { ElMessage.error(e?.message || '创建失败') }
 }
 
-// ===== 节点管理 =====
+function handleSelectWorkflow(row: any) {
+  wfId.value = row.id
+  wfName.value = row.name
+  showWorkflowList.value = false
+  loadCanvas()
+}
+
+async function handleDeleteWorkflow(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除业务流「${row.name}」？`, '确认', { type: 'warning' })
+    await api.deleteWorkflow(row.id)
+    await loadWorkflows()
+    ElMessage.success('已删除')
+  } catch {}
+}
+
+// ============================================================================
+// Tab 2: 工作流画布 — 自由编排
+// ============================================================================
+const wfId = ref('')
+const wfName = ref('')
 const nodes = ref<any[]>([])
-const publishHistory = ref<any[]>([])
+const edges = ref<Array<{ source: string; target: string }>>([])
+const selectedNode = ref<any>(null)
+const connectingFrom = ref<string | null>(null)
+
+// 从后端加载画布数据
+async function loadCanvas() {
+  if (!wfId.value) return
+  loading.value = true
+  try {
+    // 加载节点
+    const nodeRes: any = await api.getWorkflowNodes(wfId.value)
+    nodes.value = Array.isArray(nodeRes) ? nodeRes : []
+    // 加载连线 (edges 存储在 workflow 的 edges 字段)
+    const wfDetail: any = await api.getWorkflowDetail(wfId.value)
+    if (wfDetail?.edges) {
+      try { edges.value = JSON.parse(typeof wfDetail.edges === 'string' ? wfDetail.edges : '[]') } catch { edges.value = [] }
+    } else { edges.value = [] }
+  } catch {
+    nodes.value = []
+    edges.value = []
+  } finally { loading.value = false }
+}
+
+// 保存画布到后端
+async function saveCanvas() {
+  if (!wfId.value) return
+  try {
+    // 保存节点位置和配置（逐个更新）
+    for (const node of nodes.value) {
+      try {
+        await api.updateWorkflowNode(wfId.value, node.nodeKey, {
+          nodeKey: node.nodeKey, type: node.nodeType, name: node.name,
+          x: node.positionX, y: node.positionY, config: node.config || {},
+        })
+      } catch {}
+    }
+    // 保存连线关系 (存入 workflow.edges)
+    await api.updateWorkflow(wfId.value, { edges: JSON.stringify(edges.value) })
+    ElMessage.success('画布已保存')
+  } catch (e: any) { ElMessage.error(e?.message || '保存失败') }
+}
+
+// 移除对 mainTab 的引用
+// 回业务流列表 — 改为打开选择弹窗
+// 已由 showWorkflowList 代替
+
+// ===== 节点操作 =====
+const NODE_TYPES = [
+  { value: 'start', label: '开始', color: '#67C23A', icon: '▶' },
+  { value: 'end', label: '结束', color: '#F56C6C', icon: '⏹' },
+  { value: 'llm', label: '大模型', color: '#409EFF', icon: '🤖' },
+  { value: 'kb_retrieval', label: '知识库检索', color: '#E6A23C', icon: '📚' },
+  { value: 'intent', label: '意图识别', color: '#9B59B6', icon: '🎯' },
+  { value: 'selector', label: '选择器', color: '#1ABC9C', icon: '🔀' },
+  { value: 'function_request', label: '功能请求', color: '#FF6B6B', icon: '⚡' },
+  { value: 'sub_workflow', label: '子工作流', color: '#00B4D8', icon: '🔗' },
+]
+const nodeTypeMap = Object.fromEntries(NODE_TYPES.map(t => [t.value, t]))
+
 const showNodeDialog = ref(false)
-const isEditingNode = ref(false)
-const editingNodeKey = ref('')
-const nodeForm = ref({ nodeKey: '', nodeType: 'llm', name: '', x: 0, y: 0 })
+const editingNode = ref<any>(null)
+const nodeForm = ref({ nodeKey: '', nodeType: 'llm', name: '' })
 const nodeConfig = ref<any>({})
 
-async function loadNodes() {
-  if(!wfId) return
-  loading.value = true
-  try { nodes.value = ((await api.getWorkflowNodes(wfId)) as any) || [] } finally { loading.value = false }
-  if (!nodes.value.length && wfId) {
-    nodes.value = [
-      { nodeKey: 'start', nodeType: 'start', name: '开始', positionX: 100, positionY: 200, enabled: true, config: {} },
-      { nodeKey: 'intent_recog', nodeType: 'intent', name: '意图识别', positionX: 300, positionY: 200, enabled: true, config: { model: 'qwen3-72b', maxLabels: 10 } },
-      { nodeKey: 'kb_search', nodeType: 'kb_retrieval', name: '知识库检索', positionX: 500, positionY: 200, enabled: true, config: { topK: 5, similarityThreshold: 0.7, mode: 'hybrid' } },
-      { nodeKey: 'llm_reply', nodeType: 'llm', name: '大模型生成回答', positionX: 700, positionY: 200, enabled: true, config: { model: 'qwen3-72b', temperature: 0.7, maxTokens: 2048, systemPrompt: '你是一个知识助手' } },
-      { nodeKey: 'end', nodeType: 'end', name: '结束', positionX: 900, positionY: 200, enabled: true, config: {} },
-    ]
-  }
-}
-function handleAddNode() { isEditingNode.value = false; editingNodeKey.value = ''; nodeForm.value = { nodeKey: '', nodeType: 'llm', name: '', x: 0, y: 0 }; nodeConfig.value = {}; showNodeDialog.value = true }
-function handleEditNode(row: any) { isEditingNode.value = true; editingNodeKey.value = row.nodeKey; nodeForm.value = { nodeKey: row.nodeKey, nodeType: row.nodeType, name: row.name || '', x: row.positionX || 0, y: row.positionY || 0 }; nodeConfig.value = row.config || {}; showNodeDialog.value = true }
-async function handleSaveNode() {
-  if (!nodeForm.value.nodeKey) { ElMessage.warning('请输入节点Key'); return }
-  const data = { ...nodeForm.value, config: nodeConfig.value }
-  try {
-    if (isEditingNode.value) { try { await api.updateWorkflowNode(wfId, editingNodeKey.value, data) } catch {} }
-    else { try { await api.addWorkflowNode(wfId, data) } catch {} }
-    ElMessage.success(isEditingNode.value ? '节点配置已保存' : '节点已添加'); showNodeDialog.value = false; await loadNodes()
-  } catch { ElMessage.success(isEditingNode.value ? '已保存（演示模式）' : '已添加（演示模式）'); showNodeDialog.value = false; await loadNodes() }
-}
-async function handleDeleteNode(row: any) {
-  try { await ElMessageBox.confirm('确认删除节点？', '确认', { type: 'warning' }) } catch { return }
-  try { await api.deleteWorkflowNode(wfId, row.nodeKey) } catch {}
-  await loadNodes(); ElMessage.success('已删除')
-}
-async function handleSaveWorkflow() {
-  publishHistory.value.unshift({ id: 'ph' + Date.now(), action: '保存', operator: '当前用户', createdAt: new Date().toISOString().slice(0, 16).replace('T', ' ') })
-  ElMessage.success('业务流已保存')
-}
-async function handlePublishWorkflow() {
-  try { await api.publishWorkflow(wfId) } catch {}
-  publishHistory.value.unshift({ id: 'ph' + Date.now(), action: '发布', operator: '当前用户', createdAt: new Date().toISOString().slice(0, 16).replace('T', ' ') })
-  ElMessage.success('已发布（演示模式）')
-}
-async function handleExecute() {
-  try { await api.executeWorkflow(wfId) } catch {}
-  ElMessage.success('执行完成（演示模式）')
-}
-
 const nodeTypeConfigs: Record<string, any> = {
-  llm: { fields: [{ key: 'model', label: '模型', type: 'input' }, { key: 'temperature', label: '温度', type: 'slider', min: 0, max: 2, step: 0.1 }, { key: 'maxTokens', label: '最大Token', type: 'number', min: 128, max: 8192 }, { key: 'systemPrompt', label: '系统提示词', type: 'textarea' }] },
-  kb_retrieval: { fields: [{ key: 'topK', label: 'Top K', type: 'number', min: 1, max: 50 }, { key: 'similarityThreshold', label: '相似度阈值', type: 'slider', min: 0, max: 1, step: 0.05 }, { key: 'mode', label: '检索模式', type: 'select', options: [{ label: '向量', value: 'vector' }, { label: '全文', value: 'fulltext' }, { label: '混合', value: 'hybrid' }] }] },
-  intent: { fields: [{ key: 'model', label: '模型', type: 'input' }, { key: 'maxLabels', label: '最大分类数', type: 'number', min: 1, max: 50 }] },
-  selector: { fields: [{ key: 'condition', label: '条件表达式', type: 'input' }, { key: 'defaultBranch', label: '默认分支', type: 'input' }] },
-  start: { fields: [] },
-  end: { fields: [{ key: 'outputFormat', label: '输出格式', type: 'select', options: [{ label: '文本', value: 'text' }, { label: 'JSON', value: 'json' }] }] },
+  llm: { fields: [
+    { key: 'model', label: '模型', type: 'input' },
+    { key: 'temperature', label: '温度', type: 'slider', min: 0, max: 2, step: 0.1 },
+    { key: 'maxTokens', label: '最大Token', type: 'number', min: 128, max: 8192 },
+    { key: 'systemPrompt', label: '系统提示词', type: 'textarea' },
+    { key: 'outputFormat', label: '输出格式', type: 'select', options: [{ label: '文本', value: 'text' }, { label: 'JSON', value: 'json' }, { label: 'Markdown', value: 'markdown' }] },
+  ]},
+  kb_retrieval: { fields: [
+    { key: 'kbId', label: '知识库ID', type: 'input' },
+    { key: 'topK', label: 'Top K', type: 'number', min: 1, max: 50 },
+    { key: 'similarityThreshold', label: '相似度阈值', type: 'slider', min: 0, max: 1, step: 0.05 },
+    { key: 'mode', label: '检索策略', type: 'select', options: [{ label: '向量', value: 'vector' }, { label: '全文', value: 'fulltext' }, { label: '混合', value: 'hybrid' }] },
+  ]},
+  intent: { fields: [
+    { key: 'model', label: '模型', type: 'input' },
+    { key: 'maxLabels', label: '最大分类数', type: 'number', min: 1, max: 50 },
+    { key: 'confidenceThreshold', label: '置信度阈值', type: 'slider', min: 0, max: 1, step: 0.05 },
+  ]},
+  selector: { fields: [
+    { key: 'condition', label: '条件表达式', type: 'input' },
+    { key: 'defaultBranch', label: '默认分支', type: 'input' },
+  ]},
+  start: { fields: [
+    { key: 'inputParams', label: '输入参数(JSON)', type: 'textarea' },
+  ]},
+  end: { fields: [
+    { key: 'outputFormat', label: '返回方式', type: 'select', options: [{ label: '文本', value: 'text' }, { label: 'JSON', value: 'json' }, { label: '流式', value: 'stream' }] },
+  ]},
+  function_request: { fields: [
+    { key: 'functionName', label: '函数名称', type: 'input' },
+    { key: 'requestUrl', label: '请求URL', type: 'input' },
+    { key: 'requestMethod', label: '请求方法', type: 'select', options: [{ label: 'GET', value: 'GET' }, { label: 'POST', value: 'POST' }, { label: 'PUT', value: 'PUT' }, { label: 'DELETE', value: 'DELETE' }] },
+  ]},
+  sub_workflow: { fields: [
+    { key: 'workflowId', label: '子工作流ID', type: 'input' },
+    { key: 'inputMapping', label: '输入映射(JSON)', type: 'textarea' },
+  ]},
 }
 
-// ===== 测试案例 CRUD =====
-const testCases = ref<any[]>([])
-const showTCDialog = ref(false)
-const tcForm = ref({ name: '', query: '', expectedOutput: '' })
-const isEditingTC = ref(false)
-const editingTCId = ref('')
-async function loadTests() {
-  if(!wfId) return
-  try { testCases.value = ((await api.getWorkflowTestCases(wfId)) as any) || [] } catch { testCases.value = [] }
-  if (!testCases.value.length && wfId) {
-    testCases.value = [
-      { id: 'tc1', name: '基础问答', query: '公司主要业务是什么？', expectedOutput: '返回公司业务介绍' },
-      { id: 'tc2', name: '产品咨询', query: '你们有哪些产品？', expectedOutput: '返回产品列表' },
-    ]
-  }
+function handleAddNode() {
+  editingNode.value = null
+  // 找空白位置
+  const usedPositions = nodes.value.map(n => ({ x: n.positionX, y: n.positionY }))
+  let x = 100, y = 100
+  while (usedPositions.some(p => Math.abs(p.x - x) < 80 && Math.abs(p.y - y) < 80)) { x += 120; if (x > 800) { x = 100; y += 100 } }
+  nodeForm.value = { nodeKey: 'node_' + Date.now(), nodeType: 'llm', name: '' }
+  nodeConfig.value = {}
+  selectedNode.value = { nodeKey: nodeForm.value.nodeKey, nodeType: 'llm', name: '', positionX: x, positionY: y, config: {} }
+  showNodeDialog.value = true
 }
-function handleAddTC() { isEditingTC.value = false; editingTCId.value = ''; tcForm.value = { name: '', query: '', expectedOutput: '' }; showTCDialog.value = true }
-function handleEditTC(row: any) { isEditingTC.value = true; editingTCId.value = row.id; tcForm.value = { name: row.name, query: row.query, expectedOutput: row.expectedOutput }; showTCDialog.value = true }
-async function handleSaveTC() {
-  if (!tcForm.value.name) { ElMessage.warning('请输入名称'); return }
-  if (isEditingTC.value) {
-    const idx = testCases.value.findIndex((t: any) => t.id === editingTCId.value)
-    if (idx >= 0) testCases.value[idx] = { ...testCases.value[idx], ...tcForm.value }
+
+function handleEditNode(node: any) {
+  editingNode.value = node
+  nodeForm.value = { nodeKey: node.nodeKey, nodeType: node.nodeType, name: node.name || '' }
+  nodeConfig.value = node.config ? (typeof node.config === 'string' ? JSON.parse(node.config) : { ...node.config }) : {}
+  showNodeDialog.value = true
+}
+
+function handleSaveNode() {
+  if (!nodeForm.value.nodeKey) { ElMessage.warning('请输入节点Key'); return }
+  const x = editingNode.value?.positionX || (selectedNode.value?.positionX || 100)
+  const y = editingNode.value?.positionY || (selectedNode.value?.positionY || 100)
+  const nodeData = {
+    nodeKey: nodeForm.value.nodeKey,
+    nodeType: nodeForm.value.nodeType,
+    name: nodeForm.value.name || nodeTypeMap[nodeForm.value.nodeType]?.label || nodeForm.value.nodeType,
+    positionX: x,
+    positionY: y,
+    enabled: 1,
+    config: nodeConfig.value,
+  }
+  if (editingNode.value) {
+    Object.assign(editingNode.value, nodeData)
   } else {
-    testCases.value.unshift({ id: 'tc_' + Date.now(), ...tcForm.value })
+    nodes.value.push(nodeData)
   }
-  try { await api.createWorkflowTestCase(wfId, tcForm.value) } catch {}
-  showTCDialog.value = false; ElMessage.success(isEditingTC.value ? '已更新' : '已创建')
-}
-async function handleDeleteTC(row: any) {
-  try { await ElMessageBox.confirm('确认删除？', '确认', { type: 'warning' }) } catch { return }
-  testCases.value = testCases.value.filter((t: any) => t.id !== row.id)
-  try { await api.deleteWorkflowNode(wfId, row.id) } catch {}
-  ElMessage.success('已删除')
+  showNodeDialog.value = false
+  selectedNode.value = null
+  ElMessage.success(editingNode.value ? '节点已更新' : `已添加「${nodeData.name}」节点`)
 }
 
-// ===== 配置模板 CRUD =====
-const templates = ref<any[]>([])
-const showTemplateDialog = ref(false)
-const templateForm = ref({ name: '', category: '问答', description: '', config: '' })
-const isEditingTemplate = ref(false)
-const editingTemplateId = ref('')
-async function loadTemplates() {
-  templates.value = [
-    { id: 'tm1', name: '智能问答工作流', category: '问答', description: '意图识别→知识库检索→LLM回答', config: '{"nodes":["start","intent","kb_retrieval","llm","end"]}', isBuiltin: true },
-    { id: 'tm2', name: '多轮对话工作流', category: '对话', description: '上下文管理→意图识别→知识检索→回答生成', config: '{"nodes":["start","context","intent","kb_retrieval","llm","end"]}', isBuiltin: true },
-    { id: 'tm3', name: '数据抽取工作流', category: '数据处理', description: '输入解析→LLM抽取→格式化输出', config: '{"nodes":["start","parser","llm","formatter","end"]}', isBuiltin: false },
-  ]
-  try { const r: any = await api.getWorkflowTemplates(); if (Array.isArray(r) && r.length) templates.value = r } catch {}
+function handleDeleteNode(node: any) {
+  if (!node) return
+  nodes.value = nodes.value.filter(n => n.nodeKey !== node.nodeKey)
+  edges.value = edges.value.filter(e => e.source !== node.nodeKey && e.target !== node.nodeKey)
+  if (selectedNode.value?.nodeKey === node.nodeKey) selectedNode.value = null
+  ElMessage.success(`已删除「${node.name}」`)
 }
-function handleAddTemplate() { isEditingTemplate.value = false; editingTemplateId.value = ''; templateForm.value = { name: '', category: '问答', description: '', config: '' }; showTemplateDialog.value = true }
-function handleEditTemplate(row: any) { isEditingTemplate.value = true; editingTemplateId.value = row.id; templateForm.value = { name: row.name, category: row.category, description: row.description, config: row.config || '' }; showTemplateDialog.value = true }
-async function handleSaveTemplate() {
-  if (!templateForm.value.name) { ElMessage.warning('请输入模板名称'); return }
-  if (isEditingTemplate.value) {
-    const idx = templates.value.findIndex((t: any) => t.id === editingTemplateId.value)
-    if (idx >= 0) templates.value[idx] = { ...templates.value[idx], ...templateForm.value }
-  } else {
-    templates.value.push({ id: 'tm_' + Date.now(), ...templateForm.value, isBuiltin: false })
+
+function handleNodeClick(node: any) {
+  selectedNode.value = node
+}
+
+function handleCanvasClick() {
+  selectedNode.value = null
+  connectingFrom.value = null
+}
+
+// ===== 自由连线 =====
+function handleStartConnect(sourceKey: string) {
+  connectingFrom.value = sourceKey
+  ElMessage.info(`请点击目标节点完成连线，点击空白处取消`)
+}
+
+function handleEndConnect(targetKey: string) {
+  if (!connectingFrom.value || connectingFrom.value === targetKey) {
+    connectingFrom.value = null
+    return
   }
-  showTemplateDialog.value = false; ElMessage.success(isEditingTemplate.value ? '模板已更新' : '模板已创建')
-}
-async function handleDeleteTemplate(row: any) {
-  try { await ElMessageBox.confirm('确认删除模板？', '确认', { type: 'warning' }) } catch { return }
-  templates.value = templates.value.filter((t: any) => t.id !== row.id)
-  ElMessage.success('已删除')
-}
-
-// ===== 迁移 CRUD =====
-const migrations = ref<any[]>([])
-const showMigrationDialog = ref(false)
-const migrationForm = ref({ sourceWorkflowId: '', targetEnv: 'staging' })
-async function loadMigrations() {
-  migrations.value = [
-    { id: 'mg1', sourceWorkflowId: '智能问答工作流', targetEnv: 'production', status: 'completed', progress: 100, createdAt: '2026-06-29 10:00' },
-    { id: 'mg2', sourceWorkflowId: '多轮对话工作流', targetEnv: 'staging', status: 'in_progress', progress: 60, createdAt: '2026-06-29 11:00' },
-  ]
-  try { const r: any = await api.getWorkflowMigrations(); if (Array.isArray(r) && r.length) migrations.value = r } catch {}
-}
-function handleAddMigration() { migrationForm.value = { sourceWorkflowId: '', targetEnv: 'staging' }; showMigrationDialog.value = true }
-async function handleCreateMigration() {
-  if (!migrationForm.value.sourceWorkflowId) { ElMessage.warning('请选择源流程'); return }
-  migrations.value.unshift({ id: 'mg_' + Date.now(), ...migrationForm.value, status: 'pending', progress: 0, createdAt: new Date().toISOString().slice(0, 16).replace('T', ' ') })
-  showMigrationDialog.value = false; ElMessage.success('迁移任务已创建')
+  // 检查是否已存在
+  const exists = edges.value.some(e => e.source === connectingFrom.value && e.target === targetKey)
+  if (exists) { ElMessage.warning('这两个节点已连接'); connectingFrom.value = null; return }
+  edges.value.push({ source: connectingFrom.value, target: targetKey })
+  ElMessage.success(`已连线`)
+  connectingFrom.value = null
 }
 
-// ===== 监控 =====
-const monitorData = ref<any>({})
-async function loadMonitor() {
-  if(!wfId) return
-  try { const r: any = await api.getWorkflowMonitor(wfId); if(r) monitorData.value = r } catch {}
-  if (!monitorData.value.totalExecutions) {
-    monitorData.value = { totalExecutions: 15230, avgLatency: 186, errorRate: 0.023 }
+function handleDeleteEdge(edge: { source: string; target: string }) {
+  edges.value = edges.value.filter(e => e.source !== edge.source || e.target !== edge.target)
+}
+
+// 根据节点位置计算连线路径
+function getEdgePath(edge: { source: string; target: string }) {
+  const src = nodes.value.find(n => n.nodeKey === edge.source)
+  const tgt = nodes.value.find(n => n.nodeKey === edge.target)
+  if (!src || !tgt) return ''
+  const x1 = src.positionX + 75, y1 = src.positionY + 25
+  const x2 = tgt.positionX + 75, y2 = tgt.positionY
+  // 贝塞尔曲线
+  const cy = Math.abs(y2 - y1) / 2 + 20
+  return `M ${x1} ${y1} C ${x1} ${y1 + cy}, ${x2} ${y2 - cy}, ${x2} ${y2}`
+}
+
+// ===== 拖拽 =====
+const draggingNode = ref<any>(null)
+const dragOffset = ref({ x: 0, y: 0 })
+
+function handleMouseDown(e: MouseEvent, node: any) {
+  if ((e.target as HTMLElement)?.closest('.node-actions')) return
+  draggingNode.value = node
+  dragOffset.value = { x: e.clientX - node.positionX, y: e.clientY - node.positionY }
+  document.addEventListener('mousemove', handleMouseMove)
+  document.addEventListener('mouseup', handleMouseUp)
+}
+function handleMouseMove(e: MouseEvent) {
+  if (!draggingNode.value) return
+  draggingNode.value.positionX = Math.max(0, e.clientX - dragOffset.value.x)
+  draggingNode.value.positionY = Math.max(0, e.clientY - dragOffset.value.y)
+}
+function handleMouseUp() {
+  if (draggingNode.value) {
+    api.moveWorkflowNode(wfId.value, draggingNode.value.nodeKey, {
+      x: draggingNode.value.positionX, y: draggingNode.value.positionY,
+    }).catch(() => {})
   }
+  draggingNode.value = null
+  document.removeEventListener('mousemove', handleMouseMove)
+  document.removeEventListener('mouseup', handleMouseUp)
 }
 
-onMounted(() => { loadWorkflows(); loadNodes(); loadTests(); loadTemplates(); loadMigrations(); loadMonitor() })
+// ===== 节点工具箱 =====
+const showToolbox = ref(false)
+const nodeTypeFilter = ref('')
+const filteredTypes = computed(() => {
+  return nodeTypeFilter.value
+    ? NODE_TYPES.filter(t => t.label.includes(nodeTypeFilter.value))
+    : NODE_TYPES
+})
+
+onMounted(() => { loadWorkflows() })
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
-    <!-- 业务流列表 -->
-    <div class="card-panel" style="margin-bottom:16px">
-      <div class="section-header">
-        <div class="section-title">业务流管理</div>
-        <div><el-button type="primary" @click="handleCreate">创建业务流</el-button></div>
+    <!-- 画布头部 -->
+    <div class="canvas-header">
+      <div class="canvas-title">
+        <el-button text @click="showWorkflowList = true; loadWorkflows()" size="small">📂 切换业务流</el-button>
+        <span style="margin-left:8px;font-weight:600" v-if="wfId">{{ wfName }}</span>
+        <span v-else style="margin-left:8px;color:#909399">请选择或创建一个业务流</span>
+        <el-tag v-if="wfId" size="small" style="margin-left:8px" type="info">{{ nodes.length }} 个节点 · {{ edges.length }} 条连线</el-tag>
       </div>
-      <el-table :data="workflowList" stripe size="small">
-        <el-table-column prop="name" label="名称" min-width="160" />
-        <el-table-column prop="category" label="分类" width="80" />
-        <el-table-column prop="description" label="描述" show-overflow-tooltip />
-        <el-table-column prop="version" label="版本" width="70" />
-        <el-table-column label="状态" width="80"><template #default="{row}"><el-tag :type="row.status==='published'?'success':'info'" size="small">{{ row.status==='published'?'已发布':'草稿' }}</el-tag></template></el-table-column>
-        <el-table-column prop="updatedAt" label="更新时间" width="150" />
-      </el-table>
+      <div class="canvas-actions" v-if="wfId">
+        <el-button size="small" @click="showToolbox = !showToolbox">📦 节点工具箱</el-button>
+        <el-button size="small" @click="handleAddNode">＋ 添加节点</el-button>
+        <el-button size="small" type="warning" @click="saveCanvas">💾 保存画布</el-button>
+      </div>
     </div>
 
-    <!-- 详情面板 -->
-    <div class="card-panel" v-if="wfId">
-      <div class="section-header">
-        <div class="section-title">工作流详情：{{ wfId }}</div>
-        <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <el-button @click="handleSaveWorkflow" type="primary">保存</el-button>
-          <el-button @click="handlePublishWorkflow" type="success">发布</el-button>
-          <el-button @click="handleExecute" type="warning">执行测试</el-button>
+    <!-- 无业务流时的引导 -->
+    <div v-if="!wfId" class="welcome-panel">
+      <el-empty description="请先选择或创建一个业务流" :image-size="80">
+        <el-button type="primary" @click="showWorkflowList = true; loadWorkflows()">选择业务流</el-button>
+        <el-button style="margin-left:8px" @click="handleCreate">创建新业务流</el-button>
+      </el-empty>
+    </div>
+
+    <!-- 画布区域 -->
+    <template v-if="wfId">
+      <div class="canvas-layout">
+        <div v-if="showToolbox" class="toolbox-panel">
+          <div class="toolbox-header">
+            <span>节点类型</span>
+            <el-input v-model="nodeTypeFilter" size="small" placeholder="搜索..." clearable style="width:120px" />
+          </div>
+          <div v-for="t in filteredTypes" :key="t.value" class="toolbox-item" @click="handleAddNode(); nodeForm.nodeType = t.value; showToolbox = false">
+            <span class="toolbox-icon">{{ t.icon }}</span><span>{{ t.label }}</span>
+          </div>
+        </div>
+        <div class="canvas-area" @click="handleCanvasClick">
+          <svg class="canvas-svg">
+            <g v-for="(edge, i) in edges" :key="'e'+i">
+              <path :d="getEdgePath(edge)" fill="none" stroke="#409EFF" stroke-width="2" class="edge-path" />
+              <title>{{ edge.source }} → {{ edge.target }}</title>
+            </g>
+          </svg>
+          <div v-for="node in nodes" :key="node.nodeKey"
+            class="canvas-node"
+            :class="{
+              'is-selected': selectedNode?.nodeKey === node.nodeKey,
+              'is-connecting': connectingFrom === node.nodeKey,
+              'is-connect-target': connectingFrom && connectingFrom !== node.nodeKey
+            }"
+            :style="{ left: node.positionX + 'px', top: node.positionY + 'px' }"
+            @mousedown.stop="(e) => handleMouseDown(e, node)"
+            @click.stop="handleNodeClick(node)">
+            <div class="node-header" :style="{ borderLeft: '4px solid ' + (nodeTypeMap[node.nodeType]?.color || '#909399') }">
+              <span class="node-icon">{{ nodeTypeMap[node.nodeType]?.icon || '⬡' }}</span>
+              <span class="node-type-tag" :style="{ background: nodeTypeMap[node.nodeType]?.color || '#909399' }">{{ nodeTypeMap[node.nodeType]?.label || node.nodeType }}</span>
+            </div>
+            <div class="node-name">{{ node.name || node.nodeKey }}</div>
+            <div class="node-key">{{ node.nodeKey }}</div>
+            <div class="node-actions">
+              <el-button link size="small" @click.stop="handleEditNode(node)">编辑</el-button>
+              <el-button v-if="!connectingFrom" link size="small" type="primary" @click.stop="handleStartConnect(node.nodeKey)">连线</el-button>
+              <el-button v-else-if="connectingFrom !== node.nodeKey" link size="small" type="success" @click.stop="handleEndConnect(node.nodeKey)">连接</el-button>
+              <el-button link size="small" type="danger" @click.stop="handleDeleteNode(node)">删除</el-button>
+            </div>
+          </div>
+          <div v-if="!nodes.length" class="canvas-empty">
+            <el-empty description="画布为空，点击上方「添加节点」或从工具箱添加" :image-size="80" />
+          </div>
         </div>
       </div>
-
-      <el-tabs v-model="activeTab">
-        <!-- 节点管理 -->
-        <el-tab-pane label="节点管理" name="nodes">
-          <div class="section-header" style="margin-top:8px">
-            <div class="section-title">节点列表</div>
-            <el-button @click="handleAddNode">添加节点</el-button>
+      <div v-if="selectedNode" class="node-props-panel">
+        <div class="props-header">
+          <span>📐 {{ selectedNode.name || selectedNode.nodeKey }}</span>
+          <el-button text size="small" @click="selectedNode = null">✕</el-button>
+        </div>
+        <div class="props-body">
+          <div class="props-row"><label>Key</label><span>{{ selectedNode.nodeKey }}</span></div>
+          <div class="props-row"><label>类型</label><span>{{ nodeTypeMap[selectedNode.nodeType]?.label || selectedNode.nodeType }}</span></div>
+          <div class="props-row"><label>位置</label><span>({{ selectedNode.positionX }}, {{ selectedNode.positionY }})</span></div>
+          <div class="props-row" v-if="selectedNode.config && Object.keys(selectedNode.config).length">
+            <label>配置</label><pre>{{ JSON.stringify(selectedNode.config, null, 2) }}</pre>
           </div>
-          <el-table :data="nodes" stripe size="small">
-            <el-table-column prop="nodeKey" label="节点Key" width="130" />
-            <el-table-column prop="nodeType" label="类型" width="100"><template #default="{row}">{{ {llm:'大模型',kb_retrieval:'知识库检索',intent:'意图识别',selector:'选择器',start:'开始',end:'结束'}[row.nodeType]||row.nodeType }}</template></el-table-column>
-            <el-table-column prop="name" label="名称" min-width="140" />
-            <el-table-column label="位置" width="100"><template #default="{ row }">({{ row.positionX }}, {{ row.positionY }})</template></el-table-column>
-            <el-table-column label="启用" width="60"><template #default="{ row }"><el-tag :type="row.enabled?'success':'info'" size="small">{{ row.enabled?'是':'否' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="140"><template #default="{ row }"><el-button link type="primary" size="small" @click="handleEditNode(row)">配置</el-button><el-button link type="danger" size="small" @click="handleDeleteNode(row)">删除</el-button></template></el-table-column>
-          </el-table>
-          <el-empty v-if="!nodes.length && !loading" description="暂无节点" :image-size="60" />
-          <!-- 发布历史 -->
-          <div style="margin-top:16px">
-            <div class="section-title" style="margin-bottom:8px">保存/发布记录</div>
-            <el-table :data="publishHistory" stripe size="small" v-if="publishHistory.length">
-              <el-table-column prop="action" label="操作" width="80" />
-              <el-table-column prop="operator" label="操作人" width="120" />
-              <el-table-column prop="createdAt" label="时间" width="160" />
-            </el-table>
-            <el-empty v-if="!publishHistory.length" description="暂无记录，点击保存或发布将生成记录" :image-size="50" />
+          <div class="props-row"><label>入边</label><span>{{ edges.filter(e => e.target === selectedNode.nodeKey).map(e => e.source).join(', ') || '无' }}</span></div>
+          <div class="props-row"><label>出边</label>
+            <span v-if="edges.filter(e => e.source === selectedNode.nodeKey).length">
+              <template v-for="(e, i) in edges.filter(e => e.source === selectedNode.nodeKey)" :key="i">
+                {{ e.target }}<el-button link size="small" type="danger" @click="handleDeleteEdge(e)" style="margin-left:2px">✕</el-button>
+                <span v-if="i < edges.filter(ee => ee.source === selectedNode.nodeKey).length - 1">, </span>
+              </template>
+            </span>
+            <span v-else>无</span>
           </div>
-        </el-tab-pane>
+        </div>
+      </div>
+    </template>
 
-        <!-- 测试案例 -->
-        <el-tab-pane label="测试案例" name="testcases">
-          <div class="section-header"><div class="section-title">测试案例</div><el-button type="primary" @click="handleAddTC">新增</el-button></div>
-          <el-table :data="testCases" stripe size="small">
-            <el-table-column prop="name" label="名称" min-width="120" />
-            <el-table-column prop="query" label="输入" show-overflow-tooltip />
-            <el-table-column prop="expectedOutput" label="期望输出" show-overflow-tooltip />
-            <el-table-column label="操作" width="130"><template #default="{row}"><el-button link type="primary" size="small" @click="handleEditTC(row)">编辑</el-button><el-button link type="danger" size="small" @click="handleDeleteTC(row)">删除</el-button></template></el-table-column>
-          </el-table>
-          <el-empty v-if="!testCases.length" description="暂无测试案例" :image-size="60" />
-        </el-tab-pane>
-
-        <!-- 配置模板 CRUD -->
-        <el-tab-pane label="配置模板" name="templates">
-          <div class="section-header"><div class="section-title">配置模板</div><el-button type="primary" @click="handleAddTemplate">新增模板</el-button></div>
-          <el-table :data="templates" stripe size="small">
-            <el-table-column prop="name" label="名称" min-width="160" />
-            <el-table-column prop="category" label="分类" width="100" />
-            <el-table-column prop="description" label="说明" show-overflow-tooltip />
-            <el-table-column label="内置" width="70"><template #default="{ row }"><el-tag :type="row.isBuiltin?'success':'info'" size="small">{{ row.isBuiltin?'是':'否' }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="130"><template #default="{row}"><el-button v-if="!row.isBuiltin" link type="primary" size="small" @click="handleEditTemplate(row)">编辑</el-button><el-button v-if="!row.isBuiltin" link type="danger" size="small" @click="handleDeleteTemplate(row)">删除</el-button></template></el-table-column>
-          </el-table>
-        </el-tab-pane>
-
-        <!-- 配置迁移 CRUD -->
-        <el-tab-pane label="配置迁移" name="migration">
-          <div class="section-header"><div class="section-title">迁移记录</div><el-button type="primary" @click="handleAddMigration">新建迁移</el-button></div>
-          <el-table :data="migrations" stripe size="small">
-            <el-table-column prop="sourceWorkflowId" label="源流程" min-width="140" />
-            <el-table-column prop="targetEnv" label="目标环境" width="100" />
-            <el-table-column prop="status" label="状态" width="90"><template #default="{row}"><el-tag :type="row.status==='completed'?'success':'warning'" size="small">{{ row.status }}</el-tag></template></el-table-column>
-            <el-table-column label="进度" width="80"><template #default="{row}"><el-progress :percentage="row.progress" :status="row.status==='completed'?'success':undefined" /></template></el-table-column>
-            <el-table-column prop="createdAt" label="时间" width="160" />
-          </el-table>
-        </el-tab-pane>
-
-        <!-- 监控 -->
-        <el-tab-pane label="监控" name="monitor">
-          <div class="section-title">执行监控</div>
-          <div class="metric-cards" style="margin-top:12px">
-            <div class="metric-card"><div class="metric-label">执行次数</div><div class="metric-value">{{ monitorData.totalExecutions || 0 }}</div></div>
-            <div class="metric-card"><div class="metric-label">平均耗时(ms)</div><div class="metric-value">{{ monitorData.avgLatency || 0 }}</div></div>
-            <div class="metric-card"><div class="metric-label">错误率</div><div class="metric-value">{{ ((monitorData.errorRate || 0) * 100).toFixed(1) }}%</div></div>
-          </div>
-        </el-tab-pane>
-      </el-tabs>
-    </div>
-    <el-empty v-else description="请从侧边栏进入具体的业务流管理" :image-size="80" />
+    <!-- 业务流选择弹窗 -->
+    <el-dialog v-model="showWorkflowList" title="选择业务流" width="700px">
+      <div class="section-header" style="margin-bottom:12px">
+        <span style="font-size:14px;color:#909399">共 {{ workflowList.length }} 个业务流</span>
+        <el-button size="small" type="primary" @click="handleCreate(); showWorkflowList = false">创建新业务流</el-button>
+      </div>
+      <el-table :data="workflowList" stripe @row-dblclick="handleSelectWorkflow" max-height="400">
+        <el-table-column prop="name" label="名称" min-width="160" />
+        <el-table-column prop="description" label="描述" show-overflow-tooltip min-width="200" />
+        <el-table-column prop="category" label="分类" width="80" />
+        <el-table-column label="状态" width="80">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'published' ? 'success' : 'info'" size="small">{{ row.status === 'published' ? '已发布' : '草稿' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="140" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="handleSelectWorkflow(row)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="handleDeleteWorkflow(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!workflowList.length" description="暂无业务流" :image-size="50" />
+    </el-dialog>
 
     <!-- 创建业务流弹窗 -->
     <el-dialog v-model="showCreateDialog" title="创建业务流" width="480px">
@@ -304,52 +427,99 @@ onMounted(() => { loadWorkflows(); loadNodes(); loadTests(); loadTemplates(); lo
       <template #footer><el-button @click="showCreateDialog=false">取消</el-button><el-button type="primary" @click="handleCreateWorkflow">创建</el-button></template>
     </el-dialog>
 
-    <!-- 节点弹窗 -->
-    <el-dialog v-model="showNodeDialog" :title="isEditingNode ? '配置节点' : '添加节点'" width="520px">
-      <el-form label-width="100px">
-        <el-form-item label="节点Key" required><el-input v-model="nodeForm.nodeKey" :disabled="isEditingNode" /></el-form-item>
-        <el-form-item label="类型"><el-select v-model="nodeForm.nodeType" style="width:160px" :disabled="isEditingNode"><el-option label="大模型" value="llm" /><el-option label="知识库检索" value="kb_retrieval" /><el-option label="意图识别" value="intent" /><el-option label="选择器" value="selector" /><el-option label="开始" value="start" /><el-option label="结束" value="end" /></el-select></el-form-item>
+    <!-- 节点编辑弹窗 -->
+    <el-dialog v-model="showNodeDialog" :title="editingNode ? '编辑节点' : '添加节点'" width="480px">
+      <el-form label-width="90px">
+        <el-form-item label="节点Key" required><el-input v-model="nodeForm.nodeKey" :disabled="!!editingNode" /></el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="nodeForm.nodeType" style="width:160px" :disabled="!!editingNode">
+            <el-option v-for="t in NODE_TYPES" :key="t.value" :label="t.label" :value="t.value" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="名称"><el-input v-model="nodeForm.name" /></el-form-item>
-        <el-form-item label="位置X"><el-input-number v-model="nodeForm.x" /></el-form-item>
-        <el-form-item label="位置Y"><el-input-number v-model="nodeForm.y" /></el-form-item>
-        <el-divider v-if="nodeTypeConfigs[nodeForm.nodeType]?.fields.length">节点配置</el-divider>
+        <el-divider v-if="nodeTypeConfigs[nodeForm.nodeType]?.fields?.length">节点配置</el-divider>
         <template v-for="field in (nodeTypeConfigs[nodeForm.nodeType]?.fields || [])" :key="field.key">
           <el-form-item :label="field.label">
-            <el-input v-if="field.type==='input'" v-model="nodeConfig[field.key]" style="width:260px" />
-            <el-input-number v-else-if="field.type==='number'" v-model="nodeConfig[field.key]" :min="field.min||0" :max="field.max||9999" style="width:200px" />
-            <el-slider v-else-if="field.type==='slider'" v-model="nodeConfig[field.key]" :min="field.min||0" :max="field.max||2" :step="field.step||0.1" show-input style="width:280px" />
-            <el-select v-else-if="field.type==='select'" v-model="nodeConfig[field.key]" style="width:200px"><el-option v-for="opt in (field.options||[])" :key="opt.value" :label="opt.label" :value="opt.value" /></el-select>
-            <el-input v-else-if="field.type==='textarea'" v-model="nodeConfig[field.key]" type="textarea" :rows="2" style="width:100%" />
+            <el-input v-if="field.type === 'input'" v-model="nodeConfig[field.key]" style="width:260px" />
+            <el-input-number v-else-if="field.type === 'number'" v-model="nodeConfig[field.key]" :min="field.min||0" :max="field.max||9999" style="width:200px" />
+            <el-slider v-else-if="field.type === 'slider'" v-model="nodeConfig[field.key]" :min="field.min||0" :max="field.max||2" :step="field.step||0.1" show-input />
+            <el-select v-else-if="field.type === 'select'" v-model="nodeConfig[field.key]" style="width:200px">
+              <el-option v-for="opt in (field.options||[])" :key="opt.value" :label="opt.label" :value="opt.value" />
+            </el-select>
+            <el-input v-else-if="field.type === 'textarea'" v-model="nodeConfig[field.key]" type="textarea" :rows="2" />
           </el-form-item>
         </template>
       </el-form>
-      <template #footer><el-button @click="showNodeDialog=false">取消</el-button><el-button type="primary" @click="handleSaveNode">{{ isEditingNode ? '保存配置' : '添加' }}</el-button></template>
-    </el-dialog>
-
-    <!-- 测试案例弹窗 -->
-    <el-dialog v-model="showTCDialog" :title="isEditingTC ? '编辑测试案例' : '新增测试案例'" width="480px">
-      <el-form label-width="90px"><el-form-item label="名称" required><el-input v-model="tcForm.name" /></el-form-item><el-form-item label="输入"><el-input v-model="tcForm.query" /></el-form-item><el-form-item label="期望输出"><el-input v-model="tcForm.expectedOutput" type="textarea" :rows="2" /></el-form-item></el-form>
-      <template #footer><el-button @click="showTCDialog=false">取消</el-button><el-button type="primary" @click="handleSaveTC">{{ isEditingTC ? '保存' : '创建' }}</el-button></template>
-    </el-dialog>
-
-    <!-- 模板弹窗 -->
-    <el-dialog v-model="showTemplateDialog" :title="isEditingTemplate ? '编辑模板' : '新增模板'" width="520px">
-      <el-form label-width="90px"><el-form-item label="名称" required><el-input v-model="templateForm.name" /></el-form-item><el-form-item label="分类"><el-select v-model="templateForm.category" style="width:160px"><el-option label="问答" value="问答" /><el-option label="对话" value="对话" /><el-option label="数据处理" value="数据处理" /></el-select></el-form-item><el-form-item label="说明"><el-input v-model="templateForm.description" type="textarea" :rows="2" /></el-form-item><el-form-item label="配置"><el-input v-model="templateForm.config" type="textarea" :rows="3" placeholder="JSON格式配置" /></el-form-item></el-form>
-      <template #footer><el-button @click="showTemplateDialog=false">取消</el-button><el-button type="primary" @click="handleSaveTemplate">{{ isEditingTemplate ? '保存' : '创建' }}</el-button></template>
-    </el-dialog>
-
-    <!-- 迁移弹窗 -->
-    <el-dialog v-model="showMigrationDialog" title="新建配置迁移" width="480px">
-      <el-form label-width="100px"><el-form-item label="源流程" required><el-input v-model="migrationForm.sourceWorkflowId" placeholder="输入源流程ID" /></el-form-item><el-form-item label="目标环境"><el-select v-model="migrationForm.targetEnv" style="width:160px"><el-option label="测试" value="staging" /><el-option label="生产" value="production" /></el-select></el-form-item></el-form>
-      <template #footer><el-button @click="showMigrationDialog=false">取消</el-button><el-button type="primary" @click="handleCreateMigration">创建</el-button></template>
+      <template #footer>
+        <el-button @click="showNodeDialog=false">取消</el-button>
+        <el-button type="primary" @click="handleSaveNode">{{ editingNode ? '保存' : '添加' }}</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
 
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
-.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; gap:8px; flex-wrap:wrap; }
+
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; }
 .section-title { font-size: 15px; font-weight: 600; }
-.metric-cards { display: grid; grid-template-columns: repeat(3,1fr); gap: $spacing-base; }
-.metric-card { background: $bg-white; border-radius: $radius-base; padding: $spacing-lg; .metric-label { font-size: 13px; color: $text-secondary; margin-bottom: 4px; } .metric-value { font-size: 24px; font-weight: 700; } }
+
+// ====== 画布头部 ======
+.canvas-header {
+  display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; flex-wrap: wrap; gap: 8px;
+}
+.canvas-title { display: flex; align-items: center; font-size: 15px; }
+.canvas-actions { display: flex; gap: 8px; }
+
+// ====== 画布布局 ======
+.canvas-layout { display: flex; gap: 12px; }
+
+// ====== 工具箱 ======
+.toolbox-panel {
+  width: 160px; flex-shrink: 0; background: #fff; border: 1px solid #ebeef5; border-radius: 8px; padding: 8px; max-height: 500px; overflow-y: auto;
+}
+.toolbox-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 8px; font-size: 13px; font-weight: 600; }
+.toolbox-item {
+  display: flex; align-items: center; gap: 6px; padding: 6px 8px; border-radius: 4px; cursor: pointer; font-size: 13px;
+  &:hover { background: #f0f5ff; color: #409eff; }
+}
+.toolbox-icon { font-size: 16px; }
+
+// ====== 画布区域 ======
+.canvas-area {
+  flex: 1; position: relative; height: 520px; border: 1px solid #ebeef5; border-radius: 8px;
+  background: #fafafa; overflow: hidden;
+}
+.canvas-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+.edge-path { pointer-events: stroke; cursor: pointer; }
+.edge-path:hover { stroke: #f56c6c; stroke-width: 3; }
+.canvas-empty { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.welcome-panel { margin-top: 60px; display: flex; justify-content: center; }
+
+// ====== 节点卡片 ======
+.canvas-node {
+  position: absolute; width: 150px; background: #fff; border: 2px solid #dcdfe6; border-radius: 8px;
+  box-shadow: 0 2px 8px rgba(0,0,0,0.06); cursor: move; z-index: 1; transition: box-shadow 0.15s;
+  &:hover { box-shadow: 0 4px 16px rgba(0,0,0,0.12); z-index: 2; }
+  &.is-selected { border-color: #409eff; box-shadow: 0 0 0 2px rgba(64,158,255,0.2); z-index: 3; }
+  &.is-connecting { border-color: #e6a23c; box-shadow: 0 0 0 2px rgba(230,162,60,0.3); }
+  &.is-connect-target { border-color: #67c23a; box-shadow: 0 0 0 2px rgba(103,194,58,0.3); cursor: pointer; }
+}
+.node-header { display: flex; align-items: center; gap: 4px; padding: 6px 8px; }
+.node-icon { font-size: 14px; }
+.node-type-tag { font-size: 10px; color: #fff; padding: 1px 6px; border-radius: 4px; margin-left: auto; }
+.node-name { font-size: 13px; font-weight: 600; padding: 0 8px 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.node-key { font-size: 11px; color: #909399; padding: 0 8px 4px; }
+.node-actions { display: flex; gap: 2px; padding: 4px 6px; border-top: 1px solid #f0f0f0; flex-wrap: wrap; }
+.node-actions :deep(.el-button) { font-size: 11px; }
+
+// ====== 节点属性面板 ======
+.node-props-panel {
+  margin-top: 12px; background: #fff; border: 1px solid #ebeef5; border-radius: 8px; padding: 12px; max-width: 400px;
+}
+.props-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px; font-weight: 600; }
+.props-body { display: flex; flex-direction: column; gap: 6px; }
+.props-row { display: flex; gap: 8px; font-size: 13px; }
+.props-row label { color: #909399; min-width: 40px; flex-shrink: 0; }
+.props-row pre { background: #f5f7fa; padding: 4px 8px; border-radius: 4px; font-size: 11px; max-height: 100px; overflow: auto; margin: 0; }
 </style>

@@ -18,30 +18,37 @@ async function loadKbList() {
     const res: any = await api.getKnowledgeBases()
     kbList.value = Array.isArray(res) ? res : (res?.list || res?.records || [])
     if (kbList.value.length > 0 && !selectedKbId.value) selectedKbId.value = kbList.value[0].id
-  } catch { /* ignore */ }
+  } catch {
+    kbList.value = [{ id: 'kb_sample', name: '示例知识库' }]
+    selectedKbId.value = 'kb_sample'
+  }
 }
 
 async function loadData() {
   if (!selectedKbId.value) return
   loading.value = true
   try {
-    const res: any = await api.getComplianceRules(selectedKbId.value)
-    dataList.value = Array.isArray(res) ? res : []
-  } finally { loading.value = false }
+    dataList.value = (await api.getComplianceRules(selectedKbId.value)) as any[] || []
+  } catch {
+    dataList.value = []
+  } finally {
+    loading.value = false
+  }
 }
 onMounted(async () => { await loadKbList(); loadData() })
 
 function handleAdd() { editingId.value = null; formData.value = { ruleType: 'content', enabled: true }; dialogTitle.value = '新增合规规则'; showDialog.value = true }
-function handleEdit(row: any) { editingId.value = row.id; formData.value = { ...row }; dialogTitle.value = '编辑合规规则'; showDialog.value = true }
+function handleEdit(row: any) { editingId.value = row.id; formData.value = { name: row.ruleName || row.name, ruleType: row.ruleType, rule: row.pattern || row.rule, description: row.description, enabled: row.enabled === true || row.enabled === 1 }; dialogTitle.value = '编辑合规规则'; showDialog.value = true }
 async function handleDelete(row: any) {
   try {
-    await ElMessageBox.confirm(`确定要删除规则「${row.name}」吗？`, '提示', { type: 'warning' })
+    await ElMessageBox.confirm(`确定要删除规则「${row.ruleName || row.name}」吗？`, '提示', { type: 'warning' })
     await api.deleteComplianceRule(selectedKbId.value, row.id); ElMessage.success('删除成功'); loadData()
   } catch {}
 }
 async function handleToggle(row: any) {
   try {
-    await api.createComplianceRule(selectedKbId.value, { ...row, enabled: !row.enabled })
+    const data = { ruleName: row.ruleName || row.name, ruleType: row.ruleType, pattern: row.pattern || row.rule, description: row.description, enabled: !row.enabled ? 1 : 0 }
+    await api.updateComplianceRule(selectedKbId.value, row.id, data)
     row.enabled = !row.enabled; ElMessage.success(row.enabled ? '已启用' : '已停用')
   } catch {}
 }
@@ -50,7 +57,7 @@ async function handleSave() {
   if (!formData.value.rule) { ElMessage.warning('请输入规则描述'); return }
   try {
     const data = { ruleName: formData.value.name, ruleType: formData.value.ruleType, pattern: formData.value.rule, description: formData.value.description, enabled: formData.value.enabled ? 1 : 0 }
-    if (editingId.value) { await api.createComplianceRule(selectedKbId.value, { ...data, id: editingId.value }); ElMessage.success('更新成功') }
+    if (editingId.value) { await api.updateComplianceRule(selectedKbId.value, editingId.value, data); ElMessage.success('更新成功') }
     else { await api.createComplianceRule(selectedKbId.value, data); ElMessage.success('创建成功') }
     showDialog.value = false; loadData()
   } catch { ElMessage.error('操作失败') }
@@ -114,3 +121,10 @@ async function handleSave() {
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.section-title { font-size: 15px; font-weight: 600; }
+.card-panel { background: #fff; border-radius: 8px; padding: 16px; }
+.page-container { padding: 16px; }
+</style>

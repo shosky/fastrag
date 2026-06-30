@@ -10,6 +10,7 @@ import java.util.*;
 public class RetrievalLogServiceImpl implements RetrievalLogService {
     private final KbRetrievalLogMapper mapper;
     @Override public void log(KbRetrievalLog log) { mapper.insert(log); }
+    @Override public void update(KbRetrievalLog log) { mapper.updateById(log); }
     @Override public PageResult<KbRetrievalLog> page(String kbId,Boolean hasResult,int page,int pageSize) {
         var w=new LambdaQueryWrapper<KbRetrievalLog>();
         if(kbId!=null&&!kbId.isEmpty()) w.eq(KbRetrievalLog::getKbId,kbId);

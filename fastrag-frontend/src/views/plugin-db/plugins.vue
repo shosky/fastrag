@@ -96,9 +96,12 @@ function statusText(val: string | number | boolean | undefined | null): string {
 async function loadData() {
   loading.value = true
   try {
-    const res: any = await api.getTools({ keyword: searchKeyword.value || undefined })
-    dataList.value = Array.isArray(res) ? res : (res?.list || [])
+    const res = await api.getTools()
+    dataList.value = Array.isArray(res) ? res : (res as any)?.list || []
     total.value = dataList.value.length
+  } catch {
+    dataList.value = []
+    total.value = 0
   } finally {
     loading.value = false
   }
@@ -131,7 +134,20 @@ function handleAdd() {
   jsonContent.value = ''
   jsonFile.value = null
   jsonImportMode.value = 'paste'
-  dialogTitle.value = '新增插件'
+  dialogTitle.value = '创建自定义插件'
+  showDialog.value = true
+}
+
+/** 快速创建 HTTP 工具（添加工具 + 配置API） */
+function handleAddTool() {
+  editingId.value = null
+  formData.value = { type: 'custom' }
+  resetApiConfig()
+  uploadedFile.value = null
+  jsonContent.value = ''
+  jsonFile.value = null
+  jsonImportMode.value = 'paste'
+  dialogTitle.value = '添加工具 - 配置API'
   showDialog.value = true
 }
 
@@ -260,16 +276,22 @@ async function handleSave() {
 
     if (editingId.value) {
       await api.updateTool(editingId.value, payload)
-      // 保存 API 配置
+      // 保存 API 配置（将 headers/params 数组序列化为 JSON 字符串，适配后端 String 字段）
       if (formData.value.type === 'custom') {
-        await api.saveToolApiConfig(editingId.value, apiConfigForm.value)
+        const apiCfg = { ...apiConfigForm.value }
+        apiCfg.headers = JSON.stringify(apiCfg.headers)
+        apiCfg.params = JSON.stringify(apiCfg.params)
+        await api.saveToolApiConfig(editingId.value, apiCfg)
       }
       ElMessage.success('更新成功')
     } else {
       const res: any = await api.createTool(payload)
       const newId: string | undefined = res?.id
       if (newId && formData.value.type === 'custom') {
-        await api.saveToolApiConfig(newId, apiConfigForm.value)
+        const apiCfg = { ...apiConfigForm.value }
+        apiCfg.headers = JSON.stringify(apiCfg.headers)
+        apiCfg.params = JSON.stringify(apiCfg.params)
+        await api.saveToolApiConfig(newId, apiCfg)
       }
       ElMessage.success('创建成功')
     }
@@ -308,7 +330,8 @@ function removePair(arr: KeyValuePair[], idx: number) { if (arr.length > 1) arr.
       <div class="section-header">
         <div class="section-title">插件管理</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">
-          <el-button type="primary" @click="handleAdd">新增</el-button>
+          <el-button type="primary" @click="handleAddTool">添加工具</el-button>
+          <el-button @click="handleAdd">创建自定义插件</el-button>
           <el-button type="success" @click="handleUploadPlugin">
             <el-icon style="margin-right:4px"><UploadFilled /></el-icon>
             上传插件

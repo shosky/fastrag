@@ -101,7 +101,7 @@ const routes: RouteRecordRaw[] = [
       },
       {
         path: 'knowledge/:id/knowledge-edit',
-        name: 'KnowledgeEdit',
+        name: 'KnowledgeProcessingEdit',
         component: () => import('@/views/knowledge/detail/knowledge-edit.vue'),
         meta: { title: '知识加工与采编', hidden: true },
       },

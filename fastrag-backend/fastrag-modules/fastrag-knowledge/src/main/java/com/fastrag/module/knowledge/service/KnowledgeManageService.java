@@ -10,8 +10,10 @@ public interface KnowledgeManageService {
     List<KbKnowledgeTest> listTests(String kbId,String knowledgeId);
     KbKnowledgeTest createTest(KbKnowledgeTest test);
     KbKnowledgeTest updateTest(String id,KbKnowledgeTest test);
+    void deleteTest(String id);
     // 知识对话
     List<KbKnowledgeDialog> listDialogs(String kbId,String knowledgeId);
     KbKnowledgeDialog createDialog(KbKnowledgeDialog dialog);
+    void deleteDialog(String id);
     Map<String,Object> judge(String id,String query,String model);
 }

@@ -41,6 +41,7 @@ function seedRules(): QueryRule[] {
     { id: 'r_3', name: '拉网线→综合布线', type: 'rewrite', status: 'enabled', pattern: '拉网线', replacement: '综合布线', priority: 1, createdAt: '2026-06-01 10:02' },
     { id: 'r_4', name: '多少钱→价格报价', type: 'rewrite', status: 'enabled', pattern: '多少钱', replacement: '价格 报价 费用', priority: 2, createdAt: '2026-06-02 09:00' },
     { id: 'r_5', name: '咋办→办理流程', type: 'rewrite', status: 'enabled', pattern: '咋办', replacement: '办理流程', priority: 2, createdAt: '2026-06-02 09:01' },
+    { id: 'r_10', name: '总结小微ICT→帮忙总结内容', type: 'rewrite', status: 'enabled', pattern: '总结小微ICT', replacement: '帮忙总结小微ICT的内容', priority: 1, createdAt: '2026-06-29 12:00' },
     // 扩写规则：追加上下文词
     { id: 'r_6', name: '价格扩写', type: 'expand', status: 'enabled', pattern: '价格', replacement: '价格 报价 费用 方案 套餐', priority: 3, createdAt: '2026-06-03 14:00' },
     { id: 'r_7', name: '安装扩写', type: 'expand', status: 'enabled', pattern: '安装', replacement: '安装 部署 施工 调试', priority: 3, createdAt: '2026-06-03 14:01' },

@@ -2,15 +2,18 @@ package com.fastrag.module.knowledge.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.knowledge.entity.*; import com.fastrag.module.knowledge.mapper.*;
 import com.fastrag.module.knowledge.service.PublishManageService;
+import com.fastrag.module.publish.entity.KbUpdateLog;
+import com.fastrag.module.publish.mapper.KbUpdateLogMapper;
 import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
 import java.time.LocalDateTime; import java.util.*;
 @Service @RequiredArgsConstructor
 public class PublishManageServiceImpl implements PublishManageService {
-    private final KbPublishHistoryMapper phMapper; private final KbPublishPlanMapper ppMapper;
+    private final KbPublishHistoryMapper2 phMapper; private final KbPublishPlanMapper ppMapper;
     private final KbReviewStrategyMapper rsMapper; private final KbComplianceRuleMapper crMapper; private final KbQualityRuleMapper qrMapper;
     private final KbReviewTemplateMapper rtMapper; private final KbReviewNodeMapper rnMapper;
     private final KbListenerMapper liMapper; private final KbListenerLogMapper llMapper;
     private final KbResetConfigMapper rcMapper; private final KbKnowledgeMapper kmMapper; private final KbKnowledgeUpdateMapper kmUpdateMapper;
+    private final KbUpdateLogMapper kbUpdateLogMapper;
     // ===== 发布管理 =====
     @Override public List<KbPublishHistory> listPublishHistory(String kbId,String knowledgeId) {
         var w=new LambdaQueryWrapper<KbPublishHistory>();
@@ -45,9 +48,11 @@ public class PublishManageServiceImpl implements PublishManageService {
     @Override public void deleteStrategy(String id) { rsMapper.deleteById(id); }
     @Override public List<KbComplianceRule> listComplianceRules(String kbId) { return crMapper.selectList(new LambdaQueryWrapper<KbComplianceRule>().eq(kbId!=null&&!kbId.isEmpty(),KbComplianceRule::getKbId,kbId)); }
     @Override public KbComplianceRule createComplianceRule(KbComplianceRule r) { if(r.getEnabled()==null) r.setEnabled(1); crMapper.insert(r); return r; }
+    @Override public KbComplianceRule updateComplianceRule(String id,KbComplianceRule r) { r.setId(id); crMapper.updateById(r); return crMapper.selectById(id); }
     @Override public void deleteComplianceRule(String id) { crMapper.deleteById(id); }
     @Override public List<KbQualityRule> listQualityRules(String kbId) { return qrMapper.selectList(new LambdaQueryWrapper<KbQualityRule>().eq(kbId!=null&&!kbId.isEmpty(),KbQualityRule::getKbId,kbId)); }
     @Override public KbQualityRule createQualityRule(KbQualityRule r) { if(r.getEnabled()==null) r.setEnabled(1); qrMapper.insert(r); return r; }
+    @Override public KbQualityRule updateQualityRule(String id,KbQualityRule r) { r.setId(id); qrMapper.updateById(r); return qrMapper.selectById(id); }
     @Override public void deleteQualityRule(String id) { qrMapper.deleteById(id); }
     // ===== 审核流程设计 =====
     @Override public List<KbReviewTemplate> listTemplates() { return rtMapper.selectList(new LambdaQueryWrapper<KbReviewTemplate>().orderByDesc(KbReviewTemplate::getCreatedAt)); }
@@ -212,9 +217,9 @@ public class PublishManageServiceImpl implements PublishManageService {
         r.put("status","applied"); r.put("appliedAt",LocalDateTime.now()); return r;
     }
     @Override public Map<String,Object> getKnowledgeUpdateLogs(String kbId, int page, int pageSize) {
-        var w=new LambdaQueryWrapper<KbKnowledgeUpdate>().eq(KbKnowledgeUpdate::getKbId,kbId).orderByDesc(KbKnowledgeUpdate::getCreatedAt);
-        var list=kmUpdateMapper.selectList(w.last("LIMIT "+pageSize+" OFFSET "+((page-1)*pageSize)));
-        var total=kmUpdateMapper.selectCount(w);
+        var w=new LambdaQueryWrapper<KbUpdateLog>().eq(KbUpdateLog::getKbId,kbId).orderByDesc(KbUpdateLog::getTimestamp);
+        var list=kbUpdateLogMapper.selectList(w.last("LIMIT "+pageSize+" OFFSET "+((page-1)*pageSize)));
+        var total=kbUpdateLogMapper.selectCount(w);
         Map<String,Object> r=new LinkedHashMap<>(); r.put("list",list); r.put("total",total); r.put("page",page); r.put("pageSize",pageSize); return r;
     }
     @Override public Map<String,Object> compareKnowledgeContent(String kbId, String oldId, String newId) {
@@ -232,6 +237,6 @@ public class PublishManageServiceImpl implements PublishManageService {
     }
     // ===== 知识重置 =====
     @Override public List<KbResetConfig> listResetConfigs(String kbId) { return rcMapper.selectList(new LambdaQueryWrapper<KbResetConfig>().eq(kbId!=null&&!kbId.isEmpty(),KbResetConfig::getKbId,kbId)); }
-    @Override public KbResetConfig saveResetConfig(KbResetConfig c) { if(c.getCanReset()==null) c.setCanReset(0); if(c.getMaxResetCount()==null) c.setMaxResetCount(3); rcMapper.insert(c); return c; }
+    @Override public KbResetConfig saveResetConfig(KbResetConfig c) { if(c.getCanReset()==null) c.setCanReset(0); if(c.getMaxResetCount()==null) c.setMaxResetCount(3); if(c.getId()!=null&&!c.getId().isEmpty()) rcMapper.updateById(c); else rcMapper.insert(c); return c; }
     @Override public Map<String,Object> resetKnowledge(String kbId,String knowledgeId) { Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("knowledgeId",knowledgeId); r.put("status","reset"); r.put("resetToVersion",1); r.put("resetAt",LocalDateTime.now()); return r; }
 }

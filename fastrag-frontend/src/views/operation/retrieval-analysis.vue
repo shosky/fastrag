@@ -55,7 +55,6 @@ async function loadLogs() {
     total.value = logList.value.length
   }
 }
-}
 
 function handleSearch() {
   query.value.page = 1
@@ -71,6 +70,62 @@ function handleReset() {
 function handlePageChange(p: number) {
   query.value.page = p
   loadLogs()
+}
+
+// 检索日志修改功能 (#2703)
+const showEditDialog = ref(false)
+const editForm = ref<{
+  id: number | string
+  kbId: string
+  query: string
+  hitCount: number
+  topScore: number
+  latencyMs: number
+  hasResult: boolean
+}>({
+  id: '',
+  kbId: '',
+  query: '',
+  hitCount: 0,
+  topScore: 0,
+  latencyMs: 0,
+  hasResult: true,
+})
+
+function handleEditLog(row: any) {
+  editForm.value = {
+    id: row.id,
+    kbId: row.kbId || '',
+    query: row.query || '',
+    hitCount: row.hitCount ?? 0,
+    topScore: row.topScore ?? 0,
+    latencyMs: row.latencyMs ?? 0,
+    hasResult: row.hasResult ?? true,
+  }
+  showEditDialog.value = true
+}
+
+async function handleSaveLogEdit() {
+  if (!editForm.value.query) {
+    ElMessage.warning('请输入查询内容')
+    return
+  }
+  try {
+    await api.updateRetrievalLog(editForm.value.id, {
+      kbId: editForm.value.kbId,
+      query: editForm.value.query,
+      hitCount: editForm.value.hitCount,
+      topScore: editForm.value.topScore,
+      latencyMs: editForm.value.latencyMs,
+      hasResult: editForm.value.hasResult,
+    })
+    ElMessage.success('修改成功')
+    showEditDialog.value = false
+    loadLogs()
+    loadAnalysis()
+  } catch {
+    ElMessage.error('修改失败')
+  }
 }
 
 onMounted(() => {
@@ -176,6 +231,11 @@ function handleSaveConfig() {
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="时间" width="160" />
+        <el-table-column label="操作" width="80" align="center">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="handleEditLog(row)">修改</el-button>
+          </template>
+        </el-table-column>
       </el-table>
       <el-pagination
         v-if="total > 0"
@@ -199,6 +259,22 @@ function handleSaveConfig() {
         <el-form-item label="定时报告"><el-switch v-model="analysisConfig.scheduledReport" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showConfigDialog=false">取消</el-button><el-button type="primary" @click="handleSaveConfig">保存配置</el-button></template>
+    </el-dialog>
+
+    <!-- 修改检索日志 -->
+    <el-dialog v-model="showEditDialog" title="修改检索日志" width="500px">
+      <el-form label-width="100px">
+        <el-form-item label="知识库ID"><el-input v-model="editForm.kbId" /></el-form-item>
+        <el-form-item label="查询内容" required><el-input v-model="editForm.query" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item label="命中数"><el-input-number v-model="editForm.hitCount" :min="0" style="width:160px" /></el-form-item>
+        <el-form-item label="最高分"><el-input-number v-model="editForm.topScore" :min="0" :max="1" :step="0.01" style="width:160px" /></el-form-item>
+        <el-form-item label="耗时(ms)"><el-input-number v-model="editForm.latencyMs" :min="0" style="width:160px" /></el-form-item>
+        <el-form-item label="是否有结果"><el-switch v-model="editForm.hasResult" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditDialog=false">取消</el-button>
+        <el-button type="primary" @click="handleSaveLogEdit">保存</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>

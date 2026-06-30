@@ -10,11 +10,14 @@ import com.fastrag.module.knowledge.parser.DocumentParser;
 import com.fastrag.module.knowledge.parser.ParseResult;
 import com.fastrag.module.knowledge.storage.StorageService;
 import com.fastrag.module.publish.service.LogService;
+import com.fastrag.module.platform.entity.SysNotification;
+import com.fastrag.module.platform.mapper.SysNotificationMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 
 import java.io.InputStream;
+import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Map;
 
@@ -32,6 +35,7 @@ public class IngestionConsumer implements IngestionHandler {
     private final StorageService storageService;
     private final KbFileMapper fileMapper;
     private final LogService logService;
+    private final SysNotificationMapper notificationMapper;
 
     @Override
     public void handleIngestion(Map<String, Object> message) {
@@ -77,8 +81,19 @@ public class IngestionConsumer implements IngestionHandler {
             try {
                 KbFile kf = fileMapper.selectById(fileId);
                 String fileName = kf != null ? kf.getName() : fileId;
-                logService.addUpdateLog(kbId, "ADD", fileName,
+                logService.addUpdateLog(kbId, "file_added", fileName,
                         "上传并处理了文档 " + fileName, operator);
+
+                // 创建系统通知
+                SysNotification notice = new SysNotification();
+                notice.setTitle("知识更新提醒");
+                notice.setContent("知识库新增文件: " + fileName);
+                notice.setNotifyType("knowledge_update");
+                notice.setSourceType("kb");
+                notice.setSourceId(kbId);
+                notice.setStatus("unread");
+                notice.setCreatedAt(LocalDateTime.now());
+                notificationMapper.insert(notice);
             } catch (Exception e) {
                 log.warn("Failed to record update log for file: {}", fileId, e);
             }

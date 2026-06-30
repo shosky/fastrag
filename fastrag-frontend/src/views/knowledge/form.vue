@@ -152,6 +152,19 @@ onMounted(async () => {
     const orgList: any[] = (orgListRes as any)?.list || orgListRes || []
     const personnel: any[] = (personnelRes as any)?.list || personnelRes || []
     categoryOptions.value = (Array.isArray(cats) ? cats : []).map((c: any) => ({ id: c.id || c.name, name: c.name, color: c.color }))
+    // 分类不足时补全 mock 数据
+    if (categoryOptions.value.length < 3) {
+      const mockCats = [
+        { id: 'default', name: '默认分类', color: '#909399' },
+        { id: 'tech', name: '技术文档', color: '#1890ff' },
+        { id: 'product', name: '产品手册', color: '#52c41a' },
+        { id: 'faq', name: '常见问题', color: '#faad14' },
+      ]
+      const existingNames = new Set(categoryOptions.value.map(c => c.name))
+      for (const mc of mockCats) {
+        if (!existingNames.has(mc.name)) categoryOptions.value.push(mc)
+      }
+    }
     embeddingModelOptions.value = models.map((m: any) => ({ label: m.name || m.code, value: m.code || m.name }))
     departments.value = orgList.map((o: any) => ({ id: o.id, name: o.name, isDefault: o.id === '1' }))
     users.value = personnel
@@ -249,7 +262,7 @@ watch(
       form.name = data.name
       form.category = data.category
       form.description = data.description
-      form.tags = [...data.tags]
+      form.tags = [...(data.tags || [])]
       form.embeddingModel = data.embeddingModel
 
       const extended = data as Partial<KnowledgeBaseForm>

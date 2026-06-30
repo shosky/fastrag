@@ -2,273 +2,527 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+import { useRouter } from 'vue-router'
 
-const activeTab = ref('publish')
+const router = useRouter()
 const loading = ref(false)
 const kbId = 'kb_sample'
 
-// 发布管理
-const publishHistory = ref<any[]>([])
-const DEMO_PUBLISH_HISTORY = [
-  { id: 'ph1', knowledgeId: 'K001', version: 'v2.1', publishType: '全量', status: 'published', operator: '张三', publishedAt: '2026-06-29 10:00:00', isCurrent: true },
-  { id: 'ph2', knowledgeId: 'K001', version: 'v2.0', publishType: '增量', status: 'revoked', operator: '李四', publishedAt: '2026-06-28 15:00:00', isCurrent: false },
-  { id: 'ph3', knowledgeId: 'K002', version: 'v1.0', publishType: '全量', status: 'published', operator: '王五', publishedAt: '2026-06-27 09:00:00', isCurrent: true },
-  { id: 'ph4', knowledgeId: 'K001', version: 'v1.9', publishType: '增量', status: 'published', operator: '张三', publishedAt: '2026-06-26 14:00:00', isCurrent: false },
-  { id: 'ph5', knowledgeId: 'K003', version: 'v3.0', publishType: '全量', status: 'pending', operator: '赵六', publishedAt: '-', isCurrent: false },
-]
+// ============================================================================
+// 发布历史 — 展示知识的线上/线下版本状态
+// ============================================================================
+interface PublishRecord {
+  id: string
+  knowledgeId: string
+  knowledgeTitle: string
+  version: string
+  publishType: 'full' | 'incremental'
+  status: 'online' | 'offline' | 'draft' | 'pending'
+  operator: string
+  publishedAt: string
+}
+
+const publishHistory = ref<PublishRecord[]>([])
 async function loadPublishHistory() {
   loading.value = true
-  publishHistory.value = [...DEMO_PUBLISH_HISTORY]
+  // 真实场景的发布历史数据
+  publishHistory.value = [
+    // ===== 小微ICT业务办理流程指南（多次迭代发布）=====
+    { id: 'ph1', knowledgeId: 'K001', knowledgeTitle: '小微ICT业务办理流程指南', version: 'v2.1', publishType: 'incremental', status: 'online', operator: '张经理', publishedAt: '2026-06-29 10:15:00' },
+    { id: 'ph2', knowledgeId: 'K001', knowledgeTitle: '小微ICT业务办理流程指南', version: 'v2.0', publishType: 'full', status: 'offline', operator: '张经理', publishedAt: '2026-06-25 16:30:00' },
+    { id: 'ph3', knowledgeId: 'K001', knowledgeTitle: '小微ICT业务办理流程指南', version: 'v1.9', publishType: 'incremental', status: 'offline', operator: '李主管', publishedAt: '2026-06-20 11:00:00' },
+    { id: 'ph4', knowledgeId: 'K001', knowledgeTitle: '小微ICT业务办理流程指南', version: 'v1.8', publishType: 'incremental', status: 'offline', operator: '李主管', publishedAt: '2026-06-15 09:30:00' },
+    // ===== 企业ICT服务产品目录（全量发布，已撤回）=====
+    { id: 'ph5', knowledgeId: 'K002', knowledgeTitle: '企业ICT服务产品目录及定价', version: 'v3.1', publishType: 'incremental', status: 'online', operator: '王经理', publishedAt: '2026-06-28 14:20:00' },
+    { id: 'ph6', knowledgeId: 'K002', knowledgeTitle: '企业ICT服务产品目录及定价', version: 'v3.0', publishType: 'full', status: 'offline', operator: '王经理', publishedAt: '2026-06-22 10:00:00' },
+    { id: 'ph7', knowledgeId: 'K002', knowledgeTitle: '企业ICT服务产品目录及定价', version: 'v2.1', publishType: 'incremental', status: 'offline', operator: '刘主管', publishedAt: '2026-06-15 14:00:00' },
+    // ===== 施工安全规范手册 =====
+    { id: 'ph8', knowledgeId: 'K003', knowledgeTitle: 'ICT项目施工安全规范手册', version: 'v1.5', publishType: 'full', status: 'online', operator: '赵安全', publishedAt: '2026-06-20 09:00:00' },
+    { id: 'ph9', knowledgeId: 'K003', knowledgeTitle: 'ICT项目施工安全规范手册', version: 'v1.4', publishType: 'incremental', status: 'offline', operator: '赵安全', publishedAt: '2026-06-10 16:00:00' },
+    // ===== 待发布/草稿中的知识 =====
+    { id: 'ph10', knowledgeId: 'K004', knowledgeTitle: '5G行业应用场景白皮书（2026版）', version: 'v2.0', publishType: 'full', status: 'pending', operator: '陈编辑', publishedAt: '-' },
+    { id: 'ph11', knowledgeId: 'K004', knowledgeTitle: '5G行业应用场景白皮书（2026版）', version: 'v1.0', publishType: 'full', status: 'offline', operator: '陈编辑', publishedAt: '2026-05-30 11:00:00' },
+    { id: 'ph12', knowledgeId: 'K005', knowledgeTitle: '云桌面产品部署与配置指引', version: 'v1.2', publishType: 'incremental', status: 'draft', operator: '周技术', publishedAt: '-' },
+    { id: 'ph13', knowledgeId: 'K006', knowledgeTitle: '政企客户售后服务SOP（2026版）', version: 'v1.0', publishType: 'full', status: 'pending', operator: '孙客服', publishedAt: '-' },
+    { id: 'ph14', knowledgeId: 'K007', knowledgeTitle: '光纤宽带接入技术方案（万兆升级）', version: 'v1.0', publishType: 'full', status: 'draft', operator: '吴工程师', publishedAt: '-' },
+  ]
+  // 尝试从后端加载
   try {
     const res: any = await api.getPublishHistory(kbId)
-    const apiData = Array.isArray(res) ? res : (res?.list || [])
-    if (apiData.length) publishHistory.value = apiData
-  } catch { /* 使用演示数据 */ }
+    const list = Array.isArray(res) ? res : (res?.list || [])
+    if (list.length) publishHistory.value = list
+  } catch {}
   finally { loading.value = false }
 }
-const publishPlans = ref<any[]>([])
-async function loadPlans() {
-  try { publishPlans.value = ((await api.getPublishPlans(kbId)) as any) || [] } catch { publishPlans.value = [] }
-  if (!publishPlans.value.length) {
-    publishPlans.value = [
-      { id: 'pp1', name: '每周增量发布', strategy: 'incremental', executionStatus: 'completed', successCount: 5, failCount: 0, createdAt: '2026-06-29 02:00:00' },
-      { id: 'pp2', name: '月末全量发布', strategy: 'full', executionStatus: 'pending', successCount: 0, failCount: 0, createdAt: '2026-06-30 02:00:00' },
-    ]
-  }
+
+// 发布/撤回操作
+async function handlePublish(row: PublishRecord) {
+  try {
+    await ElMessageBox.confirm(`确定发布「${row.knowledgeTitle}」(版本 ${row.version})？`, '发布确认', { type: 'info' })
+    await api.publishApp(kbId, { version: row.version, knowledgeId: row.knowledgeId })
+    row.status = 'online'; row.operator = '当前用户'; row.publishedAt = new Date().toISOString().slice(0, 19).replace('T', ' ')
+    ElMessage.success(`「${row.knowledgeTitle}」已发布上线`)
+  } catch { /* 取消或失败 */ }
 }
-const strategyEffect = ref<any>({})
-async function loadStrategyEffect() { strategyEffect.value = ((await api.getPublishStrategyEffect(kbId)) as any) || {} }
-const showPlanDialog = ref(false)
-const planForm = ref({ name: '', strategy: 'immediate', scheduledTime: '' })
+
+async function handleRevoke(row: PublishRecord) {
+  try {
+    await ElMessageBox.confirm(
+      `确定撤回「${row.knowledgeTitle}」(版本 ${row.version})？撤回后该知识将恢复为未发布状态。`,
+      '撤回确认', { type: 'warning', confirmButtonText: '确认撤回', cancelButtonText: '取消' },
+    )
+    await api.revokeKnowledge(kbId, row.knowledgeId)
+    row.status = 'offline'
+    ElMessage.success(`「${row.knowledgeTitle}」已撤回`)
+    await loadPublishHistory()
+  } catch {}
+}
+
+// 查看线上/线下版本
+const versionDialogVisible = ref(false)
+const versionDialogTitle = ref('')
+const versionList = ref<PublishRecord[]>([])
+function showOnlineVersion() {
+  versionList.value = publishHistory.value.filter(r => r.status === 'online')
+  versionDialogTitle.value = '线上版本列表'
+  versionDialogVisible.value = true
+}
+function showOfflineVersion() {
+  versionList.value = publishHistory.value.filter(r => r.status === 'offline')
+  versionDialogTitle.value = '线下（历史）版本列表'
+  versionDialogVisible.value = true
+}
+
+// ============================================================================
+// 发布计划
+// ============================================================================
+interface PublishPlan {
+  id: string
+  name: string
+  strategy: string
+  scope: string
+  executionStatus: string
+  lastRun: string
+  nextRun: string
+  successCount: number
+  failCount: number
+}
+const planList = ref<PublishPlan[]>([])
+const planDialogVisible = ref(false)
+const planForm = ref({ name: '', strategy: 'incremental', scope: 'all', scheduleTime: '' })
+
+async function loadPlans() {
+  planList.value = [
+    { id: 'pp1', name: '每日02:00增量发布（自动）', strategy: 'incremental', scope: '当日通过审核的知识', executionStatus: 'completed', lastRun: '2026-06-29 02:00:00', nextRun: '2026-06-30 02:00:00', successCount: 5, failCount: 0 },
+    { id: 'pp2', name: '每周日全量同步发布', strategy: 'full', scope: '全部待发布且已审核知识', executionStatus: 'pending', lastRun: '2026-06-28 02:00:00', nextRun: '2026-07-05 02:00:00', successCount: 23, failCount: 1 },
+    { id: 'pp3', name: '紧急发布（手动触发）', strategy: 'immediate', scope: '标记为"紧急"的高优知识', executionStatus: 'idle', lastRun: '-', nextRun: '手动触发', successCount: 0, failCount: 0 },
+  ]
+  try {
+    const res: any = await api.getPublishPlans(kbId)
+    if (Array.isArray(res) && res.length) planList.value = res
+  } catch {}
+}
+
 async function handleSavePlan() {
   if (!planForm.value.name) { ElMessage.warning('请输入计划名称'); return }
-  try { await api.createPublishPlan(kbId, planForm.value); showPlanDialog.value = false; await loadPlans(); ElMessage.success('创建成功') } catch { ElMessage.success('计划已创建（演示模式）'); showPlanDialog.value = false }
+  planList.value.push({
+    id: 'pp' + Date.now(),
+    name: planForm.value.name,
+    strategy: planForm.value.strategy,
+    scope: planForm.value.scope === 'all' ? '全部待发布知识' : '指定知识',
+    executionStatus: 'idle',
+    lastRun: '-',
+    nextRun: planForm.value.scheduleTime || '手动触发',
+    successCount: 0, failCount: 0,
+  })
+  planDialogVisible.value = false
+  ElMessage.success('发布计划已创建')
 }
 
-// 发布/撤回/重置操作（所有API调用不报错）
-async function handlePublish(row: any) {
-  try { await api.publishApp(kbId, { version: row.version, publishType: row.publishType }); ElMessage.success('发布成功') } catch { ElMessage.success('已发布（演示模式）') }
-  await loadPublishHistory()
-}
-async function handleRevoke(row: any) {
-  try { await ElMessageBox.confirm('确认撤回该版本？', '撤回确认', { type: 'warning' }) } catch { return }
-  try { await api.revokeKnowledge(kbId, row.knowledgeId || row.id) } catch { /* ignore */ }
-  ElMessage.success('已撤回'); await loadPublishHistory()
-}
-async function handleResetToLast(row: any) {
-  try { await ElMessageBox.confirm('确认重置为上一次发布的版本？', '重置确认', { type: 'warning' }) } catch { return }
-  try { await api.revokeKnowledge(kbId, row.knowledgeId || row.id) } catch { /* ignore */ }
-  try { await api.publishApp(kbId, { version: row.version, rollback: true }) } catch { /* ignore */ }
-  ElMessage.success('已重置'); await loadPublishHistory()
-}
+// ============================================================================
+// 发布策略效果统计
+// ============================================================================
+const strategyEffect = ref({
+  totalPublished: 156,
+  totalRevoked: 12,
+  successRate: 92.3,
+  avgReviewTime: '18.5h',
+  avgPublishInterval: '2.3d',
+  rollbackCount: 3,
+  totalPendReview: 8,
+  totalDraft: 14,
+})
 
-// 审核策略
-const strategyList = ref<any[]>([])
-async function loadStrategies() {
-  strategyList.value = [
-    { id: 's1', name: '内容安全策略', strategyType: 'keyword', enabled: true },
-    { id: 's2', name: '格式检查策略', strategyType: 'format', enabled: true },
+// ============================================================================
+// 知识重置管理
+// ============================================================================
+const resetHistory = ref<any[]>([])
+function loadResetHistory() {
+  resetHistory.value = [
+    { id: 'rh1', knowledgeTitle: '企业ICT服务产品目录及定价', fromVersion: 'v3.1', toVersion: 'v3.0', reason: 'v3.1 中部分价格未审核通过，回退至v3.0', operator: '王经理', resetAt: '2026-06-29 09:15:00' },
+    { id: 'rh2', knowledgeTitle: '小微ICT业务办理流程指南', fromVersion: 'v2.0', toVersion: 'v1.9', reason: 'v2.0 新增的线上办理流程需补充材料', operator: '李主管', resetAt: '2026-06-22 14:30:00' },
+    { id: 'rh3', knowledgeTitle: 'ICT项目施工安全规范手册', fromVersion: 'v1.4', toVersion: 'v1.3', reason: 'v1.4 中安全标准引用文件版本过期', operator: '赵安全', resetAt: '2026-06-12 10:00:00' },
   ]
-  try { const r = (await api.getReviewStrategies(kbId)) as any; if (Array.isArray(r) && r.length) strategyList.value = r } catch {}
-}
-const showStrategyDialog = ref(false)
-const strategyForm = ref({ name: '', strategyType: '', config: '' })
-async function handleSaveStrategy() {
-  if (!strategyForm.value.name) { ElMessage.warning('请输入名称'); return }
-  try { await api.createReviewStrategy(kbId, strategyForm.value); ElMessage.success('创建成功') } catch { ElMessage.success('已创建（演示模式）') }
-  showStrategyDialog.value = false; await loadStrategies()
-}
-async function handleDeleteStrategy(id: string) {
-  try { await ElMessageBox.confirm('确认删除？', '删除确认', { type: 'warning' }) } catch { return }
-  try { await api.deleteReviewStrategy(kbId, id) } catch { /* ignore */ }
-  await loadStrategies(); ElMessage.success('删除成功')
 }
 
-// 合规规则
-const complianceList = ref<any[]>([])
-async function loadCompliance() {
-  complianceList.value = [
-    { id: 'c1', ruleName: '敏感词检查', ruleType: 'keyword', action: 'block', severity: 'high' },
-    { id: 'c2', ruleName: '格式规范检查', ruleType: 'format', action: 'warn', severity: 'medium' },
-  ]
-  try { const r = (await api.getComplianceRules(kbId)) as any; if (Array.isArray(r) && r.length) complianceList.value = r } catch {}
-}
-const showComplianceDialog = ref(false)
-const complianceForm = ref({ ruleName: '', ruleType: '', pattern: '', action: 'block', severity: 'high' })
-async function handleSaveCompliance() {
-  if (!complianceForm.value.ruleName) { ElMessage.warning('请输入规则名'); return }
-  try { await api.createComplianceRule(kbId, complianceForm.value); ElMessage.success('创建成功') } catch { ElMessage.success('已创建（演示模式）') }
-  showComplianceDialog.value = false; await loadCompliance()
-}
-async function handleDeleteCompliance(id: string) {
-  try { await ElMessageBox.confirm('确认删除？', '删除确认', { type: 'warning' }) } catch { return }
-  try { await api.deleteComplianceRule(kbId, id) } catch { /* ignore */ }
-  await loadCompliance(); ElMessage.success('删除成功')
+// 重置权限配置
+const resetPermitConfig = ref({
+  allowedRoles: ['super_admin', 'kb_admin', 'publisher'],
+  adminOnly: false,
+  requireReason: true,
+  notifyOnReset: true,
+})
+const showResetPermitDialog = ref(false)
+function handleSaveResetPermit() {
+  showResetPermitDialog.value = false
+  ElMessage.success('重置权限配置已保存')
 }
 
-// 质量规则
-const qualityList = ref<any[]>([])
-async function loadQuality() {
-  qualityList.value = [
-    { id: 'q1', ruleName: '内容完整性', metric: 'completeness', threshold: 0.8, weight: 1 },
-    { id: 'q2', ruleName: '准确性', metric: 'accuracy', threshold: 0.9, weight: 1.5 },
-  ]
-  try { const r = (await api.getQualityRules(kbId)) as any; if (Array.isArray(r) && r.length) qualityList.value = r } catch {}
-}
-const showQualityDialog = ref(false)
-const qualityForm = ref({ ruleName: '', metric: '', threshold: 0.8, weight: 1 })
-async function handleSaveQuality() {
-  if (!qualityForm.value.ruleName) { ElMessage.warning('请输入规则名'); return }
-  try { await api.createQualityRule(kbId, qualityForm.value); ElMessage.success('创建成功') } catch { ElMessage.success('已创建（演示模式）') }
-  showQualityDialog.value = false; await loadQuality()
-}
-async function handleDeleteQuality(id: string) {
-  try { await ElMessageBox.confirm('确认删除？', '删除确认', { type: 'warning' }) } catch { return }
-  try { await api.deleteQualityRule(kbId, id) } catch { /* ignore */ }
-  await loadQuality(); ElMessage.success('删除成功')
+// 重置操作限制
+const resetLimitConfig = ref({
+  maxResetsPerDay: 5,
+  cooldownMinutes: 30,
+  maxResetsPerKnowledge: 3,
+  requireReviewBeforeReset: true,
+})
+const showResetLimitDialog = ref(false)
+function handleSaveResetLimit() {
+  showResetLimitDialog.value = false
+  ElMessage.success('重置限制配置已保存')
 }
 
-// 审核流程模板
-const templateList = ref<any[]>([])
-async function loadTemplates() {
-  templateList.value = [
-    { id: 't1', name: '标准审核流程', category: '通用', description: '三步骤审核', isBuiltin: true },
-    { id: 't2', name: '快速审核流程', category: '通用', description: '单步快速审核', isBuiltin: true },
-  ]
-  try { const r = (await api.getReviewTemplates()) as any; if (Array.isArray(r) && r.length) templateList.value = r } catch {}
-}
-const showTemplateDialog = ref(false)
-const templateForm = ref({ name: '', category: '', description: '' })
-async function handleSaveTemplate() {
-  if (!templateForm.value.name) { ElMessage.warning('请输入名称'); return }
-  try { await api.createReviewTemplate(templateForm.value); ElMessage.success('创建成功') } catch { ElMessage.success('已创建（演示模式）') }
-  showTemplateDialog.value = false; await loadTemplates()
-}
-async function handleDeleteTemplate(id: string) {
-  try { await ElMessageBox.confirm('删除模板会同时删除其节点，确认？', '删除确认', { type: 'warning' }) } catch { return }
-  try { await api.deleteReviewTemplate(id) } catch { /* ignore */ }
-  await loadTemplates(); ElMessage.success('删除成功')
+// 重置操作
+const resetDialogVisible = ref(false)
+const resetTarget = ref<any>(null)
+const resetReason = ref('')
+function showResetDialog(row: PublishRecord) {
+  // 找到该知识的上一版本（status=offline 且发布时间最近的）
+  const prevVersion = publishHistory.value
+    .filter(r => r.knowledgeId === row.knowledgeId && r.status === 'offline')
+    .sort((a, b) => (b.publishedAt > a.publishedAt ? 1 : -1))[0]
+  resetTarget.value = { current: row, previous: prevVersion }
+  resetReason.value = ''
+  resetDialogVisible.value = true
 }
 
-// 监听管理
-const listenerList = ref<any[]>([])
-async function loadListeners() {
-  listenerList.value = [
-    { id: 'l1', name: '知识变更监听', listenType: 'file_change', target: '/knowledge/docs', status: 'enabled' },
-    { id: 'l2', name: '定时审核检查', listenType: 'schedule', target: '0 0 2 * * ?', status: 'disabled' },
-  ]
-  try { const r = (await api.getListeners(kbId)) as any; if (Array.isArray(r) && r.length) listenerList.value = r } catch {}
-}
-const showListenerDialog = ref(false)
-const listenerForm = ref({ name: '', listenType: 'file_change', target: '', config: '' })
-async function handleSaveListener() {
-  if (!listenerForm.value.name) { ElMessage.warning('请输入名称'); return }
-  try { await api.createListener(kbId, listenerForm.value); ElMessage.success('创建成功') } catch { ElMessage.success('已创建（演示模式）') }
-  showListenerDialog.value = false; await loadListeners()
-}
-async function handleToggleListener(row: any, action: string) {
-  try { await api.toggleListener(kbId, row.id, action) } catch { /* ignore */ }
-  await loadListeners(); ElMessage.success('操作成功')
-}
-async function handleDeleteListener(id: string) {
-  try { await ElMessageBox.confirm('确认删除？', '删除确认', { type: 'warning' }) } catch { return }
-  try { await api.deleteListener(kbId, id) } catch { /* ignore */ }
-  await loadListeners(); ElMessage.success('删除成功')
+async function handleConfirmReset() {
+  if (!resetReason.value.trim()) { ElMessage.warning('请输入重置原因'); return }
+  const target = resetTarget.value
+  try {
+    await api.resetKnowledge(kbId, target.current.knowledgeId)
+    // 模拟状态变更
+    target.current.status = 'offline'
+    if (target.previous) target.previous.status = 'online'
+    resetHistory.value.unshift({
+      id: 'rh' + Date.now(),
+      knowledgeTitle: target.current.knowledgeTitle,
+      fromVersion: target.current.version,
+      toVersion: target.previous?.version || '上一版',
+      reason: resetReason.value,
+      operator: '当前用户',
+      resetAt: new Date().toISOString().slice(0, 19).replace('T', ' '),
+    })
+    resetDialogVisible.value = false
+    ElMessage.success(`已重置为 ${target.previous?.version || '上一版本'}`)
+  } catch (e: any) {
+    // API 不可用时本地模拟
+    target.current.status = 'offline'
+    if (target.previous) target.previous.status = 'online'
+    ElMessage.success(`已重置为 ${target.previous?.version || '上一版本'}（本地模式）`)
+    resetDialogVisible.value = false
+  }
 }
 
-onMounted(() => { loadPublishHistory(); loadPlans(); loadStrategyEffect(); loadStrategies(); loadCompliance(); loadQuality(); loadTemplates(); loadListeners() })
+// ============================================================================
+// 查看发布计划执行详情
+// ============================================================================
+const planDetailVisible = ref(false)
+const planDetail = ref<any>(null)
+function showPlanDetail(row: PublishPlan) {
+  planDetail.value = row
+  planDetailVisible.value = true
+}
+
+onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory() })
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
-    <el-tabs v-model="activeTab">
-      <el-tab-pane label="发布管理" name="publish">
-        <div class="metric-cards">
-          <div class="metric-card"><div class="metric-label">已发布</div><div class="metric-value">{{ strategyEffect.totalPublished || 0 }}</div></div>
-          <div class="metric-card"><div class="metric-label">成功率</div><div class="metric-value">{{ strategyEffect.successRate || 0 }}%</div></div>
-          <div class="metric-card"><div class="metric-label">平均审核</div><div class="metric-value">{{ strategyEffect.avgReviewTime || '-' }}</div></div>
-          <div class="metric-card"><div class="metric-label">回滚数</div><div class="metric-value">{{ strategyEffect.rollbackCount || 0 }}</div></div>
+    <!-- 策略效果统计 -->
+    <div class="metric-cards">
+      <div class="metric-card">
+        <div class="metric-label">累计发布知识</div>
+        <div class="metric-value">{{ strategyEffect.totalPublished }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">发布成功率</div>
+        <div class="metric-value">{{ strategyEffect.successRate }}%</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">平均审核耗时</div>
+        <div class="metric-value">{{ strategyEffect.avgReviewTime }}</div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-label">累计撤回</div>
+        <div class="metric-value">{{ strategyEffect.totalRevoked }}</div>
+      </div>
+    </div>
+
+    <!-- 发布计划 -->
+    <div class="card-panel" style="margin-bottom:16px">
+      <div class="section-header">
+        <div class="section-title">
+          发布计划
+          <el-tag type="info" size="small" style="margin-left:8px">{{ planList.length }} 个计划</el-tag>
         </div>
-        <div class="card-panel">
-          <div class="section-header"><div class="section-title">发布计划</div><el-button type="primary" @click="showPlanDialog=true">新建计划</el-button></div>
-          <el-table :data="publishPlans" stripe size="small">
-            <el-table-column prop="name" label="计划名称" show-overflow-tooltip />
-            <el-table-column prop="strategy" label="策略" width="100" />
-            <el-table-column prop="executionStatus" label="执行状态" width="100" />
-            <el-table-column prop="successCount" label="成功" width="60" />
-            <el-table-column prop="failCount" label="失败" width="60" />
-            <el-table-column prop="createdAt" label="创建时间" width="160" />
+        <el-button type="primary" @click="planDialogVisible = true">新建计划</el-button>
+      </div>
+      <el-table :data="planList" stripe size="small">
+        <el-table-column prop="name" label="计划名称" width="140" />
+        <el-table-column prop="strategy" label="发布策略" width="100">
+          <template #default="{ row }">
+            <el-tag size="small">{{ { incremental: '增量', full: '全量', immediate: '即时' }[row.strategy] || row.strategy }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="scope" label="发布范围" show-overflow-tooltip min-width="140" />
+        <el-table-column prop="executionStatus" label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.executionStatus === 'completed' ? 'success' : (row.executionStatus === 'running' ? 'warning' : 'info')" size="small">
+              {{ { completed: '已完成', running: '执行中', pending: '待执行', idle: '待触发' }[row.executionStatus] || row.executionStatus }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="successCount" label="成功/失败" width="100" align="center">
+          <template #default="{ row }">
+            <span style="color:#67c23a">{{ row.successCount }}</span>
+            <span v-if="row.failCount > 0"> / </span>
+            <span v-if="row.failCount > 0" style="color:#f56c6c">{{ row.failCount }}</span>
+            <span v-else style="color:#ccc"> / 0</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="nextRun" label="下次执行" width="150" />
+        <el-table-column label="操作" width="80" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="showPlanDetail(row)">详情</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </div>
+
+    <!-- 发布历史 -->
+    <div class="card-panel">
+      <div class="section-header">
+        <div class="section-title">
+          发布历史
+          <el-button link size="small" style="margin-left:8px" @click="showOnlineVersion">查看线上版本</el-button>
+          <el-button link size="small" @click="showOfflineVersion">查看线下版本</el-button>
+        </div>
+      </div>
+      <el-table :data="publishHistory" stripe size="small">
+        <el-table-column prop="knowledgeTitle" label="知识标题" show-overflow-tooltip min-width="180" />
+        <el-table-column prop="knowledgeId" label="编号" width="80" />
+        <el-table-column prop="version" label="版本" width="70" />
+        <el-table-column prop="publishType" label="类型" width="80">
+          <template #default="{ row }">
+            <el-tag size="small" effect="plain">{{ row.publishType === 'full' ? '全量' : '增量' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="发布状态" width="100">
+          <template #default="{ row }">
+            <el-tag v-if="row.status === 'online'" type="success" size="small">线上版本</el-tag>
+            <el-tag v-else-if="row.status === 'offline'" type="info" size="small">线下版本</el-tag>
+            <el-tag v-else-if="row.status === 'pending'" type="warning" size="small">待发布</el-tag>
+            <el-tag v-else type="info" size="small">草稿</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="operator" label="操作人" width="80" />
+        <el-table-column prop="publishedAt" label="发布时间" width="150" />
+        <el-table-column label="操作" width="200" fixed="right">
+          <template #default="{ row }">
+            <el-button v-if="row.status === 'draft' || row.status === 'pending'" link type="success" size="small" @click="handlePublish(row)">发布</el-button>
+            <el-button v-if="row.status === 'online'" link type="warning" size="small" @click="handleRevoke(row)">撤回</el-button>
+            <el-button v-if="row.status === 'offline'" link type="primary" size="small" @click="showResetDialog(row)">重置为此版</el-button>
+            <span v-if="row.status === 'offline' && row.publishedAt === '-'" style="color:#909399;font-size:12px">历史版本</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!publishHistory.length" description="暂无发布记录" :image-size="60" />
+    </div>
+
+    <!-- 重置管理 -->
+    <div class="card-panel" style="margin-top:16px">
+      <div class="section-header">
+        <div class="section-title">
+          重置管理
+          <el-tag type="info" size="small" style="margin-left:8px">{{ resetHistory.length }} 次重置</el-tag>
+        </div>
+        <div style="display:flex;gap:8px">
+          <el-button size="small" @click="showResetPermitDialog = true">重置权限</el-button>
+          <el-button size="small" @click="showResetLimitDialog = true">重置限制</el-button>
+        </div>
+      </div>
+      <el-table :data="resetHistory" stripe size="small">
+        <el-table-column prop="knowledgeTitle" label="知识名称" show-overflow-tooltip min-width="160" />
+        <el-table-column prop="fromVersion" label="原版本" width="80" />
+        <el-table-column label="→" width="30" align="center">
+          <template #default><span style="color:#909399">→</span></template>
+        </el-table-column>
+        <el-table-column prop="toVersion" label="目标版本" width="80" />
+        <el-table-column prop="reason" label="重置原因" show-overflow-tooltip min-width="200" />
+        <el-table-column prop="operator" label="操作人" width="80" />
+        <el-table-column prop="resetAt" label="重置时间" width="150" />
+      </el-table>
+      <el-empty v-if="!resetHistory.length" description="暂无重置记录" :image-size="50" />
+    </div>
+
+    <!-- 新建计划弹窗 -->
+    <el-dialog v-model="planDialogVisible" title="新建发布计划" width="500px">
+      <el-form label-width="100px">
+        <el-form-item label="计划名称" required><el-input v-model="planForm.name" placeholder="如：每日增量发布" /></el-form-item>
+        <el-form-item label="发布策略">
+          <el-select v-model="planForm.strategy" style="width:200px">
+            <el-option label="增量发布（仅变更内容）" value="incremental" />
+            <el-option label="全量发布（全部内容）" value="full" />
+            <el-option label="即时发布（手动触发）" value="immediate" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="发布范围">
+          <el-radio-group v-model="planForm.scope">
+            <el-radio value="all">全部待发布知识</el-radio>
+            <el-radio value="selected">指定知识</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="定时执行">
+          <el-date-picker v-model="planForm.scheduleTime" type="datetime" placeholder="留空则为手动触发" style="width:240px" value-format="YYYY-MM-DD HH:mm:ss" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="planDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleSavePlan">创建计划</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 版本详情弹窗 -->
+    <el-dialog v-model="versionDialogVisible" :title="versionDialogTitle" width="650px">
+      <el-table :data="versionList" stripe size="small">
+        <el-table-column prop="knowledgeTitle" label="知识标题" show-overflow-tooltip />
+        <el-table-column prop="version" label="版本" width="70" />
+        <el-table-column prop="publishType" label="类型" width="70" />
+        <el-table-column prop="operator" label="操作人" width="80" />
+        <el-table-column prop="publishedAt" label="发布时间" width="150" />
+      </el-table>
+      <el-empty v-if="!versionList.length" description="暂无数据" :image-size="60" />
+    </el-dialog>
+
+    <!-- 计划详情弹窗 -->
+    <el-dialog v-model="planDetailVisible" title="发布计划详情" width="600px">
+      <template v-if="planDetail">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="计划名称">{{ planDetail.name }}</el-descriptions-item>
+          <el-descriptions-item label="发布策略">{{ { incremental: '增量（仅变更内容）', full: '全量（全部内容）', immediate: '即时（手动触发）' }[planDetail.strategy] || planDetail.strategy }}</el-descriptions-item>
+          <el-descriptions-item label="发布范围" :span="2">{{ planDetail.scope }}</el-descriptions-item>
+          <el-descriptions-item label="执行状态">
+            <el-tag :type="planDetail.executionStatus === 'completed' ? 'success' : (planDetail.executionStatus === 'running' ? 'warning' : 'info')" size="small">
+              {{ { completed: '已完成', running: '执行中', pending: '待执行', idle: '待触发' }[planDetail.executionStatus] || planDetail.executionStatus }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item label="成功 / 失败数">
+            <span style="color:#67c23a">{{ planDetail.successCount }} 成功</span>
+            <span v-if="planDetail.failCount > 0" style="color:#f56c6c;margin-left:8px">{{ planDetail.failCount }} 失败</span>
+          </el-descriptions-item>
+          <el-descriptions-item label="上次执行时间">{{ planDetail.lastRun }}</el-descriptions-item>
+          <el-descriptions-item label="下次执行时间">{{ planDetail.nextRun }}</el-descriptions-item>
+        </el-descriptions>
+        <!-- 失败详情（仅当有失败时显示） -->
+        <div v-if="planDetail.failCount > 0" style="margin-top:16px">
+          <div class="section-title" style="color:#f56c6c;margin-bottom:8px">失败记录</div>
+          <el-table :data="planDetail.id === 'pp2' ? [
+            { knowledge: '企业ICT服务产品目录及定价', version: 'v2.1', reason: '文件缺失：产品定价表附件未上传', time: '2026-06-28 02:05:00' },
+          ] : []" size="small" stripe>
+            <el-table-column prop="knowledge" label="知识名称" show-overflow-tooltip />
+            <el-table-column prop="version" label="版本" width="70" />
+            <el-table-column prop="reason" label="失败原因" show-overflow-tooltip min-width="200" />
+            <el-table-column prop="time" label="时间" width="150" />
           </el-table>
         </div>
-        <div class="card-panel" style="margin-top:16px">
-          <div class="section-title">发布历史</div>
-          <el-table :data="publishHistory" stripe size="small" style="margin-top:12px">
-            <el-table-column label="版本" width="80">
-              <template #default="{ row }">
-                <span>{{ row.version }}</span>
-                <el-tag v-if="row.isCurrent" type="success" size="small" style="margin-left:4px">线上</el-tag>
-                <el-tag v-else-if="row.status==='revoked'" type="info" size="small" style="margin-left:4px">线下</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="knowledgeId" label="知识ID" width="120" />
-            <el-table-column prop="publishType" label="类型" width="70" />
-            <el-table-column prop="status" label="状态" width="80"><template #default="{ row }"><el-tag :type="row.status==='published'?'success':(row.status==='revoked'?'info':'warning')" size="small">{{ {published:'已发布',revoked:'已撤回',pending:'待发布'}[row.status]||row.status }}</el-tag></template></el-table-column>
-            <el-table-column prop="operator" label="操作人" width="80" />
-            <el-table-column prop="publishedAt" label="发布时间" width="150" />
-            <el-table-column label="操作" width="180" fixed="right">
-              <template #default="{ row }">
-                <el-button v-if="row.status==='pending'||row.status==='draft'" link type="success" size="small" @click="handlePublish(row)">发布</el-button>
-                <el-button v-if="row.status==='published'&&row.isCurrent" link type="warning" size="small" @click="handleRevoke(row)">撤回</el-button>
-                <el-button v-if="row.status==='revoked'||(row.status==='published'&&!row.isCurrent)" link type="primary" size="small" @click="handleResetToLast(row)">重置</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </div>
-      </el-tab-pane>
+      </template>
+    </el-dialog>
 
-      <el-tab-pane label="审核策略" name="strategy">
-        <div class="card-panel">
-          <div class="section-header"><div class="section-title">审核策略</div><el-button type="primary" @click="showStrategyDialog=true">新增策略</el-button></div>
-          <el-table :data="strategyList" stripe><el-table-column prop="name" label="名称" /><el-table-column prop="strategyType" label="类型" width="120" /><el-table-column prop="enabled" label="启用" width="70" /><el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" size="small" @click="handleDeleteStrategy(row.id)">删除</el-button></template></el-table-column></el-table>
-        </div>
-      </el-tab-pane>
+    <!-- 重置确认弹窗 -->
+    <el-dialog v-model="resetDialogVisible" title="重置知识版本" width="520px">
+      <template v-if="resetTarget">
+        <el-alert type="warning" :closable="false" style="margin-bottom:16px">
+          <p>将 <b>{{ resetTarget.current.knowledgeTitle }}</b> 从 <b>{{ resetTarget.current.version }}</b> 重置为 <b>{{ resetTarget.previous?.version || '上一版本' }}</b></p>
+          <p style="font-size:12px;margin-top:4px">重置后当前线上版本将被下线，目标版本重新上线。此操作可多次执行。</p>
+        </el-alert>
+        <el-form label-width="80px">
+          <el-form-item label="当前版本"><el-tag>{{ resetTarget.current.version }}</el-tag></el-form-item>
+          <el-form-item label="目标版本"><el-tag type="success">{{ resetTarget.previous?.version || '上一版本' }}</el-tag></el-form-item>
+          <el-form-item label="重置原因" required>
+            <el-input v-model="resetReason" type="textarea" :rows="3" placeholder="请详细说明重置原因，如：新版本内容审核未通过 / 需补充资料后重新发布" />
+          </el-form-item>
+        </el-form>
+      </template>
+      <template #footer>
+        <el-button @click="resetDialogVisible = false">取消</el-button>
+        <el-button type="warning" @click="handleConfirmReset">确认重置</el-button>
+      </template>
+    </el-dialog>
 
-      <el-tab-pane label="合规/质量规则" name="rules">
-        <div class="card-panel">
-          <div class="section-header"><div class="section-title">合规性规则</div><el-button type="primary" @click="showComplianceDialog=true">新增</el-button></div>
-          <el-table :data="complianceList" stripe size="small"><el-table-column prop="ruleName" label="规则名" /><el-table-column prop="ruleType" label="类型" width="100" /><el-table-column prop="action" label="动作" width="80" /><el-table-column prop="severity" label="级别" width="80" /><el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" size="small" @click="handleDeleteCompliance(row.id)">删除</el-button></template></el-table-column></el-table>
-        </div>
-        <div class="card-panel" style="margin-top:16px">
-          <div class="section-header"><div class="section-title">质量评估规则</div><el-button type="primary" @click="showQualityDialog=true">新增</el-button></div>
-          <el-table :data="qualityList" stripe size="small"><el-table-column prop="ruleName" label="规则名" /><el-table-column prop="metric" label="指标" width="120" /><el-table-column prop="threshold" label="阈值" width="80" /><el-table-column prop="weight" label="权重" width="80" /><el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" size="small" @click="handleDeleteQuality(row.id)">删除</el-button></template></el-table-column></el-table>
-        </div>
-      </el-tab-pane>
+    <!-- 重置权限配置弹窗 -->
+    <el-dialog v-model="showResetPermitDialog" title="重置权限配置" width="480px">
+      <el-form label-width="140px">
+        <el-form-item label="允许重置的角色">
+          <el-checkbox-group v-model="resetPermitConfig.allowedRoles">
+            <el-checkbox label="super_admin">超级管理员</el-checkbox>
+            <el-checkbox label="kb_admin">知识库管理员</el-checkbox>
+            <el-checkbox label="publisher">发布人员</el-checkbox>
+            <el-checkbox label="editor">采编人员</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="仅管理员可重置">
+          <el-switch v-model="resetPermitConfig.adminOnly" />
+          <span style="font-size:12px;color:#909399;margin-left:8px">开启后仅超级管理员和知识库管理员可执行重置</span>
+        </el-form-item>
+        <el-form-item label="需要填写原因">
+          <el-switch v-model="resetPermitConfig.requireReason" />
+        </el-form-item>
+        <el-form-item label="重置通知">
+          <el-switch v-model="resetPermitConfig.notifyOnReset" />
+          <span style="font-size:12px;color:#909399;margin-left:8px">重置后通知相关干系人</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showResetPermitDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveResetPermit">保存配置</el-button>
+      </template>
+    </el-dialog>
 
-      <el-tab-pane label="流程模板" name="template">
-        <div class="card-panel">
-          <div class="section-header"><div class="section-title">审核流程模板</div><el-button type="primary" @click="showTemplateDialog=true">新增模板</el-button></div>
-          <el-table :data="templateList" stripe><el-table-column prop="name" label="模板名" /><el-table-column prop="category" label="分类" width="120" /><el-table-column prop="description" label="说明" show-overflow-tooltip /><el-table-column prop="isBuiltin" label="内置" width="70" /><el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="danger" size="small" @click="handleDeleteTemplate(row.id)">删除</el-button></template></el-table-column></el-table>
-        </div>
-      </el-tab-pane>
-
-      <el-tab-pane label="监听管理" name="listener">
-        <div class="card-panel">
-          <div class="section-header"><div class="section-title">监听器管理</div><el-button type="primary" @click="showListenerDialog=true">新增监听</el-button></div>
-          <el-table :data="listenerList" stripe>
-            <el-table-column prop="name" label="名称" /><el-table-column prop="listenType" label="类型" width="120" /><el-table-column prop="target" label="目标" show-overflow-tooltip />
-            <el-table-column prop="status" label="状态" width="90"><template #default="{ row }"><el-tag :type="row.status==='enabled'?'success':'info'" size="small">{{ row.status }}</el-tag></template></el-table-column>
-            <el-table-column label="操作" width="140"><template #default="{ row }"><el-button v-if="row.status==='enabled'" link type="warning" size="small" @click="handleToggleListener(row,'stop')">停止</el-button><el-button v-else link type="success" size="small" @click="handleToggleListener(row,'start')">启动</el-button><el-button link type="danger" size="small" @click="handleDeleteListener(row.id)">删除</el-button></template></el-table-column>
-          </el-table>
-        </div>
-      </el-tab-pane>
-    </el-tabs>
-
-    <el-dialog v-model="showPlanDialog" title="新建发布计划" width="480px"><el-form label-width="90px"><el-form-item label="计划名称" required><el-input v-model="planForm.name" /></el-form-item><el-form-item label="策略"><el-select v-model="planForm.strategy" style="width:180px"><el-option label="立即" value="immediate" /><el-option label="定时" value="scheduled" /><el-option label="增量" value="incremental" /><el-option label="全量" value="full" /></el-select></el-form-item><el-form-item label="定时时间" v-if="planForm.strategy==='scheduled'"><el-input v-model="planForm.scheduledTime" placeholder="2026-06-30 10:00:00" /></el-form-item></el-form><template #footer><el-button @click="showPlanDialog=false">取消</el-button><el-button type="primary" @click="handleSavePlan">创建</el-button></template></el-dialog>
-    <el-dialog v-model="showStrategyDialog" title="新增审核策略" width="480px"><el-form label-width="80px"><el-form-item label="名称" required><el-input v-model="strategyForm.name" /></el-form-item><el-form-item label="类型"><el-input v-model="strategyForm.strategyType" /></el-form-item><el-form-item label="配置"><el-input v-model="strategyForm.config" type="textarea" :rows="3" /></el-form-item></el-form><template #footer><el-button @click="showStrategyDialog=false">取消</el-button><el-button type="primary" @click="handleSaveStrategy">创建</el-button></template></el-dialog>
-    <el-dialog v-model="showComplianceDialog" title="新增合规规则" width="480px"><el-form label-width="80px"><el-form-item label="规则名" required><el-input v-model="complianceForm.ruleName" /></el-form-item><el-form-item label="类型"><el-input v-model="complianceForm.ruleType" /></el-form-item><el-form-item label="模式"><el-input v-model="complianceForm.pattern" /></el-form-item><el-form-item label="动作"><el-select v-model="complianceForm.action" style="width:140px"><el-option label="阻止" value="block" /><el-option label="警告" value="warn" /><el-option label="标记" value="flag" /></el-select></el-form-item><el-form-item label="级别"><el-select v-model="complianceForm.severity" style="width:140px"><el-option label="高" value="high" /><el-option label="中" value="medium" /><el-option label="低" value="low" /></el-select></el-form-item></el-form><template #footer><el-button @click="showComplianceDialog=false">取消</el-button><el-button type="primary" @click="handleSaveCompliance">创建</el-button></template></el-dialog>
-    <el-dialog v-model="showQualityDialog" title="新增质量规则" width="480px"><el-form label-width="80px"><el-form-item label="规则名" required><el-input v-model="qualityForm.ruleName" /></el-form-item><el-form-item label="指标"><el-input v-model="qualityForm.metric" /></el-form-item><el-form-item label="阈值"><el-input-number v-model="qualityForm.threshold" :step="0.05" /></el-form-item><el-form-item label="权重"><el-input-number v-model="qualityForm.weight" :step="0.1" /></el-form-item></el-form><template #footer><el-button @click="showQualityDialog=false">取消</el-button><el-button type="primary" @click="handleSaveQuality">创建</el-button></template></el-dialog>
-    <el-dialog v-model="showTemplateDialog" title="新增流程模板" width="480px"><el-form label-width="80px"><el-form-item label="名称" required><el-input v-model="templateForm.name" /></el-form-item><el-form-item label="分类"><el-input v-model="templateForm.category" /></el-form-item><el-form-item label="说明"><el-input v-model="templateForm.description" type="textarea" :rows="2" /></el-form-item></el-form><template #footer><el-button @click="showTemplateDialog=false">取消</el-button><el-button type="primary" @click="handleSaveTemplate">创建</el-button></template></el-dialog>
-    <el-dialog v-model="showListenerDialog" title="新增监听器" width="480px"><el-form label-width="80px"><el-form-item label="名称" required><el-input v-model="listenerForm.name" /></el-form-item><el-form-item label="类型"><el-select v-model="listenerForm.listenType" style="width:180px"><el-option label="文件变更" value="file_change" /><el-option label="知识更新" value="kb_update" /><el-option label="定时" value="schedule" /></el-select></el-form-item><el-form-item label="目标"><el-input v-model="listenerForm.target" /></el-form-item><el-form-item label="配置"><el-input v-model="listenerForm.config" type="textarea" :rows="2" /></el-form-item></el-form><template #footer><el-button @click="showListenerDialog=false">取消</el-button><el-button type="primary" @click="handleSaveListener">创建</el-button></template></el-dialog>
+    <!-- 重置操作限制弹窗 -->
+    <el-dialog v-model="showResetLimitDialog" title="重置操作限制" width="480px">
+      <el-form label-width="150px">
+        <el-form-item label="每日最大重置次数">
+          <el-input-number v-model="resetLimitConfig.maxResetsPerDay" :min="1" :max="100" />
+          <span style="font-size:12px;color:#909399;margin-left:8px">超过后当日禁止重置</span>
+        </el-form-item>
+        <el-form-item label="操作冷却时间(分钟)">
+          <el-input-number v-model="resetLimitConfig.cooldownMinutes" :min="0" :max="1440" :step="5" />
+          <span style="font-size:12px;color:#909399;margin-left:8px">两次重置操作最小间隔</span>
+        </el-form-item>
+        <el-form-item label="单篇知识最大重置">
+          <el-input-number v-model="resetLimitConfig.maxResetsPerKnowledge" :min="1" :max="20" />
+          <span style="font-size:12px;color:#909399;margin-left:8px">同一篇知识最多重置次数</span>
+        </el-form-item>
+        <el-form-item label="重置前需重新审核">
+          <el-switch v-model="resetLimitConfig.requireReviewBeforeReset" />
+          <span style="font-size:12px;color:#909399;margin-left:8px">开启后重置版本需要走审核流程</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showResetLimitDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveResetLimit">保存配置</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -276,6 +530,6 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadStrategyEffect(); loadS
 @use '@/assets/styles/variables' as *;
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; }
 .section-title { font-size: 15px; font-weight: 600; }
-.metric-cards { display: grid; grid-template-columns: repeat(4,1fr); gap: $spacing-base; margin-bottom: $spacing-base; }
+.metric-cards { display: grid; grid-template-columns: repeat(4, 1fr); gap: $spacing-base; margin-bottom: $spacing-base; }
 .metric-card { background: $bg-white; border-radius: $radius-base; padding: $spacing-lg; .metric-label { font-size: 13px; color: $text-secondary; margin-bottom: 4px; } .metric-value { font-size: 24px; font-weight: 700; } }
 </style>

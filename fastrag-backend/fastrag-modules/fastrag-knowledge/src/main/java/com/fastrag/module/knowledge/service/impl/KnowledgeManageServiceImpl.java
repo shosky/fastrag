@@ -40,6 +40,7 @@ public class KnowledgeManageServiceImpl implements KnowledgeManageService {
     @Override public KbKnowledgeTest updateTest(String id,KbKnowledgeTest test) {
         test.setId(id); testMapper.updateById(test); return testMapper.selectById(id);
     }
+    @Override public void deleteTest(String id) { testMapper.deleteById(id); }
     @Override public List<KbKnowledgeDialog> listDialogs(String kbId,String knowledgeId) {
         var w=new LambdaQueryWrapper<KbKnowledgeDialog>();
         if(kbId!=null&&!kbId.isEmpty()) w.eq(KbKnowledgeDialog::getKbId,kbId);
@@ -47,6 +48,7 @@ public class KnowledgeManageServiceImpl implements KnowledgeManageService {
         return dialogMapper.selectList(w.orderByDesc(KbKnowledgeDialog::getCreatedAt));
     }
     @Override public KbKnowledgeDialog createDialog(KbKnowledgeDialog dialog) { dialogMapper.insert(dialog); return dialog; }
+    @Override public void deleteDialog(String id) { dialogMapper.deleteById(id); }
     @Override public Map<String,Object> judge(String id,String query,String model) {
         var dialog=dialogMapper.selectById(id);
         Map<String,Object> result=new LinkedHashMap<>();

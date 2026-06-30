@@ -1456,3 +1456,31 @@ CREATE TABLE IF NOT EXISTS db_table (
     synced_at DATETIME,
     INDEX idx_db_id (db_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ==================== Global Security & Publish Strategy ====================
+CREATE TABLE IF NOT EXISTS sys_security_policy (
+    id VARCHAR(32) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    policy_type VARCHAR(32) NOT NULL,
+    pattern VARCHAR(512),
+    action VARCHAR(16) DEFAULT 'block',
+    priority INT DEFAULT 0,
+    enabled TINYINT DEFAULT 1,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_policy_type (policy_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS sys_publish_strategy (
+    id VARCHAR(32) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    strategy_type VARCHAR(32) NOT NULL,
+    config JSON,
+    priority INT DEFAULT 0,
+    enabled TINYINT DEFAULT 1,
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_strategy_type (strategy_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

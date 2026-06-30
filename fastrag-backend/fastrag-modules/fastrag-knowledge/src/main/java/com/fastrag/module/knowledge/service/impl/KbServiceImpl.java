@@ -33,6 +33,12 @@ public class KbServiceImpl implements KbService {
         if(req.getName()!=null)e.setName(req.getName()); if(req.getCategory()!=null)e.setCategory(req.getCategory());
         if(req.getDescription()!=null)e.setDescription(req.getDescription());
         if(req.getTags()!=null)e.setTags(JSONUtil.toJsonStr(req.getTags()));
+        if(req.getEmbeddingModel()!=null)e.setEmbeddingModel(req.getEmbeddingModel());
+        if(req.getParseMode()!=null)e.setParseMode(req.getParseMode());
+        if(req.getSplitMode()!=null)e.setSplitMode(req.getSplitMode());
+        if(req.getPermission()!=null)e.setPermission(req.getPermission());
+        if(req.getFileTypeConfig()!=null)e.setFileTypeConfig(JSONUtil.toJsonStr(req.getFileTypeConfig()));
+        if(req.getRetrievalConfig()!=null)e.setRetrievalConfig(JSONUtil.toJsonStr(req.getRetrievalConfig()));
         mapper.updateById(e); return toDto(e);
     }
     @Override public void delete(String id) { mapper.deleteById(id); }
@@ -43,5 +49,5 @@ public class KbServiceImpl implements KbService {
 	        grouped.forEach((k,v)->{ var m=new HashMap<String,Object>(); m.put("id",k); m.put("name",k); m.put("count",v); result.add(m); });
 	        return result;
 	    }
-    private KbDto toDto(KnowledgeBase e) { var d=new KbDto(); d.setId(e.getId()); d.setName(e.getName()); d.setDescription(e.getDescription()); d.setCategory(e.getCategory()); d.setTags(StrUtil.isNotBlank(e.getTags())?JSONUtil.toList(e.getTags(),String.class):null); d.setEmbeddingModel(e.getEmbeddingModel()); d.setDimension(e.getDimension()); d.setCreator(e.getCreator()); d.setCreatedAt(e.getCreatedAt()); d.setUsedSize(e.getUsedSize()); d.setTotalSize(e.getTotalSize()); d.setType(e.getType()); return d; }
+    private KbDto toDto(KnowledgeBase e) { var d=new KbDto(); d.setId(e.getId()); d.setName(e.getName()); d.setDescription(e.getDescription()); d.setCategory(e.getCategory()); d.setTags(StrUtil.isNotBlank(e.getTags())?JSONUtil.toList(e.getTags(),String.class):null); d.setEmbeddingModel(e.getEmbeddingModel()); d.setDimension(e.getDimension()); d.setCreator(e.getCreator()); d.setCreatedAt(e.getCreatedAt()); d.setUsedSize(e.getUsedSize()); d.setTotalSize(e.getTotalSize()); d.setType(e.getType()); d.setParseMode(e.getParseMode()); d.setSplitMode(e.getSplitMode()); d.setPermission(e.getPermission()); d.setFileTypeConfig(StrUtil.isNotBlank(e.getFileTypeConfig())?JSONUtil.parse(e.getFileTypeConfig()):null); d.setRetrievalConfig(StrUtil.isNotBlank(e.getRetrievalConfig())?JSONUtil.parse(e.getRetrievalConfig()):null); return d; }
 }
