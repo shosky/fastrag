@@ -6,6 +6,8 @@ import com.fastrag.module.publish.entity.KbUpdateLog;
 import com.fastrag.module.publish.mapper.KbUpdateLogMapper;
 import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
 import java.time.LocalDateTime; import java.util.*;
+import java.util.regex.Pattern;
+import org.springframework.transaction.annotation.Transactional;
 @Service @RequiredArgsConstructor
 public class PublishManageServiceImpl implements PublishManageService {
     private final KbPublishHistoryMapper2 phMapper; private final KbPublishPlanMapper ppMapper;
@@ -39,7 +41,36 @@ public class PublishManageServiceImpl implements PublishManageService {
     @Override public List<KbPublishPlan> listPlans(String kbId) { return ppMapper.selectList(new LambdaQueryWrapper<KbPublishPlan>().eq(kbId!=null&&!kbId.isEmpty(),KbPublishPlan::getKbId,kbId).orderByDesc(KbPublishPlan::getCreatedAt)); }
     @Override public Map<String,Object> getStrategyEffect(String kbId) {
         Map<String,Object> r=new LinkedHashMap<>();
-        r.put("totalPublished",156); r.put("successRate",96.2); r.put("avgReviewTime","2.5h"); r.put("rollbackCount",3);
+        // 统计总发布次数（所有发布记录）
+        var totalPublish=phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>()
+            .eq(KbPublishHistory::getKbId,kbId));
+        // 统计成功发布次数（publish_type='publish' AND status='published'）
+        var successCount=phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>()
+            .eq(KbPublishHistory::getKbId,kbId)
+            .eq(KbPublishHistory::getPublishType,"publish")
+            .eq(KbPublishHistory::getStatus,"published"));
+        // 统计撤回次数（publish_type='revoke'）
+        var revokeCount=phMapper.selectCount(new LambdaQueryWrapper<KbPublishHistory>()
+            .eq(KbPublishHistory::getKbId,kbId)
+            .eq(KbPublishHistory::getPublishType,"revoke"));
+        // 计算平均审核时长（已发布记录的 published_at - created_at 的小时数）
+        var avgHours=phMapper.selectList(new LambdaQueryWrapper<KbPublishHistory>()
+            .eq(KbPublishHistory::getKbId,kbId)
+            .eq(KbPublishHistory::getStatus,"published")
+            .isNotNull(KbPublishHistory::getPublishedAt)
+            .isNotNull(KbPublishHistory::getCreatedAt));
+        String avgReviewHours="-";
+        if(!avgHours.isEmpty()){
+            var totalHours=avgHours.stream()
+                .filter(h->h.getPublishedAt()!=null&&h.getCreatedAt()!=null)
+                .mapToLong(h->java.time.Duration.between(h.getCreatedAt(),h.getPublishedAt()).toHours())
+                .average();
+            if(totalHours.isPresent()) avgReviewHours=String.format("%.1fh",totalHours.getAsDouble());
+        }
+        r.put("totalPublish",totalPublish);
+        r.put("successCount",successCount);
+        r.put("revokeCount",revokeCount);
+        r.put("avgReviewHours",avgReviewHours);
         return r;
     }
     // ===== 审核策略/合规/质量 =====
@@ -239,4 +270,168 @@ public class PublishManageServiceImpl implements PublishManageService {
     @Override public List<KbResetConfig> listResetConfigs(String kbId) { return rcMapper.selectList(new LambdaQueryWrapper<KbResetConfig>().eq(kbId!=null&&!kbId.isEmpty(),KbResetConfig::getKbId,kbId)); }
     @Override public KbResetConfig saveResetConfig(KbResetConfig c) { if(c.getCanReset()==null) c.setCanReset(0); if(c.getMaxResetCount()==null) c.setMaxResetCount(3); if(c.getId()!=null&&!c.getId().isEmpty()) rcMapper.updateById(c); else rcMapper.insert(c); return c; }
     @Override public Map<String,Object> resetKnowledge(String kbId,String knowledgeId) { Map<String,Object> r=new LinkedHashMap<>(); r.put("kbId",kbId); r.put("knowledgeId",knowledgeId); r.put("status","reset"); r.put("resetToVersion",1); r.put("resetAt",LocalDateTime.now()); return r; }
+    // ===== 新增功能 =====
+    @Override public Map<String,Object> executeComplianceCheck(String kbId, String knowledgeId, List<String> ruleIds) {
+        Map<String,Object> r=new LinkedHashMap<>();
+        r.put("kbId",kbId); r.put("knowledgeId",knowledgeId);
+        // 1. 查询知识内容
+        var knowledge=kmMapper.selectById(knowledgeId);
+        if(knowledge==null){
+            r.put("error","知识不存在"); r.put("results",List.of()); r.put("executedAt",LocalDateTime.now());
+            return r;
+        }
+        String content=knowledge.getContent()!=null?knowledge.getContent():"";
+        String title=knowledge.getTitle()!=null?knowledge.getTitle():"";
+        String fullText=title+"\n"+content;
+        // 2. 查询合规规则
+        var w=new LambdaQueryWrapper<KbComplianceRule>().eq(KbComplianceRule::getKbId,kbId).eq(KbComplianceRule::getEnabled,1);
+        if(ruleIds!=null&&!ruleIds.isEmpty()) w.in(KbComplianceRule::getId,ruleIds);
+        var rules=crMapper.selectList(w);
+        // 3. 逐条检查
+        List<Map<String,Object>> results=new ArrayList<>();
+        for(var rule:rules){
+            Map<String,Object> item=new LinkedHashMap<>();
+            item.put("ruleId",rule.getId()); item.put("ruleName",rule.getRuleName());
+            item.put("ruleType",rule.getRuleType()); item.put("severity",rule.getSeverity());
+            boolean passed=true; String detail="";
+            try {
+                switch(rule.getRuleType()!=null?rule.getRuleType():""){
+                    case "keyword":{
+                        // pattern 以逗号、分号、中文逗号分隔关键词
+                        String[] keywords=rule.getPattern().split("[,;，；]");
+                        List<String> matched=new ArrayList<>();
+                        for(String kw:keywords){
+                            String trimmed=kw.trim();
+                            if(!trimmed.isEmpty()&&fullText.contains(trimmed)) matched.add(trimmed);
+                        }
+                        if(!matched.isEmpty()){ passed=false; detail="命中关键词："+String.join("、",matched); }
+                        else detail="未命中任何关键词";
+                        break;
+                    }
+                    case "content":{
+                        // pattern 为正则表达式
+                        try{
+                            var p=Pattern.compile(rule.getPattern());
+                            var m=p.matcher(fullText);
+                            if(m.find()){ passed=false; detail="正则匹配命中："+m.group(); }
+                            else detail="未命中正则规则";
+                        }catch(Exception e){
+                            detail="正则表达式无效："+e.getMessage();
+                        }
+                        break;
+                    }
+                    case "length":{
+                        // pattern 格式: "min:100,max:5000" 或 "max:5000" 或 "min:100"
+                        int min=0; int max=Integer.MAX_VALUE;
+                        if(rule.getPattern()!=null){
+                            for(String seg:rule.getPattern().split(",")){
+                                seg=seg.trim();
+                                if(seg.startsWith("min:")) try{min=Integer.parseInt(seg.substring(4));}catch(Exception ignored){}
+                                if(seg.startsWith("max:")) try{max=Integer.parseInt(seg.substring(4));}catch(Exception ignored){}
+                            }
+                        }
+                        int len=fullText.length();
+                        if(len<min){passed=false; detail="内容长度"+len+"低于最低要求"+min+"字";}
+                        else if(len>max){passed=false; detail="内容长度"+len+"超过最大限制"+max+"字";}
+                        else detail="内容长度"+len+"在允许范围("+min+"-"+max+")内";
+                        break;
+                    }
+                    case "format":{
+                        // pattern 格式: "html", "markdown", "plain"
+                        String fmt=rule.getPattern()!=null?rule.getPattern().trim().toLowerCase():"";
+                        switch(fmt){
+                            case "html": passed=content.trim().startsWith("<")||content.contains("<html"); detail=passed?"格式为HTML":"内容不以HTML标签开头"; break;
+                            case "markdown": passed=content.contains("#")||content.contains("```")||content.contains("**"); detail=passed?"格式为Markdown":"内容不含Markdown标记"; break;
+                            case "plain": default: passed=!content.contains("<")&&!content.contains("```"); detail=passed?"格式为纯文本":"内容包含HTML或Markdown标记"; break;
+                        }
+                        break;
+                    }
+                    default: detail="不支持的规则类型："+rule.getRuleType();
+                }
+            } catch(Exception e){
+                passed=false; detail="检查异常："+e.getMessage();
+            }
+            item.put("passed",passed); item.put("details",detail);
+            results.add(item);
+        }
+        r.put("results",results); r.put("executedAt",LocalDateTime.now());
+        return r;
+    }
+    @Override public List<Map<String,Object>> getNodeOptimizationSuggestions(String templateId) {
+        List<Map<String,Object>> suggestions=new ArrayList<>();
+        var nodes=rnMapper.selectList(new LambdaQueryWrapper<KbReviewNode>()
+            .eq(KbReviewNode::getTemplateId,templateId).orderByAsc(KbReviewNode::getOrderNum));
+        if(nodes.isEmpty()){
+            suggestions.add(Map.of("type","warning","title","流程无审核节点",
+                "description","当前审核流程模板没有配置任何节点，请添加审核步骤","impact","high",
+                "action","add_node"));
+            return suggestions;
+        }
+        // 1. 节点数量检查
+        if(nodes.size()<2){
+            suggestions.add(Map.of("type","suggestion","title","建议增加审核环节",
+                "description","当前仅"+nodes.size()+"个审核节点，建议增加至2-3个环节以提高审核质量",
+                "impact","medium","action","add_node"));
+        } else if(nodes.size()>5){
+            suggestions.add(Map.of("type","warning","title","审核环节过多",
+                "description","当前有"+nodes.size()+"个审核节点，建议简化至3-4个以提高效率",
+                "impact","medium","action","reduce_node"));
+        }
+        // 2. 检查节点配置
+        for(var node:nodes){
+            String config=node.getConfig();
+            if(config!=null&&!config.isEmpty()){
+                try{
+                    @SuppressWarnings("unchecked")
+                    var cfg=new com.fasterxml.jackson.databind.ObjectMapper().readValue(config,Map.class);
+                    Object timeout=cfg.get("timeoutHours");
+                    if(timeout instanceof Number && ((Number)timeout).intValue()>48){
+                        suggestions.add(Map.of("type","optimization","title","节点「"+node.getNodeName()+"」超时时间过长",
+                            "description","当前超时设置为"+timeout+"小时，建议缩短至24-48小时以避免审核积压",
+                            "impact","high","action","update_timeout","nodeId",node.getId()));
+                    }
+                }catch(Exception ignored){}
+            }
+            // 检查是否有相同的审核角色相邻
+        }
+        // 3. 角色去重检查：检查是否有连续相同角色的节点
+        for(int i=0;i<nodes.size()-1;i++){
+            if(nodes.get(i).getApproverRole()!=null && nodes.get(i).getApproverRole().equals(nodes.get(i+1).getApproverRole())){
+                suggestions.add(Map.of("type","suggestion","title","相邻节点审核角色重复",
+                    "description","节点「"+nodes.get(i).getNodeName()+"」和「"+nodes.get(i+1).getNodeName()+"」均由「"+nodes.get(i).getApproverRole()+"」审核，建议调整为不同角色以分担审核压力",
+                    "impact","low","action","adjust_role"));
+                break;
+            }
+        }
+        // 4. 总体评价
+        if(suggestions.isEmpty()){
+            suggestions.add(Map.of("type","info","title","流程配置良好",
+                "description","当前审核流程配置合理，无需优化","impact","none","action","none"));
+        }
+        return suggestions;
+    }
+    @Override @Transactional
+    public KbReviewNode copyReviewNode(String id) {
+        var original=rnMapper.selectById(id);
+        if(original==null) throw new RuntimeException("节点不存在");
+        var copy=new KbReviewNode();
+        copy.setTemplateId(original.getTemplateId());
+        copy.setNodeName(original.getNodeName()+"（副本）");
+        copy.setNodeType(original.getNodeType());
+        copy.setApproverRole(original.getApproverRole());
+        copy.setConfig(original.getConfig());
+        // 自动调整序号：原节点序号+1，后续节点序号+1
+        int newOrder=original.getOrderNum()!=null?original.getOrderNum()+1:1;
+        // 将原序号 >= newOrder 的节点序号+1
+        var siblings=rnMapper.selectList(new LambdaQueryWrapper<KbReviewNode>()
+            .eq(KbReviewNode::getTemplateId,original.getTemplateId())
+            .ge(KbReviewNode::getOrderNum,newOrder));
+        for(var sib:siblings){
+            sib.setOrderNum(sib.getOrderNum()+1);
+            rnMapper.updateById(sib);
+        }
+        copy.setOrderNum(newOrder);
+        rnMapper.insert(copy);
+        return copy;
+    }
 }

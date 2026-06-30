@@ -16,6 +16,7 @@ public class ConfigManageController {
     @GetMapping("/models/export") public ApiResponse<?> exportModels(@RequestParam(required=false) String ids,@RequestParam(required=false) String purpose) { return ApiResponse.success(svc.exportModels(ids,purpose)); }
     // ===== 配置管理 =====
     @GetMapping("/config") public ApiResponse<?> list(@RequestParam(required=false) String configType) { return ApiResponse.success(svc.listConfigs(configType)); }
+    @PutMapping("/config") public ApiResponse<?> save(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig((String)body.get("configKey"),String.valueOf(body.get("configValue")),(String)body.get("configType"),(String)body.get("description"),"admin")); }
     @GetMapping("/config/history") public ApiResponse<?> history(@RequestParam(required=false) String configKey,@RequestParam(required=false) String configType) { return ApiResponse.success(svc.listHistory(configKey,configType)); }
     @GetMapping("/config/export") public ApiResponse<?> exportConfig(@RequestParam(required=false) String configType) { return ApiResponse.success(svc.exportConfig(configType)); }
     @PostMapping("/config/import") public ApiResponse<?> importConfig(@RequestBody List<Map<String,Object>> items) { return ApiResponse.success(svc.importConfig(items,"admin")); }

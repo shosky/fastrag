@@ -86,4 +86,23 @@ public class PublishManageController {
     @GetMapping("/reset-configs") public ApiResponse<?> resetConfigs(@PathVariable String kbId) { return ApiResponse.success(svc.listResetConfigs(kbId)); }
     @PostMapping("/reset-configs") public ApiResponse<?> saveResetConfig(@PathVariable String kbId,@RequestBody KbResetConfig c) { c.setKbId(kbId); return ApiResponse.success(svc.saveResetConfig(c)); }
     @PostMapping("/reset/{knowledgeId}") public ApiResponse<?> reset(@PathVariable String kbId,@PathVariable String knowledgeId) { return ApiResponse.success(svc.resetKnowledge(kbId,knowledgeId)); }
+    // ===== M15 新增功能 =====
+    /** 执行合规性检查 */
+    @PostMapping("/compliance-rules/execute")
+    public ApiResponse<?> executeCompliance(@PathVariable String kbId, @RequestBody Map<String,Object> body) {
+        String knowledgeId=(String)body.get("knowledgeId");
+        @SuppressWarnings("unchecked")
+        List<String> ruleIds=body.get("ruleIds")!=null?(List<String>)body.get("ruleIds"):null;
+        return ApiResponse.success(svc.executeComplianceCheck(kbId,knowledgeId,ruleIds));
+    }
+    /** 获取节点优化建议 */
+    @GetMapping("/review-templates/{templateId}/optimizations")
+    public ApiResponse<?> nodeOptimizations(@PathVariable String templateId) {
+        return ApiResponse.success(svc.getNodeOptimizationSuggestions(templateId));
+    }
+    /** 复制审核节点 */
+    @PostMapping("/review-nodes/{id}/copy")
+    public ApiResponse<?> copyNode(@PathVariable String id) {
+        return ApiResponse.success(svc.copyReviewNode(id));
+    }
 }

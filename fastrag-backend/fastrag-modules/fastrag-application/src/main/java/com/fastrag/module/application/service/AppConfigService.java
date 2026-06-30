@@ -25,6 +25,7 @@ public interface AppConfigService {
     // 数据库绑定
     List<AppDbBinding> listDbBindings(String appId);
     AppDbBinding bindDb(String appId,AppDbBinding b);
+    AppDbBinding updateDbBinding(String id,AppDbBinding b);
     void unbindDb(String id);
     // 发布
     List<AppPublishRecord> listPublishRecords(String appId);
@@ -37,6 +38,8 @@ public interface AppConfigService {
     // 对话优化
     List<AppOptimization> listOptimizations(String appId);
     AppOptimization createOptimization(String appId,AppOptimization o);
+    AppOptimization updateOptimization(String id,AppOptimization o);
+    void deleteOptimization(String id);
     AppOptimization applyOptimization(String id);
     Map<String,Object> analyze(String appId);
     // M16 扩展

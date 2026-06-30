@@ -87,7 +87,7 @@ async function handleLogin() {
         </el-form-item>
       </el-form>
       <div class="login-tip">
-        <p>演示账号：admin / 任意密码</p>
+        <p></p>
       </div>
     </div>
   </div>

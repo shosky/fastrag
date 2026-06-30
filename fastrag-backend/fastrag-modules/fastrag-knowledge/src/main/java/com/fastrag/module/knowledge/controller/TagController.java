@@ -22,4 +22,8 @@ public class TagController {
     @PostMapping("/tags/{id}/relations") public ApiResponse<?> linkTag(@PathVariable String id,@RequestBody Map<String,String> body) { svc.linkTag(id,body.get("targetType"),body.get("targetId")); return ApiResponse.success(); }
     @DeleteMapping("/tags/{id}/relations/{targetId}") public ApiResponse<?> unlinkTag(@PathVariable String id,@PathVariable String targetId,@RequestParam String targetType) { svc.unlinkTag(id,targetType,targetId); return ApiResponse.success(); }
     @GetMapping("/tag-relations") public ApiResponse<?> relations(@RequestParam String targetType,@RequestParam String targetId) { return ApiResponse.success(svc.getRelations(targetType,targetId)); }
+    // 查询标签关联的知识列表（前端 getTagKnowledge 调用）
+    @GetMapping("/tags/{id}/knowledge") public ApiResponse<?> tagKnowledge(@PathVariable String id) { return ApiResponse.success(svc.getTagLinkedKnowledge(id)); }
+    // 取消关联标签（前端 disassociateTag 调用），targetType 固定为 knowledge
+    @DeleteMapping("/tags/{id}/knowledge/{knowledgeId}") public ApiResponse<?> disassociateTag(@PathVariable String id,@PathVariable String knowledgeId) { svc.unlinkTag(id,"knowledge",knowledgeId); return ApiResponse.success(); }
 }

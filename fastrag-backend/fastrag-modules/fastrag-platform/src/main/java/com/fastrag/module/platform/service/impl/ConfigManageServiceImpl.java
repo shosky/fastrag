@@ -84,9 +84,27 @@ public class ConfigManageServiceImpl implements ConfigManageService {
         return getDefaultConfigs();
     }
     @Override public List<SysConfig> resetToDefault(List<String> configKeys,String operator) {
-        // 模拟重置：将默认配置的值写回
         List<SysConfig> result=new ArrayList<>();
-        for(var key:configKeys){ var c=getConfig(key); if(c!=null&&c.getIsDefault()!=null&&c.getIsDefault()==1){ result.add(c); } }
+        for(var key:configKeys){
+            var c=getConfig(key);
+            if(c!=null&&c.getIsDefault()!=null&&c.getIsDefault()==1){
+                // 当前值就是默认值，无需重置
+                result.add(c);
+            } else if(c!=null){
+                // 先查询该 key 的默认配置记录（is_default=1），若不存在则无法重置
+                var defaults=configMapper.selectList(new LambdaQueryWrapper<SysConfig>().eq(SysConfig::getConfigKey,key).eq(SysConfig::getIsDefault,1));
+                if(!defaults.isEmpty()){
+                    String defaultValue=defaults.get(0).getConfigValue();
+                    String oldValue=c.getConfigValue();
+                    c.setConfigValue(defaultValue);
+                    c.setIsDefault(1);
+                    c.setUpdatedBy(operator);
+                    configMapper.updateById(c);
+                    recordHistory(c.getId(),key,oldValue,defaultValue,"reset",operator);
+                    result.add(c);
+                }
+            }
+        }
         return result;
     }
     // ===== 安全策略 CRUD =====

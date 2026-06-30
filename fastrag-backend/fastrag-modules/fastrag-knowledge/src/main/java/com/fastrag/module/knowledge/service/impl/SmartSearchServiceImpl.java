@@ -29,8 +29,17 @@ public class SmartSearchServiceImpl implements SmartSearchService {
         var rules=assocMapper.selectList(w);
         List<Map<String,Object>> associations=new ArrayList<>();
         for(var r:rules){
-            if(r.getPattern()!=null&&java.util.regex.Pattern.compile(r.getPattern()).matcher(q).find()){
-                associations.add(Map.of("dimension",r.getDimension(),"ruleName",r.getName(),"relevance",0.9));
+            if(matchesDimension(r,q)){
+                var item=new LinkedHashMap<String,Object>();
+                item.put("dimension",r.getDimension());
+                item.put("ruleName",r.getName());
+                item.put("relevance",0.9);
+                // 解析 JSON suggestions 数组返回给前端展示
+                if(r.getSuggestions()!=null&&!r.getSuggestions().isEmpty()){
+                    try{ item.put("suggestions",new com.fasterxml.jackson.databind.ObjectMapper().readValue(r.getSuggestions(),List.class)); }
+                    catch(Exception e){ item.put("suggestions",List.of(r.getSuggestions())); }
+                } else { item.put("suggestions",List.of()); }
+                associations.add(item);
             }
         }
         Map<String,Object> result=new LinkedHashMap<>();
@@ -44,11 +53,39 @@ public class SmartSearchServiceImpl implements SmartSearchService {
         Map<String,Object> result=new LinkedHashMap<>();
         boolean matched=false; double confidence=0.0; KbSearchAssociation matchedRule=null;
         for(var r:rules){
-            if(r.getPattern()!=null&&java.util.regex.Pattern.compile(r.getPattern()).matcher(query).find()){ matched=true; confidence=0.9; matchedRule=r; break; }
+            if(matchesDimension(r,query)){ matched=true; confidence=0.9; matchedRule=r; break; }
         }
         result.put("matched",matched); result.put("confidence",confidence);
         if(matchedRule!=null) result.put("matchedRule",Map.of("id",matchedRule.getId(),"name",matchedRule.getName(),"dimension",matchedRule.getDimension()));
         return result;
+    }
+    // 按维度分派匹配策略：content/rule 用正则，attachment 用包含匹配，publishTime 用模糊日期匹配，knowledgeType 用精确/包含匹配
+    private boolean matchesDimension(KbSearchAssociation r,String query){
+        if(r.getPattern()==null) return false;
+        String dim=r.getDimension();
+        String pat=r.getPattern();
+        String cond=r.getConditions(); // JSON 格式的附加条件
+        return switch(dim!=null?dim:"content"){
+            case "content","rule" -> { try{ yield java.util.regex.Pattern.compile(pat).matcher(query).find(); }catch(Exception e){ yield false; } }
+            case "attachment" -> query.contains(pat) || pat.toLowerCase().contains(query.toLowerCase());
+            case "publishTime" -> { // pattern 存储日期范围表达式，如 "2026-01~2026-06" 或 "2026"
+                yield fuzzyDateMatch(query,pat);
+            }
+            case "knowledgeType" -> query.equalsIgnoreCase(pat) || query.toLowerCase().contains(pat.toLowerCase()) || pat.toLowerCase().contains(query.toLowerCase());
+            default -> { try{ yield java.util.regex.Pattern.compile(pat).matcher(query).find(); }catch(Exception e){ yield false; } }
+        };
+    }
+    // 模糊日期匹配：查询文本中含年份/月份/日期，与规则 pattern 中的日期范围比较
+    private boolean fuzzyDateMatch(String query,String pattern){
+        // 从 pattern 解析日期范围（支持 "YYYY" / "YYYY-MM" / "YYYY-MM~YYYY-MM" 格式）
+        try{
+            String[] parts=pattern.split("~");
+            String start=parts[0].trim();
+            String end=parts.length>1?parts[1].trim():start;
+            // 从查询文本提取年月
+            String qNorm=query.replaceAll("[年月]", "-").replaceAll("[日号]", "").replaceAll("\\s","");
+            return !qNorm.isEmpty() && qNorm.compareTo(start)>=0 && qNorm.compareTo(end)<=0;
+        }catch(Exception e){ return false; }
     }
     @Override public Map<String,Object> autoCorrect(String kbId,String q) { return autoCorrectInternal(kbId,q); }
     private Map<String,Object> autoCorrectInternal(String kbId,String q) {

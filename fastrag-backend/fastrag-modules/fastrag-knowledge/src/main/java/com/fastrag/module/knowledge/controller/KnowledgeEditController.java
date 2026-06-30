@@ -1,13 +1,15 @@
 package com.fastrag.module.knowledge.controller;
 import com.fastrag.common.response.ApiResponse; import com.fastrag.module.knowledge.entity.KbKnowledgeEdit;
 import com.fastrag.module.knowledge.service.KnowledgeEditService;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 @RestController @RequestMapping("/api/kb/{kbId}/knowledge-edits") @RequiredArgsConstructor
 public class KnowledgeEditController {
     private final KnowledgeEditService svc;
     @GetMapping public ApiResponse<?> list(@PathVariable String kbId,@RequestParam(required=false) String status,@RequestParam(required=false) String editor) { return ApiResponse.success(svc.list(kbId,status,editor)); }
-    @GetMapping("/export") public ApiResponse<?> export(@PathVariable String kbId,@RequestParam(required=false) String ids,@RequestParam(required=false) String status,@RequestParam(required=false) String editor) { return ApiResponse.success(svc.export(kbId,ids,status,editor)); }
+    // 导出为 CSV 文件流：支持按 ids 勾选导出；无 ids 时按筛选条件全量导出
+    @GetMapping("/export") public void export(@PathVariable String kbId,@RequestParam(required=false) String ids,@RequestParam(required=false) String status,@RequestParam(required=false) String editor,HttpServletResponse resp) throws Exception { svc.exportCsv(kbId,ids,status,editor,resp); }
     @GetMapping("/{id}") public ApiResponse<?> get(@PathVariable String id) { return ApiResponse.success(svc.get(id)); }
     @PostMapping public ApiResponse<?> create(@PathVariable String kbId,@RequestBody KbKnowledgeEdit edit) { edit.setKbId(kbId); return ApiResponse.success(svc.create(edit)); }
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@RequestBody KbKnowledgeEdit edit) { return ApiResponse.success(svc.update(id,edit)); }

@@ -143,7 +143,140 @@ async function handleToggleStrategy(row: any) {
   } catch {}
 }
 
-onMounted(() => { loadPolicies(); loadStrategies() })
+// ============================================================================
+// 3. 配置项管理（文档导读设置 / 配置历史 / 导出导入 / 默认配置 / 重置）
+// ============================================================================
+const configList = ref<any[]>([])
+const configQuery = ref({ configType: '' })
+const configTypeOptions = [
+  { label: '文档导读', value: 'doc_guide' },
+  { label: '发布', value: 'publish' },
+  { label: '审核', value: 'review' },
+  { label: '通用', value: 'general' },
+]
+const CONFIG_TYPE_LABEL: Record<string, string> = { doc_guide: '文档导读', publish: '发布', review: '审核', general: '通用' }
+
+async function loadConfigs() {
+  try {
+    configList.value = ((await api.getSysConfigs(configQuery.value.configType || undefined)) as any) || []
+  } catch { configList.value = [] }
+}
+
+// 解析 configValue JSON
+function parseJsonValue(val: string): any {
+  try { return JSON.parse(val) } catch { return val }
+}
+
+// 文档导读设置弹窗
+const showDocGuideDialog = ref(false)
+const docGuideForm = ref({ autoGenerate: true, llmModel: 'qwen3-72b', maxOutlineLevel: 3 })
+const LLM_MODEL_OPTIONS = ['qwen3-72b', 'qwen3-32b', 'qwen3-7b', 'bge-m3', 'deepseek-v3'].map(m => ({ label: m, value: m }))
+
+async function handleEditDocGuide() {
+  try {
+    const configs: any[] = ((await api.getSysConfigs('doc_guide')) as any) || []
+    const item = configs.find((c: any) => c.configKey === 'doc_guide')
+    if (item) {
+      const parsed = parseJsonValue(item.configValue)
+      docGuideForm.value = { autoGenerate: parsed.autoGenerate ?? true, llmModel: parsed.llmModel ?? 'qwen3-72b', maxOutlineLevel: parsed.maxOutlineLevel ?? 3 }
+    }
+    showDocGuideDialog.value = true
+  } catch { ElMessage.error('加载文档导读配置失败') }
+}
+
+async function handleSaveDocGuide() {
+  try {
+    await api.updateDocGuideConfig(docGuideForm.value)
+    showDocGuideDialog.value = false
+    await loadConfigs()
+    ElMessage.success('文档导读设置已保存')
+  } catch { ElMessage.error('保存失败') }
+}
+
+// 配置历史弹窗
+const showHistoryDialog = ref(false)
+const historyList = ref<any[]>([])
+const historyTitle = ref('')
+
+async function handleShowHistory(row: any) {
+  historyTitle.value = row.configKey
+  try {
+    historyList.value = ((await api.getConfigHistory(row.configKey)) as any) || []
+    showHistoryDialog.value = true
+  } catch { ElMessage.error('加载历史记录失败') }
+}
+
+const CHANGE_TYPE_LABEL: Record<string, string> = { create: '创建', update: '修改', reset: '重置' }
+const CHANGE_TYPE_TAG: Record<string, string> = { create: 'success', update: 'primary', reset: 'warning' }
+
+// 导出配置
+async function handleExportConfig() {
+  try {
+    const res: any = await api.exportSysConfig(configQuery.value.configType || undefined)
+    const items = res?.items || res
+    if (!items?.length) { ElMessage.warning('没有可导出的配置'); return }
+    const blob = new Blob([JSON.stringify(items, null, 2)], { type: 'application/json;charset=utf-8;' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `sys_config_${new Date().toISOString().slice(0, 10)}.json`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success(`成功导出 ${Array.isArray(items) ? items.length : 0} 条配置`)
+  } catch { ElMessage.error('导出失败') }
+}
+
+// 导入配置
+const showImportDialog = ref(false)
+const importFile = ref<File | null>(null)
+
+function handleImportFileChange(file: any) { importFile.value = file.raw }
+async function handleImportConfig() {
+  if (!importFile.value) { ElMessage.warning('请先选择文件'); return }
+  try {
+    const text = await importFile.value.text()
+    const items = JSON.parse(text)
+    if (!Array.isArray(items)) { ElMessage.error('JSON 格式错误，需要数组'); return }
+    const res = await api.importSysConfig({ items })
+    showImportDialog.value = false
+    importFile.value = null
+    await loadConfigs()
+    ElMessage.success(`成功导入 ${items.length} 条配置`)
+  } catch { ElMessage.error('导入失败，请检查 JSON 格式') }
+}
+
+// 设置默认配置
+async function handleSetDefault(row: any) {
+  try {
+    await api.setDefaultConfig(row.configKey)
+    await loadConfigs()
+    ElMessage.success(`已将「${row.configKey}」设为默认配置`)
+  } catch { ElMessage.error('操作失败') }
+}
+
+// 查看默认配置弹窗
+const showDefaultDialog = ref(false)
+const defaultList = ref<any[]>([])
+async function handleViewDefaults() {
+  try {
+    defaultList.value = ((await api.getDefaultConfigs()) as any) || []
+    showDefaultDialog.value = true
+  } catch { ElMessage.error('加载默认配置失败') }
+}
+
+// 重置为默认配置
+async function handleResetDefault(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定将「${row.configKey}」重置为默认值？`, '重置确认', { type: 'warning' })
+    await api.resetDefaultConfig(row.configKey)
+    await loadConfigs()
+    ElMessage.success(`已将「${row.configKey}」重置为默认值`)
+  } catch { /* cancelled */ }
+}
+
+onMounted(() => { loadPolicies(); loadStrategies(); loadConfigs() })
 </script>
 
 <template>
@@ -208,11 +341,45 @@ onMounted(() => { loadPolicies(); loadStrategies() })
         </div>
       </el-tab-pane>
 
-      <!-- ===== Tab 3: 配置项管理（保留原有） ===== -->
+      <!-- ===== Tab 3: 配置项管理 ===== -->
       <el-tab-pane label="配置项管理" name="config">
         <div class="card-panel">
-          <div class="section-title">知识库系统配置项</div>
-          <p class="desc-text">配置管理通过系统字典与 Config API 管理，详见「字典管理」页面</p>
+          <div class="section-header">
+            <div class="section-title">配置项列表（共 {{ configList.length }} 条）</div>
+            <div style="display:flex;gap:8px">
+              <el-button @click="handleViewDefaults">查看默认配置</el-button>
+              <el-button @click="showImportDialog = true; importFile = null">导入配置</el-button>
+              <el-button @click="handleExportConfig">导出配置</el-button>
+              <el-button type="primary" @click="handleEditDocGuide">文档导读设置</el-button>
+            </div>
+          </div>
+          <div class="filter-bar">
+            <el-select v-model="configQuery.configType" placeholder="配置类型" clearable style="width:140px" @change="loadConfigs">
+              <el-option v-for="t in configTypeOptions" :key="t.value" :label="t.label" :value="t.value" />
+            </el-select>
+            <el-button type="primary" @click="loadConfigs">查询</el-button>
+          </div>
+          <el-table :data="configList" stripe size="small">
+            <el-table-column prop="configKey" label="配置键" width="160" show-overflow-tooltip />
+            <el-table-column label="配置值" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">{{ (row.configValue || '').length > 60 ? row.configValue.slice(0, 60) + '...' : row.configValue }}</template>
+            </el-table-column>
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }"><el-tag size="small">{{ CONFIG_TYPE_LABEL[row.configType] || row.configType }}</el-tag></template>
+            </el-table-column>
+            <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
+            <el-table-column label="默认" width="70" align="center">
+              <template #default="{ row }"><el-tag v-if="row.isDefault === 1" type="success" size="small">是</el-tag><span v-else style="color:#c0c4cc">否</span></template>
+            </el-table-column>
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleShowHistory(row)">历史</el-button>
+                <el-button v-if="row.isDefault !== 1" link type="warning" size="small" @click="handleSetDefault(row)">设为默认</el-button>
+                <el-button v-if="row.configKey !== 'doc_guide'" link type="primary" size="small" @click="handleResetDefault(row)">重置</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!configList.length" description="暂无配置项" :image-size="60" />
         </div>
       </el-tab-pane>
 
@@ -267,6 +434,74 @@ onMounted(() => { loadPolicies(); loadStrategies() })
       <template #footer>
         <el-button @click="showStrategyDialog = false">取消</el-button>
         <el-button type="primary" @click="handleSaveStrategy">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 文档导读设置弹窗 -->
+    <el-dialog v-model="showDocGuideDialog" title="文档导读设置" width="480px" :close-on-click-modal="false">
+      <el-form label-width="110px">
+        <el-form-item label="自动生成导读"><el-switch v-model="docGuideForm.autoGenerate" /></el-form-item>
+        <el-form-item label="LLM 模型">
+          <el-select v-model="docGuideForm.llmModel" style="width:100%">
+            <el-option v-for="m in LLM_MODEL_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="最大大纲层级">
+          <el-input-number v-model="docGuideForm.maxOutlineLevel" :min="1" :max="6" style="width:160px" />
+          <span style="margin-left:8px;font-size:12px;color:#909399">文档导读大纲的最大层级深度</span>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showDocGuideDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveDocGuide">保存设置</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 配置历史弹窗 -->
+    <el-dialog v-model="showHistoryDialog" :title="'配置变更历史 - ' + historyTitle" width="650px">
+      <el-timeline v-if="historyList.length">
+        <el-timeline-item v-for="h in historyList" :key="h.id" :timestamp="h.timestamp" placement="top">
+          <p style="margin:0">
+            <el-tag :type="CHANGE_TYPE_TAG[h.changeType] || 'info'" size="small">{{ CHANGE_TYPE_LABEL[h.changeType] || h.changeType }}</el-tag>
+            <span style="margin-left:8px;font-size:12px;color:#909399">操作人：{{ h.operator || '-' }}</span>
+          </p>
+          <div v-if="h.oldValue" style="margin-top:4px;font-size:12px">
+            <span style="color:#f56c6c">旧值：</span><code>{{ (h.oldValue || '').length > 80 ? h.oldValue.slice(0, 80) + '...' : h.oldValue }}</code>
+          </div>
+          <div v-if="h.newValue" style="margin-top:2px;font-size:12px">
+            <span style="color:#67c23a">新值：</span><code>{{ (h.newValue || '').length > 80 ? h.newValue.slice(0, 80) + '...' : h.newValue }}</code>
+          </div>
+        </el-timeline-item>
+      </el-timeline>
+      <el-empty v-else description="暂无变更记录" :image-size="60" />
+      <template #footer><el-button @click="showHistoryDialog = false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- 查看默认配置弹窗 -->
+    <el-dialog v-model="showDefaultDialog" title="默认配置列表" width="600px">
+      <el-table :data="defaultList" stripe size="small">
+        <el-table-column prop="configKey" label="配置键" width="150" show-overflow-tooltip />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }"><el-tag size="small">{{ CONFIG_TYPE_LABEL[row.configType] || row.configType }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
+        <el-table-column label="默认值" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">{{ (row.configValue || '').length > 60 ? row.configValue.slice(0, 60) + '...' : row.configValue }}</template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!defaultList.length" description="暂无默认配置" :image-size="60" />
+      <template #footer><el-button @click="showDefaultDialog = false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- 导入配置弹窗 -->
+    <el-dialog v-model="showImportDialog" title="导入配置" width="480px">
+      <el-upload drag :auto-upload="false" :limit="1" accept=".json" :on-change="handleImportFileChange" style="width:100%">
+        <div style="padding:20px">将 JSON 配置文件拖到此处，或 <em>点击上传</em></div>
+        <template #tip><div style="font-size:12px;color:#909399">仅支持 .json 格式的配置文件</div></template>
+      </el-upload>
+      <template #footer>
+        <el-button @click="showImportDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleImportConfig" :disabled="!importFile">开始导入</el-button>
       </template>
     </el-dialog>
   </div>

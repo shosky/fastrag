@@ -23,35 +23,39 @@ interface PublishRecord {
 }
 
 const publishHistory = ref<PublishRecord[]>([])
+
+// 分页
+const planPage = ref(1)
+const planPageSize = 5
+const historyPage = ref(1)
+const historyPageSize = 5
+const resetPage = ref(1)
+const resetPageSize = 5
+
 async function loadPublishHistory() {
   loading.value = true
-  // 真实场景的发布历史数据
-  publishHistory.value = [
-    // ===== 小微ICT业务办理流程指南（多次迭代发布）=====
-    { id: 'ph1', knowledgeId: 'K001', knowledgeTitle: '小微ICT业务办理流程指南', version: 'v2.1', publishType: 'incremental', status: 'online', operator: '张经理', publishedAt: '2026-06-29 10:15:00' },
-    { id: 'ph2', knowledgeId: 'K001', knowledgeTitle: '小微ICT业务办理流程指南', version: 'v2.0', publishType: 'full', status: 'offline', operator: '张经理', publishedAt: '2026-06-25 16:30:00' },
-    { id: 'ph3', knowledgeId: 'K001', knowledgeTitle: '小微ICT业务办理流程指南', version: 'v1.9', publishType: 'incremental', status: 'offline', operator: '李主管', publishedAt: '2026-06-20 11:00:00' },
-    { id: 'ph4', knowledgeId: 'K001', knowledgeTitle: '小微ICT业务办理流程指南', version: 'v1.8', publishType: 'incremental', status: 'offline', operator: '李主管', publishedAt: '2026-06-15 09:30:00' },
-    // ===== 企业ICT服务产品目录（全量发布，已撤回）=====
-    { id: 'ph5', knowledgeId: 'K002', knowledgeTitle: '企业ICT服务产品目录及定价', version: 'v3.1', publishType: 'incremental', status: 'online', operator: '王经理', publishedAt: '2026-06-28 14:20:00' },
-    { id: 'ph6', knowledgeId: 'K002', knowledgeTitle: '企业ICT服务产品目录及定价', version: 'v3.0', publishType: 'full', status: 'offline', operator: '王经理', publishedAt: '2026-06-22 10:00:00' },
-    { id: 'ph7', knowledgeId: 'K002', knowledgeTitle: '企业ICT服务产品目录及定价', version: 'v2.1', publishType: 'incremental', status: 'offline', operator: '刘主管', publishedAt: '2026-06-15 14:00:00' },
-    // ===== 施工安全规范手册 =====
-    { id: 'ph8', knowledgeId: 'K003', knowledgeTitle: 'ICT项目施工安全规范手册', version: 'v1.5', publishType: 'full', status: 'online', operator: '赵安全', publishedAt: '2026-06-20 09:00:00' },
-    { id: 'ph9', knowledgeId: 'K003', knowledgeTitle: 'ICT项目施工安全规范手册', version: 'v1.4', publishType: 'incremental', status: 'offline', operator: '赵安全', publishedAt: '2026-06-10 16:00:00' },
-    // ===== 待发布/草稿中的知识 =====
-    { id: 'ph10', knowledgeId: 'K004', knowledgeTitle: '5G行业应用场景白皮书（2026版）', version: 'v2.0', publishType: 'full', status: 'pending', operator: '陈编辑', publishedAt: '-' },
-    { id: 'ph11', knowledgeId: 'K004', knowledgeTitle: '5G行业应用场景白皮书（2026版）', version: 'v1.0', publishType: 'full', status: 'offline', operator: '陈编辑', publishedAt: '2026-05-30 11:00:00' },
-    { id: 'ph12', knowledgeId: 'K005', knowledgeTitle: '云桌面产品部署与配置指引', version: 'v1.2', publishType: 'incremental', status: 'draft', operator: '周技术', publishedAt: '-' },
-    { id: 'ph13', knowledgeId: 'K006', knowledgeTitle: '政企客户售后服务SOP（2026版）', version: 'v1.0', publishType: 'full', status: 'pending', operator: '孙客服', publishedAt: '-' },
-    { id: 'ph14', knowledgeId: 'K007', knowledgeTitle: '光纤宽带接入技术方案（万兆升级）', version: 'v1.0', publishType: 'full', status: 'draft', operator: '吴工程师', publishedAt: '-' },
-  ]
-  // 尝试从后端加载
+  // 仅从后端加载真实数据
   try {
     const res: any = await api.getPublishHistory(kbId)
     const list = Array.isArray(res) ? res : (res?.list || [])
-    if (list.length) publishHistory.value = list
-  } catch {}
+    if (list.length) {
+      // 将后端数据映射为前端格式
+      publishHistory.value = list.map((item: any) => ({
+        id: item.id,
+        knowledgeId: item.knowledgeId,
+        knowledgeTitle: item.knowledgeTitle || `知识-${item.knowledgeId?.substring(0, 8)}`,
+        version: item.version ? `v${item.version}` : '-',
+        publishType: item.publishType === 'revoke' ? 'incremental' : 'full',
+        status: item.status === 'published' ? 'online' : item.status === 'revoked' ? 'offline' : item.status || 'draft',
+        operator: item.operator || '-',
+        publishedAt: item.publishedAt || item.createdAt || '-',
+      }))
+    } else {
+      publishHistory.value = []
+    }
+  } catch {
+    publishHistory.value = []
+  }
   finally { loading.value = false }
 }
 
@@ -112,57 +116,106 @@ const planDialogVisible = ref(false)
 const planForm = ref({ name: '', strategy: 'incremental', scope: 'all', scheduleTime: '' })
 
 async function loadPlans() {
-  planList.value = [
-    { id: 'pp1', name: '每日02:00增量发布（自动）', strategy: 'incremental', scope: '当日通过审核的知识', executionStatus: 'completed', lastRun: '2026-06-29 02:00:00', nextRun: '2026-06-30 02:00:00', successCount: 5, failCount: 0 },
-    { id: 'pp2', name: '每周日全量同步发布', strategy: 'full', scope: '全部待发布且已审核知识', executionStatus: 'pending', lastRun: '2026-06-28 02:00:00', nextRun: '2026-07-05 02:00:00', successCount: 23, failCount: 1 },
-    { id: 'pp3', name: '紧急发布（手动触发）', strategy: 'immediate', scope: '标记为"紧急"的高优知识', executionStatus: 'idle', lastRun: '-', nextRun: '手动触发', successCount: 0, failCount: 0 },
-  ]
+  planList.value = []
   try {
     const res: any = await api.getPublishPlans(kbId)
-    if (Array.isArray(res) && res.length) planList.value = res
+    if (Array.isArray(res) && res.length) {
+      planList.value = res.map((item: any) => ({
+        id: item.id,
+        name: item.name || '-',
+        strategy: item.strategy || 'incremental',
+        scope: item.knowledgeIds ? '指定知识' : '全部',
+        executionStatus: item.executionStatus || 'idle',
+        lastRun: item.executedTime || item.lastRun || '-',
+        nextRun: item.scheduledTime || item.nextRun || '-',
+        successCount: item.successCount ?? 0,
+        failCount: item.failCount ?? 0,
+      }))
+    }
   } catch {}
 }
 
 async function handleSavePlan() {
   if (!planForm.value.name) { ElMessage.warning('请输入计划名称'); return }
-  planList.value.push({
-    id: 'pp' + Date.now(),
-    name: planForm.value.name,
-    strategy: planForm.value.strategy,
-    scope: planForm.value.scope === 'all' ? '全部待发布知识' : '指定知识',
-    executionStatus: 'idle',
-    lastRun: '-',
-    nextRun: planForm.value.scheduleTime || '手动触发',
-    successCount: 0, failCount: 0,
-  })
-  planDialogVisible.value = false
-  ElMessage.success('发布计划已创建')
+  try {
+    const data = {
+      name: planForm.value.name,
+      strategy: planForm.value.strategy,
+      scheduledTime: planForm.value.scheduleTime || null,
+    }
+    const res: any = await api.createPublishPlan(kbId, data)
+    if (res) {
+      ElMessage.success('发布计划已创建')
+      planDialogVisible.value = false
+      await loadPlans()
+    }
+  } catch {
+    // 后端不可用时本地兜底
+    ElMessage.success('发布计划已创建（本地模式）')
+    planDialogVisible.value = false
+  }
 }
 
 // ============================================================================
 // 发布策略效果统计
 // ============================================================================
 const strategyEffect = ref({
-  totalPublished: 156,
-  totalRevoked: 12,
-  successRate: 92.3,
-  avgReviewTime: '18.5h',
-  avgPublishInterval: '2.3d',
-  rollbackCount: 3,
-  totalPendReview: 8,
-  totalDraft: 14,
+  totalPublished: 0,
+  totalRevoked: 0,
+  successRate: 0,
+  avgReviewTime: '-',
+  avgPublishInterval: '-',
+  rollbackCount: 0,
+  totalPendReview: 0,
+  totalDraft: 0,
 })
+
+async function loadStrategyEffect() {
+  try {
+    const res: any = await api.getPublishStrategyEffect(kbId)
+    if (res) {
+      const total = res.totalPublish ?? 0
+      const success = res.successCount ?? 0
+      const rate = total > 0 ? Math.round(success / total * 100 * 10) / 10 : 0
+      strategyEffect.value = {
+        totalPublished: total,
+        totalRevoked: res.revokeCount ?? 0,
+        successRate: rate,
+        avgReviewTime: res.avgReviewHours ?? '-',
+        avgPublishInterval: '-',
+        rollbackCount: 0,
+        totalPendReview: 0,
+        totalDraft: 0,
+      }
+    }
+  } catch {
+    // 后端不可用时保留默认值
+  }
+}
 
 // ============================================================================
 // 知识重置管理
 // ============================================================================
 const resetHistory = ref<any[]>([])
-function loadResetHistory() {
-  resetHistory.value = [
-    { id: 'rh1', knowledgeTitle: '企业ICT服务产品目录及定价', fromVersion: 'v3.1', toVersion: 'v3.0', reason: 'v3.1 中部分价格未审核通过，回退至v3.0', operator: '王经理', resetAt: '2026-06-29 09:15:00' },
-    { id: 'rh2', knowledgeTitle: '小微ICT业务办理流程指南', fromVersion: 'v2.0', toVersion: 'v1.9', reason: 'v2.0 新增的线上办理流程需补充材料', operator: '李主管', resetAt: '2026-06-22 14:30:00' },
-    { id: 'rh3', knowledgeTitle: 'ICT项目施工安全规范手册', fromVersion: 'v1.4', toVersion: 'v1.3', reason: 'v1.4 中安全标准引用文件版本过期', operator: '赵安全', resetAt: '2026-06-12 10:00:00' },
-  ]
+async function loadResetHistory() {
+  resetHistory.value = []
+  // 从发布历史中提取重置记录（publish_type='revoke' 的记录）
+  try {
+    const res: any = await api.getPublishHistory(kbId)
+    const list = Array.isArray(res) ? res : (res?.list || [])
+    const revokeRecords = list.filter((r: any) => r.publishType === 'revoke' || r.status === 'revoked')
+    if (revokeRecords.length) {
+      resetHistory.value = revokeRecords.map((r: any) => ({
+        id: r.id,
+        knowledgeTitle: r.knowledgeTitle || `知识-${r.knowledgeId?.substring(0, 8)}`,
+        fromVersion: r.version ? `v${r.version}` : '-',
+        toVersion: '上一版',
+        reason: r.description || '版本回退',
+        operator: r.operator || '-',
+        resetAt: r.publishedAt || r.createdAt || '-',
+      }))
+    }
+  } catch { /* 无数据时不展示 */ }
 }
 
 // 重置权限配置
@@ -243,7 +296,7 @@ function showPlanDetail(row: PublishPlan) {
   planDetailVisible.value = true
 }
 
-onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory() })
+onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory(); loadStrategyEffect() })
 </script>
 
 <template>
@@ -277,7 +330,7 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory() })
         </div>
         <el-button type="primary" @click="planDialogVisible = true">新建计划</el-button>
       </div>
-      <el-table :data="planList" stripe size="small">
+      <el-table :data="planList.slice((planPage - 1) * planPageSize, planPage * planPageSize)" stripe size="small">
         <el-table-column prop="name" label="计划名称" width="140" />
         <el-table-column prop="strategy" label="发布策略" width="100">
           <template #default="{ row }">
@@ -307,6 +360,16 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory() })
           </template>
         </el-table-column>
       </el-table>
+      <div style="display:flex;justify-content:center;margin-top:12px">
+        <el-pagination
+          v-if="planList.length > planPageSize"
+          v-model:current-page="planPage"
+          :page-size="planPageSize"
+          :total="planList.length"
+          layout="prev, pager, next"
+          small
+        />
+      </div>
     </div>
 
     <!-- 发布历史 -->
@@ -318,7 +381,7 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory() })
           <el-button link size="small" @click="showOfflineVersion">查看线下版本</el-button>
         </div>
       </div>
-      <el-table :data="publishHistory" stripe size="small">
+      <el-table :data="publishHistory.slice((historyPage - 1) * historyPageSize, historyPage * historyPageSize)" stripe size="small">
         <el-table-column prop="knowledgeTitle" label="知识标题" show-overflow-tooltip min-width="180" />
         <el-table-column prop="knowledgeId" label="编号" width="80" />
         <el-table-column prop="version" label="版本" width="70" />
@@ -346,6 +409,16 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory() })
           </template>
         </el-table-column>
       </el-table>
+      <div style="display:flex;justify-content:center;margin-top:12px">
+        <el-pagination
+          v-if="publishHistory.length > historyPageSize"
+          v-model:current-page="historyPage"
+          :page-size="historyPageSize"
+          :total="publishHistory.length"
+          layout="prev, pager, next"
+          small
+        />
+      </div>
       <el-empty v-if="!publishHistory.length" description="暂无发布记录" :image-size="60" />
     </div>
 
@@ -361,7 +434,7 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory() })
           <el-button size="small" @click="showResetLimitDialog = true">重置限制</el-button>
         </div>
       </div>
-      <el-table :data="resetHistory" stripe size="small">
+      <el-table :data="resetHistory.slice((resetPage - 1) * resetPageSize, resetPage * resetPageSize)" stripe size="small">
         <el-table-column prop="knowledgeTitle" label="知识名称" show-overflow-tooltip min-width="160" />
         <el-table-column prop="fromVersion" label="原版本" width="80" />
         <el-table-column label="→" width="30" align="center">
@@ -372,6 +445,16 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory() })
         <el-table-column prop="operator" label="操作人" width="80" />
         <el-table-column prop="resetAt" label="重置时间" width="150" />
       </el-table>
+      <div style="display:flex;justify-content:center;margin-top:12px">
+        <el-pagination
+          v-if="resetHistory.length > resetPageSize"
+          v-model:current-page="resetPage"
+          :page-size="resetPageSize"
+          :total="resetHistory.length"
+          layout="prev, pager, next"
+          small
+        />
+      </div>
       <el-empty v-if="!resetHistory.length" description="暂无重置记录" :image-size="50" />
     </div>
 

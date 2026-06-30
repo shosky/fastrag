@@ -16,4 +16,6 @@ public interface TagService {
     void linkTag(String tagId,String targetType,String targetId);
     void unlinkTag(String tagId,String targetType,String targetId);
     List<Map<String,Object>> getRelations(String targetType,String targetId);
+    // 查询标签关联的知识列表（按 tagId + targetType 过滤）
+    List<Map<String,Object>> getTagLinkedKnowledge(String tagId);
 }

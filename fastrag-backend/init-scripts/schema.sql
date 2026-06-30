@@ -1457,6 +1457,32 @@ CREATE TABLE IF NOT EXISTS db_table (
     INDEX idx_db_id (db_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ==================== M20 知识库分类 & 通知 ====================
+CREATE TABLE IF NOT EXISTS kb_category (
+    id VARCHAR(32) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    description VARCHAR(256),
+    color VARCHAR(16),
+    icon VARCHAR(64),
+    sort INT DEFAULT 0,
+    created_by VARCHAR(32),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS sys_notification (
+    id VARCHAR(32) PRIMARY KEY,
+    title VARCHAR(256),
+    content TEXT,
+    notify_type VARCHAR(32),
+    source_type VARCHAR(32),
+    source_id VARCHAR(32),
+    target_user VARCHAR(32),
+    status VARCHAR(16) DEFAULT 'unread',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_status (status),
+    INDEX idx_target_user (target_user)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ==================== Global Security & Publish Strategy ====================
 CREATE TABLE IF NOT EXISTS sys_security_policy (
     id VARCHAR(32) PRIMARY KEY,

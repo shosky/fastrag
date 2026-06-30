@@ -77,4 +77,11 @@ public interface PublishManageService {
     // 效率分析
     Map<String,Object> getPublishEfficiency(String kbId);
     Map<String,Object> getFlowChart(String kbId);
+    // ===== 新增功能 =====
+    /** 执行合规性检查 */
+    Map<String,Object> executeComplianceCheck(String kbId, String knowledgeId, List<String> ruleIds);
+    /** 获取节点优化建议 */
+    List<Map<String,Object>> getNodeOptimizationSuggestions(String templateId);
+    /** 复制审核节点 */
+    KbReviewNode copyReviewNode(String id);
 }

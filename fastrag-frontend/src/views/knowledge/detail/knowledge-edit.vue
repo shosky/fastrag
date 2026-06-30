@@ -13,6 +13,8 @@ const loading = ref(false)
 // 采编管理
 const editList = ref<any[]>([])
 const editQuery = ref({ status: '', page: 1 })
+// 勾选的采编行（用于按 ids 导出）
+const selectedEdits = ref<any[]>([])
 
 async function loadEdits() {
   loading.value = true
@@ -80,31 +82,18 @@ async function handleDeleteEdit(row: any) {
 }
 async function handleExportEdits() {
   try {
-    const res: any = await api.exportKnowledgeEdits(kbId, { status: editQuery.value.status || undefined })
-    const items: any[] = res?.items || []
-    if (!items.length) {
+    // 有勾选则按 ids 导出，否则按当前筛选条件全量导出
+    const params: { ids?: string; status?: string } = {}
+    if (selectedEdits.value.length) {
+      params.ids = selectedEdits.value.map((r: any) => r.id).join(',')
+    } else if (editQuery.value.status) {
+      params.status = editQuery.value.status
+    }
+    const blob = await api.exportKnowledgeEdits(kbId, params) as unknown as Blob
+    if (!blob || blob.size === 0) {
       ElMessage.warning('没有可导出的数据')
       return
     }
-    // 构造 CSV
-    const headers = ['标题', '类型', '状态', '编辑者', '审核人', '驳回原因', '版本', '标签', '创建时间', '更新时间']
-    const typeMap: Record<string, string> = { create: '新建', update: '更新', merge: '合并', split: '拆分' }
-    const statusMap: Record<string, string> = { draft: '草稿', submitted: '待审核', approved: '已通过', rejected: '已驳回' }
-    const rows = items.map((item: any) => [
-      item.title || '',
-      typeMap[item.editType] || item.editType || '',
-      statusMap[item.status] || item.status || '',
-      item.editor || '',
-      item.reviewer || '',
-      item.reviewComment || '',
-      item.version ?? '',
-      item.tags || '',
-      item.createdAt || '',
-      item.updatedAt || '',
-    ])
-    // BOM + CSV
-    const csvContent = '\uFEFF' + headers.join(',') + '\n' + rows.map((r: string[]) => r.map((v: string) => `"${String(v).replace(/"/g, '""')}"`).join(',')).join('\n')
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' })
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -113,7 +102,8 @@ async function handleExportEdits() {
     a.click()
     document.body.removeChild(a)
     URL.revokeObjectURL(url)
-    ElMessage.success(`成功导出 ${items.length} 条采编记录`)
+    const count = selectedEdits.value.length ? selectedEdits.value.length : '全部'
+    ElMessage.success(`成功导出 ${count} 条采编记录`)
   } catch {
     ElMessage.error('导出失败')
   }
@@ -174,7 +164,8 @@ onMounted(() => {
               <el-option label="已驳回" value="rejected" />
             </el-select>
           </div>
-          <el-table :data="editList" stripe>
+          <el-table :data="editList" stripe @selection-change="(rows: any[]) => selectedEdits = rows">
+            <el-table-column type="selection" width="45" />
             <el-table-column prop="title" label="标题" show-overflow-tooltip />
             <el-table-column prop="editType" label="类型" width="80" />
             <el-table-column prop="editor" label="编辑者" width="100" />

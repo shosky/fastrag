@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
@@ -31,8 +31,16 @@ async function handleDeleteTagType(row: any) {
 
 // 标签
 const tagList = ref<any[]>([])
+const tagTotal = ref(0)
+const tagPage = ref(1)
+const tagPageSize = ref(5)
 const tagQuery = ref({ tagTypeId: '', keyword: '' })
-async function loadTags() { tagList.value = ((await api.getTags(kbId, { tagTypeId: tagQuery.value.tagTypeId || undefined, keyword: tagQuery.value.keyword || undefined })) as any) || [] }
+async function loadTags() { tagList.value = ((await api.getTags(kbId, { tagTypeId: tagQuery.value.tagTypeId || undefined, keyword: tagQuery.value.keyword || undefined })) as any) || []; tagTotal.value = tagList.value.length }
+const pagedTagList = computed(() => {
+  const start = (tagPage.value - 1) * tagPageSize.value
+  return tagList.value.slice(start, start + tagPageSize.value)
+})
+function handleTagPageChange(page: number) { tagPage.value = page }
 
 const showTagDialog = ref(false)
 const tagForm = ref({ id: '', name: '', tagTypeId: '', color: '', description: '' })
@@ -154,7 +162,7 @@ onMounted(() => { loadTagTypes(); loadTags(); loadNotes() })
             <el-input v-model="tagQuery.keyword" placeholder="搜索标签" clearable style="width: 180px" @keyup.enter="loadTags" />
             <el-button type="primary" @click="loadTags">查询</el-button>
           </div>
-          <el-table :data="tagList" stripe>
+          <el-table :data="pagedTagList" stripe>
             <el-table-column prop="name" label="标签名" width="160" />
             <el-table-column label="分类" width="140">
               <template #default="{ row }">
@@ -178,6 +186,17 @@ onMounted(() => { loadTagTypes(); loadTags(); loadNotes() })
               </template>
             </el-table-column>
           </el-table>
+          <div class="table-footer" v-if="tagTotal > tagPageSize">
+            <el-pagination
+              v-model:current-page="tagPage"
+              v-model:page-size="tagPageSize"
+              :total="tagTotal"
+              :page-sizes="[5, 10, 20]"
+              layout="total, sizes, prev, pager, next"
+              @current-change="handleTagPageChange"
+              @size-change="handleTagPageChange"
+            />
+          </div>
         </div>
       </el-tab-pane>
 
@@ -245,7 +264,7 @@ onMounted(() => { loadTagTypes(); loadTags(); loadNotes() })
         <el-table-column prop="updatedAt" label="更新时间" width="160" />
         <el-table-column label="操作" width="100" fixed="right">
           <template #default="{ row }">
-            <el-button link type="danger" size="small" @click="handleDisassociateTag(row.id, row.title)">取消关联</el-button>
+            <el-button link type="danger" size="small" @click="handleDisassociateTag(row.knowledgeId, row.title)">取消关联</el-button>
           </template>
         </el-table-column>
       </el-table>

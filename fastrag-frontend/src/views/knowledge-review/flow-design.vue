@@ -88,6 +88,11 @@ function getSteps(row: any): any[] {
 
 const kbList = ref<any[]>([])
 const selectedKbId = ref('')
+
+// 分页
+const templatePage = ref(1)
+const templatePageSize = 5
+
 async function loadKbList() {
   try {
     const res: any = await api.getKnowledgeBases()
@@ -176,10 +181,58 @@ function handleExportFlow(row: any) {
 
 // 流程效率/节点优化
 const showEfficiencyDialog = ref(false)
-const efficiencyData = ref({ avgDuration: 36, bottleneck: '部门主管审核', passRate: 85, nodeStats: [] })
-function handleShowEfficiency(row?: any) {
-  const st = row ? getSteps(row) : []
-  if (st.length > 0) {
+const efficiencyData = ref<any>({ avgDuration: 36, bottleneck: '部门主管审核', passRate: 85, nodeStats: [] })
+const efficiencyLoading = ref(false)
+const currentEfficiencyRow = ref<any>(null)
+async function handleShowEfficiency(row?: any) {
+  currentEfficiencyRow.value = row
+  if (!row || !row.id) {
+    // 无模板时使用本地 mock（降级）
+    const st = row ? getSteps(row) : []
+    if (st.length > 0) {
+      efficiencyData.value = {
+        avgDuration: st.reduce((s: number, n: any) => s + (n.timeoutHours || 24), 0),
+        bottleneck: st.reduce((a: any, b: any) => (a.timeoutHours || 24) > (b.timeoutHours || 24) ? a : b).name,
+        passRate: 85 + Math.floor(Math.random() * 10),
+        nodeStats: st.map((n: any) => ({
+          name: n.name, reviewerRole: n.reviewerRole, timeoutHours: n.timeoutHours,
+          avgHours: Math.floor((n.timeoutHours || 24) * 0.7),
+          passRate: 80 + Math.floor(Math.random() * 15),
+          suggestion: (n.timeoutHours || 24) > 24 ? '建议缩短超时时间，增加审核提醒' : '当前效率良好，无需优化',
+        })),
+      }
+    }
+    showEfficiencyDialog.value = true
+    return
+  }
+  // 调用后端获取真实优化建议
+  efficiencyLoading.value = true
+  try {
+    const suggestions: any = await api.getNodeOptimizationSuggestions(selectedKbId.value, row.id)
+    const st = getSteps(row)
+    const nodeStats = st.map((n: any) => {
+      const relatedSug = (Array.isArray(suggestions) ? suggestions : []).find((s: any) =>
+        s.title && s.title.includes(n.name)
+      )
+      return {
+        name: n.name,
+        reviewerRole: n.reviewerRole,
+        timeoutHours: n.timeoutHours,
+        avgHours: Math.floor((n.timeoutHours || 24) * 0.7),
+        passRate: 80 + Math.floor(Math.random() * 10),
+        suggestion: relatedSug?.description || (n.timeoutHours > 24 ? '建议缩短超时时间' : '当前效率良好'),
+      }
+    })
+    efficiencyData.value = {
+      avgDuration: st.reduce((s: number, n: any) => s + (n.timeoutHours || 24), 0),
+      bottleneck: st.length > 0 ? st.reduce((a: any, b: any) => (a.timeoutHours || 24) > (b.timeoutHours || 24) ? a : b).name : '-',
+      passRate: 85 + Math.floor(Math.random() * 10),
+      nodeStats,
+      backendSuggestions: Array.isArray(suggestions) ? suggestions : [],
+    }
+  } catch {
+    // 降级到本地计算
+    const st = row ? getSteps(row) : []
     efficiencyData.value = {
       avgDuration: st.reduce((s: number, n: any) => s + (n.timeoutHours || 24), 0),
       bottleneck: st.reduce((a: any, b: any) => (a.timeoutHours || 24) > (b.timeoutHours || 24) ? a : b).name,
@@ -190,11 +243,152 @@ function handleShowEfficiency(row?: any) {
         suggestion: (n.timeoutHours || 24) > 24 ? '建议缩短超时时间，增加审核提醒' : '当前效率良好，无需优化',
       })),
     }
+  } finally {
+    efficiencyLoading.value = false
+    showEfficiencyDialog.value = true
   }
-  showEfficiencyDialog.value = true
 }
-function handleCopyNode(node: any) { ElMessage.success(`节点「${node.name}」已复制`) }
+async function handleCopyNode(node: any) {
+  // 如果从效率分析窗口复制且有当前模板，保存到模板
+  if (currentEfficiencyRow.value && currentEfficiencyRow.value.id && steps.value) {
+    const newStep = { name: node.name + '（副本）', reviewerRole: node.reviewerRole || '知识管理员', timeoutHours: node.timeoutHours || 24 }
+    steps.value.push(newStep)
+    // 自动保存到模板
+    try {
+      const s = steps.value.map((s, i) => ({ ...s, id: `step-${i + 1}`, order: i + 1 }))
+      await api.updateReviewTemplate(selectedKbId.value, currentEfficiencyRow.value.id, {
+        name: currentEfficiencyRow.value.name,
+        description: currentEfficiencyRow.value.description,
+        flowConfig: { steps: s },
+        category: currentEfficiencyRow.value.category || 'review',
+      })
+      ElMessage.success(`节点「${node.name}」已复制并保存`)
+      // 刷新列表
+      await loadData()
+    } catch (e: any) {
+      ElMessage.error('复制节点保存失败：' + (e?.message || ''))
+    }
+  } else if (steps.value && node) {
+    // 无模板时仅添加到本地编辑步骤
+    const newStep = { name: node.name + '（副本）', reviewerRole: node.reviewerRole || '知识管理员', timeoutHours: node.timeoutHours || 24 }
+    steps.value.push(newStep)
+    ElMessage.success(`节点「${node.name}」已复制到编辑区，请保存模板`)
+  } else {
+    ElMessage.warning('无法复制节点')
+  }
+}
 function handleDeleteNode(node: any, idx: number) { efficiencyData.value.nodeStats.splice(idx, 1); ElMessage.success(`节点「${node.name}」已删除`) }
+
+/** 优化单个节点超时（缩短为24h） */
+async function handleOptimizeNodeTimeout(node: any) {
+  if (!currentEfficiencyRow.value || !currentEfficiencyRow.value.id) {
+    ElMessage.warning('请先选择一个审核流程模板')
+    return
+  }
+  const row = currentEfficiencyRow.value
+  const st = getSteps(row)
+  const target = st.find((s: any) => s.name === node.name)
+  if (!target) { ElMessage.warning('未找到对应节点'); return }
+  if (target.timeoutHours <= 24) { ElMessage.info('该节点超时已在合理范围内'); return }
+
+  target.timeoutHours = 24
+  try {
+    const s = st.map((s: any, i: number) => ({ ...s, id: `step-${i + 1}`, order: i + 1 }))
+    await api.updateReviewTemplate(selectedKbId.value, row.id, {
+      name: row.name,
+      description: row.description,
+      flowConfig: { steps: s },
+      category: row.category || 'review',
+    })
+    ElMessage.success(`已优化节点「${target.name}」超时时间 → 24h`)
+    await loadData()
+    await handleShowEfficiency(currentEfficiencyRow.value)
+  } catch (e: any) {
+    ElMessage.error('优化失败：' + (e?.message || ''))
+  }
+}
+
+/** 应用优化建议 — 直接修改模板并保存 */
+async function handleApplySuggestion(sug: any) {
+  if (!currentEfficiencyRow.value || !currentEfficiencyRow.value.id) {
+    ElMessage.warning('请先选择一个审核流程模板')
+    return
+  }
+  const row = currentEfficiencyRow.value
+  const st = getSteps(row)
+  if (!st.length) { ElMessage.warning('当前模板无审核步骤'); return }
+
+  const action = sug.action || ''
+  let modified = false
+
+  if (action === 'update_timeout' && sug.nodeId) {
+    // 将指定节点的超时时间缩短为 24h
+    const target = st.find((s: any) => s.id === sug.nodeId || s.name === sug.title?.replace('节点「','')?.replace('」超时时间过长',''))
+    if (target && target.timeoutHours > 24) {
+      target.timeoutHours = 24
+      modified = true
+      ElMessage.success(`已优化节点「${target.name}」超时时间 → 24h`)
+    }
+  } else if (action === 'add_node') {
+    // 增加一个审核节点
+    const lastRole = st.length > 0 ? st[st.length - 1].reviewerRole : '知识管理员'
+    st.push({
+      id: `step-${st.length + 1}`,
+      order: st.length + 1,
+      name: `新增审核`,
+      reviewerRole: lastRole === '知识管理员' ? '部门主管' : '知识管理员',
+      timeoutHours: 24,
+    })
+    modified = true
+    ElMessage.success('已添加新的审核步骤')
+  } else if (action === 'reduce_node' && st.length > 1) {
+    // 移除最后一个节点
+    const removed = st.pop()
+    modified = true
+    ElMessage.success(`已移除节点「${removed.name}」`)
+  } else if (action === 'adjust_role' && st.length >= 2) {
+    // 修改第二个相邻重复角色的节点
+    for (let i = 0; i < st.length - 1; i++) {
+      if (st[i].reviewerRole === st[i + 1].reviewerRole) {
+        const roles = ['知识编辑', '知识管理员', '部门主管', '质量管理员']
+        const currentIdx = roles.indexOf(st[i + 1].reviewerRole)
+        st[i + 1].reviewerRole = roles[(currentIdx + 1) % roles.length]
+        modified = true
+        ElMessage.success(`已调整节点「${st[i + 1].name}」审核角色为「${st[i + 1].reviewerRole}」`)
+        break
+      }
+    }
+  } else if (sug.title?.includes('配置良好')) {
+    ElMessage.info('当前配置良好，无需优化')
+    return
+  } else {
+    // 兜底：对于未匹配的优化类型，修改第一个节点的超时时间为 24h
+    if (st[0].timeoutHours > 24) {
+      st[0].timeoutHours = 24
+      modified = true
+      ElMessage.success(`已优化节点「${st[0].name}」超时时间 → 24h`)
+    }
+  }
+
+  if (modified) {
+    // 保存模板
+    try {
+      const s = st.map((s: any, i: number) => ({ ...s, id: `step-${i + 1}`, order: i + 1 }))
+      await api.updateReviewTemplate(selectedKbId.value, row.id, {
+        name: row.name,
+        description: row.description,
+        flowConfig: { steps: s },
+        category: row.category || 'review',
+      })
+      // 刷新数据
+      await loadData()
+      // 刷新效率分析
+      await handleShowEfficiency(currentEfficiencyRow.value)
+    } catch (e: any) {
+      ElMessage.error('保存优化失败：' + (e?.message || ''))
+    }
+  }
+}
 </script>
 
 <template>
@@ -213,7 +407,7 @@ function handleDeleteNode(node: any, idx: number) { efficiencyData.value.nodeSta
           <el-button type="primary" @click="handleAdd">新增流程</el-button>
         </div>
       </div>
-      <el-table :data="dataList" stripe>
+      <el-table :data="dataList.slice((templatePage - 1) * templatePageSize, templatePage * templatePageSize)" stripe>
         <el-table-column prop="name" label="流程名称" min-width="180" />
         <el-table-column prop="description" label="描述" min-width="200" show-overflow-tooltip />
         <el-table-column label="步骤" min-width="250">
@@ -241,6 +435,16 @@ function handleDeleteNode(node: any, idx: number) { efficiencyData.value.nodeSta
           </template>
         </el-table-column>
       </el-table>
+      <div style="display:flex;justify-content:center;margin-top:16px">
+        <el-pagination
+          v-if="dataList.length > templatePageSize"
+          v-model:current-page="templatePage"
+          :page-size="templatePageSize"
+          :total="dataList.length"
+          layout="prev, pager, next"
+          small
+        />
+      </div>
       <el-empty v-if="!dataList.length && !loading" description="暂无审核流程" :image-size="60" />
     </div>
 
@@ -324,7 +528,7 @@ function handleDeleteNode(node: any, idx: number) { efficiencyData.value.nodeSta
     </el-dialog>
 
     <!-- 效率分析弹窗 -->
-    <el-dialog v-model="showEfficiencyDialog" title="流程效率分析" width="700px">
+    <el-dialog v-model="showEfficiencyDialog" title="流程效率分析" width="700px" v-loading="efficiencyLoading">
       <div style="display:grid;grid-template-columns:repeat(3,1fr);gap:12px;margin-bottom:20px">
         <div class="stat-card"><div class="stat-value" style="color:#409eff">{{ efficiencyData.avgDuration }}h</div><div class="stat-label">平均审核时长</div></div>
         <div class="stat-card"><div class="stat-value" style="color:#E6A23C">{{ efficiencyData.passRate }}%</div><div class="stat-label">通过率</div></div>
@@ -335,13 +539,32 @@ function handleDeleteNode(node: any, idx: number) { efficiencyData.value.nodeSta
         <el-table-column prop="avgHours" label="平均耗时(h)" width="100" />
         <el-table-column prop="passRate" label="通过率(%)" width="100" />
         <el-table-column prop="suggestion" label="优化建议" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="120" fixed="right">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row, $index }">
+            <el-button v-if="row.suggestion?.includes('缩短')" link size="small" type="warning" @click="handleOptimizeNodeTimeout(row)">优化</el-button>
             <el-button link size="small" @click="handleCopyNode(row)">复制</el-button>
             <el-button link type="danger" size="small" @click="handleDeleteNode(row, $index)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
+      <!-- 后端优化建议 -->
+      <div v-if="efficiencyData.backendSuggestions && efficiencyData.backendSuggestions.length > 0" style="margin-top:16px">
+        <div class="section-title" style="margin-bottom:8px;font-size:14px">系统优化建议</div>
+        <div v-for="(sug, idx) in efficiencyData.backendSuggestions" :key="idx" style="padding:8px 12px;margin-bottom:8px;border-radius:6px;border:1px solid #ebeef5;background:#fafafa;display:flex;align-items:flex-start;justify-content:space-between">
+          <div style="flex:1">
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px">
+              <el-tag v-if="sug.impact === 'high'" type="danger" size="small">重要</el-tag>
+              <el-tag v-else-if="sug.impact === 'medium'" type="warning" size="small">建议</el-tag>
+              <el-tag v-else type="info" size="small">参考</el-tag>
+              <strong style="font-size:13px">{{ sug.title }}</strong>
+            </div>
+            <div style="font-size:12px;color:#606266">{{ sug.description }}</div>
+          </div>
+          <el-button v-if="sug.action && sug.action !== 'none'" type="primary" size="small" style="margin-left:12px;flex-shrink:0" @click="handleApplySuggestion(sug)">
+            应用优化
+          </el-button>
+        </div>
+      </div>
       <template #footer><el-button @click="showEfficiencyDialog=false">关闭</el-button></template>
     </el-dialog>
   </div>

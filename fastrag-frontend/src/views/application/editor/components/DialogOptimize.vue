@@ -14,38 +14,47 @@ const formDefault = { name: '', type: 'prompt', description: '', config: '' }
 const form = ref({ ...formDefault })
 
 async function loadData() {
-  try { optList.value = ((await api.getAppOptimizations(appId())) as any) || [] } catch { optList.value = [] }
-  if (!optList.value.length) {
-    optList.value = [
-      { id: 'o1', name: 'Prompt优化建议', type: 'prompt', description: '优化系统Prompt，增加角色设定和输出格式约束', status: 'pending' },
-      { id: 'o2', name: '温度参数优化', type: 'param', description: '建议将温度从0.7调整为0.5以提高回答准确性', status: 'applied' },
-    ]
-  }
+  try {
+    const res: any = await api.getAppOptimizations(appId())
+    optList.value = Array.isArray(res) ? res : []
+  } catch { optList.value = [] }
 }
 function openAdd() { isEditing.value = false; editingId.value = ''; form.value = { ...formDefault }; showDialog.value = true }
-function openEdit(row: any) { isEditing.value = true; editingId.value = row.id; form.value = { name: row.name, type: row.type, description: row.description, config: row.config || '' }; showDialog.value = true }
+function openEdit(row: any) { isEditing.value = true; editingId.value = row.id; form.value = { name: row.title || row.name, type: row.suggestionType || row.type, description: row.description, config: row.config || '' }; showDialog.value = true }
 async function handleSave() {
   if (!form.value.name) { ElMessage.warning('请输入名称'); return }
-  if (isEditing.value) { await api.updateAppOptimization(appId(), editingId.value, form.value); ElMessage.success('已更新') }
-  else { await api.createAppOptimization(appId(), form.value); ElMessage.success('已创建') }
+  // 映射前后端字段名: 前端 name/type → 后端 title/suggestionType
+  const data = { title: form.value.name, suggestionType: form.value.type, description: form.value.description, config: form.value.config }
+  if (isEditing.value) { await api.updateAppOptimization(appId(), editingId.value, data); ElMessage.success('已更新') }
+  else { await api.createAppOptimization(appId(), data); ElMessage.success('已创建') }
   showDialog.value = false; await loadData()
 }
 async function handleDelete(row: any) {
   try { await ElMessageBox.confirm('确认删除？', '确认', { type: 'warning' }); await api.deleteAppOptimization(appId(), row.id); await loadData(); ElMessage.success('已删除') } catch {}
 }
 async function handleApply(row: any) { await api.applyAppOptimization(appId(), row.id); ElMessage.success('优化建议已应用'); await loadData() }
+async function handleExport() {
+  try {
+    const blob = await api.exportAppOptimizations(appId()) as Blob
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `optimization_report_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url); ElMessage.success('优化报告已导出')
+  } catch { ElMessage.error('导出失败') }
+}
+function getTypeLabel(type: string) {
+  const map: Record<string, string> = { prompt: 'Prompt优化', param: '参数优化', flow: '流程优化' }
+  return map[type] || type
+}
 onMounted(loadData)
 </script>
 <template>
   <div class="config-section">
     <div class="card-panel">
-      <div class="section-header"><div class="section-title">对话优化</div><el-button type="primary" size="small" @click="openAdd">新增优化</el-button></div>
+      <div class="section-header"><div class="section-title">对话优化</div><div style="display:flex;gap:8px"><el-button size="small" @click="handleExport">导出优化报告</el-button><el-button type="primary" size="small" @click="openAdd">新增优化</el-button></div></div>
       <el-table :data="optList" stripe size="small" style="margin-top:12px">
-        <el-table-column prop="name" label="名称" min-width="120" />
-        <el-table-column prop="type" label="类型" width="100" />
+        <el-table-column label="名称" min-width="120"><template #default="{row}">{{ row.title || row.name }}</template></el-table-column>
+        <el-table-column label="类型" width="100"><template #default="{row}">{{ getTypeLabel(row.suggestionType || row.type) }}</template></el-table-column>
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
         <el-table-column prop="status" label="状态" width="80"><template #default="{row}"><el-tag :type="row.status==='applied'?'success':'info'" size="small">{{ row.status==='applied'?'已应用':'待应用' }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="180"><template #default="{row}"><el-button v-if="row.status!=='applied'" link type="success" size="small" @click="handleApply(row)">应用</el-button><el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button><el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button></template></el-table-column>
+        <el-table-column label="操作" width="200"><template #default="{row}"><el-button v-if="row.status!=='applied'" link type="success" size="small" @click="handleApply(row)">应用</el-button><el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button><el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button></template></el-table-column>
       </el-table>
       <el-empty v-if="!optList.length" description="暂无优化建议" :image-size="60" />
     </div>

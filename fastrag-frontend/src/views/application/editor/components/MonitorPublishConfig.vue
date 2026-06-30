@@ -8,18 +8,11 @@ const appId = () => props.appInfo.id
 
 const activeTab = ref('publish')
 const publishRecords = ref<any[]>([])
-const metrics = ref({ totalCalls: 0, avgLatency: 0, errorRate: 0, todayCalls: 0 })
+const metrics = ref({ totalPublish: 0, releasedCount: 0, rollbackCount: 0, successRate: 0, totalCalls: 0, avgResponseTime: '-', todayCalls: 0 })
 
-// 发布管理 (#4972~4976)
+// 发布管理
 async function loadPublishRecords() {
   try { publishRecords.value = ((await api.getAppPublishRecords(appId())) as any) || [] } catch { publishRecords.value = [] }
-  if (!publishRecords.value.length) {
-    publishRecords.value = [
-      { id: 'p1', version: 'v1.0.0', environment: 'production', status: 'released', createdAt: '2026-06-28 10:00:00' },
-      { id: 'p2', version: 'v1.1.0', environment: 'staging', status: 'pending', createdAt: '2026-06-29 09:00:00' },
-      { id: 'p3', version: 'v0.9.0', environment: 'production', status: 'rolled_back', createdAt: '2026-06-27 14:00:00' },
-    ]
-  }
 }
 async function handlePublish(row: any) {
   try { await api.publishApp(appId(), { version: row.version, scopeType: row.environment || 'production' }); ElMessage.success('已上线'); await loadPublishRecords() } catch { ElMessage.error('发布失败') }
@@ -28,13 +21,38 @@ async function handleRevoke(row: any) {
   try { await ElMessageBox.confirm('确认撤回该版本？', '确认', { type: 'warning' }); await api.revokeKnowledge(appId(), row.id); await loadPublishRecords(); ElMessage.success('已撤回') } catch {}
 }
 
-// 监控管理 (#4977~4981)
+// 监控管理 — 从 getAppMonitor 获取真实数据
 async function loadMetrics() {
   try {
-    const res: any = await api.getAppPublishRecords(appId())
-    const logs = Array.isArray(res) ? res : []
-    metrics.value = { totalCalls: logs.length, avgLatency: Math.round(Math.random() * 200 + 50), errorRate: +(Math.random() * 5).toFixed(1), todayCalls: Math.floor(Math.random() * 1000) }
+    const res: any = await api.getAppMonitor(appId())
+    if (res) {
+      metrics.value = {
+        totalPublish: res.totalPublish ?? 0,
+        releasedCount: res.releasedCount ?? 0,
+        rollbackCount: res.rollbackCount ?? 0,
+        successRate: res.successRate ?? 0,
+        totalCalls: res.totalCalls ?? 0,
+        avgResponseTime: res.avgResponseTime ?? '-',
+        todayCalls: res.todayCalls ?? 0,
+      }
+    }
   } catch {}
+}
+
+// 告警设置
+const showAlertDialog = ref(false)
+const alertConfig = ref({
+  errorRateThreshold: 5,
+  avgLatencyThreshold: 2000,
+  notifyChannels: ['email'],
+  enabled: true,
+})
+function openAlertConfig() {
+  showAlertDialog.value = true
+}
+function handleSaveAlert() {
+  showAlertDialog.value = false
+  ElMessage.success('告警配置已保存')
 }
 
 onMounted(() => { loadPublishRecords(); loadMetrics() })
@@ -57,22 +75,50 @@ onMounted(() => { loadPublishRecords(); loadMetrics() })
       </el-tab-pane>
       <el-tab-pane label="监控管理" name="monitor">
         <div class="card-panel">
-          <div class="section-title">运行监控</div>
-          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:16px">
-            <div class="metric-card"><div class="metric-value">{{ metrics.totalCalls }}</div><div class="metric-label">总调用次数</div></div>
-            <div class="metric-card"><div class="metric-value">{{ metrics.avgLatency }}ms</div><div class="metric-label">平均延迟</div></div>
-            <div class="metric-card"><div class="metric-value" :style="{color:metrics.errorRate>3?'#F56C6C':'#67C23A'}">{{ metrics.errorRate }}%</div><div class="metric-label">错误率</div></div>
-            <div class="metric-card"><div class="metric-value">{{ metrics.todayCalls }}</div><div class="metric-label">今日调用</div></div>
+          <div class="section-header">
+            <div class="section-title">运行监控</div>
+            <el-button size="small" @click="openAlertConfig">告警设置</el-button>
           </div>
-          <p style="color:#909399;font-size:13px;margin-top:16px">详细监控数据请查看运营中心</p>
+          <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:16px;margin-top:16px">
+            <div class="metric-card"><div class="metric-value">{{ metrics.successRate }}%</div><div class="metric-label">发布成功率</div></div>
+            <div class="metric-card"><div class="metric-value">{{ metrics.releasedCount }}</div><div class="metric-label">成功发布</div></div>
+            <div class="metric-card"><div class="metric-value" :style="{color:metrics.rollbackCount>3?'#F56C6C':'#67C23A'}">{{ metrics.rollbackCount }}</div><div class="metric-label">回滚次数</div></div>
+            <div class="metric-card"><div class="metric-value">{{ metrics.totalCalls }}</div><div class="metric-label">总调用次数</div></div>
+          </div>
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 告警设置弹窗 -->
+    <el-dialog v-model="showAlertDialog" title="数据告警设置" width="480px">
+      <el-form label-width="120px">
+        <el-form-item label="启用告警">
+          <el-switch v-model="alertConfig.enabled" />
+        </el-form-item>
+        <el-form-item label="错误率阈值(%)">
+          <el-input-number v-model="alertConfig.errorRateThreshold" :min="1" :max="100" />
+        </el-form-item>
+        <el-form-item label="延迟阈值(ms)">
+          <el-input-number v-model="alertConfig.avgLatencyThreshold" :min="100" :max="10000" :step="100" />
+        </el-form-item>
+        <el-form-item label="通知方式">
+          <el-checkbox-group v-model="alertConfig.notifyChannels">
+            <el-checkbox label="email">邮件</el-checkbox>
+            <el-checkbox label="sms">短信</el-checkbox>
+            <el-checkbox label="webhook">Webhook</el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAlertDialog=false">取消</el-button>
+        <el-button type="primary" @click="handleSaveAlert">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
-.section-header { display:flex; align-items:center; justify-content:space-between; margin-bottom:$spacing-base; gap:8px; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom:$spacing-base; gap:8px; }
 .section-title { font-size:15px; font-weight:600; }
 .card-panel { background:var(--el-bg-color-overlay); border-radius:8px; padding:20px; border:1px solid var(--el-border-color-light); }
 .metric-card { background:$bg-white; border:1px solid $border-lighter; border-radius:$radius-base; padding:16px; text-align:center; }

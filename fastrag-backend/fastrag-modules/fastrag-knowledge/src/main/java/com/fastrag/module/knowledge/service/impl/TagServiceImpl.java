@@ -6,7 +6,7 @@ import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Ser
 import java.util.*;
 @Service @RequiredArgsConstructor
 public class TagServiceImpl implements TagService {
-    private final KbTagTypeMapper tagTypeMapper; private final KbTagMapper tagMapper; private final KbTagRelationMapper relationMapper;
+    private final KbTagTypeMapper tagTypeMapper; private final KbTagMapper tagMapper; private final KbTagRelationMapper relationMapper; private final KbKnowledgeMapper knowledgeMapper;
     // ===== 标签类型 =====
     @Override public List<KbTagType> listTagTypes(String kbId) {
         var w=new LambdaQueryWrapper<KbTagType>();
@@ -59,6 +59,21 @@ public class TagServiceImpl implements TagService {
             var tag=tagMapper.selectById(r.getTagId());
             Map<String,Object> m=new LinkedHashMap<>();
             m.put("relationId",r.getId()); m.put("tagId",r.getTagId()); m.put("tagName",tag!=null?tag.getName():null); m.put("color",tag!=null?tag.getColor():null);
+            result.add(m);
+        }
+        return result;
+    }
+    @Override public List<Map<String,Object>> getTagLinkedKnowledge(String tagId) {
+        var list=relationMapper.selectList(new LambdaQueryWrapper<KbTagRelation>().eq(KbTagRelation::getTagId,tagId).eq(KbTagRelation::getTargetType,"knowledge"));
+        List<Map<String,Object>> result=new ArrayList<>();
+        for(var r:list){
+            var k=knowledgeMapper.selectById(r.getTargetId());
+            Map<String,Object> m=new LinkedHashMap<>();
+            m.put("relationId",r.getId()); m.put("tagId",tagId); m.put("knowledgeId",r.getTargetId());
+            m.put("title",k!=null?k.getTitle():null);
+            m.put("category",k!=null?k.getCategory():null);
+            m.put("status",k!=null?k.getStatus():null);
+            m.put("updatedAt",k!=null?k.getUpdatedAt():null);
             result.add(m);
         }
         return result;

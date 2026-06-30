@@ -35,7 +35,8 @@ public class AppConfigController {
     @DeleteMapping("/{appId}/knowledge-bases/{id}") public ApiResponse<?> unbindKb(@PathVariable String id) { svc.unbindKb(id); return ApiResponse.success(); }
     // ===== 数据库绑定 =====
     @GetMapping("/{appId}/databases") public ApiResponse<?> dbs(@PathVariable String appId) { return ApiResponse.success(svc.listDbBindings(appId)); }
-    @PostMapping("/{appId}/databases") public ApiResponse<?> bindDb(@PathVariable String appId,@RequestBody AppDbBinding b) { return ApiResponse.success(svc.bindDb(appId,b)); }
+    @PostMapping("/{appId}/databases") public ApiResponse<?> bindDb(@PathVariable String appId, @RequestBody AppDbBinding b) { return ApiResponse.success(svc.bindDb(appId,b)); }
+    @PutMapping("/{appId}/databases/{id}") public ApiResponse<?> updateDb(@PathVariable String id, @RequestBody AppDbBinding b) { return ApiResponse.success(svc.updateDbBinding(id,b)); }
     @DeleteMapping("/{appId}/databases/{id}") public ApiResponse<?> unbindDb(@PathVariable String id) { svc.unbindDb(id); return ApiResponse.success(); }
     // ===== 发布管理 =====
     @GetMapping("/{appId}/publish/records") public ApiResponse<?> pubRecords(@PathVariable String appId) { return ApiResponse.success(svc.listPublishRecords(appId)); }
@@ -55,8 +56,20 @@ public class AppConfigController {
     // ===== 对话优化 =====
     @GetMapping("/{appId}/optimizations") public ApiResponse<?> opts(@PathVariable String appId) { return ApiResponse.success(svc.listOptimizations(appId)); }
     @PostMapping("/{appId}/optimizations") public ApiResponse<?> createOpt(@PathVariable String appId,@RequestBody AppOptimization o) { return ApiResponse.success(svc.createOptimization(appId,o)); }
+    @PutMapping("/{appId}/optimizations/{id}") public ApiResponse<?> updateOpt(@PathVariable String id,@RequestBody AppOptimization o) { return ApiResponse.success(svc.updateOptimization(id,o)); }
+    @DeleteMapping("/{appId}/optimizations/{id}") public ApiResponse<?> deleteOpt(@PathVariable String id) { svc.deleteOptimization(id); return ApiResponse.success(); }
     @PostMapping("/{appId}/optimizations/{id}/apply") public ApiResponse<?> applyOpt(@PathVariable String id) { return ApiResponse.success(svc.applyOptimization(id)); }
     @PostMapping("/{appId}/optimization/analyze") public ApiResponse<?> analyze(@PathVariable String appId) { return ApiResponse.success(svc.analyze(appId)); }
+    @GetMapping("/{appId}/optimizations/export") public void exportOpts(@PathVariable String appId, HttpServletResponse resp) throws Exception {
+        var list=svc.listOptimizations(appId);
+        resp.setContentType("text/csv;charset=UTF-8"); resp.setHeader("Content-Disposition","attachment;filename=optimization_report.csv");
+        var w=new java.io.PrintWriter(resp.getWriter()); w.println("title,suggestionType,description,status,impactScore,createdAt");
+        for(var o:list) w.printf("\"%s\",\"%s\",\"%s\",\"%s\",%s,%s%n",
+            o.getTitle()!=null?o.getTitle():"",o.getSuggestionType()!=null?o.getSuggestionType():"",
+            o.getDescription()!=null?o.getDescription():"",o.getStatus()!=null?o.getStatus():"",
+            o.getImpactScore(),o.getCreatedAt());
+        w.flush();
+    }
 
     // ===== M16 扩展：高级选项 =====
     @PutMapping("/{appId}/basic/advanced") public ApiResponse<?> advanced(@PathVariable String appId,@RequestBody Map<String,Object> opts) { return ApiResponse.success(svc.saveAdvanced(appId,opts)); }

@@ -1126,7 +1126,7 @@ export async function getKnowledgeEdits(kbId: string, params?: { status?: string
 }
 
 export async function exportKnowledgeEdits(kbId: string, params?: { ids?: string; status?: string; editor?: string }) {
-  return request.get(`/kb/${kbId}/knowledge-edits/export`, { params })
+  return request.get(`/kb/${kbId}/knowledge-edits/export`, { params, responseType: 'blob' })
 }
 
 export async function createKnowledgeEdit(kbId: string, data: Record<string, unknown>) {
@@ -1527,6 +1527,15 @@ export async function updateReviewTemplate(kbId: string, id: string, data: Recor
 export async function getReviewNodes(kbId: string, templateId: string) {
   return request.get(`/kb/${kbId}/review-templates/${templateId}/nodes`)
 }
+export async function executeComplianceCheck(kbId: string, data: { knowledgeId: string; ruleIds?: string[] }) {
+  return request.post(`/kb/${kbId}/compliance-rules/execute`, data)
+}
+export async function copyReviewNode(kbId: string, id: string) {
+  return request.post(`/kb/${kbId}/review-nodes/${id}/copy`)
+}
+export async function getNodeOptimizationSuggestions(kbId: string, templateId: string) {
+  return request.get(`/kb/${kbId}/review-templates/${templateId}/optimizations`)
+}
 export async function getListeners(kbId: string) {
   return request.get(`/kb/${kbId}/listeners`)
 }
@@ -1648,6 +1657,9 @@ export async function updateAppOptimization(appId: string, id: string, data: Rec
 }
 export async function deleteAppOptimization(appId: string, id: string) {
   return request.delete(`/apps/${appId}/optimizations/${id}`)
+}
+export async function exportAppOptimizations(appId: string) {
+  return request.get(`/apps/${appId}/optimizations/export`, { responseType: 'blob' })
 }
 
 // ===========================================================================

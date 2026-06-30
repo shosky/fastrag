@@ -10,12 +10,28 @@ const activeTab = ref('association')
 const loading = ref(false)
 
 // 搜索联想
+const DIMENSION_OPTIONS = [
+  { label: '主题词/别名', value: 'content' },
+  { label: '搜索规则', value: 'rule' },
+  { label: '附件', value: 'attachment' },
+  { label: '发布时间', value: 'publishTime' },
+  { label: '知识类型', value: 'knowledgeType' },
+] as const
+const DIMENSION_LABEL_MAP: Record<string, string> = Object.fromEntries(DIMENSION_OPTIONS.map(d => [d.value, d.label]))
 const assocList = ref<any[]>([])
+const assocTotal = ref(0)
+const assocPage = ref(1)
+const assocPageSize = ref(5)
 const assocQuery = ref({ dimension: '', keyword: '' })
 async function loadAssoc() {
   loading.value = true
-  try { assocList.value = ((await api.getSearchAssociations(kbId, assocQuery.value)) as any)?.list || [] } finally { loading.value = false }
+  try {
+    const res: any = await api.getSearchAssociations(kbId, { ...assocQuery.value, page: assocPage.value, pageSize: assocPageSize.value })
+    assocList.value = res?.list || []
+    assocTotal.value = res?.total || assocList.value.length
+  } finally { loading.value = false }
 }
+function handleAssocPageChange(page: number) { assocPage.value = page; loadAssoc() }
 const showAssocDialog = ref(false)
 const assocForm = ref({ id: '', dimension: 'content', name: '', description: '', pattern: '', suggestions: '', priority: 0 })
 function handleAddAssoc() { assocForm.value = { id: '', dimension: 'content', name: '', description: '', pattern: '', suggestions: '', priority: 0 }; showAssocDialog.value = true }
@@ -31,12 +47,27 @@ async function handleDeleteAssoc(row: any) {
     await api.deleteSearchAssociation(kbId, row.id); await loadAssoc(); ElMessage.success('删除成功') } catch {}
 }
 
-// 联想测试
+// 联想效果验证
 const testQuery = ref('')
+const testDimension = ref('') // 空=全部维度（多条件组合），指定值=单维度验证
 const testResult = ref<any>(null)
+// 按维度分组，每个维度合并所有匹配规则的 suggestions
+const groupedTestResult = computed(() => {
+  if (!testResult.value?.associations?.length) return []
+  const map = new Map<string, string[]>()
+  for (const a of testResult.value.associations) {
+    const dim = a.dimension || 'content'
+    const list = map.get(dim) || []
+    if (a.suggestions?.length) list.push(...a.suggestions)
+    map.set(dim, list)
+  }
+  return Array.from(map.entries()).map(([dimension, suggestions]) => ({ dimension, suggestions }))
+})
+const DIMENSION_TAG_TYPES: Record<string, string> = { content: '', rule: 'warning', attachment: 'success', publishTime: 'info', knowledgeType: 'danger' }
+function dimensionTagType(dim: string) { return DIMENSION_TAG_TYPES[dim] || '' }
 async function handleTest() {
-  if (!testQuery.value) { ElMessage.warning('请输入关键词'); return }
-  testResult.value = await api.searchAssociations(kbId, testQuery.value)
+  if (!testQuery.value) { ElMessage.warning('请输入搜索词'); return }
+  testResult.value = await api.searchAssociations(kbId, testQuery.value, testDimension.value || undefined)
 }
 
 // 判断（按维度校验联想规则）
@@ -184,34 +215,62 @@ onMounted(() => {
     <el-tabs v-model="activeTab">
       <el-tab-pane label="搜索联想" name="association">
         <div class="card-panel">
-          <div class="section-header"><div class="section-title">搜索联想规则</div><el-button type="primary" @click="handleAddAssoc">新增联想</el-button></div>
+          <div class="section-header"><div class="section-title">查询联想规则</div><el-button type="primary" @click="handleAddAssoc">新增联想</el-button></div>
           <div class="filter-bar">
             <el-select v-model="assocQuery.dimension" placeholder="维度" clearable style="width:140px" @change="loadAssoc">
-              <el-option label="搜索内容" value="content" /><el-option label="搜索规则" value="rule" />
+              <el-option v-for="d in DIMENSION_OPTIONS" :key="d.value" :label="d.label" :value="d.value" />
             </el-select>
             <el-input v-model="assocQuery.keyword" placeholder="名称搜索" clearable style="width:180px" @keyup.enter="loadAssoc" />
             <el-button type="primary" @click="loadAssoc">查询</el-button>
           </div>
           <el-table :data="assocList" stripe>
             <el-table-column prop="name" label="规则名称" show-overflow-tooltip />
-            <el-table-column prop="dimension" label="维度" width="100" />
+            <el-table-column prop="dimension" label="维度" width="110"><template #default="{ row }">{{ DIMENSION_LABEL_MAP[row.dimension] || row.dimension }}</template></el-table-column>
             <el-table-column prop="pattern" label="匹配模式" show-overflow-tooltip />
             <el-table-column prop="priority" label="优先级" width="80" />
             <el-table-column prop="enabled" label="启用" width="70"><template #default="{ row }"><el-tag :type="row.enabled?'success':'info'" size="small">{{ row.enabled ? '是' : '否' }}</el-tag></template></el-table-column>
             <el-table-column label="操作" width="180"><template #default="{ row }"><el-button link type="primary" size="small" @click="handleEditAssoc(row)">编辑</el-button><el-button link type="primary" size="small" @click="handleShowJudge(row)">判断</el-button><el-button link type="danger" size="small" @click="handleDeleteAssoc(row)">删除</el-button></template></el-table-column>
           </el-table>
+          <div class="table-footer" v-if="assocTotal > assocPageSize">
+            <el-pagination
+              v-model:current-page="assocPage"
+              v-model:page-size="assocPageSize"
+              :total="assocTotal"
+              :page-sizes="[5, 10, 20]"
+              layout="total, sizes, prev, pager, next"
+              @current-change="handleAssocPageChange"
+              @size-change="handleAssocPageChange"
+            />
+          </div>
         </div>
         <div class="card-panel" style="margin-top:16px">
-          <div class="section-title">联想测试</div>
+          <div class="section-title">联想效果验证</div>
           <div class="filter-bar">
-            <el-input v-model="testQuery" placeholder="输入关键词测试联想" style="width:300px" @keyup.enter="handleTest" />
-            <el-button type="primary" @click="handleTest">测试</el-button>
+            <el-input v-model="testQuery" placeholder="模拟用户输入的搜索词，如：宽带、专线、云电脑、2026" style="width:300px" @keyup.enter="handleTest" />
+            <el-select v-model="testDimension" placeholder="验证维度" clearable style="width:140px">
+              <el-option label="全部维度" value="" />
+              <el-option v-for="d in DIMENSION_OPTIONS" :key="d.value" :label="d.label" :value="d.value" />
+            </el-select>
+            <el-button type="primary" @click="handleTest">验证联想效果</el-button>
           </div>
-          <div v-if="testResult" class="result-box">
-            <p><b>联想结果：</b>{{ testResult.associations?.length || 0 }} 条</p>
-            <el-tag v-for="(a,i) in testResult.associations||[]" :key="i" style="margin:4px">{{ a.ruleName || a.text }}</el-tag>
-            <p v-if="testResult.corrections?.length"><b>纠错：</b></p>
-            <span v-for="(c,i) in testResult.corrections||[]" :key="'c'+i" style="margin-right:8px;font-size:12px;color:#e6a23c">{{ c.original }} → {{ c.corrected }}</span>
+          <el-empty v-if="testQuery && testResult && (!testResult.associations?.length) && (!testResult.corrections?.length)" description="未匹配到联想规则" :image-size="60" />
+          <div v-if="testResult && (testResult.associations?.length || testResult.corrections?.length)" class="result-box">
+            <!-- 纠错提示 -->
+            <div v-if="testResult.corrections?.length" style="margin-bottom:12px;padding:8px 12px;background:#fdf6ec;border-radius:6px;border:1px solid #faecd8">
+              <span style="font-size:13px;color:#e6a23c">💡 是否要搜索：</span>
+              <span v-for="(c,i) in testResult.corrections" :key="'c'+i" style="margin-right:12px;font-weight:600;color:#e6a23c">{{ c.corrected }}</span>
+              <span style="font-size:12px;color:#909399">（原输入：{{ testResult.corrections.map((c: any) => c.original).join('、') }}）</span>
+            </div>
+            <!-- 按维度分组展示联想建议 -->
+            <div v-for="group in groupedTestResult" :key="group.dimension" style="margin-bottom:12px">
+              <div style="font-size:13px;color:#606266;margin-bottom:6px">
+                <el-tag size="small" :type="dimensionTagType(group.dimension)">{{ DIMENSION_LABEL_MAP[group.dimension] || group.dimension }}</el-tag>
+                <span style="margin-left:8px">为您推荐以下内容：</span>
+              </div>
+              <div style="display:flex;flex-wrap:wrap;gap:6px">
+                <el-tag v-for="(s, si) in group.suggestions" :key="si" effect="plain" style="max-width:300px" show-overflow-tooltip>{{ s }}</el-tag>
+              </div>
+            </div>
           </div>
         </div>
       </el-tab-pane>
@@ -289,7 +348,7 @@ onMounted(() => {
       <el-form label-width="80px">
         <el-form-item label="名称" required><el-input v-model="assocForm.name" /></el-form-item>
         <el-form-item label="维度">
-          <el-select v-model="assocForm.dimension" style="width:180px"><el-option label="搜索内容" value="content" /><el-option label="搜索规则" value="rule" /></el-select>
+          <el-select v-model="assocForm.dimension" style="width:180px"><el-option v-for="d in DIMENSION_OPTIONS" :key="d.value" :label="d.label" :value="d.value" /></el-select>
         </el-form-item>
         <el-form-item label="匹配模式"><el-input v-model="assocForm.pattern" placeholder="正则表达式，如：退款|退货" /></el-form-item>
         <el-form-item label="联想建议"><el-input v-model="assocForm.suggestions" type="textarea" :rows="3" placeholder='JSON数组' /></el-form-item>
@@ -313,7 +372,7 @@ onMounted(() => {
       <el-form label-width="110px">
         <el-form-item label="判断维度">
           <el-select v-model="judgeForm.dimension" style="width:180px">
-            <el-option label="搜索内容" value="content" /><el-option label="搜索规则" value="rule" />
+            <el-option v-for="d in DIMENSION_OPTIONS" :key="d.value" :label="d.label" :value="d.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="测试查询" required>

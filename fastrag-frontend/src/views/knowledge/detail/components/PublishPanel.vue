@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { PUBLISH_STATUS_LABELS, PUBLISH_STATUS_COLORS } from '@/types/audit'
-import { CircleCheck, Select, CloseBold, RefreshRight, InfoFilled, Plus, Clock, DataBoard, History } from '@element-plus/icons-vue'
+import { CircleCheck, Select, CloseBold, RefreshRight, InfoFilled, Plus, Clock, DataBoard, Timer } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 import { useAuth } from '@/composables/useAuth'

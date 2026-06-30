@@ -313,3 +313,53 @@ INSERT INTO wf_optimization (id, workflow_id, name, suggestion, status, created_
 -- ==================== M19 数据库实例种子数据 ====================
 INSERT INTO db_instance (id, name, db_type, host, port, db_name, status, created_by) VALUES
 ('db_inst_001', '订单业务库', 'mysql', '10.0.0.10', 3306, 'orders', 'connected', 'admin');
+
+-- ==================== M20 知识库分类种子数据 ====================
+INSERT INTO kb_category (id, name, description, color, icon, sort) VALUES
+('cat_tech', '技术文档', '技术类知识库', '#1890ff', 'Document', 1),
+('cat_product', '产品手册', '产品相关文档', '#52c41a', 'Box', 2),
+('cat_faq', '常见问题', 'FAQ知识库', '#faad14', 'QuestionFilled', 3),
+('cat_default', '默认分类', '未分类的知识库', '#909399', 'Folder', 0);
+
+-- ==================== M20 通知种子数据 ====================
+INSERT INTO sys_notification (id, title, content, notify_type, source_type, source_id, target_user, status, created_at) VALUES
+('ntf_001', '知识库文件更新', '知识库「示例知识库」新增文件：产品需求文档v2.0.docx', 'knowledge_update', 'kb', 'kb_sample', NULL, 'read', '2026-06-01 09:15:00'),
+('ntf_002', '审核任务待处理', '您有 3 条知识审核任务待处理，请及时审核', 'review_pending', 'review', 'task_batch_001', 'user_admin', 'read', '2026-06-02 10:30:00'),
+('ntf_003', '发布计划执行成功', '发布计划「每日自动发布」执行完成，成功发布 12 条知识', 'publish_success', 'publish', 'plan_daily', NULL, 'read', '2026-06-03 08:00:00'),
+('ntf_004', '模型调用异常告警', '模型 Qwen3-72B 过去1小时调用失败率达到 5.2%，请关注', 'model_alert', 'model', 'qwen3-72b', NULL, 'read', '2026-06-04 14:20:00'),
+('ntf_005', '知识库容量预警', '知识库「示例知识库」存储空间已使用 85%，建议清理过期文件', 'storage_warning', 'kb', 'kb_sample', NULL, 'unread', '2026-06-05 11:00:00');
+
+-- ==================== M20 安全策略种子数据 ====================
+INSERT INTO sys_security_policy (id, name, policy_type, pattern, action, priority, enabled, description) VALUES
+('sp_001', '内网IP白名单', 'ip_whitelist', '192.168.0.0/16,10.0.0.0/8', 'allow', 1, 1, '允许内网IP段访问系统'),
+('sp_002', '敏感词过滤', 'keyword_filter', 'password,secret,密钥,token', 'block', 2, 1, '过滤包含敏感关键词的输入'),
+('sp_003', '高频访问限制', 'rate_limit', '100/60', 'throttle', 3, 1, '限制单用户每分钟最多100次请求'),
+('sp_004', '文件类型限制', 'file_type', 'exe,bat,sh,cmd,ps1', 'block', 4, 1, '禁止上传可执行文件'),
+('sp_005', 'SQL注入防护', 'sql_injection', '(SELECT|DROP|DELETE|UPDATE|INSERT).*FROM', 'block', 0, 1, '拦截常见SQL注入模式');
+
+-- ==================== M20 发布策略种子数据 ====================
+INSERT INTO sys_publish_strategy (id, name, strategy_type, config, priority, enabled, description) VALUES
+('ps_001', '自动审核发布', 'auto_publish', '{"minApproval":2,"workHours":"08:00-20:00"}', 1, 1, '达到最低审批数后在工作时间内自动发布'),
+('ps_002', '定时批量发布', 'scheduled_publish', '{"cron":"0 9 * * 1-5"}', 2, 1, '每个工作日9点批量发布审核通过的知识'),
+('ps_003', '敏感内容复查', 'sensitive_review', '{"checkFields":["title","content"]}', 0, 1, '包含敏感词的知识需要额外审核'),
+('ps_004', '版本回滚策略', 'rollback', '{"keepVersions":10,"maxAgeDays":30}', 3, 0, '保留最近10个版本，超过30天的旧版本可清理');
+
+-- ==================== M20 扩展系统配置种子数据 ====================
+INSERT INTO sys_config (id, config_key, config_value, config_type, description, is_default) VALUES
+('cfg_chunk_size', 'general_chunk_size', '512', 'general', '默认分片大小', 0),
+('cfg_chunk_overlap', 'general_chunk_overlap', '50', 'general', '默认分片重叠', 0),
+('cfg_search_top_k', 'general_search_top_k', '10', 'general', '默认搜索返回条数', 0),
+('cfg_retrieval_mode', 'general_retrieval_mode', 'hybrid', 'general', '默认检索模式', 1),
+('cfg_enable_rerank', 'general_enable_rerank', 'true', 'general', '是否启用重排序', 0),
+('cfg_max_tokens', 'general_max_tokens', '2048', 'general', '默认最大生成Token数', 0),
+('cfg_publish_batch', 'publish_batch_size', '100', 'publish', '批量发布数量上限', 0),
+('cfg_review_threshold', 'review_auto_approve_threshold', '0.95', 'review', '自动审核通过阈值', 0),
+('cfg_review_reject_notify', 'review_notify_on_reject', 'true', 'review', '审核驳回时发送通知', 1);
+
+-- ==================== M20 对话测试案例种子数据 ====================
+INSERT INTO app_dialog_test (id, app_id, name, query, expected_answer, tags, created_by, created_at) VALUES
+('dt_001', 'app_001', '企业请假制度查询', '员工请事假需要提前几天申请？', '根据公司考勤管理制度，员工请事假需提前3个工作日向直属主管提交书面申请，经部门负责人审批同意后方可休假。', '"制度查询"', 'admin', '2026-06-28 10:00:00'),
+('dt_002', 'app_001', '报销流程咨询', '差旅费报销需要提供哪些材料？', '差旅费报销需提供以下材料：1.差旅审批单（需主管签字）；2.交通票据原件；3.住宿发票（需为正规增值税发票）；4.出差补助申请表。', '"流程查询"', 'admin', '2026-06-28 10:05:00'),
+('dt_003', 'app_001', 'IT系统故障报修', 'VPN连接不上怎么办？', 'VPN连接问题可按以下步骤排查：1.检查网络连接是否正常；2.确认VPN客户端版本是否为最新版本；3.尝试切换VPN服务器节点；4.如仍无法连接，请联系IT服务热线400-888-0012。', '"故障排查"', 'admin', '2026-06-28 10:10:00'),
+('dt_004', 'app_001', '绩效考核标准查询', '部门绩效考核的评分等级有哪些？', '部门绩效考核评分共分为5个等级：S级（优秀，90分以上）占10%，A级（良好，80-89分）占30%，B级（合格，70-79分）占50%，C级（待改进，60-69分）占8%，D级（不合格，60分以下）占2%。', '"考核查询"', 'admin', '2026-06-28 10:15:00'),
+('dt_005', 'app_001', '新员工入职指引', '新员工入职第一天需要携带什么材料？', '新员工入职第一天请携带：1.身份证原件及复印件2份；2.学历学位证书原件及复印件1份；3.原单位离职证明原件；4.一寸免冠照片2张；5.银行卡复印件1份。', '"入职指引"', 'admin', '2026-06-28 10:20:00');
