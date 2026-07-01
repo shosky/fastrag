@@ -17,4 +17,10 @@ public class KbChunk {
     private Integer vectorStored;
     private Double startTime;
     private Double endTime;
+
+    // PDF 页感知分块
+    private Integer pageNumber;       // 所属页码
+    private String pageRange;         // 页码范围 "3-4"
+    private String imageKeys;         // JSON 数组 ["page_1_img_0.png"]
+    private String chunkType;         // "text" | "image"，默认 "text"
 }

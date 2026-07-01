@@ -14,6 +14,7 @@ import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -53,10 +54,13 @@ public class AsrService {
                         .uri(URI.create(asrUrl + "/v1/audio/transcriptions"))
                         .header("Authorization", "Bearer " + asrKey)
                         .header("Content-Type", "multipart/form-data; boundary=" + boundary)
+                        .timeout(Duration.ofSeconds(120))   // 请求超时 120 秒
                         .POST(HttpRequest.BodyPublishers.ofByteArray(body))
                         .build();
 
-                HttpClient client = HttpClient.newHttpClient();
+                HttpClient client = HttpClient.newBuilder()
+                        .connectTimeout(Duration.ofSeconds(30))  // 连接超时 30 秒
+                        .build();
                 HttpResponse<String> response = client.send(request, HttpResponse.BodyHandlers.ofString(StandardCharsets.UTF_8));
 
                 log.info("ASR response status: {}, body: {}", response.statusCode(), response.body());

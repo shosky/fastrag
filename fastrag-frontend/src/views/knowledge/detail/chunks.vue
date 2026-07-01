@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from 'vue-router'
-import { ArrowLeft, Download, Search, Edit, Grid, ArrowDown, ArrowUp, Delete, Upload, Setting } from '@element-plus/icons-vue'
+import { onBeforeUnmount, watch } from 'vue'
+import { ArrowLeft, Download, Search, Edit, Grid, ArrowDown, ArrowUp, Delete, Upload, Setting, VideoPlay, VideoPause } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 
@@ -20,6 +21,9 @@ interface Chunk {
   endTime?: number
   metadata: ChunkMetadata
   selected?: boolean
+  chunkType?: string        // "text" | "image"
+  imageKeys?: string[]      // PDF 提取的图片 key 列表
+  pageNumber?: number       // 所属页码
 }
 
 interface ChunkMetadata {
@@ -69,7 +73,10 @@ async function loadFileInfo() {
   }
 }
 
-loadFileInfo().then(() => loadImage())
+loadFileInfo().then(() => {
+  loadImage()
+  loadMedia()
+})
 
 // --- Active tab ---
 const activeTab = ref<'markdown' | 'chunks'>('chunks')
@@ -91,10 +98,71 @@ const selectAll = ref(false)
 // --- Markdown state ---
 
 // --- Media player state ---
+const audioRef = ref<HTMLAudioElement | null>(null)
+const videoRef = ref<HTMLVideoElement | null>(null)
 const mediaPlaying = ref(false)
 const mediaCurrentTime = ref(0)
-const mediaDuration = ref(300) // 5 minutes mock
+const mediaDuration = ref(0)
 const mediaSelectedChunkId = ref<string | null>(null)
+const audioBlobUrl = ref('')
+const videoBlobUrl = ref('')
+
+async function loadMedia() {
+  if (!fileInfo.value.url) return
+  const raw = localStorage.getItem('ais_token') || ''
+  const token = raw.startsWith('"') ? JSON.parse(raw) : raw
+  try {
+    const resp = await fetch(fileInfo.value.url, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    if (resp.ok) {
+      const blob = await resp.blob()
+      if (fileInfo.value.category === 'audio') {
+        if (audioBlobUrl.value) URL.revokeObjectURL(audioBlobUrl.value)
+        audioBlobUrl.value = URL.createObjectURL(blob)
+      } else if (fileInfo.value.category === 'video') {
+        if (videoBlobUrl.value) URL.revokeObjectURL(videoBlobUrl.value)
+        videoBlobUrl.value = URL.createObjectURL(blob)
+      }
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function onAudioMetadataLoaded() {
+  if (audioRef.value) {
+    mediaDuration.value = audioRef.value.duration || 0
+  }
+}
+
+function onAudioTimeUpdate() {
+  if (audioRef.value) {
+    mediaCurrentTime.value = audioRef.value.currentTime || 0
+  }
+}
+
+function onAudioEnded() {
+  mediaPlaying.value = false
+  mediaCurrentTime.value = 0
+}
+
+function onVideoMetadataLoaded() {
+  if (videoRef.value) {
+    mediaDuration.value = videoRef.value.duration || 0
+  }
+}
+
+function onVideoTimeUpdate() {
+  if (videoRef.value) {
+    mediaCurrentTime.value = videoRef.value.currentTime || 0
+  }
+}
+
+function onVideoEnded() {
+  mediaPlaying.value = false
+  mediaCurrentTime.value = 0
+}
 
 // --- Markdown 内容 ---
 const markdownContent = ref('')
@@ -138,6 +206,9 @@ async function loadChunks() {
       content: mc.content || '',
       startTime: mc.startTime ?? undefined,
       endTime: mc.endTime ?? undefined,
+      chunkType: mc.chunkType || 'text',
+      imageKeys: mc.imageKeys ? (typeof mc.imageKeys === 'string' ? JSON.parse(mc.imageKeys) : mc.imageKeys) : undefined,
+      pageNumber: mc.pageNumber ?? undefined,
       metadata: {
         fileId: mc.fileId || fileId,
         fileName: mc.fileName || '',
@@ -244,6 +315,44 @@ function cancelEdit() {
   editingContent.value = ''
 }
 
+// --- 图片缩略图 ---
+const imageBlobUrls = ref<Record<string, string>>({})
+
+function getImageUrl(imageKey: string): string | undefined {
+  return imageBlobUrls.value[imageKey]
+}
+
+async function loadImageThumb(imageKey: string) {
+  if (imageBlobUrls.value[imageKey]) return
+  try {
+    const raw = localStorage.getItem('ais_token') || ''
+    const token = raw.startsWith('"') ? JSON.parse(raw) : raw
+    const resp = await fetch(`/api/kb/${kbId}/files/${fileId}/images/${imageKey}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    })
+    if (resp.ok) {
+      const blob = await resp.blob()
+      imageBlobUrls.value[imageKey] = URL.createObjectURL(blob)
+    }
+  } catch {
+    // ignore
+  }
+}
+
+function previewImage(imageKey: string) {
+  const url = getImageUrl(imageKey)
+  if (url) window.open(url, '_blank')
+}
+
+// 加载所有图片分片的缩略图
+watch(() => chunks.value, (list) => {
+  for (const chunk of list) {
+    if (chunk.chunkType === 'image' && chunk.imageKeys) {
+      chunk.imageKeys.forEach(key => loadImageThumb(key))
+    }
+  }
+}, { immediate: true })
+
 function saveEdit() {
   if (!editingChunk.value) return
   editingChunk.value.content = editingContent.value
@@ -300,29 +409,45 @@ function exportMarkdown() {
 
 // --- Media player methods ---
 function formatTime(seconds: number): string {
+  if (!seconds || isNaN(seconds)) return '00:00'
   const mins = Math.floor(seconds / 60)
   const secs = Math.floor(seconds % 60)
   return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`
 }
 
 function togglePlay() {
-  mediaPlaying.value = !mediaPlaying.value
-  // In real app, this would control the actual media player
+  const el = audioRef.value || videoRef.value
+  if (!el) return
   if (mediaPlaying.value) {
-    ElMessage.info('播放中...')
+    el.pause()
+  } else {
+    el.play().catch(() => {})
   }
+  mediaPlaying.value = !mediaPlaying.value
 }
 
 function selectMediaChunk(chunk: Chunk) {
   mediaSelectedChunkId.value = chunk.id
-  // Jump to the start time of the chunk
   if (chunk.startTime !== undefined) {
-    mediaCurrentTime.value = chunk.startTime
+    const el = audioRef.value || videoRef.value
+    if (el) {
+      el.currentTime = chunk.startTime
+      mediaCurrentTime.value = chunk.startTime
+      if (!mediaPlaying.value) {
+        el.play().catch(() => {})
+        mediaPlaying.value = true
+      }
+    }
   }
 }
 
 function seekTo(time: number) {
-  mediaCurrentTime.value = Math.max(0, Math.min(time, mediaDuration.value))
+  const t = Math.max(0, Math.min(time, mediaDuration.value))
+  mediaCurrentTime.value = t
+  const el = audioRef.value || videoRef.value
+  if (el) {
+    el.currentTime = t
+  }
 }
 
 function onTimelineClick(e: MouseEvent) {
@@ -405,6 +530,12 @@ function batchExport() {
   }
   ElMessage.success(`已导出 ${selectedChunks.value.size} 个分片`)
 }
+
+onBeforeUnmount(() => {
+  if (audioBlobUrl.value) URL.revokeObjectURL(audioBlobUrl.value)
+  if (videoBlobUrl.value) URL.revokeObjectURL(videoBlobUrl.value)
+  Object.values(imageBlobUrls.value).forEach(url => URL.revokeObjectURL(url))
+})
 </script>
 
 <template>
@@ -546,6 +677,7 @@ function batchExport() {
                         @change="toggleChunkSelection(chunk.id)"
                       />
                       <span class="chunks-page__chunk-index">#{{ chunk.index }}</span>
+                      <el-tag v-if="chunk.chunkType === 'image'" size="small" type="warning">图片</el-tag>
                       <span class="chunks-page__chunk-id">ID: {{ chunk.id }}</span>
                       <el-button
                         :icon="Edit"
@@ -557,6 +689,17 @@ function batchExport() {
 
                     <div class="chunks-page__chunk-content">
                       {{ chunk.content }}
+                    </div>
+
+                    <!-- 图片分片：展示缩略图 -->
+                    <div v-if="chunk.chunkType === 'image' && chunk.imageKeys && chunk.imageKeys.length > 0" class="chunks-page__chunk-images">
+                      <img
+                        v-for="(key, idx) in chunk.imageKeys"
+                        :key="idx"
+                        :src="getImageUrl(key)"
+                        class="chunks-page__chunk-thumb"
+                        @click="previewImage(key)"
+                      />
                     </div>
 
                     <!-- Metadata -->
@@ -800,31 +943,59 @@ function batchExport() {
           <div class="chunks-page__media-left">
             <!-- Video player -->
             <div v-if="fileInfo.category === 'video'" class="chunks-page__video">
-              <div class="chunks-page__video-player">
-                <div class="chunks-page__video-placeholder">
-                  <el-icon :size="64"><ArrowLeft /></el-icon>
-                  <span>视频播放器</span>
-                  <span class="chunks-page__video-time">{{ formatTime(mediaCurrentTime) }} / {{ formatTime(mediaDuration) }}</span>
-                </div>
+              <div v-if="videoBlobUrl" class="chunks-page__video-player">
+                <video
+                  ref="videoRef"
+                  :src="videoBlobUrl"
+                  controls
+                  preload="metadata"
+                  @loadedmetadata="onVideoMetadataLoaded"
+                  @timeupdate="onVideoTimeUpdate"
+                  @ended="onVideoEnded"
+                  @play="mediaPlaying = true"
+                  @pause="mediaPlaying = false"
+                  class="chunks-page__video-element"
+                />
+              </div>
+              <div v-else class="chunks-page__video-placeholder">
+                <el-icon :size="64"><ArrowLeft /></el-icon>
+                <span>正在加载视频...</span>
               </div>
             </div>
 
             <!-- Audio player -->
             <div v-else class="chunks-page__audio">
-              <div class="chunks-page__audio-player">
-                <div class="chunks-page__audio-placeholder">
-                  <el-icon :size="48"><ArrowLeft /></el-icon>
-                  <span>音频播放器</span>
-                </div>
+              <div v-if="audioBlobUrl" class="chunks-page__audio-player">
+                <audio
+                  ref="audioRef"
+                  :src="audioBlobUrl"
+                  preload="metadata"
+                  @loadedmetadata="onAudioMetadataLoaded"
+                  @timeupdate="onAudioTimeUpdate"
+                  @ended="onAudioEnded"
+                  @play="mediaPlaying = true"
+                  @pause="mediaPlaying = false"
+                  style="display:none"
+                />
                 <div class="chunks-page__audio-waveform">
-                  <div v-for="i in 50" :key="i" class="chunks-page__wave-bar" :style="{ height: `${Math.random() * 40 + 10}px` }" />
+                  <div class="chunks-page__audio-wave-icon">
+                    <el-icon :size="32" :class="{ rotating: mediaPlaying }"><ArrowLeft /></el-icon>
+                  </div>
+                  <div class="chunks-page__audio-wave-text">
+                    <span>{{ fileInfo.name }}</span>
+                    <span class="chunks-page__audio-wave-time">{{ formatTime(mediaCurrentTime) }} / {{ formatTime(mediaDuration) }}</span>
+                  </div>
                 </div>
+              </div>
+              <div v-else class="chunks-page__audio-placeholder">
+                <el-icon :size="48"><ArrowLeft /></el-icon>
+                <span>{{ fileInfo.category === 'audio' ? '正在加载音频...' : '音频暂不可用' }}</span>
               </div>
             </div>
 
             <!-- Player controls -->
             <div class="chunks-page__player-controls">
-              <el-button :icon="mediaPlaying ? ArrowLeft : ArrowLeft" circle @click="togglePlay" />
+              <el-button :icon="mediaPlaying ? VideoPause : VideoPlay" circle @click="togglePlay" />
               <span class="chunks-page__player-time">{{ formatTime(mediaCurrentTime) }}</span>
               <el-slider
                 :model-value="mediaCurrentTime"
@@ -1298,6 +1469,28 @@ function batchExport() {
     word-break: break-word;
   }
 
+  &__chunk-images {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  &__chunk-thumb {
+    width: 120px;
+    height: 90px;
+    object-fit: cover;
+    border-radius: 4px;
+    border: 1px solid #eee;
+    cursor: pointer;
+    transition: transform 0.2s;
+
+    &:hover {
+      transform: scale(1.05);
+      box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+    }
+  }
+
   &__chunk-edit {
     display: flex;
     flex-direction: column;
@@ -1354,6 +1547,16 @@ function batchExport() {
     flex: 1;
     background: #000;
     min-height: 300px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  &__video-element {
+    width: 100%;
+    height: 100%;
+    max-height: 500px;
+    object-fit: contain;
   }
 
   &__video-player {

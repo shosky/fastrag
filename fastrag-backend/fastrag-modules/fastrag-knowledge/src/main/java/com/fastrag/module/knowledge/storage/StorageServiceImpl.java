@@ -1,7 +1,7 @@
 package com.fastrag.module.knowledge.storage;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.embedding.EmbeddingService;
-import com.fastrag.infra.elasticsearch.ESIndexService;
 import com.fastrag.infra.milvus.MilvusService;
 import com.fastrag.module.knowledge.chunking.ChunkData;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -10,6 +10,8 @@ import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
+import com.fastrag.module.platform.entity.ModelRecord;
+import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,11 +25,11 @@ import java.util.stream.Collectors;
 public class StorageServiceImpl implements StorageService {
 
     private final KbChunkMapper chunkMapper;
-    private final ESIndexService esIndexService;
     private final MilvusService milvusService;
     private final EmbeddingService embeddingService;
     private final KbFileMapper fileMapper;
     private final KnowledgeBaseMapper kbMapper;
+    private final ModelRecordMapper modelRecordMapper;
 
     @Override
     public void storeChunks(String kbId, String fileId, List<ChunkData> chunks) {
@@ -48,21 +50,41 @@ public class StorageServiceImpl implements StorageService {
             log.warn("Milvus collection may already exist: {}", e.getMessage());
         }
 
-        // 2. 确保 ES index 存在（ES 不可用时跳过）
-        String esIndex = "kb_" + kbId.replace("-", "_");
-        try {
-            esIndexService.createIndex(esIndex);
-        } catch (Exception e) {
-            log.warn("Elasticsearch not available, skipping index creation: {}", e.getMessage());
-        }
-
-        // 3. 生成 Embedding（Embedding 服务不可用时跳过）
+        // 2. 生成 Embedding（通过模型管理获取 API 地址和密钥）
         List<String> texts = chunks.stream().map(ChunkData::getContent).collect(Collectors.toList());
         List<List<Float>> vectors = new ArrayList<>();
-        // 暂时跳过 embedding，直接存储文本
-        log.info("Skipping embedding, storing {} chunks as text only", chunks.size());
+        if (embeddingModel != null && !embeddingModel.isBlank()) {
+            long tEmbed = System.currentTimeMillis();
+            try {
+                // 从模型管理表查询 API 地址和密钥
+                String apiUrl = null;
+                String apiKey = null;
+                ModelRecord modelRecord = modelRecordMapper.selectOne(
+                        new LambdaQueryWrapper<ModelRecord>()
+                                .eq(ModelRecord::getCode, embeddingModel)
+                                .eq(ModelRecord::getStatus, "online")
+                                .last("LIMIT 1"));
+                if (modelRecord != null) {
+                    apiUrl = modelRecord.getApiUrl();
+                    apiKey = modelRecord.getApiKeyRef();
+                    log.info("Resolved embedding model '{}' -> apiUrl={}", embeddingModel, apiUrl);
+                } else {
+                    log.warn("Embedding model '{}' not found in model table or offline, using default gateway", embeddingModel);
+                }
 
-        // 4. 存储到 MySQL
+                vectors = embeddingService.embed(embeddingModel, texts, apiUrl, apiKey);
+                log.info("[TIMING] embed {} chunks: {} ms, model={}", chunks.size(),
+                        System.currentTimeMillis() - tEmbed, embeddingModel);
+            } catch (Exception e) {
+                log.warn("Embedding generation failed, storing chunks without vectors: {}", e.getMessage());
+                log.warn("[TIMING] embed failed after {} ms", System.currentTimeMillis() - tEmbed);
+            }
+        } else {
+            log.info("No embedding model configured, storing {} chunks as text only", chunks.size());
+        }
+
+        // 3. 存储到 MySQL
+        long tMysql = System.currentTimeMillis();
         KbFile file = fileMapper.selectById(fileId);
         for (int i = 0; i < chunks.size(); i++) {
             ChunkData chunk = chunks.get(i);
@@ -78,11 +100,19 @@ public class StorageServiceImpl implements StorageService {
             kc.setVectorStored(vectors.isEmpty() ? 0 : 1);
             kc.setStartTime(chunk.getStartTime());
             kc.setEndTime(chunk.getEndTime());
+            kc.setPageNumber(chunk.getPageNumber());
+            kc.setPageRange(chunk.getPageRange());
+            kc.setChunkType(chunk.getChunkType() != null ? chunk.getChunkType() : "text");
+            if (chunk.getImageKeys() != null && !chunk.getImageKeys().isEmpty()) {
+                kc.setImageKeys(cn.hutool.json.JSONUtil.toJsonStr(chunk.getImageKeys()));
+            }
             chunkMapper.insert(kc);
         }
+        log.info("[TIMING] MySQL insert {} chunks: {} ms", chunks.size(), System.currentTimeMillis() - tMysql);
 
-        // 5. 存储到 Milvus
+        // 4. 存储到 Milvus
         if (!vectors.isEmpty()) {
+            long tMilvus = System.currentTimeMillis();
             try {
                 List<String> ids = new ArrayList<>();
                 List<Long> indices = new ArrayList<>();
@@ -91,27 +121,13 @@ public class StorageServiceImpl implements StorageService {
                     indices.add((long) i);
                 }
                 milvusService.insert(collection, ids, vectors, kbId, fileId, indices);
+                log.info("[TIMING] Milvus insert {} vectors: {} ms", ids.size(), System.currentTimeMillis() - tMilvus);
             } catch (Exception e) {
                 log.error("Milvus insert failed", e);
             }
         }
 
-        // 6. 存储到 Elasticsearch（ES 不可用时不阻断流程）
-        try {
-            esIndexService.createIndex(esIndex);
-            for (int i = 0; i < chunks.size(); i++) {
-                Map<String, Object> doc = new HashMap<>();
-                doc.put("content", chunks.get(i).getContent());
-                doc.put("kbId", kbId);
-                doc.put("fileId", fileId);
-                doc.put("chunkIndex", i);
-                esIndexService.indexDocument(esIndex, fileId + "_chunk_" + i, doc);
-            }
-        } catch (Exception e) {
-            log.warn("Elasticsearch not available, skipping ES indexing: {}", e.getMessage());
-        }
-
-        // 7. 更新文件的 chunkCount
+        // 5. 更新文件的 chunkCount
         if (file != null) {
             file.setChunkCount(chunks.size());
             fileMapper.updateById(file);

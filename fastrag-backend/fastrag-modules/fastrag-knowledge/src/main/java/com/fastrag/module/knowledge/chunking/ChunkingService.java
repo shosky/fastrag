@@ -9,6 +9,9 @@ public interface ChunkingService {
 
     /**
      * 根据时间戳分段生成带时间信息的切片（用于音视频 ASR 结果）
+     *
+     * @param segments   时间戳分段列表
+     * @param strategyId 解析策略 ID（用于读取 chunkLength 等参数，可为 null）
      */
-    List<ChunkData> chunkBySegments(List<ParseResult.ChunkTimeSegment> segments);
+    List<ChunkData> chunkBySegments(List<ParseResult.ChunkTimeSegment> segments, String strategyId);
 }

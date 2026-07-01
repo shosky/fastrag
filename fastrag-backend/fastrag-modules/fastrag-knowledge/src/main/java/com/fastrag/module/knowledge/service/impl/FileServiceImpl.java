@@ -2,6 +2,8 @@ package com.fastrag.module.knowledge.service.impl;
 
 import cn.hutool.core.io.FileUtil;
 import cn.hutool.core.util.IdUtil;
+import cn.hutool.json.JSONArray;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fastrag.infra.minio.MinioService;
@@ -186,19 +188,54 @@ public class FileServiceImpl implements FileService {
 
     private String resolveStrategy(String kbId, String extension) {
         try {
-            List<KbParseStrategy> strategies = strategyMapper.selectList(
-                    new LambdaQueryWrapper<KbParseStrategy>()
-                            .eq(KbParseStrategy::getKbId, kbId)
-                            .eq(KbParseStrategy::getIsDefault, 1));
-            if (!strategies.isEmpty()) return strategies.get(0).getId();
+            String extWithDot = "." + extension;
 
-            strategies = strategyMapper.selectList(
+            // 1. 找扩展名匹配 + 默认策略
+            List<KbParseStrategy> all = strategyMapper.selectList(
                     new LambdaQueryWrapper<KbParseStrategy>().eq(KbParseStrategy::getKbId, kbId));
-            if (!strategies.isEmpty()) return strategies.get(0).getId();
+            for (KbParseStrategy s : all) {
+                if (s.getIsDefault() != null && s.getIsDefault() == 1
+                        && matchesExtension(s.getExtensions(), extWithDot)) {
+                    return s.getId();
+                }
+            }
+
+            // 2. 找扩展名匹配（非默认）
+            for (KbParseStrategy s : all) {
+                if (matchesExtension(s.getExtensions(), extWithDot)) {
+                    return s.getId();
+                }
+            }
+
+            // 3. 找默认策略（不按扩展名）
+            for (KbParseStrategy s : all) {
+                if (s.getIsDefault() != null && s.getIsDefault() == 1) {
+                    return s.getId();
+                }
+            }
+
+            // 4. 返回第一个
+            if (!all.isEmpty()) return all.get(0).getId();
         } catch (Exception e) {
             log.warn("Failed to resolve strategy", e);
         }
         return null;
+    }
+
+    /**
+     * 判断扩展名是否在策略的 extensions JSON 数组中
+     */
+    private boolean matchesExtension(String extensionsJson, String extWithDot) {
+        if (extensionsJson == null || extensionsJson.isBlank()) return false;
+        try {
+            JSONArray arr = JSONUtil.parseArray(extensionsJson);
+            for (int i = 0; i < arr.size(); i++) {
+                if (extWithDot.equals(arr.getStr(i))) return true;
+            }
+        } catch (Exception e) {
+            log.debug("Failed to parse extensions JSON: {}", extensionsJson);
+        }
+        return false;
     }
 
     private FileDto toDto(KbFile f) {

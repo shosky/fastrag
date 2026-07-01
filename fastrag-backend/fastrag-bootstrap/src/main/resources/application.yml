@@ -32,7 +32,6 @@ spring:
 mybatis-plus:
   configuration:
     map-underscore-to-camel-case: true
-    log-impl: org.apache.ibatis.logging.stdout.StdOutImpl
   global-config:
     db-config:
       id-type: assign_id
@@ -52,6 +51,13 @@ ai:
     url: https://api.siliconflow.cn
     key: ${ASR_API_KEY:}
     model: deepseek-ai/DeepSeek-OCR
+  ffmpeg:
+    path: D:\Servers\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe
+
+# Milvus 向量数据库
+milvus:
+  host: 39.97.60.18
+  port: 19530
 
 # 本地文件存储路径
 storage:
@@ -66,5 +72,5 @@ springdoc:
 
 logging:
   level:
-    com.fastrag: DEBUG
-    org.springframework.security: DEBUG
+    com.fastrag: INFO
+    org.springframework.security: INFO

@@ -144,4 +144,54 @@ public class FileController {
             return ResponseEntity.internalServerError().build();
         }
     }
+
+    /**
+     * 下载音频切片文件
+     * 切片文件存储在: {kbId}/{fileId}/segments/{chunkIndex}.{ext}
+     */
+    @GetMapping("/{id}/segments/{chunkIndex}")
+    public ResponseEntity<InputStreamResource> downloadSegment(
+            @PathVariable String kbId, @PathVariable String id, @PathVariable int chunkIndex) {
+        KbFile file = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
+                .eq(KbFile::getId, id).eq(KbFile::getKbId, kbId));
+        if (file == null) {
+            return ResponseEntity.notFound().build();
+        }
+
+        String ext = file.getExtension() != null ? file.getExtension().toLowerCase() : "mp3";
+        String segKey = kbId + "/" + id + "/segments/" + chunkIndex + "." + ext;
+
+        try {
+            InputStream stream = minioService.download(segKey);
+            MediaType mediaType = MediaType.parseMediaType("audio/" + ext);
+
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                    .contentType(mediaType)
+                    .body(new InputStreamResource(stream));
+        } catch (Exception e) {
+            log.warn("Segment not found: {} (chunkIndex={})", segKey, chunkIndex);
+            return ResponseEntity.notFound().build();
+        }
+    }
+
+    /**
+     * 下载 PDF 提取的页面图片
+     * 图片存储在: {kbId}/{fileId}/images/{imageKey}
+     */
+    @GetMapping("/{id}/images/{imageKey}")
+    public ResponseEntity<InputStreamResource> downloadPageImage(
+            @PathVariable String kbId, @PathVariable String id, @PathVariable String imageKey) {
+        try {
+            String objectKey = kbId + "/" + id + "/images/" + imageKey;
+            InputStream stream = minioService.download(objectKey);
+            return ResponseEntity.ok()
+                    .header(HttpHeaders.CONTENT_DISPOSITION, "inline")
+                    .contentType(MediaType.IMAGE_PNG)
+                    .body(new InputStreamResource(stream));
+        } catch (Exception e) {
+            log.warn("Page image not found: {} / {}", id, imageKey);
+            return ResponseEntity.notFound().build();
+        }
+    }
 }

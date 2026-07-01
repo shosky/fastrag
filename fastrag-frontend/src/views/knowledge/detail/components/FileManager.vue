@@ -16,6 +16,27 @@ import RecycleBinDialog from './RecycleBinDialog.vue'
 import { useFiles } from '@/composables/useFiles'
 import { useParseStrategy } from '@/composables/useParseStrategy'
 
+// --- 状态轮询 ---
+let pollingTimer: ReturnType<typeof setInterval> | null = null
+
+function startPolling() {
+  stopPolling()
+  pollingTimer = setInterval(async () => {
+    await load()
+    const hasProcessing = files.value.some((f) => f.status === 'processing')
+    if (!hasProcessing) {
+      stopPolling()
+    }
+  }, 3000)
+}
+
+function stopPolling() {
+  if (pollingTimer !== null) {
+    clearInterval(pollingTimer)
+    pollingTimer = null
+  }
+}
+
 const props = defineProps<{
   kbId?: string
 }>()
@@ -71,16 +92,24 @@ async function handleUpload(selectedFiles: File[], config: UploadConfig & { file
   // 触发已上传文件的处理流程
   const fileIds = config.fileIds || []
   if (fileIds.length > 0) {
-    for (const fileId of fileIds) {
-      try {
-        await api.processFile(kbId, fileId)
-      } catch (e) {
-        console.error('Failed to process file:', fileId, e)
-      }
-    }
+    // 并发触发处理请求（不阻塞 UI）
+    const promises = fileIds.map((fid) =>
+      api.processFile(kbId, fid).catch((e) => {
+        console.error('Failed to process file:', fid, e)
+      }),
+    )
     ElMessage.success(`已触发 ${fileIds.length} 个文件的处理流程`)
+
+    // 立即轮询状态，用户可看到实时进度
+    startPolling()
+
+    // 等待所有 HTTP 处理请求完成
+    await Promise.allSettled(promises)
   }
+
+  // 最终刷新一次
   await load()
+  stopPolling()
 }
 
 // --- New folder ---
@@ -309,7 +338,7 @@ onMounted(() => {
 })
 
 onBeforeUnmount(() => {
-  // 组件卸载时无需特殊清理（mock 数据在内存中保留）
+  stopPolling()
 })
 </script>
 

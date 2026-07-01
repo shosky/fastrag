@@ -149,6 +149,10 @@ CREATE TABLE IF NOT EXISTS kb_chunk (
     vector_stored TINYINT DEFAULT 0,
     start_time DOUBLE DEFAULT NULL COMMENT '开始时间(秒)',
     end_time DOUBLE DEFAULT NULL COMMENT '结束时间(秒)',
+    page_number INT DEFAULT NULL COMMENT 'PDF 页码',
+    page_range VARCHAR(16) DEFAULT NULL COMMENT '页码范围',
+    image_keys JSON DEFAULT NULL COMMENT '关联图片 key',
+    chunk_type VARCHAR(16) DEFAULT 'text' COMMENT '分片类型(text/image)',
     INDEX idx_kb_id (kb_id),
     INDEX idx_file_id (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

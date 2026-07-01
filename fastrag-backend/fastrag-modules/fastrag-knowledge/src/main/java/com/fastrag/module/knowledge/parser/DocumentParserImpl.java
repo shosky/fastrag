@@ -1,15 +1,21 @@
 package com.fastrag.module.knowledge.parser;
 
+import cn.hutool.json.JSONUtil;
 import com.fastrag.ai.asr.AsrResult;
 import com.fastrag.ai.asr.AsrService;
 import com.fastrag.ai.llm.LlmService;
 import com.fastrag.ai.ocr.OcrService;
+import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
+import lombok.AllArgsConstructor;
+import lombok.Builder;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
+import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
 import org.apache.poi.xwpf.usermodel.XWPFDocument;
 import org.apache.poi.xwpf.extractor.XWPFWordExtractor;
@@ -21,6 +27,9 @@ import org.springframework.stereotype.Service;
 import java.io.InputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
+import java.util.NavigableMap;
+import java.util.TreeMap;
 import java.nio.ByteBuffer;
 import java.nio.CharBuffer;
 import java.nio.charset.Charset;
@@ -38,6 +47,7 @@ public class DocumentParserImpl implements DocumentParser {
     private final AsrService asrService;
     private final OcrService ocrService;
     private final MediaExtractor mediaExtractor;
+    private final MinioService minioService;
 
     @Override
     public ParseResult parse(InputStream fileStream, String extension, String strategyId) {
@@ -88,16 +98,54 @@ public class DocumentParserImpl implements DocumentParser {
     }
 
     private ParseResult parsePdf(InputStream stream, KbParseStrategy strategy) throws Exception {
-        try (PDDocument doc = Loader.loadPDF(stream.readAllBytes())) {
-            PDFTextStripper stripper = new PDFTextStripper();
-            String text = stripper.getText(doc);
-            int pages = doc.getNumberOfPages();
+        byte[] pdfBytes = stream.readAllBytes();
+        try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
+            int totalPages = doc.getNumberOfPages();
+            log.info("Parsing PDF: {} pages", totalPages);
 
-            if (strategy != null && strategy.getLlmModel() != null) {
-                text = enhanceWithLlm(text, strategy.getLlmModel());
+            // 逐页提取文字，插入 PAGE_BREAK 标记
+            StringBuilder textWithMarkers = new StringBuilder();
+            PDFRenderer renderer = new PDFRenderer(doc);
+
+            for (int pageNum = 0; pageNum < totalPages; pageNum++) {
+                // 提取该页文本
+                PDFTextStripper stripper = new PDFTextStripper();
+                stripper.setStartPage(pageNum + 1);
+                stripper.setEndPage(pageNum + 1);
+                String pageText = stripper.getText(doc);
+
+                // 扫描件 OCR 兜底：文字太少则渲染页面为图片调 DeepSeek-OCR
+                if (pageText.trim().length() < 50) {
+                    try {
+                        java.awt.image.BufferedImage pageImage = renderer.renderImageWithDPI(pageNum, 200);
+                        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+                        javax.imageio.ImageIO.write(pageImage, "png", baos);
+                        String ocrResult = ocrService.recognize(baos.toByteArray(), "png");
+                        if (ocrResult != null && !ocrResult.isBlank()) {
+                            log.info("OCR fallback for page {}: {} chars", pageNum + 1, ocrResult.length());
+                            pageText = ocrResult;
+                        }
+                    } catch (Exception e) {
+                        log.warn("OCR fallback failed for page {}: {}", pageNum + 1, e.getMessage());
+                    }
+                }
+
+                textWithMarkers.append(pageText.trim());
+                if (pageNum < totalPages - 1) {
+                    textWithMarkers.append("\n\n[PAGE_BREAK:").append(pageNum + 1).append("]\n\n");
+                }
             }
 
-            return ParseResult.builder().text(text).pages(pages).build();
+            // LLM 增强（可选）
+            String fullText = textWithMarkers.toString();
+            if (strategy != null && strategy.getLlmModel() != null) {
+                fullText = enhanceWithLlm(fullText, strategy.getLlmModel());
+            }
+
+            return ParseResult.builder()
+                    .text(fullText)
+                    .pages(totalPages)
+                    .build();
         }
     }
 
@@ -209,13 +257,201 @@ public class DocumentParserImpl implements DocumentParser {
     }
 
     /**
-     * 解析视频文件：提取音频 → ASR 转文字 → 带时间戳分段
+     * 解析视频文件：关键帧 OCR + 音频 ASR → 联合分块
+     * <p>
+     * 处理流程：
+     * 1. 从 strategy.advanced 读取关键帧配置（采样间隔、哈希阈值）
+     * 2. 音频路：FFmpeg 提取音频 → ASR 转文字（带时间戳分段）
+     * 3. 视觉路：FFmpeg 均匀采样关键帧 → pHash 去重 → DeepSeek-OCR 提取文字
+     * 4. 以 ASR 自然分段对齐，合并关键帧 OCR 文字和 ASR 文本为联合 chunk
      */
     private ParseResult parseVideo(InputStream stream, String extension, KbParseStrategy strategy) throws Exception {
-        log.info("Parsing video file, extension: {}", extension);
-        byte[] audioBytes = mediaExtractor.extractAudio(stream, extension);
-        String filename = "audio." + (extension != null ? extension : "mp4");
-        return doAsrParse(audioBytes, filename, strategy);
+        log.info("Parsing video file with multimodal processing, extension: {}", extension);
+
+        // 读取策略配置
+        int keyframeInterval = 10;   // 默认每 10 秒采样一帧
+        int hashThreshold = 10;     // 默认汉明距离阈值
+        if (strategy != null && strategy.getAdvanced() != null) {
+            try {
+                Map<String, Object> advanced = JSONUtil.toBean(strategy.getAdvanced(), Map.class);
+                if (advanced.containsKey("keyframeIntervalSeconds")) {
+                    keyframeInterval = ((Number) advanced.get("keyframeIntervalSeconds")).intValue();
+                }
+                if (advanced.containsKey("keyframeHashThreshold")) {
+                    hashThreshold = ((Number) advanced.get("keyframeHashThreshold")).intValue();
+                }
+            } catch (Exception e) {
+                log.warn("Failed to parse video strategy advanced config, using defaults", e);
+            }
+        }
+        log.info("Video parse config: keyframeInterval={}s, hashThreshold={}", keyframeInterval, hashThreshold);
+
+        // 读取视频流字节（因为 stream 只能读一次，需要分别传给音频和视觉两条路径）
+        byte[] videoBytes = stream.readAllBytes();
+
+        // === 音频路：提取音频 → ASR ===
+        List<AsrResult.AsrSegment> asrSegments = new ArrayList<>();
+        String asrFullText = "";
+        try {
+            byte[] audioBytes = mediaExtractor.extractAudio(
+                    new java.io.ByteArrayInputStream(videoBytes), extension);
+            AsrResult asrResult = asrService.transcribe(audioBytes, "audio." + (extension != null ? extension : "mp4"));
+            asrFullText = asrResult.getText();
+            if (asrResult.getSegments() != null) {
+                asrSegments.addAll(asrResult.getSegments());
+            }
+            log.info("Video ASR completed: {} segments, {} chars", asrSegments.size(), asrFullText.length());
+        } catch (Exception e) {
+            log.error("Video ASR failed, continuing with keyframe-only mode", e);
+        }
+
+        // === 视觉路：关键帧提取 → 去重 → OCR ===
+        List<KeyframeOcr> keyframeOcrList = new ArrayList<>();
+        try {
+            List<MediaExtractor.Keyframe> keyframes = mediaExtractor.extractKeyframes(
+                    new java.io.ByteArrayInputStream(videoBytes), extension, keyframeInterval);
+            log.info("Extracted {} raw keyframes from video", keyframes.size());
+
+            // 感知哈希去重
+            List<MediaExtractor.Keyframe> deduped = mediaExtractor.deduplicateByHash(keyframes, hashThreshold);
+
+            // 逐帧 OCR
+            for (MediaExtractor.Keyframe kf : deduped) {
+                try {
+                    String ocrText = ocrService.recognize(kf.getImageBytes(), "jpg");
+                    if (ocrText != null && !ocrText.isBlank()) {
+                        keyframeOcrList.add(KeyframeOcr.builder()
+                                .timestampSeconds(kf.getTimestampSeconds())
+                                .ocrText(ocrText.trim())
+                                .build());
+                    }
+                } catch (Exception e) {
+                    log.warn("OCR failed for keyframe at {}s: {}", kf.getTimestampSeconds(), e.getMessage());
+                }
+            }
+            log.info("Keyframe OCR completed: {} frames with text", keyframeOcrList.size());
+        } catch (Exception e) {
+            log.error("Video keyframe extraction/OCR failed, continuing with ASR-only mode", e);
+        }
+
+        // === 合并两路结果 ===
+        return mergeSegmentsWithKeyframes(asrFullText, asrSegments, keyframeOcrList, strategy);
+    }
+
+    /**
+     * 将 ASR 分段与关键帧 OCR 结果按时间轴合并
+     * <p>
+     * 以 ASR 自然分段对齐，对每个 ASR 段找到时间上最近的关键帧，
+     * 将 OCR 文字与 ASR 文本合并为联合 chunk。
+     */
+    private ParseResult mergeSegmentsWithKeyframes(
+            String asrFullText,
+            List<AsrResult.AsrSegment> asrSegments,
+            List<KeyframeOcr> keyframeOcrList,
+            KbParseStrategy strategy) {
+
+        List<ParseResult.ChunkTimeSegment> mergedSegments = new ArrayList<>();
+
+        if (asrSegments.isEmpty()) {
+            // ASR 失败但有关键帧 OCR 结果时，以关键帧构建分段
+            log.info("No ASR segments, building segments from keyframes only");
+            for (KeyframeOcr kf : keyframeOcrList) {
+                mergedSegments.add(ParseResult.ChunkTimeSegment.builder()
+                        .text("【画面内容】\n" + kf.getOcrText())
+                        .startTime(kf.getTimestampSeconds())
+                        .endTime(kf.getTimestampSeconds() + 10.0) // 估算
+                        .build());
+            }
+        } else if (keyframeOcrList.isEmpty()) {
+            // 无关键帧 OCR 结果时，保留纯 ASR 分段
+            log.info("No keyframe OCR results, keeping ASR segments only");
+            for (AsrResult.AsrSegment seg : asrSegments) {
+                mergedSegments.add(ParseResult.ChunkTimeSegment.builder()
+                        .text(seg.getText())
+                        .startTime(seg.getStart())
+                        .endTime(seg.getEnd())
+                        .build());
+            }
+        } else {
+            // 两路都有结果：按 ASR 分段对齐，附加最近关键帧的 OCR 文字
+            // 构建 keyframe 时间索引（NavigableMap 方便查找最近的 keyframe）
+            NavigableMap<Double, KeyframeOcr> kfIndex = new TreeMap<>();
+            for (KeyframeOcr kf : keyframeOcrList) {
+                kfIndex.put(kf.getTimestampSeconds(), kf);
+            }
+
+            for (AsrResult.AsrSegment seg : asrSegments) {
+                double startTime = seg.getStart() != null ? seg.getStart() : 0.0;
+                double endTime = seg.getEnd() != null ? seg.getEnd() : startTime;
+                double midpoint = (startTime + endTime) / 2.0;
+
+                // 查找时间上最近的关键帧
+                KeyframeOcr nearestKf = findNearestKeyframe(kfIndex, midpoint);
+
+                String asrText = seg.getText() != null ? seg.getText().trim() : "";
+                if (asrText.isEmpty()) continue;
+
+                if (nearestKf != null && nearestKf.getOcrText() != null && !nearestKf.getOcrText().isBlank()) {
+                    // 合并为联合文本
+                    String merged = "【画面内容】\n" + nearestKf.getOcrText()
+                            + "\n【语音内容】\n" + asrText;
+                    mergedSegments.add(ParseResult.ChunkTimeSegment.builder()
+                            .text(merged)
+                            .startTime(startTime)
+                            .endTime(endTime)
+                            .build());
+                } else {
+                    // 无对应关键帧，保留纯 ASR 文本
+                    mergedSegments.add(ParseResult.ChunkTimeSegment.builder()
+                            .text(asrText)
+                            .startTime(startTime)
+                            .endTime(endTime)
+                            .build());
+                }
+            }
+        }
+
+        // 可选 LLM 增强
+        String fullText = asrFullText;
+        if (strategy != null && strategy.getLlmModel() != null && fullText != null) {
+            try {
+                fullText = enhanceWithLlm(fullText, strategy.getLlmModel());
+            } catch (Exception e) {
+                log.warn("LLM enhancement failed, using original text", e);
+            }
+        }
+
+        return ParseResult.builder()
+                .text(fullText != null ? fullText : "")
+                .pages(1)
+                .segments(mergedSegments)
+                .build();
+    }
+
+    /**
+     * 在关键帧时间索引中查找与指定时间点最近的关键帧
+     *
+     * @param kfIndex  关键帧时间索引（NavigableMap，key 为时间戳）
+     * @param targetTime 目标时间点
+     * @return 最近的关键帧，如果没有则返回 null
+     */
+    private KeyframeOcr findNearestKeyframe(NavigableMap<Double, KeyframeOcr> kfIndex, double targetTime) {
+        if (kfIndex.isEmpty()) return null;
+
+        // floorEntry: <= targetTime 的最大 key
+        Map.Entry<Double, KeyframeOcr> floor = kfIndex.floorEntry(targetTime);
+        // ceilingEntry: >= targetTime 的最小 key
+        Map.Entry<Double, KeyframeOcr> ceiling = kfIndex.ceilingEntry(targetTime);
+
+        if (floor == null && ceiling == null) return null;
+        if (floor == null) return ceiling.getValue();
+        if (ceiling == null) return floor.getValue();
+
+        // 两者都存在，选距离更近的
+        double floorDist = Math.abs(targetTime - floor.getKey());
+        double ceilingDist = Math.abs(targetTime - ceiling.getKey());
+
+        return floorDist <= ceilingDist ? floor.getValue() : ceiling.getValue();
     }
 
     /**
@@ -281,5 +517,17 @@ public class DocumentParserImpl implements DocumentParser {
             log.warn("LLM enhancement failed, using original text", e);
             return text;
         }
+    }
+
+    /**
+     * 关键帧 OCR 结果模型
+     */
+    @Data
+    @Builder
+    public static class KeyframeOcr {
+        /** 关键帧时间戳（秒） */
+        private double timestampSeconds;
+        /** OCR 识别出的文字内容 */
+        private String ocrText;
     }
 }

@@ -17,8 +17,8 @@ public class ModelServiceImpl implements ModelService {
             if(f.containsKey("code")) m.setCode((String)f.get("code"));
             if(f.containsKey("purpose")) m.setPurpose((String)f.get("purpose"));
             if(f.containsKey("brand")) m.setBrand((String)f.get("brand"));
-            if(f.containsKey("apiUrl")) m.setApiUrl((String)f.get("apiUrl"));
-            if(f.containsKey("apiKeyRef")) m.setApiKeyRef((String)f.get("apiKeyRef"));
+            if(f.containsKey("apiUrl")) { String v=(String)f.get("apiUrl"); if(v!=null&&!v.isBlank()) m.setApiUrl(v); }
+            if(f.containsKey("apiKeyRef")) { String v=(String)f.get("apiKeyRef"); if(v!=null&&!v.isBlank()) m.setApiKeyRef(v); }
             if(f.containsKey("status")) m.setStatus((String)f.get("status"));
             mapper.updateById(m);
         }
