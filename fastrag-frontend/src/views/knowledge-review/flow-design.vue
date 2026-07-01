@@ -149,6 +149,7 @@ async function handleDelete(row: any) {
 }
 function addStep() { steps.value.push({ name: `步骤${steps.value.length + 1}`, reviewerRole: '知识管理员', timeoutHours: 24 }) }
 function removeStep(idx: number) { if (steps.value.length <= 1) { ElMessage.warning('至少需要一个步骤'); return }; steps.value.splice(idx, 1) }
+function copyStep(idx: number) { const src = steps.value[idx]; steps.value.splice(idx + 1, 0, { ...src, name: src.name + '(副本)' }) }
 async function handleSave() {
   if (!formData.value.name) { ElMessage.warning('请输入流程名称'); return }
   const s = steps.value.map((s, i) => ({ ...s, id: `step-${i + 1}`, order: i + 1 }))
@@ -464,6 +465,7 @@ async function handleApplySuggestion(sug: any) {
           <el-input-number v-model="step.timeoutHours" :min="1" :max="168" style="width: 130px" />
           <span style="font-size: 12px; color: #909399">小时超时</span>
           <el-button link type="danger" @click="removeStep(idx)">删除</el-button>
+          <el-button link type="primary" @click="copyStep(idx)">复制</el-button>
         </div>
         <el-button @click="addStep" style="width: 100%">+ 添加步骤</el-button>
       </el-form>

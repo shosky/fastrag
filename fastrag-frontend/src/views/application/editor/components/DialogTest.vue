@@ -6,6 +6,18 @@ import * as api from '@/api'
 const props = defineProps<{ appInfo: { id: string } }>()
 const appId = () => props.appInfo.id
 
+/** tags 与数据库 JSON 列互转工具 */
+function parseTag(tags: any): string {
+  if (!tags) return ''
+  if (typeof tags !== 'string') return String(tags)
+  try { const arr = JSON.parse(tags); return Array.isArray(arr) ? arr.join(', ') : String(arr) } catch { return tags }
+}
+function toTagJson(str: string): string {
+  if (!str || !str.trim()) return ''
+  try { JSON.parse(str); return str } catch { /* 不是 JSON，包装为数组 */ }
+  return JSON.stringify(str.split(/[,，]/).map(s => s.trim()).filter(Boolean))
+}
+
 const testList = ref<any[]>([])
 const showDialog = ref(false)
 const isEditing = ref(false)
@@ -63,7 +75,7 @@ async function handleSaveRecorded() {
       name: '录制-' + recordedQA.value.query.substring(0, 16) + '...',
       query: recordedQA.value.query,
       expectedAnswer: recordedQA.value.answer,
-      tags: '录制',
+      tags: JSON.stringify(['录制']),
     })
     ElMessage.success('测试案例已录制保存')
     showRecorder.value = false
@@ -86,7 +98,7 @@ async function handleBatchImport() {
           name: parts[0].trim(),
           query: parts[1].trim(),
           expectedAnswer: parts.length >= 3 ? parts[2].trim() : '',
-          tags: '批量导入',
+          tags: JSON.stringify(['批量导入']),
         })
         count++
       }
@@ -98,11 +110,12 @@ async function handleBatchImport() {
 }
 
 function openAdd() { isEditing.value = false; editingId.value = ''; form.value = { ...formDefault }; showDialog.value = true }
-function openEdit(row: any) { isEditing.value = true; editingId.value = row.id; form.value = { name: row.name, query: row.query, expectedAnswer: row.expectedAnswer, tags: row.tags || '' }; showDialog.value = true }
+function openEdit(row: any) { isEditing.value = true; editingId.value = row.id; form.value = { name: row.name, query: row.query, expectedAnswer: row.expectedAnswer, tags: parseTag(row.tags) }; showDialog.value = true }
 async function handleSave() {
   if (!form.value.name) { ElMessage.warning('请输入名称'); return }
-  if (isEditing.value) { await api.updateAppDialogTest(appId(), editingId.value, form.value); ElMessage.success('已更新') }
-  else { await api.createAppDialogTest(appId(), form.value); ElMessage.success('已创建') }
+  const data = { ...form.value, tags: toTagJson(form.value.tags) }
+  if (isEditing.value) { await api.updateAppDialogTest(appId(), editingId.value, data); ElMessage.success('已更新') }
+  else { await api.createAppDialogTest(appId(), data); ElMessage.success('已创建') }
   showDialog.value = false; await loadData()
 }
 async function handleDelete(row: any) {
@@ -132,7 +145,7 @@ onMounted(loadData)
         <el-table-column prop="name" label="名称" min-width="120" />
         <el-table-column prop="query" label="问题" show-overflow-tooltip min-width="180" />
         <el-table-column prop="expectedAnswer" label="期望答案" show-overflow-tooltip min-width="180" />
-        <el-table-column prop="tags" label="标签" width="100"><template #default="{row}"><el-tag v-if="row.tags" size="small">{{ row.tags }}</el-tag></template></el-table-column>
+        <el-table-column prop="tags" label="标签" width="100"><template #default="{row}"><el-tag v-if="row.tags" size="small">{{ parseTag(row.tags) }}</el-tag></template></el-table-column>
         <el-table-column label="操作" width="130"><template #default="{row}"><el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button><el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button></template></el-table-column>
       </el-table>
       <div style="display:flex;justify-content:center;margin-top:12px">

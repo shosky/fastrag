@@ -5,5 +5,12 @@ import com.baomidou.mybatisplus.annotation.*; import com.fasterxml.jackson.annot
     @JsonIgnore private String tags;
     private Integer matched; private Double similarity; private LocalDateTime createdAt;
 
-    @JsonProperty public void setTags(Object tags) { this.tags = tags == null ? null : tags.toString(); }
+    @JsonProperty public void setTags(Object tags) {
+        if (tags == null) { this.tags = null; return; }
+        String s = tags.toString().trim();
+        // 如果已经是合法 JSON（以 [ 或 { 开头），直接使用；否则包装为 JSON 数组
+        if (s.isEmpty()) { this.tags = null; }
+        else if (s.startsWith("[") || s.startsWith("{")) { this.tags = s; }
+        else { this.tags = "[\"" + s.replace("\"", "\\\"") + "\"]"; }
+    }
 }
