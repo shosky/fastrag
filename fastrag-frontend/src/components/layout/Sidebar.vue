@@ -27,12 +27,12 @@ interface NavModule {
 interface SubMenuItem {
   path: string
   title: string
+  icon?: string
   requirePerm?: string
   children?: SubMenuItem[]
 }
 
 // 全部模块定义（静态），通过 computed 过滤后渲染
-// 三大顶级模块：知识库、应用、管理
 const allModules: NavModule[] = [
   { key: 'home', title: '首页', icon: 'HomeFilled', path: '/home' },
 
@@ -45,23 +45,25 @@ const allModules: NavModule[] = [
       {
         path: '/knowledge',
         title: '知识库管理',
+        icon: 'FolderOpened',
         children: [
-          { path: '/knowledge', title: '知识库列表' },
-          { path: '/knowledge/categories', title: '知识库分类' },
-          { path: '/knowledge/tags', title: '知识库标签' },
+          { path: '/knowledge', title: '知识库列表', icon: 'Document' },
+          { path: '/knowledge/categories', title: '知识库分类', icon: 'Grid' },
+          { path: '/knowledge/tags', title: '知识库标签', icon: 'PriceTag' },
         ],
       },
       {
         path: '/knowledge-review',
         title: '知识审核',
+        icon: 'Edit',
         children: [
-          { path: '/knowledge-review/management', title: '审核管理' },
-          { path: '/knowledge-review/flows', title: '审核流程管理' },
-          { path: '/knowledge-review/flow-design', title: '审核流程设计' },
-          { path: '/knowledge-review/listeners', title: '监听管理' },
-          { path: '/knowledge-review/compliance', title: '合规性检查' },
-          { path: '/knowledge-review/reports', title: '审核报告' },
-          { path: '/knowledge-review/quality', title: '质量评估' },
+          { path: '/knowledge-review/management', title: '审核管理', icon: 'Setting' },
+          { path: '/knowledge-review/flows', title: '审核流程管理', icon: 'Connection' },
+          { path: '/knowledge-review/flow-design', title: '审核流程设计', icon: 'EditPen' },
+          { path: '/knowledge-review/listeners', title: '监听管理', icon: 'Bell' },
+          { path: '/knowledge-review/compliance', title: '合规性检查', icon: 'Shield' },
+          { path: '/knowledge-review/reports', title: '审核报告', icon: 'DataBoard' },
+          { path: '/knowledge-review/quality', title: '质量评估', icon: 'Star' },
         ],
       },
     ],
@@ -76,33 +78,36 @@ const allModules: NavModule[] = [
       {
         path: '/application',
         title: '应用管理',
-	        children: [
-		          { path: '/application', title: '应用中心' },
-		          { path: '/publish-eval/release', title: '发布与评估' },
-	        ],
+        icon: 'Grid',
+        children: [
+          { path: '/application', title: '应用中心', icon: 'Grid' },
+          { path: '/publish-eval/release', title: '发布与评估', icon: 'Upload' },
+        ],
       },
       {
         path: '/application/tools',
         title: '工具与服务',
+        icon: 'Tools',
         children: [
-          { path: '/application/my-tools', title: '我的工具' },
-          { path: '/application/mcp-management', title: 'MCP管理' },
-          { path: '/plugin-db/plugins', title: '插件管理' },
-          { path: '/application/skill-management', title: '技能管理' },
-          { path: '/plugin-db/databases', title: '数据库管理' },
+          { path: '/application/my-tools', title: '我的工具', icon: 'Tools' },
+          { path: '/application/mcp-management', title: 'MCP管理', icon: 'Connection' },
+          { path: '/plugin-db/plugins', title: '插件管理', icon: 'Coin' },
+          { path: '/application/skill-management', title: '技能管理', icon: 'MagicStick' },
+          { path: '/plugin-db/databases', title: '数据库管理', icon: 'Database' },
         ],
       },
       {
         path: '/operation',
         title: '运营中心',
+        icon: 'DataAnalysis',
         children: [
-          { path: '/operation/feedback', title: '反馈管理' },
-          { path: '/operation/qa-detail', title: '问答明细' },
-          { path: '/operation/retrieval-analysis', title: '检索日志分析' },
-          { path: '/robot-operation/faq-analysis', title: 'FAQ知识分析' },
-          { path: '/robot-operation/multi-turn', title: '多轮对话分析' },
-          { path: '/robot-operation/intent', title: '意图知识分析' },
-          { path: '/robot-operation/data-mining', title: '数据挖掘' },
+          { path: '/operation/feedback', title: '反馈管理', icon: 'ChatLineSquare' },
+          { path: '/operation/qa-detail', title: '问答明细', icon: 'ChatDotRound' },
+          { path: '/operation/retrieval-analysis', title: '检索日志分析', icon: 'Search' },
+          { path: '/robot-operation/faq-analysis', title: 'FAQ知识分析', icon: 'Document' },
+          { path: '/robot-operation/multi-turn', title: '多轮对话分析', icon: 'ChatLineSquare' },
+          { path: '/robot-operation/intent', title: '意图知识分析', icon: 'Aim' },
+          { path: '/robot-operation/data-mining', title: '数据挖掘', icon: 'DataAnalysis' },
         ],
       },
     ],
@@ -115,72 +120,78 @@ const allModules: NavModule[] = [
     icon: 'Setting',
     requirePerm: 'admin:access',
     children: [
-      { path: '/admin/index', title: '管理中心概览' },
+      { path: '/admin/index', title: '管理中心概览', icon: 'DataBoard' },
       {
         path: '/admin/system',
         title: '系统管理',
+        icon: 'Setting',
         requirePerm: 'admin:system',
         children: [
-	          { path: '/admin/system/general-settings', title: '通用设置' },
-	          { path: '/admin/system/config-management', title: '配置管理' },
-	          { path: '/admin/system/kb-config', title: '知识库配置' },
-	          { path: '/admin/system/sensitive-words', title: '敏感词设置' },
-	          { path: '/admin/system/dictionary', title: '字典管理' },
-	          { path: '/admin/system/terminology', title: '术语管理' },
-	          { path: '/admin/system/query-rules', title: '查询规则' },
-          { path: '/operation/model-monitor', title: '模型监控' },
+          { path: '/admin/system/general-settings', title: '通用设置', icon: 'Setting' },
+          { path: '/admin/system/config-management', title: '配置管理', icon: 'Tools' },
+          { path: '/admin/system/kb-config', title: '知识库配置', icon: 'Collection' },
+          { path: '/admin/system/sensitive-words', title: '敏感词设置', icon: 'WarningFilled' },
+          { path: '/admin/system/dictionary', title: '字典管理', icon: 'Notebook' },
+          { path: '/admin/system/terminology', title: '术语管理', icon: 'Reading' },
+          { path: '/admin/system/query-rules', title: '查询规则', icon: 'List' },
+          { path: '/operation/model-monitor', title: '模型监控', icon: 'Monitor' },
         ],
       },
       {
         path: '/admin/account',
         title: '账号权限',
+        icon: 'User',
         requirePerm: 'admin:role',
         children: [
-          { path: '/admin/account/roles', title: '角色管理' },
-          { path: '/admin/account/organization', title: '组织管理' },
-          { path: '/admin/account/team', title: '团队管理' },
-          { path: '/admin/account/personnel', title: '人员管理' },
-          { path: '/admin/permissions', title: '权限管理' },
+          { path: '/admin/account/roles', title: '角色管理', icon: 'User' },
+          { path: '/admin/account/organization', title: '组织管理', icon: 'OfficeBuilding' },
+          { path: '/admin/account/team', title: '团队管理', icon: 'Users' },
+          { path: '/admin/account/personnel', title: '人员管理', icon: 'UserFilled' },
+          { path: '/admin/permissions', title: '权限管理', icon: 'Key' },
         ],
       },
       {
         path: '/admin/audit',
         title: '安全审计',
+        icon: 'Lock',
         requirePerm: 'admin:audit',
         children: [
-          { path: '/admin/audit/system-log', title: '系统日志' },
-          { path: '/admin/audit/device-login', title: '设备登录分析' },
-          { path: '/admin/audit/login-security', title: '登录安全配置' },
-          { path: '/admin/audit/review-center', title: '审核中心' },
+          { path: '/admin/audit/system-log', title: '系统日志', icon: 'Document' },
+          { path: '/admin/audit/device-login', title: '设备登录分析', icon: 'Monitor' },
+          { path: '/admin/audit/login-security', title: '登录安全配置', icon: 'Lock' },
+          { path: '/admin/audit/review-center', title: '审核中心', icon: 'View' },
         ],
       },
       {
         path: '/admin/content',
         title: '内容与工具',
+        icon: 'FolderOpened',
         children: [
-          { path: '/admin/content/notification', title: '通知管理' },
-          { path: '/admin/notifications', title: '通知中心' },
-          { path: '/admin/content/prompts', title: '提示词' },
-          { path: '/application/prompt-templates', title: 'Prompt模板' },
-          { path: '/admin/content/templates', title: '文档模板' },
-          { path: '/admin/content/download', title: '下载中心' },
+          { path: '/admin/content/notification', title: '通知管理', icon: 'Bell' },
+          { path: '/admin/notifications', title: '通知中心', icon: 'Bell' },
+          { path: '/admin/content/prompts', title: '提示词', icon: 'Edit' },
+          { path: '/application/prompt-templates', title: 'Prompt模板', icon: 'CopyDocument' },
+          { path: '/admin/content/templates', title: '文档模板', icon: 'Document' },
+          { path: '/admin/content/download', title: '下载中心', icon: 'Download' },
         ],
       },
       {
         path: '/admin/analytics',
         title: '数据分析',
+        icon: 'DataAnalysis',
         children: [
-          { path: '/operation/kb-analytics', title: '知识库分析' },
+          { path: '/operation/kb-analytics', title: '知识库分析', icon: 'DataAnalysis' },
         ],
       },
       {
         path: '/admin/platform',
         title: '开放平台',
+        icon: 'Connection',
         requirePerm: 'admin:system',
         children: [
-          { path: '/admin/platform/third-party', title: '三方平台' },
-          { path: '/admin/platform/model-management', title: '模型管理' },
-          { path: '/admin/platform/api-keys', title: '开放密钥' },
+          { path: '/admin/platform/third-party', title: '三方平台', icon: 'Connection' },
+          { path: '/admin/platform/model-management', title: '模型管理', icon: 'Cpu' },
+          { path: '/admin/platform/api-keys', title: '开放密钥', icon: 'Key' },
         ],
       },
     ],
@@ -237,12 +248,10 @@ const navModules = computed<NavModule[]>(() => {
     .filter(Boolean) as NavModule[]
 })
 
-// 当前选中的模块（三大顶级模块：knowledge / application / admin）
+// 当前选中的模块
 const activeModule = computed(() => {
   const path = route.path
-  // 管理
   if (path.startsWith('/admin')) return 'admin'
-  // 应用（含机器人配置、业务流、对话知识、发布评估、运营中心、工具/MCP/插件/技能/数据库）
   if (
     path.startsWith('/application') ||
     path.startsWith('/publish-eval') ||
@@ -250,7 +259,6 @@ const activeModule = computed(() => {
     path.startsWith('/plugin-db') ||
     path.startsWith('/operation')
   ) return 'application'
-  // 知识库（含应答知识库、知识引用、知识生产、知识存储、知识审核、知识更新、知识加工）
   if (
     path.startsWith('/knowledge') ||
     path.startsWith('/knowledge-review')
@@ -297,12 +305,10 @@ watch(activeModule, () => {
 })
 
 function handleModuleClick(module: NavModule) {
-  // 如果有直接路径，跳转
   if (module.path) {
     router.push(module.path)
     return
   }
-  // 如果有子菜单，跳转到第一个子菜单
   if (module.children && module.children.length > 0) {
     router.push(module.children[0].path)
   }
@@ -321,18 +327,9 @@ function handleMenuClick(path: string) {
   router.push(path)
 }
 
-/**
- * 判断菜单项是否高亮。
- * 规则：
- *  - 精确匹配 → 高亮
- *  - 当前路径是该项的子路径（path + '/...'）→ 高亮
- *    但要排除「同级兄弟也是前缀」的情况，例如 /application 是 /application/my-tools 的前缀，
- *    但二者是平级菜单，不应互相吸收。
- */
 function isActive(path: string): boolean {
   if (route.path === path) return true
   if (!route.path.startsWith(path + '/')) return false
-  // 收集当前模块下所有叶子菜单路径
   const leafPaths: string[] = []
   const collect = (items: SubMenuItem[]) => {
     items.forEach((item) => {
@@ -344,7 +341,6 @@ function isActive(path: string): boolean {
     })
   }
   collect(currentSubMenus.value)
-  // 若存在比 path 更具体的兄弟菜单也匹配当前路由，则 path 不应高亮（让更具体的那个高亮）
   const moreSpecific = leafPaths.some((p) => p !== path && p.startsWith(path + '/') && route.path.startsWith(p))
   return !moreSpecific
 }
@@ -360,7 +356,7 @@ async function handleLogout() {
 
 <template>
   <div class="sidebar">
-    <!-- 左侧窄条 -->
+    <!-- 左侧窄条 - 极简导航 -->
     <div class="nav-strip">
       <div class="strip-logo">
         <Logo :mini="true" />
@@ -374,16 +370,22 @@ async function handleLogout() {
           :class="{ active: activeModule === module.key }"
           @click="handleModuleClick(module)"
         >
-          <el-icon :size="20"><component :is="module.icon" /></el-icon>
-          <span class="strip-label">{{ module.title }}</span>
-          <div class="active-indicator"></div>
+          <!-- 选中态：浮动卡片包裹 -->
+          <div class="strip-item-inner">
+            <el-icon :size="22">
+              <component :is="module.icon" />
+            </el-icon>
+            <span class="strip-label">{{ module.title }}</span>
+          </div>
         </div>
       </div>
 
       <div class="strip-footer">
         <el-tooltip content="退出登录" placement="right">
-          <div class="strip-item" @click="handleLogout">
-            <el-icon :size="20"><SwitchButton /></el-icon>
+          <div class="strip-item logout" @click="handleLogout">
+            <div class="strip-item-inner">
+              <el-icon :size="20"><SwitchButton /></el-icon>
+            </div>
           </div>
         </el-tooltip>
       </div>
@@ -392,31 +394,40 @@ async function handleLogout() {
     <!-- 右侧二级菜单 -->
     <div v-if="hasSubMenu" class="sub-menu-panel">
       <div class="sub-menu-header">
+        <el-icon :size="18" class="header-icon"><component :is="currentModule?.icon" /></el-icon>
         <span>{{ currentModule?.title }}</span>
       </div>
 
       <el-scrollbar class="sub-menu-body">
         <div class="menu-list">
           <template v-for="menu in currentSubMenus" :key="menu.path">
-            <!-- 无子菜单 -->
+            <!-- 叶子菜单（无子菜单） -->
             <div
               v-if="!menu.children || menu.children.length === 0"
               class="menu-item"
               :class="{ active: isActive(menu.path) }"
               @click="handleMenuClick(menu.path)"
             >
-              <span>{{ menu.title }}</span>
+              <el-icon v-if="menu.icon" :size="16" class="menu-icon">
+                <component :is="menu.icon" />
+              </el-icon>
+              <span class="menu-text">{{ menu.title }}</span>
             </div>
 
-            <!-- 有子菜单 -->
+            <!-- 有子菜单的菜单组 -->
             <div v-else class="menu-group">
               <div
                 class="menu-group-title"
                 :class="{ expanded: expandedMenus.includes(menu.path) }"
                 @click="toggleSubMenu(menu.path)"
               >
-                <span>{{ menu.title }}</span>
-                <el-icon class="expand-icon"><ArrowDown /></el-icon>
+                <div class="menu-group-title-left">
+                  <el-icon v-if="menu.icon" :size="16" class="menu-icon">
+                    <component :is="menu.icon" />
+                  </el-icon>
+                  <span>{{ menu.title }}</span>
+                </div>
+                <el-icon class="expand-icon" :size="12"><ArrowDown /></el-icon>
               </div>
               <div v-show="expandedMenus.includes(menu.path)" class="menu-group-items">
                 <div
@@ -426,8 +437,10 @@ async function handleLogout() {
                   :class="{ active: isActive(child.path) }"
                   @click="handleMenuClick(child.path)"
                 >
-                  <span class="active-dot"></span>
-                  <span>{{ child.title }}</span>
+                  <el-icon v-if="child.icon" :size="16" class="menu-icon">
+                    <component :is="child.icon" />
+                  </el-icon>
+                  <span class="menu-text">{{ child.title }}</span>
                 </div>
               </div>
             </div>
@@ -447,94 +460,111 @@ async function handleLogout() {
   flex-shrink: 0;
 }
 
-// 左侧窄条
+// ============ 左侧窄条导航 ============
 .nav-strip {
-  width: 64px;
-  background: #F8F9FA;
+  width: $nav-strip-width;
+  background: $nav-strip-bg;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid $border-lighter;
+  border-right: 1px solid $border-base;
+  z-index: 10;
 }
 
 .strip-logo {
-  padding: $spacing-sm 0;
+  padding: $spacing-md 0;
   display: flex;
   justify-content: center;
-  border-bottom: 1px solid $border-lighter;
+  border-bottom: 1px solid $border-light;
 }
 
 .strip-items {
   flex: 1;
   display: flex;
   flex-direction: column;
+  align-items: center;
   padding: $spacing-sm 0;
   overflow-y: auto;
+  gap: 4px;
 }
 
 .strip-item {
   display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 2px;
-  padding: 10px $spacing-xs;
+  justify-content: center;
+  width: 100%;
+  padding: 2px 0;
   cursor: pointer;
   position: relative;
-  color: $text-secondary;
-  transition: all 0.2s;
-
-  &:hover {
-    color: $color-primary;
-    background: $bg-hover;
-  }
+  transition: all 0.2s ease;
 
   &.active {
-    color: $color-primary;
-    background: $bg-active;
+    .strip-item-inner {
+      background: $bg-white;
+      border-radius: $radius-lg;
+      box-shadow: $shadow-nav-card;
+      color: $nav-icon-active;
+    }
+  }
 
-    .active-indicator {
-      position: absolute;
-      left: 0;
-      top: 50%;
-      transform: translateY(-50%);
-      width: 3px;
-      height: 24px;
-      background: $color-primary;
-      border-radius: 0 2px 2px 0;
+  &.logout {
+    .strip-item-inner {
+      color: $text-secondary;
     }
   }
 }
 
+.strip-item-inner {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 3px;
+  padding: 8px 6px;
+  width: 48px;
+  color: $nav-icon-color;
+  transition: all 0.25s cubic-bezier(0.4, 0, 0.2, 1);
+
+  &:hover {
+    color: $text-regular;
+  }
+}
+
 .strip-label {
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.2;
+  letter-spacing: 0.3px;
+  white-space: nowrap;
 }
 
 .strip-footer {
   padding: $spacing-sm 0;
-  border-top: 1px solid $border-lighter;
+  border-top: 1px solid $border-light;
   display: flex;
   justify-content: center;
 }
 
-// 右侧二级菜单
+// ============ 右侧二级菜单 ============
 .sub-menu-panel {
-  width: 200px;
-  background: $bg-white;
+  width: $sub-menu-width;
+  background: $sub-menu-bg;
   display: flex;
   flex-direction: column;
-  border-right: 1px solid $border-lighter;
+  border-right: 1px solid $border-base;
 }
 
 .sub-menu-header {
   height: $header-height;
   display: flex;
   align-items: center;
+  gap: $spacing-sm;
   padding: 0 $spacing-base;
   font-weight: 600;
   font-size: 15px;
   color: $text-primary;
-  border-bottom: 1px solid $border-lighter;
+  border-bottom: 1px solid $border-light;
   flex-shrink: 0;
+
+  .header-icon {
+    color: $color-primary;
+  }
 }
 
 .sub-menu-body {
@@ -547,27 +577,39 @@ async function handleLogout() {
 }
 
 .menu-group {
-  margin-bottom: 2px;
+  margin-bottom: 1px;
 }
 
+// 菜单分组标题
 .menu-group-title {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 10px $spacing-base;
+  padding: 9px $spacing-base;
   font-size: 13px;
+  font-weight: 500;
   color: $text-regular;
   cursor: pointer;
   transition: all 0.2s;
+  margin: 0 $spacing-sm;
+  border-radius: $radius-base;
 
   &:hover {
     background: $bg-hover;
   }
 
+  .menu-group-title-left {
+    display: flex;
+    align-items: center;
+    gap: $spacing-sm;
+    min-width: 0;
+  }
+
   .expand-icon {
-    transition: transform 0.3s;
+    transition: transform 0.25s;
     font-size: 12px;
-    color: $text-secondary;
+    color: $text-placeholder;
+    flex-shrink: 0;
   }
 
   &.expanded .expand-icon {
@@ -579,15 +621,19 @@ async function handleLogout() {
   overflow: hidden;
 }
 
+// 菜单项
 .menu-item {
   display: flex;
   align-items: center;
-  padding: 10px $spacing-base;
-  padding-left: $spacing-xl;
+  gap: $spacing-sm;
+  padding: 8px $spacing-base;
+  padding-left: calc($spacing-xl + 4px);
   font-size: 13px;
   color: $text-regular;
   cursor: pointer;
   transition: all 0.2s;
+  margin: 1px $spacing-sm;
+  border-radius: $radius-base;
 
   &:hover {
     background: $bg-hover;
@@ -595,22 +641,32 @@ async function handleLogout() {
   }
 
   &.active {
-    background: $bg-active;
-    color: $color-primary;
+    background: $sub-menu-active-bg;
+    color: $sub-menu-active-color;
     font-weight: 500;
 
-    .active-dot {
-      display: inline-block;
-      width: 6px;
-      height: 6px;
-      border-radius: 50%;
-      background: $color-primary;
-      margin-right: $spacing-sm;
+    .menu-icon {
+      color: $sub-menu-active-color;
     }
   }
 
   &.sub {
-    padding-left: 36px;
+    padding-left: calc($spacing-xl + 4px);
   }
+
+  // 叶子菜单项（无子菜单，在根层级）
+  &:not(.sub) {
+    padding-left: $spacing-base;
+  }
+}
+
+.menu-icon {
+  color: $text-placeholder;
+  flex-shrink: 0;
+  transition: color 0.2s;
+}
+
+.menu-text {
+  line-height: 1.4;
 }
 </style>

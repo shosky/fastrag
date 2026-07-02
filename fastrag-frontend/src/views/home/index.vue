@@ -130,6 +130,14 @@ function goToKb(kbId: string) {
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
 
+// 首页网格中的卡片保留独立卡片样式（因为多卡并排，需要视觉边界）
+.home-grid .card-panel {
+  background: $bg-white;
+  border-radius: $radius-lg;
+  padding: $spacing-xl;
+  border: 1px solid $border-light;
+}
+
 .quick-entries {
   display: flex;
   gap: $spacing-xl;

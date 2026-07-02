@@ -1,27 +1,39 @@
 // ========== 主题色 ==========
-$color-primary: #1E88E5;
-$color-success: #43A047;
-$color-warning: #FB8C00;
-$color-danger: #E53935;
-$color-info: #757575;
+$color-primary: #2563EB;
+$color-primary-light: #EFF6FF;
+$color-primary-lighter: #F0F5FF;
+$color-success: #10B981;
+$color-warning: #F59E0B;
+$color-danger: #EF4444;
+$color-info: #6B7280;
 
 // ========== 文本色 ==========
-$text-primary: #212121;
-$text-regular: #424242;
-$text-secondary: #757575;
-$text-placeholder: #BDBDBD;
+$text-primary: #111827;
+$text-regular: #374151;
+$text-secondary: #6B7280;
+$text-placeholder: #9CA3AF;
+$text-disabled: #D1D5DB;
 
 // ========== 边框色 ==========
-$border-base: #E0E0E0;
-$border-light: #EEEEEE;
-$border-lighter: #F5F5F5;
-$border-extra-light: #FAFAFA;
+$border-base: #E5E7EB;
+$border-light: #F3F4F6;
+$border-lighter: #F3F4F6;
+$border-extra-light: #F9FAFB;
 
 // ========== 背景色 ==========
-$bg-page: #F5F7FA;
+$bg-page: #F0F2F5;
 $bg-white: #FFFFFF;
-$bg-hover: #F5F7FA;
-$bg-active: #E3F2FD;
+$bg-hover: #F9FAFB;
+$bg-active: #EFF6FF;
+
+// ========== 侧栏色 ==========
+$nav-strip-bg: #F8F9FB;
+$nav-strip-hover: #F0F2F5;
+$nav-icon-color: #9CA3AF;
+$nav-icon-active: #2563EB;
+$sub-menu-bg: #FAFBFC;
+$sub-menu-active-bg: #EFF6FF;
+$sub-menu-active-color: #2563EB;
 
 // ========== 间距 ==========
 $spacing-xs: 4px;
@@ -33,17 +45,22 @@ $spacing-xl: 24px;
 $spacing-xxl: 32px;
 
 // ========== 圆角 ==========
-$radius-sm: 4px;
-$radius-base: 6px;
-$radius-lg: 8px;
+$radius-sm: 6px;
+$radius-base: 8px;
+$radius-lg: 12px;
+$radius-xl: 16px;
+$radius-card: 12px;
 $radius-round: 999px;
 
 // ========== 阴影 ==========
-$shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.08);
-$shadow-base: 0 2px 8px rgba(0, 0, 0, 0.1);
-$shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.12);
+$shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.04);
+$shadow-base: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+$shadow-card: 0 2px 16px rgba(0, 0, 0, 0.06);
+$shadow-card-hover: 0 4px 24px rgba(0, 0, 0, 0.08);
+$shadow-lg: 0 4px 16px rgba(0, 0, 0, 0.08);
+$shadow-nav-card: 0 2px 12px rgba(0, 0, 0, 0.08);
 
 // ========== 布局尺寸 ==========
 $nav-strip-width: 64px;
-$sub-menu-width: 200px;
-$header-height: 80px;
+$sub-menu-width: 176px;
+$header-height: 64px;

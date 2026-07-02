@@ -171,94 +171,88 @@ async function handleDeletePerm(row: any) {
     <el-tabs v-model="activeTab">
       <!-- 发布记录 -->
       <el-tab-pane label="发布记录" name="records">
-        <div class="card-panel">
-          <div class="section-header">
-            <div class="section-title">发布历史</div>
-            <div style="display:flex;gap:12px;align-items:center">
-              <el-select v-model="selectedAppId" @change="loadData" placeholder="选择应用" style="width:200px">
-                <el-option v-for="app in appList" :key="app.id" :label="app.name" :value="app.id" />
-              </el-select>
-              <el-button type="primary" @click="handleAdd">新增记录</el-button>
-            </div>
+        <div class="section-header">
+          <div class="section-title">发布历史</div>
+          <div style="display:flex;gap:12px;align-items:center">
+            <el-select v-model="selectedAppId" @change="loadData" placeholder="选择应用" style="width:200px">
+              <el-option v-for="app in appList" :key="app.id" :label="app.name" :value="app.id" />
+            </el-select>
+            <el-button type="primary" @click="handleAdd">新增记录</el-button>
           </div>
-          <div class="filter-bar">
-            <el-input v-model="searchKeyword" placeholder="搜索版本号..." clearable style="width: 240px" @keyup.enter="handleSearch" />
-            <el-button type="primary" @click="handleSearch">搜索</el-button>
-          </div>
-          <el-table :data="dataList" stripe>
-            <el-table-column label="版本" width="110">
-              <template #default="{ row }">
-                <span>{{ row.version || '-' }}</span>
-                <el-tag v-if="row.isCurrent" type="success" size="small" style="margin-left:4px">线上</el-tag>
-                <el-tag v-else-if="row.status==='rolled_back'" type="danger" size="small" style="margin-left:4px">下线</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="环境" width="90"><template #default="{ row }">{{ row.environment || row.scopeType || '-' }}</template></el-table-column>
-            <el-table-column prop="status" label="状态" width="90">
-              <template #default="{ row }"><el-tag :type="(STATUS_COLORS[row.status] || 'info') as any" size="small">{{ STATUS_LABELS[row.status] || row.status }}</el-tag></template>
-            </el-table-column>
-            <el-table-column label="发布说明" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ row.releaseNotes || row.configSnapshot || '-' }}</template></el-table-column>
-            <el-table-column label="创建时间" width="150"><template #default="{ row }">{{ row.createdAt || '-' }}</template></el-table-column>
-            <el-table-column label="操作" width="220" fixed="right">
-              <template #default="{ row }">
-                <el-button v-if="row.status==='pending'||row.status==='draft'" link type="success" size="small" @click="handlePublish(row)">发布</el-button>
-                <el-button v-if="row.status==='released'&&row.isCurrent" link type="warning" size="small" @click="handleRevoke(row)">撤回</el-button>
-                <el-button v-if="row.status==='rolled_back'||(row.status==='released'&&!row.isCurrent)" link type="primary" size="small" @click="handleReset(row)">重置</el-button>
-                <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <div class="table-footer" v-if="total > pageSize">
-            <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :total="total"
-              :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next"
-              @current-change="handlePageChange" @size-change="handleSizeChange" />
-          </div>
+        </div>
+        <div class="filter-bar">
+          <el-input v-model="searchKeyword" placeholder="搜索版本号..." clearable style="width: 240px" @keyup.enter="handleSearch" />
+          <el-button type="primary" @click="handleSearch">搜索</el-button>
+        </div>
+        <el-table :data="dataList" stripe>
+          <el-table-column label="版本" width="110">
+            <template #default="{ row }">
+              <span>{{ row.version || '-' }}</span>
+              <el-tag v-if="row.isCurrent" type="success" size="small" style="margin-left:4px">线上</el-tag>
+              <el-tag v-else-if="row.status==='rolled_back'" type="danger" size="small" style="margin-left:4px">下线</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="环境" width="90"><template #default="{ row }">{{ row.environment || row.scopeType || '-' }}</template></el-table-column>
+          <el-table-column prop="status" label="状态" width="90">
+            <template #default="{ row }"><el-tag :type="(STATUS_COLORS[row.status] || 'info') as any" size="small">{{ STATUS_LABELS[row.status] || row.status }}</el-tag></template>
+          </el-table-column>
+          <el-table-column label="发布说明" min-width="200" show-overflow-tooltip><template #default="{ row }">{{ row.releaseNotes || row.configSnapshot || '-' }}</template></el-table-column>
+          <el-table-column label="创建时间" width="150"><template #default="{ row }">{{ row.createdAt || '-' }}</template></el-table-column>
+          <el-table-column label="操作" width="220" fixed="right">
+            <template #default="{ row }">
+              <el-button v-if="row.status==='pending'||row.status==='draft'" link type="success" size="small" @click="handlePublish(row)">发布</el-button>
+              <el-button v-if="row.status==='released'&&row.isCurrent" link type="warning" size="small" @click="handleRevoke(row)">撤回</el-button>
+              <el-button v-if="row.status==='rolled_back'||(row.status==='released'&&!row.isCurrent)" link type="primary" size="small" @click="handleReset(row)">重置</el-button>
+              <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
+              <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <div class="table-footer" v-if="total > pageSize">
+          <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :total="total"
+            :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next"
+            @current-change="handlePageChange" @size-change="handleSizeChange" />
         </div>
       </el-tab-pane>
 
       <!-- 发布计划 CRUD -->
       <el-tab-pane label="发布计划" name="plans">
-        <div class="card-panel">
-          <div class="section-header"><div class="section-title">发布计划</div><el-button type="primary" @click="handleAddPlan">新建计划</el-button></div>
-          <el-table :data="plans" stripe size="small">
-            <el-table-column prop="name" label="计划名称" min-width="160" />
-            <el-table-column prop="strategy" label="策略" width="100"><template #default="{row}">{{ {immediate:'立即',scheduled:'定时',incremental:'增量',full:'全量'}[row.strategy]||row.strategy }}</template></el-table-column>
-            <el-table-column prop="scheduledTime" label="计划时间" width="150" />
-            <el-table-column prop="scope" label="范围" width="80" />
-            <el-table-column label="状态" width="80"><template #default="{row}"><el-tag :type="row.status==='active'?'success':'info'" size="small">{{ row.status==='active'?'执行中':'待执行' }}</el-tag></template></el-table-column>
-            <el-table-column prop="createdAt" label="创建时间" width="100" />
-            <el-table-column label="操作" width="180">
-              <template #default="{row}">
-                <el-button v-if="row.status!=='active'" link type="success" size="small" @click="handleExecutePlan(row)">执行</el-button>
-                <el-button link type="primary" size="small" @click="handleEditPlan(row)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="handleDeletePlan(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-empty v-if="!plans.length" description="暂无发布计划" :image-size="60" />
-        </div>
+        <div class="section-header"><div class="section-title">发布计划</div><el-button type="primary" @click="handleAddPlan">新建计划</el-button></div>
+        <el-table :data="plans" stripe size="small">
+          <el-table-column prop="name" label="计划名称" min-width="160" />
+          <el-table-column prop="strategy" label="策略" width="100"><template #default="{row}">{{ {immediate:'立即',scheduled:'定时',incremental:'增量',full:'全量'}[row.strategy]||row.strategy }}</template></el-table-column>
+          <el-table-column prop="scheduledTime" label="计划时间" width="150" />
+          <el-table-column prop="scope" label="范围" width="80" />
+          <el-table-column label="状态" width="80"><template #default="{row}"><el-tag :type="row.status==='active'?'success':'info'" size="small">{{ row.status==='active'?'执行中':'待执行' }}</el-tag></template></el-table-column>
+          <el-table-column prop="createdAt" label="创建时间" width="100" />
+          <el-table-column label="操作" width="180">
+            <template #default="{row}">
+              <el-button v-if="row.status!=='active'" link type="success" size="small" @click="handleExecutePlan(row)">执行</el-button>
+              <el-button link type="primary" size="small" @click="handleEditPlan(row)">编辑</el-button>
+              <el-button link type="danger" size="small" @click="handleDeletePlan(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!plans.length" description="暂无发布计划" :image-size="60" />
       </el-tab-pane>
 
       <!-- 重置权限配置 CRUD -->
       <el-tab-pane label="重置权限配置" name="permissions">
-        <div class="card-panel">
-          <div class="section-header"><div class="section-title">重置权限配置</div><el-button type="primary" @click="handleAddPerm">新增配置</el-button></div>
-          <el-table :data="permissions" stripe size="small">
-            <el-table-column prop="role" label="角色" width="120" />
-            <el-table-column label="允许重置" width="90"><template #default="{row}"><el-tag :type="row.canReset?'success':'info'" size="small">{{ row.canReset?'是':'否' }}</el-tag></template></el-table-column>
-            <el-table-column label="允许撤回" width="90"><template #default="{row}"><el-tag :type="row.canRevoke?'success':'info'" size="small">{{ row.canRevoke?'是':'否' }}</el-tag></template></el-table-column>
-            <el-table-column prop="maxResetCount" label="最大重置次数" width="120" />
-            <el-table-column prop="description" label="说明" show-overflow-tooltip />
-            <el-table-column label="操作" width="130">
-              <template #default="{row}">
-                <el-button link type="primary" size="small" @click="handleEditPerm(row)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="handleDeletePerm(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-empty v-if="!permissions.length" description="暂无权限配置" :image-size="60" />
-        </div>
+        <div class="section-header"><div class="section-title">重置权限配置</div><el-button type="primary" @click="handleAddPerm">新增配置</el-button></div>
+        <el-table :data="permissions" stripe size="small">
+          <el-table-column prop="role" label="角色" width="120" />
+          <el-table-column label="允许重置" width="90"><template #default="{row}"><el-tag :type="row.canReset?'success':'info'" size="small">{{ row.canReset?'是':'否' }}</el-tag></template></el-table-column>
+          <el-table-column label="允许撤回" width="90"><template #default="{row}"><el-tag :type="row.canRevoke?'success':'info'" size="small">{{ row.canRevoke?'是':'否' }}</el-tag></template></el-table-column>
+          <el-table-column prop="maxResetCount" label="最大重置次数" width="120" />
+          <el-table-column prop="description" label="说明" show-overflow-tooltip />
+          <el-table-column label="操作" width="130">
+            <template #default="{row}">
+              <el-button link type="primary" size="small" @click="handleEditPerm(row)">编辑</el-button>
+              <el-button link type="danger" size="small" @click="handleDeletePerm(row)">删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!permissions.length" description="暂无权限配置" :image-size="60" />
       </el-tab-pane>
     </el-tabs>
 

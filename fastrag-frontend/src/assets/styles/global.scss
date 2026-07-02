@@ -2,27 +2,45 @@
 
 // 通用页面容器
 .page-container {
-  padding: $spacing-xl;
   height: 100%;
-  overflow-y: auto;
-  background: $bg-page;
 }
 
-// 通用卡片
+// ===== Empty State 收缩 Padding =====
+.el-empty {
+  --el-empty-padding: 24px 0;
+
+  .el-empty__image {
+    margin-bottom: 8px;
+  }
+  .el-empty__description {
+    margin-bottom: 0;
+  }
+}
+
+// 卡片内部区块分隔 — 直接浮在白色大卡片背景上的内容块
+// 不再嵌套独立卡片，仅通过间距和可选的分隔线自然区隔
 .card-panel {
-  background: $bg-white;
-  border-radius: $radius-base;
-  padding: $spacing-xl;
-  border: 1px solid $border-lighter;
-  margin-bottom: $spacing-base;
+  + .card-panel {
+    margin-top: $spacing-xl;
+    padding-top: $spacing-xl;
+    border-top: 1px solid $border-light;
+  }
+  // 默认无 padding/border/背景 — 由父级 .content-card 提供
+  // 页面级布局容器如需自成一卡（如首页网格），通过 scoped 覆盖
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: 0;
+  margin-bottom: 0;
 }
 
 // 通用标题
 .section-title {
-  font-size: 16px;
+  font-size: 15px;
   font-weight: 600;
   color: $text-primary;
   margin-bottom: $spacing-base;
+  line-height: 1.4;
 }
 
 // 通用筛选栏
@@ -95,4 +113,68 @@
 // 标签样式
 .el-tag {
   border-radius: $radius-sm;
+}
+
+// ===== Element Plus 主题风格覆盖 =====
+
+// 按钮
+.el-button {
+  border-radius: $radius-base;
+}
+
+// 对话框
+.el-dialog {
+  border-radius: $radius-xl;
+}
+
+.el-dialog__header {
+  padding: $spacing-lg $spacing-xl;
+  margin: 0;
+  border-bottom: 1px solid $border-light;
+}
+
+.el-dialog__body {
+  padding: $spacing-xl;
+}
+
+.el-dialog__footer {
+  padding: $spacing-base $spacing-xl;
+  border-top: 1px solid $border-light;
+}
+
+// Card 组件
+.el-card {
+  border-radius: $radius-lg;
+  border: 1px solid $border-light;
+  box-shadow: $shadow-sm;
+}
+
+// 输入框
+.el-input__wrapper {
+  border-radius: $radius-base;
+  box-shadow: 0 0 0 1px $border-base inset !important;
+}
+
+.el-input__wrapper:hover {
+  box-shadow: 0 0 0 1px $text-placeholder inset !important;
+}
+
+.el-input__wrapper.is-focus {
+  box-shadow: 0 0 0 1px $color-primary inset !important;
+}
+
+// 选择器
+.el-select .el-input__wrapper {
+  border-radius: $radius-base;
+}
+
+// 表格
+.el-table {
+  border-radius: $radius-base;
+}
+
+.el-table th.el-table__cell {
+  background-color: $bg-hover;
+  color: $text-secondary;
+  font-weight: 500;
 }

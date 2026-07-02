@@ -18,7 +18,7 @@ const breadcrumbs = computed(() => {
   <div class="header">
     <div class="header-left">
       <h1 class="page-title">{{ pageTitle }}</h1>
-      <el-breadcrumb separator="/">
+      <el-breadcrumb v-if="breadcrumbs.length > 1" separator="/">
         <el-breadcrumb-item :to="{ path: '/home' }">首页</el-breadcrumb-item>
         <el-breadcrumb-item v-for="(crumb, idx) in breadcrumbs" :key="idx">
           {{ crumb.title }}
@@ -38,27 +38,53 @@ const breadcrumbs = computed(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: $spacing-base $spacing-lg;
+  height: $header-height;
+  padding: 0 $spacing-xl;
   background: $bg-white;
-  border-bottom: 1px solid $border-lighter;
+  flex-shrink: 0;
 }
 
 .header-left {
   display: flex;
   flex-direction: column;
-  gap: $spacing-xs;
+  justify-content: center;
+  gap: 2px;
+  min-height: 44px;
 }
 
 .page-title {
   margin: 0;
-  font-size: 18px;
+  font-size: 16px;
   font-weight: 600;
   color: $text-primary;
+  line-height: 1.4;
 }
 
 .header-right {
   display: flex;
   align-items: center;
   gap: $spacing-sm;
+}
+
+// 面包屑覆盖 - 更轻量
+:deep(.el-breadcrumb) {
+  font-size: 12px;
+
+  .el-breadcrumb__inner {
+    color: $text-secondary;
+
+    &.is-link {
+      color: $text-placeholder;
+
+      &:hover {
+        color: $color-primary;
+      }
+    }
+  }
+
+  .el-breadcrumb__separator {
+    color: $border-base;
+    font-weight: 400;
+  }
 }
 </style>

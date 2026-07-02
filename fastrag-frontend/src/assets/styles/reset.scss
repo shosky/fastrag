@@ -33,15 +33,20 @@ img {
   vertical-align: middle;
 }
 
-// 滚动条样式
+// 滚动条样式 - 更精致的细条
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 4px;
+  height: 4px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c0c4cc;
-  border-radius: 3px;
+  background: #d1d5db;
+  border-radius: 4px;
+  transition: background 0.2s;
+
+  &:hover {
+    background: #9ca3af;
+  }
 }
 
 ::-webkit-scrollbar-track {
