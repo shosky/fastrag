@@ -100,6 +100,7 @@ CREATE TABLE IF NOT EXISTS kb (
     file_type_config JSON,
     parse_mode VARCHAR(16) DEFAULT 'auto',
     split_mode VARCHAR(16) DEFAULT 'auto',
+    graph_auto_build TINYINT DEFAULT 0 COMMENT '是否自动构建知识图谱（默认关闭）',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -120,6 +121,8 @@ CREATE TABLE IF NOT EXISTS kb_file (
     parse_strategy_id VARCHAR(32),
     parse_strategy_name VARCHAR(128),
     chunk_count INT DEFAULT 0,
+    processing_mode VARCHAR(16) DEFAULT 'chunk' COMMENT '处理模式: chunk/qa',
+    enable_graph_build TINYINT DEFAULT 0 COMMENT '该文件是否构建知识图谱',
     folder_id VARCHAR(32),
     view_count BIGINT DEFAULT 0,
     deleted_at DATETIME,
@@ -168,6 +171,7 @@ CREATE TABLE IF NOT EXISTS kb_parse_strategy (
     advanced JSON,
     llm_model VARCHAR(128),
     vlm_model VARCHAR(128),
+    enable_graph_build TINYINT DEFAULT 0 COMMENT '该解析策略是否构建知识图谱',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_kb_id (kb_id)
@@ -200,6 +204,30 @@ CREATE TABLE IF NOT EXISTS kb_graph_index (
     index_version INT DEFAULT 0,
     last_built_at DATETIME,
     build_error TEXT
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 知识图谱实体表（MySQL fallback 存储）
+CREATE TABLE IF NOT EXISTS kb_graph_entity (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    name VARCHAR(256) NOT NULL,
+    entity_type VARCHAR(64) DEFAULT 'UNKNOWN',
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_kb_entity (kb_id, name(255)),
+    INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 知识图谱关系表（MySQL fallback 存储）
+CREATE TABLE IF NOT EXISTS kb_graph_relation (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    source VARCHAR(256) NOT NULL,
+    target VARCHAR(256) NOT NULL,
+    label VARCHAR(128) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_kb_relation (kb_id, source(255), target(255), label(127)),
+    INDEX idx_kb_id (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_benchmark (
@@ -254,6 +282,10 @@ CREATE TABLE IF NOT EXISTS kb_evaluation_result (
     question TEXT,
     generated_answer TEXT,
     retrieval_metrics JSON,
+    recall_at_1 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@1',
+    recall_at_3 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@3',
+    recall_at_5 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@5',
+    recall_at_10 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@10',
     is_correct TINYINT,
     judge_reason TEXT,
     INDEX idx_evaluation_id (evaluation_id)
@@ -691,19 +723,6 @@ CREATE TABLE IF NOT EXISTS kb_update_remind (
     INDEX idx_kb_id (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- ==================== M3 实体库 ====================
-CREATE TABLE IF NOT EXISTS kb_entity (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32),
-    name VARCHAR(128) NOT NULL,
-    entity_type VARCHAR(32) DEFAULT 'enum',
-    description TEXT,
-    values_json JSON,
-    creator VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ==================== M6 数据挖掘 ====================
 CREATE TABLE IF NOT EXISTS data_mining_task (
@@ -721,295 +740,6 @@ CREATE TABLE IF NOT EXISTS data_mining_task (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ==================== M7 多媒体存储 + 问答抽取 ====================
-CREATE TABLE IF NOT EXISTS kb_media_storage (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    media_type VARCHAR(16) NOT NULL,
-    name VARCHAR(256) NOT NULL,
-    original_name VARCHAR(256),
-    extension VARCHAR(16),
-    size BIGINT DEFAULT 0,
-    object_key VARCHAR(512),
-    duration INT,
-    resolution VARCHAR(32),
-    width INT,
-    height INT,
-    thumbnail_key VARCHAR(512),
-    ocr_text TEXT,
-    transcript LONGTEXT,
-    description TEXT,
-    tags JSON,
-    status VARCHAR(16) DEFAULT 'uploaded',
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_media_type (media_type)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_qa_extract_task (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    name VARCHAR(128),
-    source_type VARCHAR(16),
-    source_ids JSON,
-    llm_model VARCHAR(128),
-    total_count INT DEFAULT 0,
-    completed_count INT DEFAULT 0,
-    status VARCHAR(16) DEFAULT 'pending',
-    result JSON,
-    params JSON,
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    completed_at DATETIME,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ==================== M8 知识加工与采编 ====================
-CREATE TABLE IF NOT EXISTS kb_knowledge_edit (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    knowledge_id VARCHAR(32),
-    title VARCHAR(256) NOT NULL,
-    content LONGTEXT NOT NULL,
-    edit_type VARCHAR(16),
-    tags JSON,
-    status VARCHAR(16) DEFAULT 'draft',
-    editor VARCHAR(32),
-    reviewer VARCHAR(32),
-    review_comment TEXT,
-    version INT DEFAULT 1,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_knowledge_validate (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    validate_type VARCHAR(32),
-    target_scope VARCHAR(32),
-    target_value VARCHAR(256),
-    total_count INT DEFAULT 0,
-    passed_count INT DEFAULT 0,
-    warning_count INT DEFAULT 0,
-    failed_count INT DEFAULT 0,
-    result JSON,
-    status VARCHAR(16) DEFAULT 'pending',
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    completed_at DATETIME,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ==================== M9 知识存储管理（标签/笔记） ====================
-CREATE TABLE IF NOT EXISTS kb_tag_type (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    name VARCHAR(128) NOT NULL,
-    description TEXT,
-    color VARCHAR(16),
-    icon VARCHAR(64),
-    sort INT DEFAULT 0,
-    is_system TINYINT DEFAULT 0,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_tag (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    tag_type_id VARCHAR(32),
-    name VARCHAR(128) NOT NULL,
-    color VARCHAR(16),
-    description TEXT,
-    usage_count INT DEFAULT 0,
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_tag_type_id (tag_type_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_tag_relation (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    tag_id VARCHAR(32) NOT NULL,
-    target_type VARCHAR(16) NOT NULL,
-    target_id VARCHAR(32) NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_tag_id (tag_id),
-    INDEX idx_target (target_type, target_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_note (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    title VARCHAR(256) NOT NULL,
-    content LONGTEXT,
-    target_type VARCHAR(16),
-    target_id VARCHAR(32),
-    tags JSON,
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ==================== M10 知识管理 + M11 知识更新 ====================
-CREATE TABLE IF NOT EXISTS kb_knowledge (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    title VARCHAR(256) NOT NULL,
-    content LONGTEXT NOT NULL,
-    summary TEXT,
-    category VARCHAR(64),
-    tags JSON,
-    source VARCHAR(16) DEFAULT 'manual',
-    source_id VARCHAR(32),
-    version INT DEFAULT 1,
-    status VARCHAR(16) DEFAULT 'draft',
-    quality_score DECIMAL(5,2),
-    view_count INT DEFAULT 0,
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_category (category)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_knowledge_test (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    knowledge_id VARCHAR(32) NOT NULL,
-    test_query TEXT NOT NULL,
-    expected_answer TEXT,
-    actual_answer TEXT,
-    relevance_score DECIMAL(5,2),
-    is_passed TINYINT,
-    test_model VARCHAR(128),
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_knowledge_id (knowledge_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_knowledge_dialog (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    knowledge_id VARCHAR(32) NOT NULL,
-    dialog_type VARCHAR(16),
-    messages JSON,
-    result VARCHAR(16),
-    confidence DECIMAL(5,2),
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_knowledge_id (knowledge_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_knowledge_update (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    knowledge_id VARCHAR(32),
-    update_type VARCHAR(16) NOT NULL,
-    title VARCHAR(256),
-    old_value LONGTEXT,
-    new_value LONGTEXT,
-    change_summary TEXT,
-    status VARCHAR(16) DEFAULT 'pending',
-    applied_at DATETIME,
-    operator VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_knowledge_id (knowledge_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ==================== M12 智能搜索 ====================
-CREATE TABLE IF NOT EXISTS kb_search_association (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    dimension VARCHAR(32) NOT NULL,
-    name VARCHAR(128) NOT NULL,
-    description TEXT,
-    pattern VARCHAR(256),
-    suggestions JSON,
-    priority INT DEFAULT 0,
-    enabled TINYINT DEFAULT 1,
-    conditions JSON,
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_dimension (dimension)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_auto_correction (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    wrong_text VARCHAR(256) NOT NULL,
-    correct_text VARCHAR(256) NOT NULL,
-    match_type VARCHAR(16) DEFAULT 'exact',
-    priority INT DEFAULT 0,
-    enabled TINYINT DEFAULT 1,
-    hit_count INT DEFAULT 0,
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- ==================== M13 知识问答 ====================
-CREATE TABLE IF NOT EXISTS kb_multi_turn_qa (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    title VARCHAR(256) NOT NULL,
-    description TEXT,
-    turns JSON NOT NULL,
-    category VARCHAR(64),
-    tags JSON,
-    status VARCHAR(16) DEFAULT 'active',
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_multimodal_qa (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    title VARCHAR(256) NOT NULL,
-    question TEXT NOT NULL,
-    answer TEXT,
-    modal_type VARCHAR(16),
-    media_ids JSON,
-    category VARCHAR(64),
-    tags JSON,
-    status VARCHAR(16) DEFAULT 'active',
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS kb_doc_guide (
-    id VARCHAR(32) PRIMARY KEY,
-    kb_id VARCHAR(32) NOT NULL,
-    file_id VARCHAR(32),
-    title VARCHAR(256) NOT NULL,
-    summary TEXT,
-    outline JSON,
-    key_points JSON,
-    index_status VARCHAR(16) DEFAULT 'pending',
-    index_progress INT DEFAULT 0,
-    category VARCHAR(64),
-    tags JSON,
-    created_by VARCHAR(32),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_file_id (file_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
 -- ==================== M14 系统设置管理 ====================
 CREATE TABLE IF NOT EXISTS sys_config (
     id VARCHAR(32) PRIMARY KEY,
@@ -1513,4 +1243,119 @@ CREATE TABLE IF NOT EXISTS sys_publish_strategy (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_strategy_type (strategy_type)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ==================== 已有数据库升级脚本（知识图谱 + 评估 + 处理模式） ====================
+-- 如已有 fastrag 数据库，执行以下语句补充新增字段和表
+
+-- kb 表新增字段
+ALTER TABLE kb ADD COLUMN IF NOT EXISTS graph_auto_build TINYINT DEFAULT 0 COMMENT '是否自动构建知识图谱（默认关闭）';
+
+-- kb_parse_strategy 表新增字段
+ALTER TABLE kb_parse_strategy ADD COLUMN IF NOT EXISTS enable_graph_build TINYINT DEFAULT 0 COMMENT '该解析策略是否构建知识图谱';
+
+-- kb_file 表新增字段
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS processing_mode VARCHAR(16) DEFAULT 'chunk' COMMENT '处理模式: chunk/qa';
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS enable_graph_build TINYINT DEFAULT 0 COMMENT '该文件是否构建知识图谱';
+
+-- kb_graph_index 表新增字段
+ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS settings TEXT COMMENT '索引配置(JSON)';
+ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS total_chunks INT DEFAULT 0 COMMENT '总切片数';
+ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS built_chunks INT DEFAULT 0 COMMENT '已构建切片数';
+ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS entity_count INT DEFAULT 0 COMMENT '实体数';
+ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS relation_count INT DEFAULT 0 COMMENT '关系数';
+
+-- 知识图谱实体表（MySQL fallback 存储）
+CREATE TABLE IF NOT EXISTS kb_graph_entity (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    name VARCHAR(256) NOT NULL,
+    entity_type VARCHAR(64) DEFAULT 'UNKNOWN',
+    description TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_kb_entity (kb_id, name(255)),
+    INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 知识图谱关系表（MySQL fallback 存储）
+CREATE TABLE IF NOT EXISTS kb_graph_relation (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    source VARCHAR(256) NOT NULL,
+    target VARCHAR(256) NOT NULL,
+    label VARCHAR(128) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_kb_relation (kb_id, source(255), target(255), label(127)),
+    INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 评估基准表
+CREATE TABLE IF NOT EXISTS kb_benchmark (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    description TEXT,
+    has_gold_chunks TINYINT DEFAULT 0,
+    has_gold_answer TINYINT DEFAULT 0,
+    is_auto_generated TINYINT DEFAULT 0,
+    question_count INT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 评估基准问题表
+CREATE TABLE IF NOT EXISTS kb_benchmark_question (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    benchmark_id VARCHAR(32) NOT NULL,
+    question_index INT,
+    question TEXT NOT NULL,
+    gold_chunks VARCHAR(512),
+    gold_answer TEXT,
+    INDEX idx_benchmark_id (benchmark_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 评估记录表
+CREATE TABLE IF NOT EXISTS kb_evaluation (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    name VARCHAR(128),
+    benchmark VARCHAR(128),
+    benchmark_count INT,
+    data_count INT,
+    completed_count INT,
+    duration BIGINT,
+    recall_at_1 DECIMAL(5,4),
+    recall_at_3 DECIMAL(5,4),
+    recall_at_5 DECIMAL(5,4),
+    recall_at_10 DECIMAL(5,4),
+    answer_accuracy DECIMAL(5,4),
+    overall_score DECIMAL(5,4),
+    status VARCHAR(16) DEFAULT 'pending',
+    run_id VARCHAR(64),
+    answer_model VARCHAR(128),
+    judge_model VARCHAR(128),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 评估结果详情表
+CREATE TABLE IF NOT EXISTS kb_evaluation_result (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    evaluation_id VARCHAR(32) NOT NULL,
+    question TEXT,
+    generated_answer TEXT,
+    retrieval_metrics JSON,
+    recall_at_1 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@1',
+    recall_at_3 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@3',
+    recall_at_5 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@5',
+    recall_at_10 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@10',
+    is_correct TINYINT,
+    judge_reason TEXT,
+    INDEX idx_evaluation_id (evaluation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    generated_answer TEXT,
+    retrieval_metrics JSON,
+    is_correct TINYINT,
+    judge_reason TEXT,
+    INDEX idx_evaluation_id (evaluation_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

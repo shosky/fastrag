@@ -17,7 +17,7 @@ async function loadData() {
   try {
     const res: any = await api.getAppOptimizations(appId())
     optList.value = Array.isArray(res) ? res : []
-  } catch { optList.value = [] }
+  } catch (e) { optList.value = [] }
 }
 function openAdd() { isEditing.value = false; editingId.value = ''; form.value = { ...formDefault }; showDialog.value = true }
 function openEdit(row: any) { isEditing.value = true; editingId.value = row.id; form.value = { name: row.title || row.name, type: row.suggestionType || row.type, description: row.description, config: row.config || '' }; showDialog.value = true }
@@ -30,14 +30,14 @@ async function handleSave() {
   showDialog.value = false; await loadData()
 }
 async function handleDelete(row: any) {
-  try { await ElMessageBox.confirm('确认删除？', '确认', { type: 'warning' }); await api.deleteAppOptimization(appId(), row.id); await loadData(); ElMessage.success('已删除') } catch {}
+  try { await ElMessageBox.confirm('确认删除？', '确认', { type: 'warning' }); await api.deleteAppOptimization(appId(), row.id); await loadData(); ElMessage.success('已删除') } catch (e) {}
 }
 async function handleApply(row: any) { await api.applyAppOptimization(appId(), row.id); ElMessage.success('优化建议已应用'); await loadData() }
 async function handleExport() {
   try {
     const blob = await api.exportAppOptimizations(appId()) as Blob
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `optimization_report_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url); ElMessage.success('优化报告已导出')
-  } catch { ElMessage.error('导出失败') }
+  } catch (e) { ElMessage.error('导出失败') }
 }
 function getTypeLabel(type: string) {
   const map: Record<string, string> = { prompt: 'Prompt优化', param: '参数优化', flow: '流程优化' }

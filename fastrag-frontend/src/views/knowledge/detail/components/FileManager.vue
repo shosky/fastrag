@@ -18,12 +18,20 @@ import { useParseStrategy } from '@/composables/useParseStrategy'
 
 // --- 状态轮询 ---
 let pollingTimer: ReturnType<typeof setInterval> | null = null
+// 追踪本次触发处理的文件 ID，轮询只针对这些文件判断是否完成
+const pendingProcessFileIds = ref<Set<string>>(new Set())
 
-function startPolling() {
+function startPolling(fileIds?: string[]) {
   stopPolling()
+  if (fileIds && fileIds.length > 0) {
+    pendingProcessFileIds.value = new Set(fileIds)
+  }
   pollingTimer = setInterval(async () => {
     await load()
-    const hasProcessing = files.value.some((f) => f.status === 'processing')
+    const trackingSet = pendingProcessFileIds.value
+    const hasProcessing = trackingSet.size > 0
+      && [...trackingSet].some(id =>
+        files.value.some(f => f.id === id && f.status === 'processing'))
     if (!hasProcessing) {
       stopPolling()
     }
@@ -35,6 +43,7 @@ function stopPolling() {
     clearInterval(pollingTimer)
     pollingTimer = null
   }
+  pendingProcessFileIds.value.clear()
 }
 
 const props = defineProps<{
@@ -59,6 +68,7 @@ const {
   bulkMove,
   copy,
   retry,
+  toggleGraphBuild,
   upload,
   changeStrategy,
   createFolder,
@@ -88,28 +98,32 @@ function openUploader() {
   uploaderVisible.value = true
 }
 
-async function handleUpload(selectedFiles: File[], config: UploadConfig & { fileIds?: string[] }) {
+async function handleUpload(_selectedFiles: File[], config: UploadConfig & { fileIds?: string[] }) {
+  // 先刷新列表，让已上传文件（pending 状态）立即可见
+  await load()
+
   // 触发已上传文件的处理流程
   const fileIds = config.fileIds || []
   if (fileIds.length > 0) {
-    // 并发触发处理请求（不阻塞 UI）
-    const promises = fileIds.map((fid) =>
-      api.processFile(kbId, fid).catch((e) => {
-        console.error('Failed to process file:', fid, e)
-      }),
-    )
-    ElMessage.success(`已触发 ${fileIds.length} 个文件的处理流程`)
+    // fire-and-forget：触发处理请求（后端通过 RabbitMQ 异步执行，请求立即返回）
+    const processConfig: Record<string, unknown> = {}
+    if (config.processingMode && config.processingMode !== 'chunk') {
+      processConfig.processingMode = config.processingMode
+    }
+    if (config.qaConfig) {
+      processConfig.qaConfig = config.qaConfig
+    }
 
-    // 立即轮询状态，用户可看到实时进度
-    startPolling()
+    fileIds.forEach((fid) => {
+      api.processFile(kbId, fid, Object.keys(processConfig).length > 0 ? processConfig : undefined).catch((e) => {
+        console.error('Failed to trigger process for file:', fid, e)
+      })
+    })
+    ElMessage.success(`已提交 ${fileIds.length} 个文件的处理任务`)
 
-    // 等待所有 HTTP 处理请求完成
-    await Promise.allSettled(promises)
+    // 立即开始轮询状态（追踪本次提交的文件 ID）
+    startPolling(fileIds)
   }
-
-  // 最终刷新一次
-  await load()
-  stopPolling()
 }
 
 // --- New folder ---
@@ -332,6 +346,16 @@ function handleChangeStrategy(file: KnowledgeFile, strategyId: string, strategyN
   ElMessage.success(`已修改解析策略：${strategyName}`)
 }
 
+// --- Toggle graph build ---
+async function handleToggleGraphBuild(file: KnowledgeFile, enabled: boolean) {
+  try {
+    await toggleGraphBuild(file.id, enabled)
+    ElMessage.success(enabled ? `已开启「${file.name}」的知识图谱构建` : `已关闭「${file.name}」的知识图谱构建`)
+  } catch {
+    ElMessage.error('操作失败')
+  }
+}
+
 // --- Lifecycle ---
 onMounted(() => {
   load()
@@ -416,6 +440,7 @@ onBeforeUnmount(() => {
       @copy="handleCopy"
       @selection-change="handleSelectionChange"
       @change-strategy="handleChangeStrategy"
+    @toggle-graph-build="handleToggleGraphBuild"
     />
 
     <!-- Upload dialog -->

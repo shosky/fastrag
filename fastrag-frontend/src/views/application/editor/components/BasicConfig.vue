@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
-import { Download, UploadFilled, ZoomIn } from '@element-plus/icons-vue'
+import { Download, UploadFilled, ZoomIn, CopyDocument } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   appInfo: {
@@ -43,7 +43,7 @@ async function loadBasic() {
     const r: any = await api.getAppBasicConfig(appId())
     if (r) Object.assign(basicForm.value, r)
     if (r?.advanced) Object.assign(advancedForm.value, r.advanced)
-  } catch { /* ignore */ }
+  } catch (e) { /* ignore */ }
 }
 
 async function saveBasic() {
@@ -61,7 +61,7 @@ async function handleViewDetail() {
     const r: any = await api.getAppBasicConfig(appId())
     detailData.value = JSON.stringify({ basic: r, advanced: advancedForm.value }, null, 2)
     showDetailDialog.value = true
-  } catch {
+  } catch (e) {
     ElMessage.error('获取配置详情失败')
   }
 }
@@ -77,7 +77,7 @@ async function handleExportBasic() {
     a.click()
     URL.revokeObjectURL(url)
     ElMessage.success('基础配置已导出')
-  } catch {
+  } catch (e) {
     ElMessage.error('导出失败')
   }
 }
@@ -95,7 +95,7 @@ async function handleImportBasic() {
       await api.importAppConfig(appId(), data)
       await loadBasic()
       ElMessage.success('基础配置已导入')
-    } catch {
+    } catch (e) {
       ElMessage.error('导入失败，请检查文件格式')
     }
   }

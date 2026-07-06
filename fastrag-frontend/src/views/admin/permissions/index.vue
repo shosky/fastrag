@@ -109,10 +109,6 @@ function getMenuTreeData() {
 
 <template>
   <div class="page-container">
-    <div class="section-header">
-      <h3>权限管理</h3>
-    </div>
-
     <el-tabs v-model="activeTab">
       <el-tab-pane label="全部权限" name="list" />
       <el-tab-pane label="菜单权限" name="menu" />

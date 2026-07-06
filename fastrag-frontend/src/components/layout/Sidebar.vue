@@ -49,21 +49,15 @@ const allModules: NavModule[] = [
         children: [
           { path: '/knowledge', title: '知识库列表', icon: 'Document' },
           { path: '/knowledge/categories', title: '知识库分类', icon: 'Grid' },
-          { path: '/knowledge/tags', title: '知识库标签', icon: 'PriceTag' },
         ],
       },
       {
-        path: '/knowledge-review',
-        title: '知识审核',
-        icon: 'Edit',
+        path: '/operation',
+        title: '运营中心',
+        icon: 'DataAnalysis',
         children: [
-          { path: '/knowledge-review/management', title: '审核管理', icon: 'Setting' },
-          { path: '/knowledge-review/flows', title: '审核流程管理', icon: 'Connection' },
-          { path: '/knowledge-review/flow-design', title: '审核流程设计', icon: 'EditPen' },
-          { path: '/knowledge-review/listeners', title: '监听管理', icon: 'Bell' },
-          { path: '/knowledge-review/compliance', title: '合规性检查', icon: 'Shield' },
-          { path: '/knowledge-review/reports', title: '审核报告', icon: 'DataBoard' },
-          { path: '/knowledge-review/quality', title: '质量评估', icon: 'Star' },
+          { path: '/operation/kb-analytics', title: '知识库分析', icon: 'DataAnalysis' },
+          { path: '/operation/retrieval-analysis', title: '检索日志分析', icon: 'Search' },
         ],
       },
     ],
@@ -91,9 +85,7 @@ const allModules: NavModule[] = [
         children: [
           { path: '/application/my-tools', title: '我的工具', icon: 'Tools' },
           { path: '/application/mcp-management', title: 'MCP管理', icon: 'Connection' },
-          { path: '/plugin-db/plugins', title: '插件管理', icon: 'Coin' },
           { path: '/application/skill-management', title: '技能管理', icon: 'MagicStick' },
-          { path: '/plugin-db/databases', title: '数据库管理', icon: 'Database' },
         ],
       },
       {
@@ -102,12 +94,7 @@ const allModules: NavModule[] = [
         icon: 'DataAnalysis',
         children: [
           { path: '/operation/feedback', title: '反馈管理', icon: 'ChatLineSquare' },
-          { path: '/operation/qa-detail', title: '问答明细', icon: 'ChatDotRound' },
-          { path: '/operation/retrieval-analysis', title: '检索日志分析', icon: 'Search' },
-          { path: '/robot-operation/faq-analysis', title: 'FAQ知识分析', icon: 'Document' },
-          { path: '/robot-operation/multi-turn', title: '多轮对话分析', icon: 'ChatLineSquare' },
-          { path: '/robot-operation/intent', title: '意图知识分析', icon: 'Aim' },
-          { path: '/robot-operation/data-mining', title: '数据挖掘', icon: 'DataAnalysis' },
+          { path: '/operation/model-monitor', title: '模型监控', icon: 'Monitor' },
         ],
       },
     ],
@@ -128,13 +115,11 @@ const allModules: NavModule[] = [
         requirePerm: 'admin:system',
         children: [
           { path: '/admin/system/general-settings', title: '通用设置', icon: 'Setting' },
-          { path: '/admin/system/config-management', title: '配置管理', icon: 'Tools' },
           { path: '/admin/system/kb-config', title: '知识库配置', icon: 'Collection' },
           { path: '/admin/system/sensitive-words', title: '敏感词设置', icon: 'WarningFilled' },
           { path: '/admin/system/dictionary', title: '字典管理', icon: 'Notebook' },
           { path: '/admin/system/terminology', title: '术语管理', icon: 'Reading' },
           { path: '/admin/system/query-rules', title: '查询规则', icon: 'List' },
-          { path: '/operation/model-monitor', title: '模型监控', icon: 'Monitor' },
         ],
       },
       {
@@ -158,29 +143,7 @@ const allModules: NavModule[] = [
         children: [
           { path: '/admin/audit/system-log', title: '系统日志', icon: 'Document' },
           { path: '/admin/audit/device-login', title: '设备登录分析', icon: 'Monitor' },
-          { path: '/admin/audit/login-security', title: '登录安全配置', icon: 'Lock' },
           { path: '/admin/audit/review-center', title: '审核中心', icon: 'View' },
-        ],
-      },
-      {
-        path: '/admin/content',
-        title: '内容与工具',
-        icon: 'FolderOpened',
-        children: [
-          { path: '/admin/content/notification', title: '通知管理', icon: 'Bell' },
-          { path: '/admin/notifications', title: '通知中心', icon: 'Bell' },
-          { path: '/admin/content/prompts', title: '提示词', icon: 'Edit' },
-          { path: '/application/prompt-templates', title: 'Prompt模板', icon: 'CopyDocument' },
-          { path: '/admin/content/templates', title: '文档模板', icon: 'Document' },
-          { path: '/admin/content/download', title: '下载中心', icon: 'Download' },
-        ],
-      },
-      {
-        path: '/admin/analytics',
-        title: '数据分析',
-        icon: 'DataAnalysis',
-        children: [
-          { path: '/operation/kb-analytics', title: '知识库分析', icon: 'DataAnalysis' },
         ],
       },
       {
@@ -189,7 +152,6 @@ const allModules: NavModule[] = [
         icon: 'Connection',
         requirePerm: 'admin:system',
         children: [
-          { path: '/admin/platform/third-party', title: '三方平台', icon: 'Connection' },
           { path: '/admin/platform/model-management', title: '模型管理', icon: 'Cpu' },
           { path: '/admin/platform/api-keys', title: '开放密钥', icon: 'Key' },
         ],
@@ -252,17 +214,12 @@ const navModules = computed<NavModule[]>(() => {
 const activeModule = computed(() => {
   const path = route.path
   if (path.startsWith('/admin')) return 'admin'
-  if (
-    path.startsWith('/application') ||
-    path.startsWith('/publish-eval') ||
-    path.startsWith('/robot-operation') ||
-    path.startsWith('/plugin-db') ||
-    path.startsWith('/operation')
-  ) return 'application'
-  if (
-    path.startsWith('/knowledge') ||
-    path.startsWith('/knowledge-review')
-  ) return 'knowledge'
+  if (path.startsWith('/application')) return 'application'
+  if (path.startsWith('/publish-eval')) return 'application'
+  if (path.startsWith('/operation/kb-analytics')) return 'knowledge'
+  if (path.startsWith('/operation/retrieval-analysis')) return 'knowledge'
+  if (path.startsWith('/operation')) return 'application'
+  if (path.startsWith('/knowledge')) return 'knowledge'
   return 'home'
 })
 

@@ -24,7 +24,7 @@ async function loadDialog() {
   try {
     const r: any = await api.getAppDialogConfig(appId())
     if (r) Object.assign(dialogForm.value, r)
-  } catch { /* ignore */ }
+  } catch (e) { /* ignore */ }
 }
 
 async function saveDialog() {
@@ -43,7 +43,7 @@ async function handleExportDialog() {
     a.click()
     URL.revokeObjectURL(url)
     ElMessage.success('对话配置已导出')
-  } catch {
+  } catch (e) {
     ElMessage.error('导出失败')
   }
 }
@@ -61,7 +61,7 @@ async function handleImportDialog() {
       await api.importAppDialog(appId(), data)
       await loadDialog()
       ElMessage.success('对话配置已导入')
-    } catch {
+    } catch (e) {
       ElMessage.error('导入失败，请检查文件格式')
     }
   }
@@ -135,7 +135,7 @@ async function handleDeleteTrigger(row: any) {
     await api.deleteAppTrigger(appId(), row.id)
     await loadTriggers()
     ElMessage.success('删除成功')
-  } catch { /* cancelled */ }
+  } catch (e) { /* cancelled */ }
 }
 
 async function handleToggleTrigger(row: any) {
@@ -143,7 +143,7 @@ async function handleToggleTrigger(row: any) {
     await api.updateAppTrigger(appId(), row.id, { enabled: row.enabled ? 0 : 1 })
     await loadTriggers()
     ElMessage.success(row.enabled ? '已禁用' : '已启用')
-  } catch {
+  } catch (e) {
     ElMessage.error('操作失败')
   }
 }
@@ -158,7 +158,7 @@ async function handleTestTrigger(row: any) {
       const r: any = await api.testAppTrigger(appId(), row.id, value)
       ElMessageBox.alert(JSON.stringify(r, null, 2), '测试结果', { dangerouslyUseHTMLString: false })
     }
-  } catch { /* cancelled */ }
+  } catch (e) { /* cancelled */ }
 }
 
 async function handleRunTrigger(row: any) {
@@ -171,7 +171,7 @@ async function handleRunTrigger(row: any) {
       const r: any = await api.runAppTrigger(appId(), row.id, value)
       ElMessageBox.alert(JSON.stringify(r, null, 2), '运行结果', { dangerouslyUseHTMLString: false })
     }
-  } catch { /* cancelled */ }
+  } catch (e) { /* cancelled */ }
 }
 
 onMounted(() => {

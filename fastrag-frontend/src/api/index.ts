@@ -46,6 +46,18 @@ export async function logout() {
   return request.post('/auth/logout')
 }
 
+export async function sendCode(email: string, purpose: string) {
+  return request.post('/auth/send-code', { email, purpose })
+}
+
+export async function register(data: { username: string; email: string; password: string; code: string }) {
+  return request.post('/auth/register', data)
+}
+
+export async function resetPassword(data: { email: string; code: string; newPassword: string }) {
+  return request.post('/auth/reset-password', data)
+}
+
 // ===========================================================================
 // 知识库 API
 // ===========================================================================
@@ -104,12 +116,16 @@ export async function uploadFile(kbId: string, formData: FormData) {
   })
 }
 
-export async function processFile(kbId: string, fileId: string) {
-  return request.post(`/kb/${kbId}/files/${fileId}/process`)
+export async function processFile(kbId: string, fileId: string, config?: { processingMode?: string; qaConfig?: Record<string, unknown> }) {
+  return request.post(`/kb/${kbId}/files/${fileId}/process`, config)
 }
 
 export async function updateFile(kbId: string, fileId: string, data: Record<string, unknown>) {
   return request.put(`/kb/${kbId}/files/${fileId}`, data)
+}
+
+export async function retryFile(kbId: string, fileId: string) {
+  return request.post(`/kb/${kbId}/files/${fileId}/retry`)
 }
 
 export async function deleteFile(kbId: string, fileId: string) {
@@ -134,6 +150,12 @@ export async function copyFile(kbId: string, fileId: string) {
 
 export async function getFileProcessingStatus(kbId: string, fileId: string) {
   return request.get(`/kb/${kbId}/files/${fileId}/processing-status`)
+}
+
+export async function previewFileChunks(kbId: string, fileId: string, strategyId?: string) {
+  return request.get(`/kb/${kbId}/files/${fileId}/preview`, {
+    params: strategyId ? { strategyId } : undefined,
+  })
 }
 
 export async function downloadFile(kbId: string, fileId: string) {
@@ -172,7 +194,7 @@ export async function fetchChunkCount(kbId: string): Promise<number> {
 // QA 对 API
 // ===========================================================================
 
-export async function getQaPairs(kbId: string, params?: { page?: number; pageSize?: number }) {
+export async function getQaPairs(kbId: string, params?: { fileId?: string; page?: number; pageSize?: number }) {
   return request.get(`/kb/${kbId}/qa-pairs`, { params })
 }
 
@@ -190,10 +212,6 @@ export async function deleteQaPair(kbId: string, id: string) {
 
 export async function confirmQaPair(kbId: string, id: string) {
   return request.post(`/kb/${kbId}/qa-pairs/${id}/confirm`)
-}
-
-export async function qaExtract(kbId: string, data: { fileId?: string }) {
-  return request.post(`/kb/${kbId}/qa-pairs/qa-extract`, data)
 }
 
 // ===========================================================================
@@ -314,7 +332,7 @@ export async function fetchBenchmarks(kbId: string): Promise<Benchmark[]> {
 }
 
 export async function fetchBenchmarkDetail(kbId: string, benchId: string): Promise<BenchmarkQuestion[]> {
-  return request.get(`/kb/${kbId}/benchmarks/${benchId}`)
+  return request.get(`/kb/${kbId}/benchmarks/${benchId}/questions`)
 }
 
 export async function createBenchmarkApi(
@@ -346,6 +364,10 @@ export async function fetchEvaluations(kbId: string): Promise<Evaluation[]> {
 
 export async function fetchEvaluationDetail(kbId: string, evalId: string): Promise<EvaluationDetail> {
   return request.get(`/kb/${kbId}/evaluations/${evalId}`)
+}
+
+export async function fetchEvaluationStatus(kbId: string, evalId: string): Promise<{ status: string }> {
+  return request.get(`/kb/${kbId}/evaluations/${evalId}/status`)
 }
 
 export async function runEvaluationApi(
@@ -982,31 +1004,7 @@ export async function deleteUpdateRemind(id: string) {
 }
 
 // ===========================================================================
-// M3 实体管理
-// ===========================================================================
-
-export async function getEntities(kbId: string, keyword?: string) {
-  return request.get(`/kb/${kbId}/entities`, { params: { keyword } })
-}
-
-export async function getEntity(kbId: string, id: string) {
-  return request.get(`/kb/${kbId}/entities/${id}`)
-}
-
-export async function createEntity(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/entities`, data)
-}
-
-export async function updateEntity(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/entities/${id}`, data)
-}
-
-export async function deleteEntity(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/entities/${id}`)
-}
-
-// ===========================================================================
-// M4 API插件配置
+// M5 模型管理（扩展）
 // ===========================================================================
 
 export async function getToolApiConfig(toolId: string) {
@@ -1054,327 +1052,6 @@ export async function runDataMiningTask(id: string) {
 }
 
 // ===========================================================================
-// M7 知识生产与获取（多媒体存储 + 问答抽取）
-// ===========================================================================
-
-export async function getMediaList(kbId: string, mediaType: string, params?: { keyword?: string; status?: string; page?: number; pageSize?: number }) {
-  return request.get(`/kb/${kbId}/media/${mediaType}`, { params })
-}
-
-export async function importMedia(kbId: string, mediaType: string, items: Record<string, unknown>[]) {
-  return request.post(`/kb/${kbId}/media/${mediaType}/import`, items)
-}
-
-export async function exportMedia(kbId: string, mediaType: string) {
-  return request.get(`/kb/${kbId}/media/${mediaType}/export`)
-}
-
-export async function getDocumentList(kbId: string, params?: { keyword?: string; page?: number; pageSize?: number }) {
-  return request.get(`/kb/${kbId}/documents`, { params })
-}
-
-export async function importDocuments(kbId: string, items: Record<string, unknown>[]) {
-  return request.post(`/kb/${kbId}/documents/import`, items)
-}
-
-export async function exportDocuments(kbId: string) {
-  return request.get(`/kb/${kbId}/documents/export`)
-}
-
-export async function getStorageList(kbId: string, mediaType: string, params?: { keyword?: string; page?: number; pageSize?: number }) {
-  return request.get(`/kb/${kbId}/storage/${mediaType}`, { params })
-}
-
-export async function createStorage(kbId: string, mediaType: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/storage/${mediaType}`, data)
-}
-
-export async function updateStorage(kbId: string, mediaType: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/storage/${mediaType}/${id}`, data)
-}
-
-export async function deleteStorage(kbId: string, mediaType: string, id: string) {
-  return request.delete(`/kb/${kbId}/storage/${mediaType}/${id}`)
-}
-
-// 问答抽取
-export async function getQaExtractTasks(kbId: string, status?: string) {
-  return request.get(`/kb/${kbId}/qa-extract`, { params: { status } })
-}
-
-export async function startQaExtract(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/qa-extract/start`, data)
-}
-
-export async function stopQaExtract(kbId: string, taskId: string) {
-  return request.post(`/kb/${kbId}/qa-extract/${taskId}/stop`)
-}
-export async function updateQaExtract(kbId: string, taskId: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/qa-extract/${taskId}`, data)
-}
-
-export async function deleteQaExtract(kbId: string, taskId: string) {
-  return request.delete(`/kb/${kbId}/qa-extract/${taskId}`)
-}
-
-// ===========================================================================
-// M8 知识加工与采编
-// ===========================================================================
-
-export async function getKnowledgeEdits(kbId: string, params?: { status?: string; editor?: string }) {
-  return request.get(`/kb/${kbId}/knowledge-edits`, { params })
-}
-
-export async function exportKnowledgeEdits(kbId: string, params?: { ids?: string; status?: string; editor?: string }) {
-  return request.get(`/kb/${kbId}/knowledge-edits/export`, { params, responseType: 'blob' })
-}
-
-export async function createKnowledgeEdit(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/knowledge-edits`, data)
-}
-
-export async function updateKnowledgeEdit(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/knowledge-edits/${id}`, data)
-}
-
-export async function deleteKnowledgeEdit(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/knowledge-edits/${id}`)
-}
-
-export async function submitKnowledgeEdit(kbId: string, id: string) {
-  return request.post(`/kb/${kbId}/knowledge-edits/${id}/submit`)
-}
-
-export async function approveKnowledgeEdit(kbId: string, id: string, data?: { reviewer?: string }) {
-  return request.post(`/kb/${kbId}/knowledge-edits/${id}/approve`, data || {})
-}
-
-export async function rejectKnowledgeEdit(kbId: string, id: string, data: { reviewer?: string; comment?: string }) {
-  return request.post(`/kb/${kbId}/knowledge-edits/${id}/reject`, data)
-}
-
-// 存量知识点校验
-export async function getKnowledgeValidates(kbId: string) {
-  return request.get(`/kb/${kbId}/knowledge-validate`)
-}
-
-export async function checkKnowledgeValidate(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/knowledge-validate/check`, data)
-}
-
-// ===========================================================================
-// M9 知识存储管理（标签类型 / 标签 / 笔记）
-// ===========================================================================
-
-export async function getTagTypes(kbId: string) {
-  return request.get(`/kb/${kbId}/tag-types`)
-}
-
-export async function createTagType(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/tag-types`, data)
-}
-
-export async function updateTagType(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/tag-types/${id}`, data)
-}
-
-export async function deleteTagType(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/tag-types/${id}`)
-}
-
-export async function getTags(kbId: string, params?: { tagTypeId?: string; keyword?: string }) {
-  return request.get(`/kb/${kbId}/tags`, { params })
-}
-
-export async function createTag(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/tags`, data)
-}
-
-export async function updateTag(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/tags/${id}`, data)
-}
-
-export async function deleteTag(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/tags/${id}`)
-}
-export async function getTagKnowledge(kbId: string, tagId: string) {
-  return request.get(`/kb/${kbId}/tags/${tagId}/knowledge`)
-}
-export async function disassociateTag(kbId: string, tagId: string, knowledgeId: string) {
-  return request.delete(`/kb/${kbId}/tags/${tagId}/knowledge/${knowledgeId}`)
-}
-
-export async function getNotes(kbId: string, keyword?: string) {
-  return request.get(`/kb/${kbId}/notes`, { params: { keyword } })
-}
-
-export async function createNote(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/notes`, data)
-}
-
-export async function updateNote(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/notes/${id}`, data)
-}
-
-export async function deleteNote(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/notes/${id}`)
-}
-
-export async function exportNotes(kbId: string, ids?: string) {
-  return request.get(`/kb/${kbId}/notes/export`, { params: { ids } })
-}
-
-// ===========================================================================
-// M10 知识管理 + M11 知识更新
-// ===========================================================================
-
-export async function getKnowledgeList(kbId: string, params?: { keyword?: string; category?: string }) {
-  return request.get(`/kb/${kbId}/knowledge`, { params })
-}
-export async function createKnowledge(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/knowledge`, data)
-}
-export async function updateKnowledge(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/knowledge/${id}`, data)
-}
-export async function deleteKnowledge(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/knowledge/${id}`)
-}
-export async function getKnowledgeTests(kbId: string, knowledgeId?: string) {
-  return request.get(`/kb/${kbId}/knowledge-tests`, { params: { knowledgeId } })
-}
-export async function createKnowledgeTest(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/knowledge-tests`, data)
-}
-export async function updateKnowledgeTest(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/knowledge-tests/${id}`, data)
-}
-
-export async function deleteKnowledgeTest(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/knowledge-tests/${id}`)
-}
-export async function judgeKnowledgeDialog(kbId: string, id: string, data: { query: string; model?: string }) {
-  return request.post(`/kb/${kbId}/knowledge-dialogs/${id}/judge`, data)
-}
-
-export async function getKnowledgeDialogs(kbId: string, knowledgeId?: string) {
-  return request.get(`/kb/${kbId}/knowledge-dialogs`, { params: { knowledgeId } })
-}
-
-export async function createKnowledgeDialog(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/knowledge-dialogs`, data)
-}
-
-export async function deleteKnowledgeDialog(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/knowledge-dialogs/${id}`)
-}
-
-// M11 知识更新
-export async function getKnowledgeUpdates(kbId: string, params?: { knowledgeId?: string; updateType?: string; status?: string; page?: number; pageSize?: number }) {
-  return request.get(`/kb/${kbId}/knowledge-updates`, { params })
-}
-export async function createKnowledgeUpdate(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/knowledge-updates`, data)
-}
-export async function updateKnowledgeUpdate(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/knowledge-updates/${id}`, data)
-}
-export async function deleteKnowledgeUpdate(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/knowledge-updates/${id}`)
-}
-export async function applyKnowledgeUpdate(kbId: string, id: string) {
-  return request.post(`/kb/${kbId}/knowledge-updates/${id}/apply`)
-}
-export async function rollbackKnowledgeUpdate(kbId: string, id: string) {
-  return request.post(`/kb/${kbId}/knowledge-updates/${id}/rollback`)
-}
-
-// ===========================================================================
-// M12 智能搜索
-// ===========================================================================
-
-export async function getSearchAssociations(kbId: string, params?: { dimension?: string; keyword?: string; page?: number; pageSize?: number }) {
-  return request.get(`/kb/${kbId}/search-associations`, { params })
-}
-export async function createSearchAssociation(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/search-associations`, data)
-}
-export async function updateSearchAssociation(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/search-associations/${id}`, data)
-}
-export async function deleteSearchAssociation(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/search-associations/${id}`)
-}
-export async function searchAssociations(kbId: string, q: string, dimension?: string) {
-  return request.get(`/kb/${kbId}/search-associations/search`, { params: { q, dimension } })
-}
-export async function judgeSearchAssociation(kbId: string, dimension: string, query: string, targetText?: string) {
-  return request.post(`/kb/${kbId}/search-associations/judge`, { dimension, query, targetText })
-}
-export async function searchAutoCorrect(kbId: string, q: string) {
-  return request.get(`/kb/${kbId}/search-associations/auto-correct`, { params: { q } })
-}
-export async function getAutoCorrections(kbId: string) {
-  return request.get(`/kb/${kbId}/auto-corrections`)
-}
-export async function createAutoCorrection(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/auto-corrections`, data)
-}
-export async function updateAutoCorrection(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/auto-corrections/${id}`, data)
-}
-export async function deleteAutoCorrection(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/auto-corrections/${id}`)
-}
-
-// ===========================================================================
-// M13 知识问答
-// ===========================================================================
-
-export async function getMultiTurnQa(kbId: string) {
-  return request.get(`/kb/${kbId}/multi-turn-qa`)
-}
-export async function createMultiTurnQa(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/multi-turn-qa`, data)
-}
-export async function updateMultiTurnQa(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/multi-turn-qa/${id}`, data)
-}
-export async function deleteMultiTurnQa(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/multi-turn-qa/${id}`)
-}
-export async function getMultimodalQa(kbId: string) {
-  return request.get(`/kb/${kbId}/multimodal-qa`)
-}
-export async function createMultimodalQa(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/multimodal-qa`, data)
-}
-export async function updateMultimodalQa(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/multimodal-qa/${id}`, data)
-}
-export async function deleteMultimodalQa(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/multimodal-qa/${id}`)
-}
-export async function getDocGuides(kbId: string) {
-  return request.get(`/kb/${kbId}/doc-guides`)
-}
-export async function createDocGuide(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/doc-guides`, data)
-}
-export async function updateDocGuide(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/doc-guides/${id}`, data)
-}
-export async function deleteDocGuide(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/doc-guides/${id}`)
-}
-export async function indexDocGuide(kbId: string, id: string) {
-  return request.post(`/kb/${kbId}/doc-guides/${id}/index`)
-}
-export async function multimodalSearch(kbId: string, modality: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/multimodal-retrieval/${modality}/search`, data)
-}
-
-// ===========================================================================
 // M14 系统设置管理
 // ===========================================================================
 
@@ -1383,6 +1060,9 @@ export async function trainModel(modelId: string, data: Record<string, unknown>)
 }
 export async function testModel(modelId: string, data: Record<string, unknown>) {
   return request.post(`/models/${modelId}/test`, data)
+}
+export async function testModelChat(modelId: string, prompt: string) {
+  return request.post(`/models/${modelId}/test-chat`, { prompt })
 }
 export async function getModelTrainings(modelId: string) {
   return request.get(`/models/${modelId}/trainings`)
@@ -1446,7 +1126,7 @@ export async function getReviewStatus() {
 }
 
 // ===========================================================================
-// M15 知识审核管理
+// 知识发布管理
 // ===========================================================================
 
 export async function getPublishHistory(kbId: string, knowledgeId?: string) {
@@ -1479,77 +1159,11 @@ export async function saveResetConfig(kbId: string, data: Record<string, unknown
 export async function resetKnowledge(kbId: string, knowledgeId: string) {
   return request.post(`/kb/${kbId}/reset/${knowledgeId}`)
 }
-export async function getReviewStrategies(kbId: string) {
-  return request.get(`/kb/${kbId}/review-strategies`)
+export async function getOnlineVersion(kbId: string, knowledgeId?: string) {
+  return request.get(`/kb/${kbId}/publish/online-version`, { params: { knowledgeId } })
 }
-export async function createReviewStrategy(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/review-strategies`, data)
-}
-export async function deleteReviewStrategy(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/review-strategies/${id}`)
-}
-export async function getComplianceRules(kbId: string) {
-  return request.get(`/kb/${kbId}/compliance-rules`)
-}
-export async function createComplianceRule(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/compliance-rules`, data)
-}
-export async function updateComplianceRule(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/compliance-rules/${id}`, data)
-}
-export async function deleteComplianceRule(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/compliance-rules/${id}`)
-}
-export async function getQualityRules(kbId: string) {
-  return request.get(`/kb/${kbId}/quality-rules`)
-}
-export async function createQualityRule(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/quality-rules`, data)
-}
-export async function updateQualityRule(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/quality-rules/${id}`, data)
-}
-export async function deleteQualityRule(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/quality-rules/${id}`)
-}
-export async function getReviewTemplates(kbId: string) {
-  return request.get(`/kb/${kbId}/review-templates`)
-}
-export async function createReviewTemplate(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/review-templates`, data)
-}
-export async function deleteReviewTemplate(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/review-templates/${id}`)
-}
-export async function updateReviewTemplate(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/review-templates/${id}`, data)
-}
-export async function getReviewNodes(kbId: string, templateId: string) {
-  return request.get(`/kb/${kbId}/review-templates/${templateId}/nodes`)
-}
-export async function executeComplianceCheck(kbId: string, data: { knowledgeId: string; ruleIds?: string[] }) {
-  return request.post(`/kb/${kbId}/compliance-rules/execute`, data)
-}
-export async function copyReviewNode(kbId: string, id: string) {
-  return request.post(`/kb/${kbId}/review-nodes/${id}/copy`)
-}
-export async function getNodeOptimizationSuggestions(kbId: string, templateId: string) {
-  return request.get(`/kb/${kbId}/review-templates/${templateId}/optimizations`)
-}
-export async function getListeners(kbId: string) {
-  return request.get(`/kb/${kbId}/listeners`)
-}
-export async function createListener(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/listeners`, data)
-}
-export async function updateListener(kbId: string, id: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/listeners/${id}`, data)
-}
-export async function toggleListener(kbId: string, id: string, action: string) {
-  return request.post(`/kb/${kbId}/listeners/${id}/${action}`)
-}
-export async function deleteListener(kbId: string, id: string) {
-  return request.delete(`/kb/${kbId}/listeners/${id}`)
+export async function getOfflineVersion(kbId: string, knowledgeId?: string) {
+  return request.get(`/kb/${kbId}/publish/offline-version`, { params: { knowledgeId } })
 }
 
 // ===========================================================================
@@ -1763,65 +1377,6 @@ export async function importPluginsFromJson(plugins: Record<string, unknown>[]) 
 }
 
 // ===========================================================================
-// M9 存储上传/下载
-// ===========================================================================
-
-export async function uploadStorageFile(kbId: string, mediaType: string, file: File, description?: string, tags?: string) {
-  const formData = new FormData()
-  formData.append('file', file)
-  if (description) formData.append('description', description)
-  if (tags) formData.append('tags', tags)
-  return request.post(`/kb/${kbId}/storage/${mediaType}/upload`, formData, { headers: { 'Content-Type': 'multipart/form-data' } })
-}
-export function getStorageDownloadUrl(kbId: string, mediaType: string, id: string) {
-  return `/api/kb/${kbId}/storage/${mediaType}/${id}/download`
-}
-
-// ===========================================================================
-// M15 知识审核管理扩展
-// ===========================================================================
-
-export async function getListenerLogs(kbId: string, listenerId: string, params?: { level?: string; page?: number; pageSize?: number }) {
-  return request.get(`/kb/${kbId}/listeners/${listenerId}/logs`, { params })
-}
-export async function clearListenerLogs(kbId: string, listenerId: string, beforeDate?: string) {
-  return request.delete(`/kb/${kbId}/listeners/${listenerId}/logs`, { params: { beforeDate } })
-}
-export async function getListenerStats(kbId: string, listenerId: string) {
-  return request.get(`/kb/${kbId}/listeners/${listenerId}/stats`)
-}
-export async function getListenerTrends(kbId: string, listenerId: string, days?: number) {
-  return request.get(`/kb/${kbId}/listeners/${listenerId}/trends`, { params: { days } })
-}
-export async function setListenerAlerts(kbId: string, listenerId: string, config: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/listeners/${listenerId}/alerts`, config)
-}
-export async function getOnlineVersion(kbId: string, knowledgeId?: string) {
-  return request.get(`/kb/${kbId}/publish/online-version`, { params: { knowledgeId } })
-}
-export async function getOfflineVersion(kbId: string, knowledgeId?: string) {
-  return request.get(`/kb/${kbId}/publish/offline-version`, { params: { knowledgeId } })
-}
-export async function getReviewHistory(kbId: string, strategyId: string) {
-  return request.get(`/kb/${kbId}/review-strategies/${strategyId}/history`)
-}
-export async function setReviewTimeout(kbId: string, strategyId: string, config: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/review-strategies/${strategyId}/timeout`, config)
-}
-export async function generatePublishReport(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/report`)
-}
-export async function exportPublishData(kbId: string, format?: string) {
-  return request.get(`/kb/${kbId}/publish/export`, { params: { format } })
-}
-export async function getPublishEfficiency(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/efficiency`)
-}
-export async function getPublishFlowChart(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/flow-chart`)
-}
-
-// ===========================================================================
 // M16 机器人配置扩展
 // ===========================================================================
 
@@ -1914,65 +1469,11 @@ export async function deleteModelPreset(id: string) {
   return request.delete(`/models/presets/${id}`)
 }
 
-// ===========================================================================
-// P3 新功能 API
-// ===========================================================================
-export async function exportReviewRecords(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/export-review-records`, { responseType: 'blob' })
-}
-export async function importReviewKnowledge(kbId: string, items: Record<string, unknown>[]) {
-  return request.post(`/kb/${kbId}/publish/import-review-knowledge`, items)
-}
-export async function exportUnreviewedKnowledge(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/export-unreviewed`, { responseType: 'blob' })
-}
-export async function importFlowChart(kbId: string, data: Record<string, unknown>) {
-  return request.post(`/kb/${kbId}/publish/import-flow-chart`, data)
-}
-export async function getLogRetention(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/log-retention`)
-}
-export async function setLogRetention(kbId: string, config: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/publish/log-retention`, config)
-}
-export async function getReviewMetrics(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/review-metrics`)
-}
-export async function getReviewOptimizations(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/review-optimizations`)
-}
-export async function applyReviewOptimization(kbId: string, optId: string) {
-  return request.post(`/kb/${kbId}/publish/review-optimizations/${optId}/apply`)
-}
-export async function getReviewTimeoutRecords(kbId: string) {
-  return request.get(`/kb/${kbId}/review/timeout-records`)
-}
-export async function setReviewTimeoutConfig(kbId: string, data: Record<string, unknown>) {
-  return request.put(`/kb/${kbId}/review/timeout-config`, data)
-}
-export async function getReviewTimeoutConfig(kbId: string) {
-  return request.get(`/kb/${kbId}/review/timeout-config`)
-}
-export async function getPublishDetail(kbId: string, id: string) {
-  return request.get(`/kb/${kbId}/publish/${id}`)
-}
-export async function getReviewDetail(kbId: string, id: string) {
-  return request.get(`/kb/${kbId}/review/${id}`)
-}
-export async function exportPublishReport(kbId: string) {
-  return request.get(`/kb/${kbId}/publish/report/export`, { responseType: 'blob' })
-}
-export async function getReviewCoverage(kbId: string) {
-  return request.get(`/kb/${kbId}/review/coverage`)
-}
 export async function getKnowledgeUpdateLogs(kbId: string, page?: number, pageSize?: number) {
   return request.get(`/kb/${kbId}/knowledge-update-logs`, { params: { page, pageSize } })
 }
 export async function markUpdateLogRead(kbId: string, id: string) {
   return request.put(`/kb/${kbId}/update-logs/${id}/read`)
-}
-export async function compareKnowledgeContent(kbId: string, oldId: string, newId: string) {
-  return request.get(`/kb/${kbId}/knowledge-compare`, { params: { oldId, newId } })
 }
 export async function setAutoKnowledgeUpdate(appId: string, config: Record<string, unknown>) {
   return request.put(`/apps/${appId}/knowledge-update`, config)

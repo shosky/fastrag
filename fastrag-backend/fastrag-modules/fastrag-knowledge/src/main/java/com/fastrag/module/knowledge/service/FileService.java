@@ -10,7 +10,7 @@ public interface FileService {
     List<FileDto> list(String kbId);
     List<FileDto> listDeleted(String kbId);
     FileDto upload(String kbId, MultipartFile file);
-    void process(String kbId, String fileId);
+    void process(String kbId, String fileId, String processingMode, java.util.Map<String, Object> qaConfig);
     FileDto update(String kbId, String fileId, Map<String, Object> patch);
     void delete(String kbId, String fileId);
     void restore(String kbId, String fileId);
@@ -18,4 +18,6 @@ public interface FileService {
     void emptyRecycleBin(String kbId);
     FileDto copy(String kbId, String fileId);
     Map<String, Object> getProcessingStatus(String kbId, String fileId);
+    Map<String, Object> previewChunks(String kbId, String fileId, String strategyId);
+    FileDto retryFile(String kbId, String fileId);
 }

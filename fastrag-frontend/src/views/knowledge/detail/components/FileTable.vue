@@ -24,6 +24,7 @@ const emit = defineEmits<{
   (e: 'rename', file: KnowledgeFile): void
   (e: 'copy', file: KnowledgeFile): void
   (e: 'changeStrategy', file: KnowledgeFile, strategyId: string, strategyName: string): void
+  (e: 'toggleGraphBuild', file: KnowledgeFile, enabled: boolean): void
 }>()
 
 // Filter state
@@ -69,7 +70,7 @@ const filteredFiles = computed(() => {
 })
 
 // 分页（真实切片）
-const { currentPage, pageSize, total, handleCurrentChange, handleSizeChange } = usePagination(20)
+const { currentPage, pageSize, total, handleCurrentChange, handleSizeChange } = usePagination(10)
 watch(() => filteredFiles.value.length, (n) => {
   total.value = n
   currentPage.value = 1
@@ -148,6 +149,11 @@ function handleChangeStrategy(file: KnowledgeFile, strategyId: string) {
     emit('changeStrategy', file, s.id, s.name)
   }
 }
+
+// 切换知识图谱开关
+function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
+  emit('toggleGraphBuild', file, enabled)
+}
 </script>
 
 <template>
@@ -222,6 +228,7 @@ function handleChangeStrategy(file: KnowledgeFile, strategyId: string) {
               :class="{ 'file-table__name--link': row.status === 'completed' }"
               @click="handleNameClick(row as KnowledgeFile)"
             >{{ row.name }}</span>
+            <el-tag v-if="(row as any).processingMode === 'qa'" type="warning" size="small" class="file-table__qa-badge">QA</el-tag>
           </div>
         </template>
       </el-table-column>
@@ -290,6 +297,19 @@ function handleChangeStrategy(file: KnowledgeFile, strategyId: string) {
       <el-table-column label="大小" width="100" align="center" sortable :sort-method="(a: any, b: any) => (a as KnowledgeFile).size - (b as KnowledgeFile).size">
         <template #default="{ row }">
           {{ formatFileSize(row.size) }}
+        </template>
+      </el-table-column>
+
+      <!-- 知识图谱开关列 -->
+      <el-table-column label="知识图谱" width="100" align="center">
+        <template #default="{ row }">
+          <el-switch
+            :model-value="(row as any).enableGraphBuild"
+            :active-value="1"
+            :inactive-value="0"
+            @change="handleGraphToggle(row as KnowledgeFile, ($event as number) === 1)"
+            size="small"
+          />
         </template>
       </el-table-column>
 
@@ -436,6 +456,11 @@ function handleChangeStrategy(file: KnowledgeFile, strategyId: string) {
         text-decoration: underline;
       }
     }
+  }
+
+  &__qa-badge {
+    flex-shrink: 0;
+    margin-left: 6px;
   }
 
   &__more-btn {

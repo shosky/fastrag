@@ -49,9 +49,18 @@ public class FileController {
     }
 
     @PostMapping("/{id}/process")
-    public ApiResponse<?> process(@PathVariable String kbId, @PathVariable String id) {
-        svc.process(kbId, id);
+    public ApiResponse<?> process(@PathVariable String kbId, @PathVariable String id,
+                                  @RequestBody(required = false) java.util.Map<String, Object> body) {
+        String mode = body != null ? (String) body.get("processingMode") : "chunk";
+        @SuppressWarnings("unchecked")
+        java.util.Map<String, Object> qaConfig = body != null ? (java.util.Map<String, Object>) body.get("qaConfig") : null;
+        svc.process(kbId, id, mode, qaConfig);
         return ApiResponse.success();
+    }
+
+    @PostMapping("/{id}/retry")
+    public ApiResponse<?> retry(@PathVariable String kbId, @PathVariable String id) {
+        return ApiResponse.success(svc.retryFile(kbId, id));
     }
 
     @PutMapping("/{id}")
@@ -110,6 +119,12 @@ public class FileController {
     @GetMapping("/{id}/processing-status")
     public ApiResponse<?> status(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.getProcessingStatus(kbId, id));
+    }
+
+    @GetMapping("/{id}/preview")
+    public ApiResponse<?> preview(@PathVariable String kbId, @PathVariable String id,
+                                  @RequestParam(required = false) String strategyId) {
+        return ApiResponse.success(svc.previewChunks(kbId, id, strategyId));
     }
 
     @GetMapping("/{id}/download")

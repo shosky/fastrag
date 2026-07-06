@@ -9,7 +9,6 @@ import type {
 import {
   fetchGraphData,
   fetchGraphStats,
-  fetchChunkCount,
 } from '@/api'
 import { ENTITY_TYPE_COLORS } from '@/mock/knowledge-graph'
 
@@ -40,7 +39,6 @@ export function useKnowledgeGraph(kbId: string = 'default') {
   const nodes = ref<GraphNode[]>([])
   const edges = ref<GraphEdge[]>([])
   const stats = ref<GraphStats>({ entityCount: 0, relationCount: 0, entityTypes: [] })
-  const chunkCount = ref(0)
   const loading = ref(false)
   const selectedNode = ref<GraphNode | null>(null)
   /** 用户手动拖动后的坐标覆盖（id -> {x,y}），保证拖动后位置不被布局重算覆盖 */
@@ -62,17 +60,20 @@ export function useKnowledgeGraph(kbId: string = 'default') {
   async function load() {
     loading.value = true
     try {
-      const [data, s, cc] = await Promise.all([
+      const [data, s] = await Promise.all([
         fetchGraphData(kbId),
         fetchGraphStats(kbId),
-        fetchChunkCount(kbId),
       ])
       nodes.value = data.nodes
       edges.value = data.edges
       stats.value = s
-      chunkCount.value = cc
       positionOverrides.value = {}
       selectedNode.value = null
+    } catch (e) {
+      console.warn('[KnowledgeGraph] Failed to load graph data:', e)
+      nodes.value = []
+      edges.value = []
+      stats.value = { entityCount: 0, relationCount: 0, entityTypes: [] }
     } finally {
       loading.value = false
     }
@@ -105,7 +106,6 @@ export function useKnowledgeGraph(kbId: string = 'default') {
     edges,
     viewNodes,
     stats,
-    chunkCount,
     loading,
     selectedNode,
     // 计算属性

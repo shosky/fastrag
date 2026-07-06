@@ -7,6 +7,10 @@ public class ModelController {
     private final ModelService svc;
     @GetMapping public ApiResponse<?> list(@RequestParam(required=false) String keyword,@RequestParam(required=false) String purpose) { return ApiResponse.success(svc.list(keyword,purpose)); }
     @GetMapping("/{id}") public ApiResponse<?> get(@PathVariable String id) { return ApiResponse.success(svc.get(id)); }
+    @PostMapping("/{id}/test-chat") public ApiResponse<?> testChat(@PathVariable String id, @RequestBody Map<String,Object> body) {
+        String prompt = (String) body.getOrDefault("prompt", "你好，请简单介绍一下你自己");
+        return ApiResponse.success(svc.testChat(id, prompt));
+    }
     @PostMapping public ApiResponse<?> create(@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.create(f)); }
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.update(id,f)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }

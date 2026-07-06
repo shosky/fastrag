@@ -54,10 +54,6 @@ async function handleCommentSubmit() {
 
 <template>
   <div class="page-container">
-    <div class="section-header">
-      <h3>审核中心</h3>
-    </div>
-
     <el-tabs v-model="activeTab">
       <el-tab-pane label="待审核" name="pending" />
       <el-tab-pane label="已通过" name="approved" />

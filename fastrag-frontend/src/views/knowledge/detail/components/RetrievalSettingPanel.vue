@@ -1,5 +1,6 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import * as api from '@/api'
 import type { RetrievalSettingConfig } from '@/types/knowledge'
 
 const props = defineProps<{
@@ -11,6 +12,20 @@ const emit = defineEmits<{
 }>()
 
 const localConfig = ref<RetrievalSettingConfig>({ ...props.config })
+
+const rerankModels = ref<any[]>([])
+
+onMounted(async () => {
+  try {
+    const res = await api.getModels({ purpose: 'Rerank' })
+    rerankModels.value = (res as any)?.list || res || []
+  } catch {
+    rerankModels.value = [
+      { code: 'bge-reranker-v2-m3', name: 'bge-reranker-v2-m3' },
+      { code: 'bge-reranker-base', name: 'bge-reranker-base' },
+    ]
+  }
+})
 
 watch(() => props.config, (newConfig) => {
   localConfig.value = { ...newConfig }
@@ -121,12 +136,16 @@ const keywordWeight = computed(() => (1 - (localConfig.value.semanticWeight ?? 0
       <el-switch :model-value="localConfig.enableRerank ?? false" @change="(v: any) => updateBool('enableRerank', v)" />
       <el-select
         v-if="localConfig.enableRerank"
-        :model-value="localConfig.rerankModel ?? 'bge-reranker-v2-m3'"
+        :model-value="localConfig.rerankModel ?? (rerankModels[0]?.code || 'bge-reranker-v2-m3')"
         style="width: 180px; margin-left: 12px"
         @change="(v: any) => updateStr('rerankModel', v)"
       >
-        <el-option label="bge-reranker-v2-m3" value="bge-reranker-v2-m3" />
-        <el-option label="bge-reranker-base" value="bge-reranker-base" />
+        <el-option
+          v-for="m in rerankModels"
+          :key="m.code"
+          :label="m.name"
+          :value="m.code"
+        />
       </el-select>
     </el-form-item>
 

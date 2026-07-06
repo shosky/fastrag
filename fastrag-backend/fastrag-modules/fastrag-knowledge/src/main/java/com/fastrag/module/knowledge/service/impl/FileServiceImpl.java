@@ -6,21 +6,36 @@ import cn.hutool.json.JSONArray;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
+import com.fastrag.infra.milvus.MilvusService;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.infra.rabbitmq.MessagePublisher;
+import com.fastrag.module.knowledge.chunking.ChunkData;
+import com.fastrag.module.knowledge.chunking.ChunkingService;
+import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
+import com.fastrag.module.knowledge.entity.KbQaPair;
+import com.fastrag.module.knowledge.entity.KnowledgeBase;
+import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
+import com.fastrag.module.knowledge.mapper.KbQaPairMapper;
+import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.knowledge.model.FileDto;
+import com.fastrag.module.knowledge.parser.DocumentParser;
+import com.fastrag.module.knowledge.parser.ParseResult;
 import com.fastrag.module.knowledge.service.FileService;
+import com.fastrag.module.publish.service.LogService;
 import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.time.LocalDateTime;
 import java.util.*;
 import java.util.stream.Collectors;
@@ -30,10 +45,16 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class FileServiceImpl implements FileService {
     private final KbFileMapper fileMapper;
+    private final KbChunkMapper chunkMapper;
+    private final KbQaPairMapper qaPairMapper;
     private final MinioService minioService;
     private final MessagePublisher messagePublisher;
     private final KbParseStrategyMapper strategyMapper;
-    private final org.springframework.jdbc.core.JdbcTemplate jdbcTemplate;
+    private final JdbcTemplate jdbcTemplate;
+    private final DocumentParser documentParser;
+    private final ChunkingService chunkingService;
+    private final KnowledgeBaseMapper knowledgeBaseMapper;
+    private final MilvusService milvusService;
 
     @Override
     public List<FileDto> list(String kbId) {
@@ -86,7 +107,7 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
-    public void process(String kbId, String fileId) {
+    public void process(String kbId, String fileId, String processingMode, java.util.Map<String, Object> qaConfig) {
         KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
                 .eq(KbFile::getId, fileId)
                 .eq(KbFile::getKbId, kbId));
@@ -94,6 +115,21 @@ public class FileServiceImpl implements FileService {
 
         // 获取解析策略
         String strategyId = resolveStrategy(kbId, f.getExtension());
+
+        // 持久化处理模式
+        f.setProcessingMode(processingMode != null ? processingMode : "chunk");
+        // 持久化解析策略 ID（后续图谱构建等需要读取策略中的 LLM 模型配置）
+        f.setParseStrategyId(strategyId);
+        // 持久化图谱开关：
+        // - 文件从未被用户显式修改过（createdAt == updatedAt）：0 是 DB 默认值，从 KB 级 + 策略级继承
+        // - 文件已被用户显式修改过（toggle 开关等）：尊重用户的选择
+        boolean userExplicitlySet = f.getUpdatedAt() != null
+                && f.getCreatedAt() != null
+                && f.getUpdatedAt().isAfter(f.getCreatedAt());
+        if (!userExplicitlySet && (f.getEnableGraphBuild() == null || f.getEnableGraphBuild() == 0)) {
+            f.setEnableGraphBuild(resolveDefaultGraphBuild(kbId, strategyId));
+        }
+        fileMapper.updateById(f);
 
         // 发送消息到 RabbitMQ 触发处理
         Map<String, Object> msg = new HashMap<>();
@@ -103,9 +139,106 @@ public class FileServiceImpl implements FileService {
         msg.put("strategyId", strategyId);
         msg.put("operator", SecurityUtil.getCurrentUser() != null
                 ? SecurityUtil.getCurrentUser().getUsername() : "system");
+        msg.put("processingMode", processingMode != null ? processingMode : "chunk");
+        msg.put("enableGraphBuild", f.getEnableGraphBuild());
+        if (qaConfig != null) {
+            msg.put("qaConfig", qaConfig);
+        }
         messagePublisher.publishIngestion(msg);
 
-        log.info("File processing triggered: {}", f.getId());
+        log.info("File processing triggered: {}, mode: {}, enableGraphBuild: {}",
+                f.getId(), processingMode, f.getEnableGraphBuild());
+    }
+
+    /**
+     * 解析该文件的默认图谱开关值：KB 级 graphAutoBuild AND 策略级 enableGraphBuild
+     * 两者都为 1 时才返回 1，否则返回 0
+     */
+    private Integer resolveDefaultGraphBuild(String kbId, String strategyId) {
+        // KB 级开关
+        boolean kbEnabled = false;
+        KnowledgeBase kb = knowledgeBaseMapper.selectById(kbId);
+        if (kb != null && kb.getGraphAutoBuild() != null) {
+            kbEnabled = kb.getGraphAutoBuild() == 1;
+        }
+        if (!kbEnabled) return 0;
+
+        // 策略级开关
+        if (strategyId != null) {
+            KbParseStrategy strategy = strategyMapper.selectById(strategyId);
+            if (strategy != null && strategy.getEnableGraphBuild() != null) {
+                return strategy.getEnableGraphBuild() == 1 ? 1 : 0;
+            }
+        }
+        return 1; // KB 允许且策略未显式关闭
+    }
+
+    @Override
+    public FileDto retryFile(String kbId, String fileId) {
+        KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
+                .eq(KbFile::getId, fileId)
+                .eq(KbFile::getKbId, kbId));
+        if (f == null) throw new RuntimeException("File not found");
+
+        log.info("Retrying file: {}, kbId: {}, currentStatus: {}", fileId, kbId, f.getStatus());
+
+        // 1. 清理旧数据
+        cleanupOldData(kbId, fileId, f.getProcessingMode());
+
+        // 2. 重置文件状态
+        f.setStatus("pending");
+        f.setProgress(0);
+        f.setStage("");
+        f.setChunkCount(0);
+        // 如果 processingMode 尚未设置（首次重试），从当前策略解析
+        if (f.getProcessingMode() == null || f.getProcessingMode().isBlank()) {
+            String strategyId = resolveStrategy(kbId, f.getExtension());
+            f.setProcessingMode("chunk");
+            if (f.getEnableGraphBuild() == null) {
+                f.setEnableGraphBuild(resolveDefaultGraphBuild(kbId, strategyId));
+            }
+        }
+        fileMapper.updateById(f);
+
+        // 3. 重新触发处理（走标准 process 流程，会发 RabbitMQ 消息）
+        process(kbId, fileId, f.getProcessingMode(), null);
+
+        log.info("File retry initiated: {}, mode: {}", fileId, f.getProcessingMode());
+        return toDto(f);
+    }
+
+    /**
+     * 清理文件数据：MySQL chunks、Milvus 向量、QA 对
+     */
+    private void cleanupFileData(String kbId, String fileId) {
+        // 清理 MySQL kb_chunk 记录
+        int chunkDeleted = chunkMapper.delete(new LambdaQueryWrapper<KbChunk>()
+                .eq(KbChunk::getKbId, kbId)
+                .eq(KbChunk::getFileId, fileId));
+        log.info("[Delete] Deleted {} chunks for file: {}", chunkDeleted, fileId);
+
+        // 清理 Milvus 向量（按 collection + fileId）
+        String collection = "kb_" + kbId;
+        try {
+            milvusService.deleteByFileId(collection, fileId);
+        } catch (Exception e) {
+            log.warn("[Delete] Milvus cleanup failed for file {}: {}", fileId, e.getMessage());
+        }
+    }
+
+    /**
+     * 清理文件旧的处理数据：MySQL chunks、Milvus 向量、QA 对（用于重试场景）
+     */
+    private void cleanupOldData(String kbId, String fileId, String processingMode) {
+        cleanupFileData(kbId, fileId);
+
+        // 如果是 QA 模式，清理旧 QA 对
+        if ("qa".equals(processingMode)) {
+            int qaDeleted = qaPairMapper.delete(new LambdaQueryWrapper<KbQaPair>()
+                    .eq(KbQaPair::getKbId, kbId)
+                    .eq(KbQaPair::getFileId, fileId));
+            log.info("[Retry] Deleted {} old QA pairs for file: {}", qaDeleted, fileId);
+        }
     }
 
     @Override
@@ -115,6 +248,11 @@ public class FileServiceImpl implements FileService {
         if (f == null) throw new RuntimeException("File not found");
         if (patch.containsKey("name")) f.setName((String) patch.get("name"));
         if (patch.containsKey("folderId")) f.setFolderId((String) patch.get("folderId"));
+        if (patch.containsKey("enableGraphBuild")) {
+            Object val = patch.get("enableGraphBuild");
+            int intVal = val instanceof Number ? ((Number) val).intValue() : (Boolean.TRUE.equals(val) ? 1 : 0);
+            f.setEnableGraphBuild(intVal);
+        }
         fileMapper.updateById(f);
         return toDto(f);
     }
@@ -122,6 +260,7 @@ public class FileServiceImpl implements FileService {
     @Override
     public void delete(String kbId, String fileId) {
         // 软删除：使用原生 SQL 确保 deleted_at 被更新
+        // 注意：不清理 chunks/Milvus，以便 restore 时可以恢复
         jdbcTemplate.update("UPDATE kb_file SET deleted_at = NOW() WHERE id = ? AND kb_id = ?", fileId, kbId);
     }
 
@@ -136,6 +275,8 @@ public class FileServiceImpl implements FileService {
 
     @Override
     public void permanentDelete(String kbId, String fileId) {
+        // 先清理关联数据，再删除文件记录
+        cleanupFileData(kbId, fileId);
         fileMapper.deleteById(fileId);
     }
 
@@ -143,7 +284,10 @@ public class FileServiceImpl implements FileService {
     public void emptyRecycleBin(String kbId) {
         fileMapper.selectList(new LambdaQueryWrapper<KbFile>()
                 .eq(KbFile::getKbId, kbId).isNotNull(KbFile::getDeletedAt))
-                .forEach(f -> fileMapper.deleteById(f.getId()));
+                .forEach(f -> {
+                    cleanupFileData(kbId, f.getId());
+                    fileMapper.deleteById(f.getId());
+                });
     }
 
     @Override
@@ -174,6 +318,86 @@ public class FileServiceImpl implements FileService {
         r.put("progress", f.getProgress() != null ? f.getProgress() : 0);
         r.put("stage", f.getStage() != null ? f.getStage() : "");
         return r;
+    }
+
+    @Override
+    public Map<String, Object> previewChunks(String kbId, String fileId, String strategyId) {
+        KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
+                .eq(KbFile::getId, fileId)
+                .eq(KbFile::getKbId, kbId));
+        if (f == null) throw new RuntimeException("File not found");
+
+        // 如果未指定策略，按扩展名自动匹配
+        if (strategyId == null || strategyId.isBlank()) {
+            strategyId = resolveStrategy(kbId, f.getExtension());
+        }
+
+        try {
+            // 下载文件
+            InputStream fileStream = minioService.download(f.getObjectKey());
+            byte[] fileBytes = fileStream.readAllBytes();
+            fileStream.close();
+
+            // 解析文档
+            ParseResult parseResult = documentParser.parse(
+                    new ByteArrayInputStream(fileBytes), f.getExtension(), strategyId);
+
+            // 分块
+            List<ChunkData> allChunks;
+            boolean hasSegments = parseResult.getSegments() != null && !parseResult.getSegments().isEmpty();
+            if (hasSegments) {
+                allChunks = chunkingService.chunkBySegments(parseResult.getSegments(), strategyId);
+            } else {
+                allChunks = chunkingService.chunk(parseResult.getText(), strategyId);
+            }
+
+            // 限制预览数量为前 20 个
+            int previewLimit = Math.min(allChunks.size(), 20);
+            List<Map<String, Object>> previewChunks = new ArrayList<>();
+            for (int i = 0; i < previewLimit; i++) {
+                ChunkData chunk = allChunks.get(i);
+                Map<String, Object> chunkMap = new LinkedHashMap<>();
+                chunkMap.put("index", chunk.getIndex());
+                // 生成标题
+                String title = buildChunkTitle(chunk);
+                chunkMap.put("title", title);
+                // 内容截断到 300 字符
+                String content = chunk.getContent();
+                if (content != null && content.length() > 300) {
+                    content = content.substring(0, 300) + "...";
+                }
+                chunkMap.put("content", content);
+                previewChunks.add(chunkMap);
+            }
+
+            Map<String, Object> result = new LinkedHashMap<>();
+            result.put("fileId", fileId);
+            result.put("fileName", f.getName());
+            result.put("pages", parseResult.getPages());
+            result.put("totalChunks", allChunks.size());
+            result.put("previewChunks", previewChunks);
+            return result;
+        } catch (IOException e) {
+            throw new RuntimeException("文件预览失败: " + e.getMessage(), e);
+        }
+    }
+
+    private String buildChunkTitle(ChunkData chunk) {
+        if (chunk.getChunkType() != null && "image".equals(chunk.getChunkType())) {
+            return chunk.getPageNumber() != null
+                    ? "图片（第" + chunk.getPageNumber() + "页）"
+                    : "图片";
+        }
+        if (chunk.getStartTime() != null && chunk.getEndTime() != null) {
+            return String.format("#%d %.0fs - %.0fs", chunk.getIndex() + 1,
+                    chunk.getStartTime(), chunk.getEndTime());
+        }
+        if (chunk.getPageNumber() != null) {
+            return chunk.getPageRange() != null
+                    ? "第 " + chunk.getPageRange() + " 页"
+                    : "第 " + chunk.getPageNumber() + " 页";
+        }
+        return "第 " + (chunk.getIndex() + 1) + " 部分";
     }
 
     private String detectCategory(String ext) {
@@ -250,6 +474,8 @@ public class FileServiceImpl implements FileService {
         d.setProgress(f.getProgress());
         d.setStage(f.getStage());
         d.setChunkCount(f.getChunkCount());
+        d.setProcessingMode(f.getProcessingMode());
+        d.setEnableGraphBuild(f.getEnableGraphBuild());
         d.setFolderId(f.getFolderId());
         d.setDeletedAt(f.getDeletedAt());
         d.setCreatedAt(f.getCreatedAt());

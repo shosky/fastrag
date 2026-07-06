@@ -3,4 +3,6 @@ import com.baomidou.mybatisplus.annotation.*; import lombok.Data;
 @Data @TableName("model") public class ModelRecord {
     @TableId(type=IdType.ASSIGN_ID) private String id;
     private String name,code,purpose,brand,apiUrl,apiKeyRef,status;
+    /** 启用思考模式（DeepSeek 等模型支持），默认关闭 */
+    private Boolean enableThinking;
 }

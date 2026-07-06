@@ -9,8 +9,15 @@ import java.time.LocalDateTime;
 public class KbGraphIndex {
     @TableId(type = IdType.ASSIGN_ID) private String kbId;
     private String status;
-    private Integer buildProgress, entityExtractProgress, relationExtractProgress;
+    private Integer buildProgress;
+    /** @deprecated 该字段已废弃，不再由 GraphServiceImpl 写入 */
+    @Deprecated
+    private Integer entityExtractProgress;
+    /** @deprecated 该字段已废弃，不再由 GraphServiceImpl 写入 */
+    @Deprecated
+    private Integer relationExtractProgress;
     private Integer totalChunks, builtChunks, entityCount, relationCount, indexVersion;
     private LocalDateTime lastBuiltAt;
     private String buildError;
+    private String settings; // JSON: maxNodes, searchDepth, excludeChunkNodes, buildMode, triggerFileId
 }

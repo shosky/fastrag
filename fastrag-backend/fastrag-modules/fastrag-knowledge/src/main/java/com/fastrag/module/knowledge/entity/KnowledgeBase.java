@@ -27,6 +27,7 @@ public class KnowledgeBase {
     private String fileTypeConfig; // JSON
     private String parseMode;
     private String splitMode;
+    private Integer graphAutoBuild; // 是否自动构建知识图谱，默认 0（关闭）
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

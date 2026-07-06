@@ -93,12 +93,12 @@ function handleTest() {
 
 <template>
   <div class="page-container">
-    <div class="section-header">
-      <h3>查询规则管理</h3>
+    <!-- 操作按钮 Teleport 到 Header -->
+    <Teleport to="#header-actions">
       <el-button type="primary" @click="handleAdd">
         <el-icon><Plus /></el-icon>新建规则
       </el-button>
-    </div>
+    </Teleport>
 
     <el-tabs v-model="activeTab">
       <el-tab-pane label="重写规则" name="rewrite" />

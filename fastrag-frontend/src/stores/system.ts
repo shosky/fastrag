@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia'
 import { ref } from 'vue'
 import * as api from '@/api'
+import { storage } from '@/utils/storage'
 
 export const useSystemStore = defineStore('system', () => {
   const systemName = ref('AIS 智能知识服务平台')
@@ -11,6 +12,8 @@ export const useSystemStore = defineStore('system', () => {
 
   async function loadConfig() {
     if (loaded.value) return
+    // 未登录时跳过接口请求，使用默认值，避免 403 触发响应拦截器重定向
+    if (!storage.get('token')) return
     try {
       const res: any = await api.getDictionaries({ type: '系统信息' })
       const settings = res?.['系统信息'] || []

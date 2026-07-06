@@ -52,6 +52,7 @@ const fileInfo = ref({
   url: '',
   createdAt: '',
   updatedAt: '',
+  processingMode: 'chunk',
 })
 
 async function loadFileInfo() {
@@ -65,6 +66,7 @@ async function loadFileInfo() {
       fileInfo.value.size = file.size || fileInfo.value.size
       fileInfo.value.chunkCount = file.chunkCount || fileInfo.value.chunkCount
       fileInfo.value.url = file.url || ''
+      fileInfo.value.processingMode = file.processingMode || 'chunk'
       fileInfo.value.createdAt = file.createdAt || fileInfo.value.createdAt
       fileInfo.value.updatedAt = file.updatedAt || fileInfo.value.updatedAt
     }
@@ -76,6 +78,9 @@ async function loadFileInfo() {
 loadFileInfo().then(() => {
   loadImage()
   loadMedia()
+  if (isQaMode.value) {
+    loadQaPairs()
+  }
 })
 
 // --- Active tab ---
@@ -239,6 +244,69 @@ function handleSizeChange(size: number) {
 }
 
 loadChunks()
+
+// --- 问答对状态（仅 QA 模式文件使用） ---
+const isQaMode = computed(() => fileInfo.value.processingMode === 'qa')
+const qaList = ref<any[]>([])
+const qaLoading = ref(false)
+const qaCurrentPage = ref(1)
+const qaPageSize = ref(10)
+const qaTotal = ref(0)
+const editingQaId = ref<string | null>(null)
+const editingQaQuestion = ref('')
+const editingQaAnswer = ref('')
+
+async function loadQaPairs() {
+  if (!isQaMode.value) return
+  qaLoading.value = true
+  try {
+    const params: any = { fileId, page: qaCurrentPage.value, pageSize: qaPageSize.value }
+    const res: any = await api.getQaPairs(kbId, params)
+    const list = res?.list || res || []
+    qaTotal.value = res?.total || list.length
+    qaList.value = list
+  } finally {
+    qaLoading.value = false
+  }
+}
+
+function onQaPageChange() { loadQaPairs() }
+function onQaPageSizeChange() { qaCurrentPage.value = 1; loadQaPairs() }
+
+async function handleSaveQaEdit() {
+  if (!editingQaId.value) return
+  if (!editingQaQuestion.value.trim()) { ElMessage.warning('请输入问题'); return }
+  await api.updateQaPair(kbId, editingQaId.value, {
+    question: editingQaQuestion.value,
+    answer: editingQaAnswer.value,
+  })
+  ElMessage.success('问答对已更新')
+  editingQaId.value = null
+  loadQaPairs()
+}
+
+async function handleConfirmQa(row: any) {
+  await api.confirmQaPair(kbId, row.id)
+  ElMessage.success('已确认')
+  loadQaPairs()
+}
+
+async function handleDeleteQa(row: any) {
+  try {
+    await ElMessageBox.confirm('确定要删除该问答对吗？', '提示', { type: 'warning' })
+    await api.deleteQaPair(kbId, row.id)
+    ElMessage.success('删除成功')
+    // 如果正在编辑这条，取消编辑状态
+    if (editingQaId.value === row.id) editingQaId.value = null
+    loadQaPairs()
+  } catch {}
+}
+
+function startEditQa(row: any) {
+  editingQaId.value = row.id
+  editingQaQuestion.value = row.question
+  editingQaAnswer.value = row.answer
+}
 
 // --- 音视频 chunks（从 API 加载） ---
 const mediaChunks = computed(() => chunks.value.filter(c => c.startTime != null))
@@ -573,7 +641,85 @@ onBeforeUnmount(() => {
 
     <!-- Content area -->
     <div class="chunks-page__content">
-      <!-- Document type layout -->
+      <!-- QA 模式：问答对视图 -->
+      <template v-if="isQaMode">
+        <div class="chunks-page__qa-view">
+          <!-- QA header -->
+          <div class="chunks-page__doc-header">
+            <div class="chunks-page__doc-tabs">
+              <span class="chunks-page__qa-badge">
+                <el-tag type="warning" size="small">QA 模式</el-tag>
+              </span>
+              <span class="chunks-page__qa-title">问答对管理</span>
+              <span class="chunks-page__qa-count">共 {{ qaTotal }} 条</span>
+            </div>
+          </div>
+
+          <div class="chunks-page__qa-content">
+            <div v-loading="qaLoading">
+              <el-table :data="qaList" stripe size="small" empty-text="暂无问答对数据">
+                <el-table-column type="index" width="50" />
+                <el-table-column prop="question" label="问题" min-width="250" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <div v-if="editingQaId === row.id" class="qa-edit-cell">
+                      <el-input v-model="editingQaQuestion" size="small" placeholder="请输入问题" />
+                    </div>
+                    <span v-else style="font-weight: 500">{{ row.question }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="answer" label="答案" min-width="300" show-overflow-tooltip>
+                  <template #default="{ row }">
+                    <div v-if="editingQaId === row.id" class="qa-edit-cell">
+                      <el-input v-model="editingQaAnswer" type="textarea" :rows="3" size="small" placeholder="请输入答案" />
+                    </div>
+                    <span v-else style="color: #606266">{{ row.answer }}</span>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="status" label="状态" width="80" align="center">
+                  <template #default="{ row }">
+                    <el-tag :type="row.status === 'confirmed' ? 'success' : 'info'" size="small">
+                      {{ row.status === 'confirmed' ? '已确认' : '草稿' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="source" label="来源" width="80" align="center">
+                  <template #default="{ row }">
+                    <el-tag :type="row.source === 'ai' ? 'warning' : 'info'" size="small">
+                      {{ row.source === 'ai' ? 'AI抽取' : '手动' }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="createdAt" label="创建时间" width="160" show-overflow-tooltip />
+                <el-table-column label="操作" width="180" fixed="right" align="center">
+                  <template #default="{ row }">
+                    <template v-if="editingQaId === row.id">
+                      <el-button link type="primary" size="small" @click="handleSaveQaEdit">保存</el-button>
+                      <el-button link size="small" @click="editingQaId = null">取消</el-button>
+                    </template>
+                    <template v-else>
+                      <el-button v-if="row.status === 'draft'" link type="success" size="small" @click="handleConfirmQa(row)">确认</el-button>
+                      <el-button link type="primary" size="small" @click="startEditQa(row)">编辑</el-button>
+                      <el-button link type="danger" size="small" @click="handleDeleteQa(row)">删除</el-button>
+                    </template>
+                  </template>
+                </el-table-column>
+              </el-table>
+
+              <!-- 分页 -->
+              <div class="chunks-page__pagination" v-if="qaTotal > qaPageSize">
+                <el-pagination v-model:current-page="qaCurrentPage" v-model:page-size="qaPageSize"
+                  :total="qaTotal" :page-sizes="[10, 20, 50, 100]"
+                  layout="total, sizes, prev, pager, next, jumper"
+                  @current-change="onQaPageChange" @size-change="onQaPageSizeChange" />
+              </div>
+            </div>
+          </div>
+        </div>
+      </template>
+
+      <!-- 非QA模式：原有布局 -->
+      <template v-else>
+        <!-- Document type layout -->
       <template v-if="fileInfo.category === 'document'">
         <!-- Tabs header -->
         <div class="chunks-page__doc-header">
@@ -1075,6 +1221,7 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </template>
+      </template> <!-- close 非QA模式 -->
     </div>
 
     <!-- Edit Dialog -->
@@ -1998,5 +2145,35 @@ onBeforeUnmount(() => {
     justify-content: flex-end;
     gap: $spacing-sm;
   }
+}
+
+// --- QA view styles ---
+.chunks-page__qa-view {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  padding: $spacing-base;
+
+  &-badge {
+    margin-right: $spacing-sm;
+  }
+
+  &-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: $text-primary;
+  }
+
+  &-count {
+    font-size: 13px;
+    color: $text-secondary;
+    margin-left: $spacing-sm;
+  }
+}
+
+.qa-edit-cell {
+  display: flex;
+  align-items: flex-start;
 }
 </style>

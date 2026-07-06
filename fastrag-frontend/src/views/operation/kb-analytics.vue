@@ -1,12 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
-import { Top, Bottom, ArrowDown } from '@element-plus/icons-vue'
-import * as echarts from 'echarts'
+import { Top, Bottom } from '@element-plus/icons-vue'
 import * as api from '@/api'
 
-const chartRef = ref<HTMLElement>()
-const timeRange = ref('本周')
 const loading = ref(true)
 
 const metrics = ref<any[]>([])
@@ -29,38 +26,7 @@ async function loadAnalytics() {
   }
 }
 
-onMounted(async () => {
-  await loadAnalytics()
-
-  if (chartRef.value) {
-    const chart = echarts.init(chartRef.value)
-    chart.setOption({
-      tooltip: { trigger: 'axis' },
-      legend: { data: ['文档数', '知识库数'] },
-      xAxis: {
-        type: 'category',
-        data: ['周一', '周二', '周三', '周四', '周五', '周六', '周日'],
-      },
-      yAxis: { type: 'value' },
-      series: [
-        {
-          name: '文档数',
-          type: 'line',
-          smooth: true,
-          data: [120, 132, 101, 134, 90, 230, 210],
-          itemStyle: { color: '#409eff' },
-        },
-        {
-          name: '知识库数',
-          type: 'line',
-          smooth: true,
-          data: [5, 6, 4, 7, 3, 8, 6],
-          itemStyle: { color: '#67c23a' },
-        },
-      ],
-    })
-  }
-})
+onMounted(loadAnalytics)
 
 // 获取指标的数值显示（区分普通数值和百分比）
 function getMetricDisplay(m: any): string {
@@ -118,11 +84,6 @@ function handleExport(command: string) {
     <div class="section-header">
       <h3>知识资产分析</h3>
       <div style="display: flex; gap: 12px; align-items: center">
-        <el-radio-group v-model="timeRange" size="small">
-          <el-radio-button label="今天" />
-          <el-radio-button label="本周" />
-          <el-radio-button label="本月" />
-        </el-radio-group>
         <el-dropdown @command="handleExport">
           <el-button size="small">导出 <el-icon style="margin-left: 4px"><ArrowDown /></el-icon></el-button>
           <template #dropdown>
@@ -147,12 +108,6 @@ function handleExport(command: string) {
           {{ m.change }}
         </div>
       </div>
-    </div>
-
-    <!-- 趋势图 -->
-    <div class="card-panel">
-      <div class="section-title">知识资产增长趋势</div>
-      <div ref="chartRef" style="height: 300px"></div>
     </div>
 
     <div class="rank-grid">

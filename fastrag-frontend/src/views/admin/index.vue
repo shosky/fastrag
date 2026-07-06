@@ -12,7 +12,6 @@ const modules = [
     children: [
       { name: '通用设置', path: '/admin/system/general-settings' },
       { name: '知识库配置', path: '/admin/system/kb-config' },
-      { name: '全局设置', path: '/admin/system/global-settings' },
       { name: '敏感词设置', path: '/admin/system/sensitive-words' },
       { name: '字典管理', path: '/admin/system/dictionary' },
       { name: '术语管理', path: '/admin/system/terminology' },
@@ -38,29 +37,14 @@ const modules = [
     children: [
       { name: '系统日志', path: '/admin/audit/system-log' },
       { name: '设备登录分析', path: '/admin/audit/device-login' },
-      { name: '登录安全配置', path: '/admin/audit/login-security' },
-    ],
-  },
-  {
-    title: '内容与工具',
-    icon: 'Files',
-    color: '#f56c6c',
-    description: '维护通知、标签、提示词、文档模板和下载中心等内容工具能力。',
-    children: [
-      { name: '通知管理', path: '/admin/content/notification' },
-      { name: '标签管理', path: '/admin/content/tags' },
-      { name: '提示词', path: '/admin/content/prompts' },
-      { name: '文档模板', path: '/admin/content/templates' },
-      { name: '下载中心', path: '/admin/content/download' },
     ],
   },
   {
     title: '开放平台',
     icon: 'Connection',
     color: '#909399',
-    description: '管理三方平台接入、模型配置和开放密钥等对外能力。',
+    description: '管理模型配置和开放密钥等对外能力。',
     children: [
-      { name: '三方平台', path: '/admin/platform/third-party' },
       { name: '模型管理', path: '/admin/platform/model-management' },
       { name: '开放密钥', path: '/admin/platform/api-keys' },
     ],
@@ -72,7 +56,7 @@ const modules = [
   <div class="page-container">
     <div class="admin-header">
       <h2>管理中心</h2>
-      <p>集中维护系统配置、账号权限、安全审计、内容工具以及开放能力。</p>
+      <p>集中维护系统配置、账号权限、安全审计、开放能力等。</p>
     </div>
 
     <div class="module-grid">

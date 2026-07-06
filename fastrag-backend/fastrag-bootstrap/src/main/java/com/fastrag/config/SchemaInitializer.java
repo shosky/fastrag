@@ -4,6 +4,7 @@ import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
+import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
@@ -17,6 +18,7 @@ public class SchemaInitializer {
         this.jdbc = jdbc;
     }
 
+    @Order(0)
     @EventListener(ApplicationReadyEvent.class)
     public void initSchema() {
         log.info("Checking and creating missing tables...");
@@ -80,9 +82,169 @@ public class SchemaInitializer {
             log.error("Failed to create sys_dictionary: {}", e.getMessage());
         }
 
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS kb_publish_history (
+                    id VARCHAR(32) PRIMARY KEY,
+                    kb_id VARCHAR(32) NOT NULL,
+                    knowledge_id VARCHAR(32) NOT NULL,
+                    version INT,
+                    publish_type VARCHAR(16),
+                    online_version LONGTEXT,
+                    offline_version LONGTEXT,
+                    status VARCHAR(16),
+                    scheduled_at DATETIME,
+                    published_at DATETIME,
+                    operator VARCHAR(32),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_kb_id (kb_id),
+                    INDEX idx_knowledge_id (knowledge_id),
+                    INDEX idx_status (status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """);
+            log.info("Table kb_publish_history OK");
+        } catch (Exception e) {
+            log.error("Failed to create kb_publish_history: {}", e.getMessage());
+        }
+
         // 添加解析策略模型字段（MySQL 不支持 IF NOT EXISTS，逐个尝试）
         addColumnIfNotExists("kb_parse_strategy", "llm_model", "VARCHAR(128)");
         addColumnIfNotExists("kb_parse_strategy", "vlm_model", "VARCHAR(128)");
+
+        // --- Agent 模块表 ---
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agent (
+                    id VARCHAR(64) PRIMARY KEY,
+                    slug VARCHAR(128) NOT NULL,
+                    name VARCHAR(256) NOT NULL,
+                    backend_id VARCHAR(128),
+                    description TEXT,
+                    icon VARCHAR(512),
+                    pics JSON,
+                    config_json JSON,
+                    share_config JSON,
+                    is_default TINYINT DEFAULT 0,
+                    is_subagent TINYINT DEFAULT 0,
+                    created_by VARCHAR(64),
+                    updated_by VARCHAR(64),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE INDEX uk_slug (slug),
+                    INDEX idx_backend_id (backend_id),
+                    INDEX idx_is_default (is_default)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """);
+            log.info("Table agent OK");
+        } catch (Exception e) {
+            log.error("Failed to create agent: {}", e.getMessage());
+        }
+
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS agent_run (
+                    id VARCHAR(64) PRIMARY KEY,
+                    thread_id VARCHAR(64) NOT NULL,
+                    agent_id VARCHAR(64) NOT NULL,
+                    uid VARCHAR(64),
+                    request_id VARCHAR(128),
+                    input_payload JSON,
+                    status VARCHAR(32) DEFAULT 'pending',
+                    run_type VARCHAR(32) DEFAULT 'chat',
+                    parent_agent_run_id VARCHAR(64),
+                    conversation_id BIGINT,
+                    checkpoint_thread_id VARCHAR(128),
+                    error_message TEXT,
+                    error_type VARCHAR(64),
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    finished_at DATETIME,
+                    UNIQUE INDEX uk_request_id (request_id),
+                    INDEX idx_thread_id (thread_id),
+                    INDEX idx_agent_id (agent_id),
+                    INDEX idx_status (status),
+                    INDEX idx_thread_status (thread_id, status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """);
+            log.info("Table agent_run OK");
+        } catch (Exception e) {
+            log.error("Failed to create agent_run: {}", e.getMessage());
+        }
+
+        // --- Skill 表新增字段 ---
+        addColumnIfNotExists("skill", "slug", "VARCHAR(128)");
+        addColumnIfNotExists("skill", "source_type", "VARCHAR(16) DEFAULT 'custom'");
+        addColumnIfNotExists("skill", "dir_path", "VARCHAR(512)");
+        addColumnIfNotExists("skill", "dependencies", "JSON");
+        addColumnIfNotExists("skill", "content_hash", "VARCHAR(64)");
+        addColumnIfNotExists("skill", "is_builtin", "TINYINT DEFAULT 0");
+        addColumnIfNotExists("skill", "metadata", "JSON");
+        addColumnIfNotExists("skill", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+
+        // --- MCP Service 表新增字段 ---
+        addColumnIfNotExists("mcp_service", "slug", "VARCHAR(128)");
+        addColumnIfNotExists("mcp_service", "transport", "VARCHAR(16) DEFAULT 'sse'");
+        addColumnIfNotExists("mcp_service", "command", "VARCHAR(512)");
+        addColumnIfNotExists("mcp_service", "args", "JSON");
+        addColumnIfNotExists("mcp_service", "env", "JSON");
+        addColumnIfNotExists("mcp_service", "is_builtin", "TINYINT DEFAULT 0");
+        addColumnIfNotExists("mcp_service", "config_hash", "VARCHAR(64)");
+        addColumnIfNotExists("mcp_service", "metadata", "JSON");
+        addColumnIfNotExists("mcp_service", "updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+
+        // --- MCP Tool 表新增字段 ---
+        addColumnIfNotExists("mcp_tool", "tool_id", "VARCHAR(256)");
+        addColumnIfNotExists("mcp_tool", "enabled", "TINYINT DEFAULT 1");
+
+        // 添加 FULLTEXT 索引（用于全文检索）
+        try {
+            jdbc.execute("CREATE FULLTEXT INDEX idx_content_fulltext ON kb_chunk(content) WITH PARSER ngram");
+            log.info("FULLTEXT index idx_content_fulltext created on kb_chunk.content");
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (msg != null && (msg.contains("1061") || msg.contains("already exists"))) {
+                log.info("FULLTEXT index idx_content_fulltext already exists");
+            } else {
+                log.warn("FULLTEXT index creation failed: {}", msg);
+            }
+        }
+
+        // 兼容：retrieval_metrics 早期定义为 JSON，但实际存的是普通字符串
+        try {
+            jdbc.execute("ALTER TABLE kb_evaluation_result MODIFY COLUMN retrieval_metrics TEXT COMMENT '检索指标字符串'");
+            log.info("Changed kb_evaluation_result.retrieval_metrics from JSON to TEXT");
+        } catch (Exception e) {
+            log.info("retrieval_metrics column already compatible: {}", e.getMessage());
+        }
+
+        // 添加评估结果结构化召回列（兼容已有表）
+        addColumnIfNotExists("kb_evaluation_result", "recall_at_1", "DECIMAL(5,4) DEFAULT NULL COMMENT 'Recall@1'");
+        addColumnIfNotExists("kb_evaluation_result", "recall_at_3", "DECIMAL(5,4) DEFAULT NULL COMMENT 'Recall@3'");
+        addColumnIfNotExists("kb_evaluation_result", "recall_at_5", "DECIMAL(5,4) DEFAULT NULL COMMENT 'Recall@5'");
+        addColumnIfNotExists("kb_evaluation_result", "recall_at_10", "DECIMAL(5,4) DEFAULT NULL COMMENT 'Recall@10'");
+
+        // 添加 model 表缺失列（兼容已有表）
+        addColumnIfNotExists("model", "context_window", "INT DEFAULT 4096 COMMENT '上下文窗口大小'");
+        addColumnIfNotExists("model", "enable_thinking", "TINYINT(1) DEFAULT 0 COMMENT '启用思考模式'");
+
+        // --- 邮箱验证码表 ---
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS email_verification (
+                    id VARCHAR(32) PRIMARY KEY,
+                    email VARCHAR(128) NOT NULL,
+                    code VARCHAR(8) NOT NULL,
+                    purpose VARCHAR(16) NOT NULL,
+                    expires_at DATETIME NOT NULL,
+                    used TINYINT DEFAULT 0,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_email_purpose (email, purpose)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """);
+            log.info("Table email_verification OK");
+        } catch (Exception e) {
+            log.error("Failed to create email_verification: {}", e.getMessage());
+        }
 
         log.info("Schema initialization completed.");
     }

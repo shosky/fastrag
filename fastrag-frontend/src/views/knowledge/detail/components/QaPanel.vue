@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getQaPairs, addQaPair, updateQaPair, deleteQaPair, confirmQaPair, extractQaFromChunks } from '@/mock/qa-pairs'
+import * as api from '@/api'
 import { getFiles } from '@/mock/files'
 import type { QaPair } from '@/types/knowledge'
 
@@ -11,7 +11,7 @@ const loading = ref(false)
 const dataList = ref<QaPair[]>([])
 const total = ref(0)
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 const searchKeyword = ref('')
 const filterStatus = ref('')
 const filterSource = ref('')
@@ -21,12 +21,6 @@ const showDialog = ref(false)
 const dialogTitle = ref('')
 const editingId = ref<string | null>(null)
 const formData = ref<any>({})
-
-// AI抽取对话框
-const showExtractDialog = ref(false)
-const extractFileIds = ref<string[]>([])
-const fileList = ref<any[]>([])
-const extracting = ref(false)
 
 // 扩展字段（FAQ增强）
 const categories = ['常见问题', '账户相关', '支付相关', '物流相关', '技术问题', '投诉建议']
@@ -43,7 +37,7 @@ const statusOptions = [
 ]
 const STATUS_LABELS: Record<string, string> = { draft: '草稿', confirmed: '已确认', active: '启用', disabled: '停用' }
 const STATUS_COLORS: Record<string, string> = { draft: 'info', confirmed: 'warning', active: 'success', disabled: 'danger' }
-const SOURCE_LABELS: Record<string, string> = { manual: '手动录入', ai: 'AI抽取' }
+const SOURCE_LABELS: Record<string, string> = { manual: '手动录入' }
 
 const filteredList = computed(() => {
   let list = dataList.value
@@ -61,9 +55,10 @@ const filteredList = computed(() => {
 async function loadData() {
   loading.value = true
   try {
-    const pairs = getQaPairs(props.kbId)
-    dataList.value = pairs || []
-    total.value = dataList.value.length
+    const res: any = await api.getQaPairs(props.kbId)
+    const list = res?.list || res || []
+    dataList.value = list
+    total.value = res?.total ?? list.length
   } finally { loading.value = false }
 }
 onMounted(loadData)
@@ -87,13 +82,13 @@ function handleEdit(row: QaPair) {
 async function handleDelete(row: QaPair) {
   try {
     await ElMessageBox.confirm('确定要删除该问答对吗？', '提示', { type: 'warning' })
-    deleteQaPair(props.kbId, row.id)
+    await api.deleteQaPair(props.kbId, row.id)
     ElMessage.success('删除成功')
     loadData()
   } catch {}
 }
 async function handleConfirm(row: QaPair) {
-  confirmQaPair(props.kbId, row.id)
+  await api.confirmQaPair(props.kbId, row.id)
   ElMessage.success('已确认')
   loadData()
 }
@@ -101,39 +96,24 @@ async function handleSave() {
   if (!formData.value.question) { ElMessage.warning('请输入问题'); return }
   if (!formData.value.answer) { ElMessage.warning('请输入答案'); return }
   try {
-    const data = {
-      ...formData.value,
-      keywords: formData.value.keywords ? formData.value.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
-      similarQuestions: formData.value.similarQuestions ? formData.value.similarQuestions.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
-    }
+    const keywords = formData.value.keywords ? formData.value.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : []
+    const similarQuestions = formData.value.similarQuestions ? formData.value.similarQuestions.split(',').map((s: string) => s.trim()).filter(Boolean) : []
     if (editingId.value) {
-      updateQaPair(props.kbId, editingId.value, data)
+      await api.updateQaPair(props.kbId, editingId.value, {
+        question: formData.value.question,
+        answer: formData.value.answer,
+      })
       ElMessage.success('更新成功')
     } else {
-      addQaPair(props.kbId, data)
+      await api.createQaPair(props.kbId, {
+        question: formData.value.question,
+        answer: formData.value.answer,
+      })
       ElMessage.success('创建成功')
     }
     showDialog.value = false
     loadData()
   } catch {}
-}
-
-// AI抽取
-async function handleOpenExtract() {
-  const files = getFiles(props.kbId)
-  fileList.value = files?.filter((f: any) => f.status === 'completed') || []
-  extractFileIds.value = []
-  showExtractDialog.value = true
-}
-async function handleExtract() {
-  if (extractFileIds.value.length === 0) { ElMessage.warning('请选择文件'); return }
-  extracting.value = true
-  try {
-    extractQaFromChunks(props.kbId, extractFileIds.value)
-    ElMessage.success('抽取完成')
-    showExtractDialog.value = false
-    loadData()
-  } finally { extracting.value = false }
 }
 
 function handleSearch() { currentPage.value = 1 }
@@ -145,10 +125,7 @@ function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1
   <div v-loading="loading">
     <div class="section-header">
       <div class="section-title">问答对管理</div>
-      <div style="display: flex; gap: 8px">
-        <el-button size="small" @click="handleOpenExtract">AI 抽取</el-button>
-        <el-button type="primary" size="small" @click="handleAdd">手动添加</el-button>
-      </div>
+      <el-button type="primary" size="small" @click="handleAdd">手动添加</el-button>
     </div>
 
     <!-- 筛选栏 -->
@@ -158,7 +135,7 @@ function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1
         <el-option v-for="opt in statusOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
       </el-select>
       <el-select v-model="filterSource" placeholder="来源" clearable style="width: 120px" @change="handleSearch">
-        <el-option label="手动录入" value="manual" /><el-option label="AI抽取" value="ai" />
+        <el-option label="手动录入" value="manual" />
       </el-select>
       <span style="color: #909399; font-size: 13px">共 {{ total }} 条</span>
     </div>
@@ -255,23 +232,6 @@ function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1
       <template #footer>
         <el-button @click="showDialog = false">取消</el-button>
         <el-button type="primary" @click="handleSave">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- AI抽取对话框 -->
-    <el-dialog v-model="showExtractDialog" title="AI 智能抽取问答对" width="500px" :close-on-click-modal="false">
-      <p style="color: #606266; margin-bottom: 16px">选择已完成解析的文件，AI 将自动从文档内容中抽取问答对。</p>
-      <el-checkbox-group v-model="extractFileIds">
-        <div v-for="file in fileList" :key="file.id" style="padding: 6px 0">
-          <el-checkbox :label="file.id">{{ file.name }}</el-checkbox>
-        </div>
-      </el-checkbox-group>
-      <div v-if="fileList.length === 0" style="color: #909399; text-align: center; padding: 20px">
-        暂无已解析完成的文件
-      </div>
-      <template #footer>
-        <el-button @click="showExtractDialog = false">取消</el-button>
-        <el-button type="primary" :loading="extracting" @click="handleExtract">开始抽取</el-button>
       </template>
     </el-dialog>
   </div>

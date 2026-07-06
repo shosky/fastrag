@@ -10,6 +10,11 @@ const modules = ['登录认证', '首页管理', '知识仓库管理', '应用�
 
 const logList = ref<any[]>([])
 
+function formatTime(ts: string): string {
+  if (!ts) return '-'
+  return ts.replace('T', ' ').substring(0, 19)
+}
+
 async function loadLogs() {
   loading.value = true
   try {
@@ -78,7 +83,9 @@ function toggleExpand(id: string) {
         <el-table-column prop="module" label="模块名称" width="150" />
         <el-table-column prop="detail" label="操作明细" show-overflow-tooltip />
         <el-table-column prop="ip" label="IP地址" width="130" />
-        <el-table-column prop="time" label="操作时间" width="180" />
+        <el-table-column label="操作时间" width="180">
+          <template #default="{ row }">{{ formatTime(row.timestamp) }}</template>
+        </el-table-column>
       </el-table>
     </div>
   </div>

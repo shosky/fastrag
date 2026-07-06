@@ -10,11 +10,11 @@ const appId = () => props.appInfo.id
 function parseTag(tags: any): string {
   if (!tags) return ''
   if (typeof tags !== 'string') return String(tags)
-  try { const arr = JSON.parse(tags); return Array.isArray(arr) ? arr.join(', ') : String(arr) } catch { return tags }
+  try { const arr = JSON.parse(tags); return Array.isArray(arr) ? arr.join(', ') : String(arr) } catch (e) { return tags }
 }
 function toTagJson(str: string): string {
   if (!str || !str.trim()) return ''
-  try { JSON.parse(str); return str } catch { /* 不是 JSON，包装为数组 */ }
+  try { JSON.parse(str); return str } catch (e) { /* 不是 JSON，包装为数组 */ }
   return JSON.stringify(str.split(/[,，]/).map(s => s.trim()).filter(Boolean))
 }
 
@@ -33,7 +33,7 @@ async function loadData() {
   try {
     const res: any = await api.getAppDialogTests(appId())
     testList.value = Array.isArray(res) ? res : []
-  } catch { testList.value = [] }
+  } catch (e) { testList.value = [] }
 }
 
 /** 录制测试案例：打开对话界面与机器人真实对话 */
@@ -80,7 +80,7 @@ async function handleSaveRecorded() {
     ElMessage.success('测试案例已录制保存')
     showRecorder.value = false
     await loadData()
-  } catch { ElMessage.error('录制保存失败') }
+  } catch (e) { ElMessage.error('录制保存失败') }
 }
 
 /** 批量导入 */
@@ -106,7 +106,7 @@ async function handleBatchImport() {
     ElMessage.success(`成功导入 ${count} 条测试案例`)
     showImportDialog.value = false
     await loadData()
-  } catch { ElMessage.error('导入失败，请检查格式（每行：名称,问题,期望答案）') }
+  } catch (e) { ElMessage.error('导入失败，请检查格式（每行：名称,问题,期望答案）') }
 }
 
 function openAdd() { isEditing.value = false; editingId.value = ''; form.value = { ...formDefault }; showDialog.value = true }
@@ -119,13 +119,13 @@ async function handleSave() {
   showDialog.value = false; await loadData()
 }
 async function handleDelete(row: any) {
-  try { await ElMessageBox.confirm('确认删除？', '确认', { type: 'warning' }); await api.deleteAppDialogTest(appId(), row.id); await loadData(); ElMessage.success('已删除') } catch {}
+  try { await ElMessageBox.confirm('确认删除？', '确认', { type: 'warning' }); await api.deleteAppDialogTest(appId(), row.id); await loadData(); ElMessage.success('已删除') } catch (e) {}
 }
 async function handleExport() {
   try {
     const blob = await api.exportAppDialogTests(appId()) as Blob
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `test_report_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url); ElMessage.success('已导出')
-  } catch { ElMessage.error('导出失败') }
+  } catch (e) { ElMessage.error('导出失败') }
 }
 onMounted(loadData)
 </script>

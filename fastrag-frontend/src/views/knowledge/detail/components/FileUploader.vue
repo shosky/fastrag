@@ -61,9 +61,10 @@ export interface UploadConfig {
 </script>
 
 <script setup lang="ts">
-import { UploadFilled, Link, FolderOpened, Delete, ArrowLeft, Document, WarningFilled } from '@element-plus/icons-vue'
+import { UploadFilled, Link, FolderOpened, Delete, ArrowLeft, Document, WarningFilled, Loading } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatFileSize } from '@/types/knowledge'
+import * as api from '@/api'
 import { useParseStrategy } from '@/composables/useParseStrategy'
 
 const props = defineProps<{
@@ -423,12 +424,25 @@ const qaConfig = ref({
   prompt: '请从以下文本中提取问答对，每个问答对包含一个问题和一个答案。',
 })
 
-const llmModelOptions = [
-  { label: 'GPT-4', value: 'gpt-4' },
-  { label: 'GPT-3.5', value: 'gpt-3.5-turbo' },
-  { label: 'Claude 3', value: 'claude-3' },
-  { label: '本地模型', value: 'local' },
-]
+const llmModelOptions = ref<Array<{ label: string; value: string }>>([])
+
+async function loadLlmModels() {
+  try {
+    const res = await api.getModels({ purpose: 'LLM' })
+    const models = (res as any)?.list || (res as any) || []
+    llmModelOptions.value = models
+      .filter((m: any) => m.status === 'online')
+      .map((m: any) => ({ label: m.name || m.code, value: m.code || m.id }))
+    if (llmModelOptions.value.length > 0 && !llmModelOptions.value.some(o => o.value === qaConfig.value.llmModel)) {
+      qaConfig.value.llmModel = llmModelOptions.value[0].value
+    }
+  } catch {
+    llmModelOptions.value = [
+      { label: 'GPT-4', value: 'gpt-4' },
+      { label: 'GPT-3.5', value: 'gpt-3.5-turbo' },
+    ]
+  }
+}
 
 // --- Step 2: Engine config ---
 const engineConfig = ref({
@@ -490,52 +504,67 @@ const retryOptions = [
 
 const showKeyframeInterval = computed(() => engineConfig.value.videoStrategy === 'keyframe_asr')
 
-// --- Step 3: Preview ---
+// --- Step 3: Preview (real API) ---
 const previewFileIndex = ref(0)
+const previewDataMap = ref<Map<number, { chunks: Array<{ title: string; content: string }>; totalChunks: number; pages: number }>>(new Map())
+const previewLoadingMap = ref<Map<number, boolean>>(new Map())
+const previewErrorMap = ref<Map<number, string>>(new Map())
 
-// Generate mock preview based on file type
-function getPreviewChunks(fileIndex: number) {
-  const file = uploadFiles.value[fileIndex]
-  if (!file) return []
+/** 进入步骤3时加载所有文件的预览 */
+async function loadAllPreviews() {
+  const kbIdVal = props.kbId || 'default'
+  const strategyId = selectedStrategyId.value || undefined
 
-  // Document preview
-  if (/\.(txt|docx|csv|xlsx|pdf|md|html|pptx)$/i.test(file.name)) {
-    return [
-      { title: '第一部分：业务介绍', content: '以下是关于业务以及场景化营销的介绍培训文档，围绕业务的定义、内容、竞争优势、目标客户、营销方法等方面展开...' },
-      { title: '第二部分：产品包介绍', content: '包含多种网络接入及融合产品。如互联网极速专线，具备融安、融云、融应用的特性；极致融合套餐...' },
-      { title: '第三部分：营销策略', content: '对比电脑公司和第三方，在多方面具备显著优势。在维护方面，拥有完善的省 - 市 - 县三级装维架构...' },
-    ]
+  for (let i = 0; i < uploadFiles.value.length; i++) {
+    const file = uploadFiles.value[i]
+    if (!file.fileId) continue
+
+    previewLoadingMap.value.set(i, true)
+    previewErrorMap.value.delete(i)
+
+    try {
+      const res = await api.previewFileChunks(kbIdVal, file.fileId, strategyId) as any
+      const data = res?.data || res
+      const chunks = (data?.previewChunks || []).map((c: any) => ({
+        title: c.title || `#${(c.index ?? 0) + 1}`,
+        content: c.content || '',
+      }))
+      previewDataMap.value.set(i, {
+        chunks,
+        totalChunks: data?.totalChunks || chunks.length,
+        pages: data?.pages || 0,
+      })
+    } catch (e: any) {
+      previewErrorMap.value.set(i, e?.message || '预览加载失败')
+    } finally {
+      previewLoadingMap.value.set(i, false)
+    }
   }
-
-  // Audio preview
-  if (/\.(mp3|wav|m4a|aac|ogg)$/i.test(file.name)) {
-    return [
-      { title: '#1 00:00 - 01:30', content: '该切片包含会议开场白，介绍了本次会议的主要议题和参与人员...' },
-      { title: '#2 01:30 - 03:00', content: '讨论了产品规划和市场策略，包括Q2的重点项目和预算分配...' },
-      { title: '#3 03:00 - 05:00', content: '技术团队汇报了系统架构升级计划，预计在下季度完成迁移...' },
-    ]
-  }
-
-  // Video preview
-  if (/\.(mp4|avi|mov|mkv|flv)$/i.test(file.name)) {
-    return [
-      { title: '#1 00:00 - 00:30', content: '演示 Knowledge settings 页面配置' },
-      { title: '#2 00:30 - 01:00', content: '讲解分块结构和索引设置' },
-      { title: '#3 01:00 - 02:00', content: '展示检索测试功能和效果' },
-    ]
-  }
-
-  // Image preview
-  if (/\.(jpg|jpeg|png|bmp|gif|tiff)$/i.test(file.name)) {
-    return [
-      { title: 'OCR 识别结果', content: '通过 OCR 技术识别图片中的文字内容，支持中英文混合识别...' },
-    ]
-  }
-
-  return [{ title: '预览', content: '暂无预览内容' }]
 }
 
-const currentPreviewChunks = computed(() => getPreviewChunks(previewFileIndex.value))
+/** 监听步骤切换，进入步骤3时自动加载预览 */
+watch(currentStep, (step) => {
+  if (step === 3) {
+    previewDataMap.value.clear()
+    previewErrorMap.value.clear()
+    previewLoadingMap.value.clear()
+    previewFileIndex.value = 0
+    loadAllPreviews()
+  }
+})
+
+const currentPreviewChunks = computed(() => {
+  const data = previewDataMap.value.get(previewFileIndex.value)
+  return data?.chunks || []
+})
+const currentPreviewTotal = computed(() => {
+  const data = previewDataMap.value.get(previewFileIndex.value)
+  return data?.totalChunks || 0
+})
+const currentPreviewPages = computed(() => {
+  const data = previewDataMap.value.get(previewFileIndex.value)
+  return data?.pages || 0
+})
 
 // --- Step 4: Config summary ---
 const configSummary = computed(() => {
@@ -571,7 +600,7 @@ const configSummary = computed(() => {
     items.push({ label: 'LLM 模型', value: qaConfig.value.llmModel })
   }
 
-  if (hasDocuments.value || hasImages.value) {
+  if (hasImages.value) {
     items.push({ label: 'OCR 引擎', value: engineConfig.value.ocrEngine })
   }
   if (hasImages.value && engineConfig.value.vlmModel !== 'disabled') {
@@ -690,10 +719,11 @@ async function handleStartUpload() {
   dialogVisible.value = false
 }
 
-// 对话框打开时加载策略列表
+// 对话框打开时加载策略列表和 LLM 模型列表
 watch(dialogVisible, (val) => {
   if (val) {
     loadStrategies()
+    loadLlmModels()
   }
 })
 </script>
@@ -848,7 +878,7 @@ watch(dialogVisible, (val) => {
             </template>
           </el-table-column>
           <!-- 时间裁剪列：仅音视频显示 -->
-          <el-table-column label="时间裁剪" width="260">
+          <el-table-column v-if="hasAudio || hasVideo" label="时间裁剪" width="260">
             <template #default="{ row }">
               <div v-if="isAudioOrVideo(row.name)" class="file-uploader__time-range">
                 <el-input-number
@@ -1031,8 +1061,8 @@ watch(dialogVisible, (val) => {
         </div>
         <div class="file-uploader__section-content">
           <div class="file-uploader__engine-grid">
-            <!-- OCR（文档/图片） -->
-            <div v-if="hasDocuments || hasImages" class="file-uploader__engine-item">
+            <!-- OCR（图片） -->
+            <div v-if="hasImages" class="file-uploader__engine-item">
               <span class="file-uploader__engine-label">OCR 引擎</span>
               <el-select v-model="engineConfig.ocrEngine" style="width: 100%">
                 <el-option v-for="opt in ocrEngineOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
@@ -1112,6 +1142,20 @@ watch(dialogVisible, (val) => {
           >
             <el-icon class="file-uploader__preview-file-icon"><Document /></el-icon>
             <span class="file-uploader__preview-file-name">{{ item.name }}</span>
+            <el-icon
+              v-if="previewLoadingMap.get(index)"
+              class="file-uploader__preview-loading is-loading"
+            ><Loading /></el-icon>
+            <el-icon
+              v-else-if="previewErrorMap.get(index)"
+              class="file-uploader__preview-error"
+            ><WarningFilled /></el-icon>
+            <el-icon
+              v-else-if="previewDataMap.has(index)"
+              class="file-uploader__preview-success"
+            >
+              <Document />
+            </el-icon>
           </div>
         </div>
       </div>
@@ -1120,17 +1164,40 @@ watch(dialogVisible, (val) => {
       <div class="file-uploader__preview-main">
         <div class="file-uploader__preview-header">
           <span>分块预览</span>
-          <span class="file-uploader__preview-count">共 {{ currentPreviewChunks.length }} 个分块</span>
+          <span v-if="currentPreviewTotal > 0" class="file-uploader__preview-count">
+            共 {{ currentPreviewTotal }} 个分块
+            <template v-if="currentPreviewPages > 0"> / {{ currentPreviewPages }} 页</template>
+            （显示前 {{ currentPreviewChunks.length }} 个）
+          </span>
         </div>
         <div class="file-uploader__preview-content">
-          <div
-            v-for="(chunk, index) in currentPreviewChunks"
-            :key="index"
-            class="file-uploader__preview-chunk"
-          >
-            <h3 class="file-uploader__preview-chunk-title">{{ chunk.title }}</h3>
-            <div class="file-uploader__preview-chunk-content">{{ chunk.content }}</div>
+          <!-- Loading state -->
+          <div v-if="previewLoadingMap.get(previewFileIndex)" class="file-uploader__preview-empty">
+            <el-icon class="is-loading" :size="32"><Loading /></el-icon>
+            <p>正在解析文件并生成分块预览...</p>
           </div>
+          <!-- Error state -->
+          <div v-else-if="previewErrorMap.get(previewFileIndex)" class="file-uploader__preview-empty">
+            <el-icon :size="32" color="var(--el-color-error)"><WarningFilled /></el-icon>
+            <p>预览加载失败：{{ previewErrorMap.get(previewFileIndex) }}</p>
+            <el-button size="small" @click="loadAllPreviews">重新加载</el-button>
+          </div>
+          <!-- Empty state (no fileId) -->
+          <div v-else-if="!uploadFiles[previewFileIndex]?.fileId" class="file-uploader__preview-empty">
+            <el-icon :size="32" color="var(--el-color-info)"><WarningFilled /></el-icon>
+            <p>文件尚未上传完成，请返回步骤1等待上传</p>
+          </div>
+          <!-- Chunk list -->
+          <template v-else>
+            <div
+              v-for="(chunk, index) in currentPreviewChunks"
+              :key="index"
+              class="file-uploader__preview-chunk"
+            >
+              <h3 class="file-uploader__preview-chunk-title">{{ chunk.title }}</h3>
+              <div class="file-uploader__preview-chunk-content">{{ chunk.content }}</div>
+            </div>
+          </template>
         </div>
       </div>
     </div>
@@ -1703,11 +1770,39 @@ watch(dialogVisible, (val) => {
     overflow: hidden;
   }
 
-  // --- Footer ---
-  &__footer {
-    display: flex;
-    justify-content: flex-end;
-    gap: 8px;
-  }
-}
-</style>
+	  // --- Preview states ---
+	  &__preview-empty {
+	    display: flex;
+	    flex-direction: column;
+	    align-items: center;
+	    justify-content: center;
+	    gap: 12px;
+	    min-height: 200px;
+	    color: $text-secondary;
+	    font-size: 14px;
+	  }
+
+	  &__preview-loading,
+	  &__preview-error,
+	  &__preview-success {
+	    font-size: 14px;
+	    margin-left: auto;
+	    flex-shrink: 0;
+	  }
+
+	  &__preview-error {
+	    color: var(--el-color-error);
+	  }
+
+	  &__preview-success {
+	    color: var(--el-color-success);
+	  }
+
+	  // --- Footer ---
+	  &__footer {
+	    display: flex;
+	    justify-content: flex-end;
+	    gap: 8px;
+	  }
+	}
+	</style>

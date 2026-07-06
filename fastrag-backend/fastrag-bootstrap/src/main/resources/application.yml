@@ -24,6 +24,35 @@ spring:
       port: 6379
       password:
       database: 0
+  rabbitmq:
+    host: ${RABBITMQ_HOST:127.0.0.1}
+    port: ${RABBITMQ_PORT:5672}
+    username: ${RABBITMQ_USER:fastrag}
+    password: ${RABBITMQ_PASS:fastrag123}
+    virtual-host: /
+    listener:
+      simple:
+        acknowledge-mode: auto
+        prefetch: 2
+        retry:
+          enabled: true
+          max-attempts: 3
+          initial-interval: 2000
+  mail:
+    host: ${MAIL_HOST:smtp.qq.com}
+    port: ${MAIL_PORT:465}
+    username: ${MAIL_USERNAME:}
+    password: ${MAIL_PASSWORD:}
+    protocol: smtp
+    default-encoding: UTF-8
+    properties:
+      mail:
+        smtp:
+          auth: true
+          ssl:
+            enable: true
+          socket-factory:
+            class: javax.net.ssl.SSLSocketFactory
   servlet:
     multipart:
       max-file-size: 200MB
@@ -63,6 +92,19 @@ milvus:
 storage:
   local:
     path: ./uploads
+
+# Neo4j 图数据库（默认禁用，通过环境变量启用）
+neo4j:
+  enabled: ${NEO4J_ENABLED:false}
+  uri: ${NEO4J_URI:bolt://localhost:7687}
+  user: ${NEO4J_USER:neo4j}
+  password: ${NEO4J_PASSWORD:}
+
+# Actuator 配置
+management:
+  health:
+    neo4j:
+      enabled: false
 
 springdoc:
   api-docs:

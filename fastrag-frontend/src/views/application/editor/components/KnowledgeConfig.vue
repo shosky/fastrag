@@ -1,80 +1,180 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
+import { QuestionFilled, Search, ArrowRight } from '@element-plus/icons-vue'
+import * as api from '@/api'
 
+const props = defineProps<{ appInfo: { id: string } }>()
+const appId = () => props.appInfo.id
+
+// ===========================================================================
+// 知识库配置（对接真实 API）
+// ===========================================================================
+
+// 全量知识库列表（从 API 加载，分页拉取第 1 页）
+const allKbs = ref<any[]>([])
+
+// 已绑定的知识库 ID 集合
+const boundKbIds = ref<Set<string>>(new Set())
+
+// 分类列表（从后端动态加载）
+const categories = ref<Array<{ id: string; name: string }>>([
+  { id: 'all', name: '全部' },
+])
+
+// UI 状态
 const kbSearchKeyword = ref('')
 const categorySearchKeyword = ref('')
 const selectedCategory = ref('all')
 const bindPersonalKB = ref('no')
 const bindTeamKB = ref(true)
+const saving = ref(false)
+const loading = ref(false)
 
-const categories = ref([
-  { id: 'all', name: '全部' },
-  { id: 'market', name: '市场运营' },
-  { id: 'project', name: '项目管理' },
-  { id: 'product', name: '产品研发' },
-  { id: 'research', name: '市场研究' },
-  { id: 'rag', name: 'RAG测试集' },
-  { id: 'learning', name: '学习资源' },
-  { id: 'enterprise', name: '企业管理' },
-])
-
-const availableKBs = ref([
-  { id: '1', name: '物产定制化功能操作手册', embeddingModel: 'text-embedding-v4', dimension: 1024, category: 'product', selected: false },
-  { id: '2', name: '企业资质管理', embeddingModel: 'bge-m3', dimension: 1024, category: 'enterprise', selected: true },
-  { id: '3', name: '心愿汇', embeddingModel: 'bge-m3', dimension: 1024, category: 'project', selected: false },
-  { id: '4', name: 'SaaP攻略2026', embeddingModel: 'bge-m3', dimension: 1024, category: 'market', selected: false },
-  { id: '5', name: '数字员工宣发', embeddingModel: 'bge-m3', dimension: 1024, category: 'market', selected: false },
-  { id: '6', name: '2025年会', embeddingModel: 'bge-m3', dimension: 1024, category: 'enterprise', selected: false },
-  { id: '7', name: '2024年度年会珍贵记录', embeddingModel: 'bge-m3', dimension: 1024, category: 'enterprise', selected: true },
-  { id: '8', name: '深港科创项目知识库', embeddingModel: 'bge-m3', dimension: 1024, category: 'project', selected: false },
-  { id: '9', name: '市场营销和商机知识库', embeddingModel: 'bge-m3', dimension: 1024, category: 'market', selected: false },
-  { id: '10', name: '数字员工开发库', embeddingModel: 'bge-m3', dimension: 1024, category: 'product', selected: false },
-  { id: '11', name: '中汇项目管理知识库', embeddingModel: 'bge-m3', dimension: 1024, category: 'project', selected: false },
-])
-
+// 筛选后的知识库列表
 const filteredKBs = computed(() => {
-  let list = availableKBs.value
+  let list = allKbs.value
   if (selectedCategory.value !== 'all') {
-    list = list.filter(kb => kb.category === selectedCategory.value)
+    // category 存储的是分类名称文本（如"技术文档"），按名称匹配
+    list = list.filter((kb: any) => kb.category === selectedCategory.value)
   }
   if (kbSearchKeyword.value) {
-    list = list.filter(kb => kb.name.includes(kbSearchKeyword.value))
+    list = list.filter((kb: any) => kb.name?.includes(kbSearchKeyword.value))
   }
   return list
 })
 
-const selectedKBCount = computed(() => availableKBs.value.filter(kb => kb.selected).length)
-const allSelected = computed(() => filteredKBs.value.length > 0 && filteredKBs.value.every(kb => kb.selected))
+const selectedKBCount = computed(() => allKbs.value.filter((kb: any) => kb.selected).length)
+const allSelected = computed(() => filteredKBs.value.length > 0 && filteredKBs.value.every((kb: any) => kb.selected))
 
 function handleSelectAll() {
   const newVal = !allSelected.value
-  filteredKBs.value.forEach(kb => {
+  filteredKBs.value.forEach((kb: any) => {
     kb.selected = newVal
   })
 }
 
-function handleSaveKB() {
-  ElMessage.success('知识库配置保存成功')
+// ===========================================================================
+// API 调用
+// ===========================================================================
+
+async function loadAllKbs() {
+  loading.value = true
+  try {
+    // getKnowledgeBases 调用 GET /api/kb，返回分页结构 { list, total, page, pageSize }
+    const res: any = await api.getKnowledgeBases({ page: 1, pageSize: 100 })
+    allKbs.value = (res?.list || res?.records || [])
+  } catch (e) {
+    allKbs.value = []
+  } finally {
+    loading.value = false
+  }
 }
 
-// 导出/导入知识库绑定 (#4949~4950)
+async function loadCategories() {
+  try {
+    const res: any = await api.getKbCategories()
+    const cats = Array.isArray(res) ? res : (res?.list || res?.records || [])
+    // 后端返回分类 name 作为标识，前端用它做筛选值
+    if (cats.length) {
+      categories.value = [
+        { id: 'all', name: '全部' },
+        ...cats.map((c: any) => ({ id: c.name || c.id, name: c.name || c.id })),
+      ]
+    }
+  } catch (e) {
+    // 加载分类失败，保留默认"全部"
+  }
+}
+
+async function loadBoundKbs() {
+  try {
+    const res: any = await api.getAppKbBindings(appId())
+    const bindings = Array.isArray(res) ? res : (res?.list || res?.records || [])
+    boundKbIds.value = new Set(bindings.map((b: any) => b.kbId))
+    // 同步选中状态
+    allKbs.value.forEach((kb: any) => {
+      kb.selected = boundKbIds.value.has(kb.id)
+    })
+  } catch (e) {
+    boundKbIds.value = new Set()
+  }
+}
+
+async function handleSaveKB() {
+  saving.value = true
+  try {
+    // 差量同步：当前勾选的 vs 已绑定的
+    const currentlySelected = new Set(
+      allKbs.value.filter((kb: any) => kb.selected).map((kb: any) => kb.id)
+    )
+
+    // 需要新增绑定的
+    const toAdd = [...currentlySelected].filter(id => !boundKbIds.value.has(id))
+    // 需要解绑的
+    const toRemove = [...boundKbIds.value].filter(id => !currentlySelected.has(id))
+
+    // 先解绑
+    for (const kbId of toRemove) {
+      // 找到绑定 ID（API 需要绑定记录 ID，不是 KB ID）
+      const binding = await findBindingByKbId(kbId)
+      if (binding) {
+        await api.unbindAppKb(appId(), binding.id)
+      }
+    }
+
+    // 再绑定
+    for (const kbId of toAdd) {
+      await api.bindAppKb(appId(), { kbId, priority: 0 })
+    }
+
+    // 更新已绑定集合
+    boundKbIds.value = currentlySelected
+    ElMessage.success(`知识库配置已保存（新增 ${toAdd.length}，解绑 ${toRemove.length}）`)
+  } catch (e) {
+    ElMessage.error('保存失败，请重试')
+    // 回滚：重新加载已绑定状态
+    await loadBoundKbs()
+  } finally {
+    saving.value = false
+  }
+}
+
+async function findBindingByKbId(kbId: string): Promise<any> {
+  try {
+    const res: any = await api.getAppKbBindings(appId())
+    const bindings = Array.isArray(res) ? res : (res?.list || res?.records || [])
+    return bindings.find((b: any) => b.kbId === kbId)
+  } catch (e) {
+    return null
+  }
+}
+
+// 导出/导入
 function handleExportKB() {
   const data = {
     bindTeamKB: bindTeamKB.value,
     bindPersonalKB: bindPersonalKB.value,
-    selectedKBs: availableKBs.value.filter(kb => kb.selected).map(kb => ({ id: kb.id, name: kb.name })),
+    selectedKBs: allKbs.value.filter((kb: any) => kb.selected).map((kb: any) => ({ id: kb.id, name: kb.name })),
   }
   const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = 'kb_bindings.json'
-  a.click(); URL.revokeObjectURL(url); ElMessage.success('知识库配置已导出')
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'kb_bindings.json'
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('知识库配置已导出')
 }
 
 function handleImportKB() {
-  const input = document.createElement('input'); input.type = 'file'; input.accept = '.json'
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.json'
   input.onchange = (e: any) => {
     try {
-      const file = e.target.files[0]; if (!file) return
+      const file = e.target.files[0]
+      if (!file) return
       const reader = new FileReader()
       reader.onload = (ev: any) => {
         try {
@@ -83,14 +183,26 @@ function handleImportKB() {
           if (data.bindPersonalKB !== undefined) bindPersonalKB.value = data.bindPersonalKB
           if (data.selectedKBs?.length) {
             const selectedIds = new Set(data.selectedKBs.map((k: any) => k.id))
-            availableKBs.value.forEach(kb => { kb.selected = selectedIds.has(kb.id) })
+            allKbs.value.forEach((kb: any) => { kb.selected = selectedIds.has(kb.id) })
           }
           ElMessage.success('知识库配置已导入')
-        } catch { ElMessage.error('导入文件格式错误') }
-      }; reader.readAsText(file)
-    } catch { ElMessage.error('读取文件失败') }
-  }; input.click()
+        } catch (e) {
+          ElMessage.error('导入文件格式错误')
+        }
+      }
+      reader.readAsText(file)
+    } catch (e) {
+      ElMessage.error('读取文件失败')
+    }
+  }
+  input.click()
 }
+
+onMounted(() => {
+  loadCategories()
+  loadAllKbs()
+  loadBoundKbs()
+})
 </script>
 
 <template>
@@ -174,7 +286,7 @@ function handleImportKB() {
             <div v-for="kb in filteredKBs" :key="kb.id" class="kb-item">
               <el-checkbox v-model="kb.selected" />
               <span class="kb-name">{{ kb.name }}</span>
-              <span class="kb-meta">嵌入模型:{{ kb.embeddingModel }} | 维度:{{ kb.dimension }}</span>
+              <span class="kb-meta">嵌入模型:{{ kb.embeddingModel || '-' }} | 维度:{{ kb.dimension || '-' }}</span>
             </div>
             <el-empty v-if="!filteredKBs.length" description="暂无知识库" />
           </div>
@@ -183,7 +295,7 @@ function handleImportKB() {
     </div>
 
     <div class="kb-footer">
-      <el-button type="primary" @click="handleSaveKB">保 存</el-button>
+      <el-button type="primary" :loading="saving" @click="handleSaveKB">保 存</el-button>
       <el-button style="margin-left:8px" @click="handleExportKB">导出配置</el-button>
       <el-button @click="handleImportKB">导入配置</el-button>
     </div>

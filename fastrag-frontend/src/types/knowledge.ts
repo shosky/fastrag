@@ -12,6 +12,8 @@ export interface KnowledgeBase {
   usedSize: string
   totalSize: string
   type: '团队' | '个人'
+  /** 是否自动构建知识图谱（默认关闭） */
+  graphAutoBuild?: number
 }
 
 /** 文档信息 */
@@ -50,6 +52,8 @@ export interface KnowledgeBaseForm {
   embeddingModel: string
   parseMode: 'auto' | 'manual'
   splitMode: 'auto' | 'custom'
+  /** 是否自动构建知识图谱 */
+  graphAutoBuild?: boolean
   fileTypeConfig: FileTypeConfig
   retrievalConfig: RetrievalSettingConfig
 }
@@ -202,6 +206,10 @@ export interface KnowledgeFile {
   parseStrategyName?: string
   /** 切片数量 */
   chunkCount?: number
+  /** 处理模式: chunk | qa */
+  processingMode?: string
+  /** 是否构建知识图谱 */
+  enableGraphBuild?: number
   /** 所属文件夹 ID（根目录为 'root'） */
   folderId?: string
   /** 软删除时间（存在即表示已删除，在回收站中） */
@@ -304,6 +312,8 @@ export interface ParseStrategyForm {
   llmModel?: string
   /** 解析用 VLM 模型 */
   vlmModel?: string
+  /** 是否构建知识图谱 */
+  enableGraphBuild?: boolean
 }
 
 /** 解析方法类型选项 */

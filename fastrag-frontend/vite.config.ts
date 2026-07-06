@@ -33,4 +33,8 @@ export default defineConfig({
       },
     },
   },
+  optimizeDeps: {
+    // 不排除任何包，全部由 Vite 预构建，避免 UMD/CJS 兼容问题
+    // EPERM 文件锁问题已通过 Windows Defender 排除项解决
+  },
 })

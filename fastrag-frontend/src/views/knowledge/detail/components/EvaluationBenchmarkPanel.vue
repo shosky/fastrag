@@ -5,6 +5,7 @@ import { useBenchmark } from '@/composables/useBenchmark'
 import { useKnowledgeGraph } from '@/composables/useKnowledgeGraph'
 import { usePagination } from '@/composables/usePagination'
 import type { Benchmark, BenchmarkQuestion, BenchmarkGenerateConfig } from '@/types/evaluation'
+import * as api from '@/api'
 
 // --- Props & Emits ---
 const props = defineProps<{
@@ -46,14 +47,35 @@ const autoGenForm = ref<BenchmarkGenerateConfig>({
   name: '',
   description: '',
   buildMethod: 'vector',
-  llmModel: 'siliconflow-cn:Pro/MiniMaxAI/MiniMax-M2.5',
+  llmModel: '',
   questionCount: 10,
-  candidateChunkCount: 1,
+  candidateChunkCount: 5,
   concurrency: 10,
   expandChunkCount: 1,
 })
 
-// --- Detail dialog ---
+/** 从 API 加载 LLM 模型列表 */
+const llmModelOptions = ref<{ label: string; value: string }[]>([])
+async function loadModels() {
+  try {
+    const res = await api.getModels({ purpose: 'LLM' }).catch(() => [])
+    const list: any[] = (res as any)?.list || (res as any[]) || []
+    llmModelOptions.value = list.map((m: any) => ({
+      label: m.name || m.code,
+      value: m.code,
+    }))
+    // 默认选中第一个可用模型
+    if (llmModelOptions.value.length > 0 && !autoGenForm.value.llmModel) {
+      autoGenForm.value.llmModel = llmModelOptions.value[0].value
+    }
+  } catch {
+    // API 不可用时用空列表
+  }
+}
+
+// --- Help toggles ---
+const showUploadHelp = ref(false)
+const showAutoGenHelp = ref(false)
 const showDetailDialog = ref(false)
 const currentBenchmark = ref<Benchmark | null>(null)
 const benchmarkQuestions = ref<BenchmarkQuestion[]>([])
@@ -66,7 +88,7 @@ const {
   pageSize: detailPageSize,
   total: detailTotal,
   reset: resetDetailPager,
-} = usePagination(50)
+} = usePagination(10)
 watch(() => benchmarkQuestions.value.length, (n) => {
   detailTotal.value = n
   detailPage.value = 1
@@ -184,6 +206,7 @@ function handleDrop(e: DragEvent) {
 // --- Lifecycle ---
 onMounted(() => {
   load()
+  loadModels()
 })
 </script>
 
@@ -303,12 +326,26 @@ onMounted(() => {
 
       <div class="benchmark-panel__dialog-footer">
         <span class="benchmark-panel__help-link">
-          需要了解评估基准格式？查看 <el-link type="primary">使用说明</el-link>
+          <el-link type="primary" @click="showUploadHelp = !showUploadHelp">
+            {{ showUploadHelp ? '收起使用说明' : '需要了解评估基准格式？查看使用说明' }}
+          </el-link>
         </span>
         <div class="benchmark-panel__dialog-actions">
           <el-button @click="showUploadDialog = false">取消</el-button>
           <el-button type="primary" :loading="generating" @click="handleUpload">上传</el-button>
         </div>
+      </div>
+      <div v-if="showUploadHelp" class="benchmark-panel__help-content">
+        <p><strong>JSONL 格式说明：</strong></p>
+        <p>每行一个 JSON 对象，支持以下字段：</p>
+        <ul>
+          <li><code>question</code>（必填）— 问题文本</li>
+          <li><code>goldAnswer</code>（可选）— 标准答案，用于评判答案正确性</li>
+          <li><code>goldChunks</code>（可选）— 标准文档片段 ID 数组，如 <code>["文件ID_chunk_0", "文件ID_chunk_1"]</code>，用于计算 Recall@K</li>
+        </ul>
+        <p><strong>示例：</strong></p>
+        <pre>{"question": "什么是RAG？", "goldAnswer": "检索增强生成", "goldChunks": ["doc123_chunk_0"]}
+{"question": "LLM有哪些类型？", "goldAnswer": "大语言模型"}</pre>
       </div>
     </el-dialog>
 
@@ -373,11 +410,15 @@ onMounted(() => {
           </div>
         </el-form-item>
 
-        <el-form-item label="LLM模型配置" required>
-          <div class="benchmark-panel__model-row">
-            <el-input v-model="autoGenForm.llmModel" />
-            <el-button link type="primary">检查</el-button>
-          </div>
+        <el-form-item label="LLM模型" required>
+          <el-select v-model="autoGenForm.llmModel" style="width: 100%">
+            <el-option
+              v-for="opt in llmModelOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
         </el-form-item>
 
         <el-form-item label="生成参数">
@@ -409,12 +450,30 @@ onMounted(() => {
 
       <div class="benchmark-panel__dialog-footer">
         <span class="benchmark-panel__help-link">
-          需要了解评估基准生成原理？查看 <el-link type="primary">使用说明</el-link>
+          <el-link type="primary" @click="showAutoGenHelp = !showAutoGenHelp">
+            {{ showAutoGenHelp ? '收起使用说明' : '需要了解评估基准生成原理？查看使用说明' }}
+          </el-link>
         </span>
         <div class="benchmark-panel__dialog-actions">
           <el-button @click="showAutoGenDialog = false">取消</el-button>
           <el-button type="primary" :loading="generating" @click="handleAutoGen">确定</el-button>
         </div>
+      </div>
+      <div v-if="showAutoGenHelp" class="benchmark-panel__help-content">
+        <p><strong>自动生成原理：</strong></p>
+        <p>系统会从知识库中采样文档片段（chunks），将片段作为上下文发送给 LLM，让 LLM 根据片段内容生成问答对。</p>
+        <p><strong>两种构建方式：</strong></p>
+        <ul>
+          <li><strong>向量构建（默认）</strong> — 从知识库随机采样 chunks，适合快速生成通用评估基准</li>
+          <li><strong>图增强构建</strong> — 在向量召回基础上结合知识图谱（实体+关系）扩展上下文，适合测试图检索能力</li>
+        </ul>
+        <p><strong>生成的指标：</strong></p>
+        <ul>
+          <li><code>goldChunks</code> — LLM 会标注答案来源的文档片段 ID，用于评估时的 Recall@K 计算</li>
+          <li><code>goldAnswer</code> — LLM 生成的标准答案，用于评估时的答案正确性评判</li>
+        </ul>
+        <p><strong>评估流水线：</strong></p>
+        <p>检索（向量/混合/全文） → Recall@K 计算 → LLM 答案生成 → LLM 评判正确性 → 聚合综合评分</p>
       </div>
     </el-dialog>
 
@@ -713,6 +772,36 @@ onMounted(() => {
   &__help-link {
     font-size: 13px;
     color: $text-secondary;
+  }
+
+  &__help-content {
+    margin-top: $spacing-base;
+    padding: $spacing-base;
+    background: #f8fafc;
+    border: 1px solid $border-lighter;
+    border-radius: $radius-sm;
+    font-size: 13px;
+    color: $text-regular;
+    line-height: 1.6;
+
+    p { margin: 0 0 $spacing-xs; }
+    ul { margin: $spacing-xs 0; padding-left: 20px; }
+    li { margin-bottom: 4px; }
+    code {
+      background: #e2e8f0;
+      padding: 1px 6px;
+      border-radius: 3px;
+      font-size: 12px;
+    }
+    pre {
+      background: #1e293b;
+      color: #e2e8f0;
+      padding: $spacing-sm $spacing-base;
+      border-radius: $radius-sm;
+      font-size: 12px;
+      overflow-x: auto;
+      margin: $spacing-xs 0 0;
+    }
   }
 
   &__dialog-actions {

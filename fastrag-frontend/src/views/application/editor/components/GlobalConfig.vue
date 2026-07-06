@@ -18,7 +18,7 @@ async function loadVariables() {
   try {
     const res = await api.getAppVariables(appId())
     variableList.value = (res as any) || []
-  } catch { variableList.value = [] }
+  } catch (e) { variableList.value = [] }
   if (!variableList.value.length) {
     variableList.value = [
       { id: 'v1', name: 'companyName', type: 'string', defaultValue: '示例公司', description: '公司名称' },
@@ -36,13 +36,13 @@ async function handleSaveVariable() {
   showVariableDialog.value = false; await loadVariables()
 }
 async function handleDeleteVariable(row: any) {
-  try { await ElMessageBox.confirm('确认删除变量？', '确认', { type: 'warning' }); await api.deleteAppVariable(appId(), row.id); await loadVariables(); ElMessage.success('删除成功') } catch {}
+  try { await ElMessageBox.confirm('确认删除变量？', '确认', { type: 'warning' }); await api.deleteAppVariable(appId(), row.id); await loadVariables(); ElMessage.success('删除成功') } catch (e) {}
 }
 
 // 安全策略 (#4936/#4939~4940)
 const safetyEnabled = ref(1)
 const policyForm = ref({ safetyEnabled: 1, sensitiveWordMode: 'reject', fallbackText: '抱歉，没有理解您的问题', unmatchedEnabled: 1 })
-async function loadPolicy() { try { const r: any = await api.getAppGlobalPolicy(appId()); if (r) Object.assign(policyForm.value, r); safetyEnabled.value = policyForm.value.safetyEnabled } catch {} }
+async function loadPolicy() { try { const r: any = await api.getAppGlobalPolicy(appId()); if (r) Object.assign(policyForm.value, r); safetyEnabled.value = policyForm.value.safetyEnabled } catch (e) {} }
 async function savePolicy() { await api.saveAppGlobalPolicy(appId(), policyForm.value); ElMessage.success('安全策略已保存') }
 async function handleToggleSafety() { policyForm.value.safetyEnabled = policyForm.value.safetyEnabled ? 0 : 1; await savePolicy() }
 

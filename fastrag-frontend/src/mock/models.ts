@@ -16,6 +16,8 @@ export interface ModelRecord {
   brand: string
   apiUrl: string
   status: ModelStatus
+  /** 启用思考模式（LLM 模型专用） */
+  enableThinking?: boolean
 }
 
 const modelStore: ModelRecord[] = [

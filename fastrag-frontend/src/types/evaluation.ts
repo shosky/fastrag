@@ -150,16 +150,10 @@ export interface EvaluationResult {
   generatedAnswer: string
   /** 检索指标文本，例如「R@1 1.000  R@3 1.000」 */
   retrievalMetrics: string
-  /** 答案评判结果 */
-  answerJudgment: AnswerJudgeResult
-}
-
-/** 答案评判结果 */
-export interface AnswerJudgeResult {
-  /** 是否正确 */
-  isCorrect: boolean
+  /** 是否正确（0/1） */
+  isCorrect: number
   /** 评判说明 */
-  reason: string
+  judgeReason: string
 }
 
 /** 评估详情 */
@@ -187,4 +181,12 @@ export interface EvaluationStartConfig {
   benchmark: string
   answerModel: string
   judgeModel: string
+  /** 检索模式：vector / hybrid / fulltext */
+  retrievalMode?: string
+  /** 向量化模型名 */
+  embeddingModel?: string
+  /** 是否启用 Rerank 重排序 */
+  enableRerank?: boolean
+  /** 重排序模型名 */
+  rerankModel?: string
 }

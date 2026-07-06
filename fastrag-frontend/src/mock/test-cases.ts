@@ -1,5 +1,4 @@
 import type { RetrievalConfig } from '@/types/knowledge'
-import { searchRetrieval } from '@/api'
 
 // ===========================================================================
 // 对话测试案例库 mock 数据层
@@ -158,6 +157,8 @@ const defaultConfig: RetrievalConfig = {
 export async function runTestCase(tc: TestCase, config?: RetrievalConfig): Promise<TestResult> {
   const start = Date.now()
   try {
+    // 延迟加载避免循环依赖：mock/test-cases.ts → @/api → 初始化中
+    const { searchRetrieval } = await import('@/api')
     const results = await searchRetrieval({
       knowledgeId: 'default',
       query: tc.query,

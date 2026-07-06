@@ -5,6 +5,8 @@ import { useEvaluation } from '@/composables/useEvaluation'
 import { useBenchmark } from '@/composables/useBenchmark'
 import { usePagination } from '@/composables/usePagination'
 import type { Evaluation, EvaluationDetail } from '@/types/evaluation'
+import { watch, onMounted, onUnmounted, computed, ref } from 'vue'
+import * as api from '@/api'
 
 // --- Props & Emits ---
 const props = defineProps<{
@@ -26,6 +28,9 @@ const {
   load,
   start,
   remove,
+  getCachedDetail,
+  startPolling,
+  stopPolling,
 } = useEvaluation(kbId)
 
 const { benchmarkOptions, load: loadBenchmarks } = useBenchmark(kbId)
@@ -53,15 +58,41 @@ const showStartDialog = ref(false)
 const evaluationConfig = ref({
   name: '',
   benchmark: '',
-  answerModel: 'DeepSeek-V4-Flash',
+  answerModel: '',
   judgeModel: '',
+  retrievalMode: 'hybrid',
+  embeddingModel: '',
+  enableRerank: false,
+  rerankModel: '',
 })
 
-const modelOptions = [
-  { label: 'DeepSeek-V4-Flash', value: 'DeepSeek-V4-Flash' },
-  { label: 'Qwen3-32B', value: 'Qwen3-32B' },
-  { label: 'GPT-4o', value: 'GPT-4o' },
-]
+/** 从 API 加载各类型模型列表 */
+const llmModelOptions = ref<{ label: string; value: string }[]>([])
+const embeddingModelOptions = ref<{ label: string; value: string }[]>([])
+const rerankModelOptions = ref<{ label: string; value: string }[]>([])
+
+async function loadModelOptions() {
+  try {
+    const [llmRes, embedRes, rerankRes] = await Promise.all([
+      api.getModels({ purpose: 'LLM' }).catch(() => []),
+      api.getModels({ purpose: 'EMBEDDING' }).catch(() => []),
+      api.getModels({ purpose: 'RERANK' }).catch(() => []),
+    ])
+    const toOpts = (res: any) => (res?.list || res || []).map((m: any) => ({
+      label: m.name || m.code,
+      value: m.code,
+    }))
+    llmModelOptions.value = toOpts(llmRes)
+    embeddingModelOptions.value = toOpts(embedRes)
+    rerankModelOptions.value = toOpts(rerankRes)
+    // 默认选中第一个可用 LLM 模型
+    if (llmModelOptions.value.length > 0 && !evaluationConfig.value.answerModel) {
+      evaluationConfig.value.answerModel = llmModelOptions.value[0].value
+    }
+  } catch {
+    // API 不可用时用空列表
+  }
+}
 
 function genDefaultName() {
   return `eval-${new Date().toISOString().slice(0, 10).replace(/-/g, '')}-${Math.random().toString(36).slice(2, 8)}`
@@ -89,16 +120,26 @@ async function handleStartEvaluation() {
   ElMessage.info('开始评估...')
 
   try {
-    const detail = await start({
-      name: evaluationConfig.value.name,
-      benchmark: evaluationConfig.value.benchmark,
-      answerModel: evaluationConfig.value.answerModel,
-      judgeModel: evaluationConfig.value.judgeModel,
-    })
-    currentEvaluation.value = detail
+      const payload = {
+        name: evaluationConfig.value.name,
+        benchmark: evaluationConfig.value.benchmark,
+        answerModel: evaluationConfig.value.answerModel,
+        judgeModel: evaluationConfig.value.judgeModel,
+        retrievalMode: evaluationConfig.value.retrievalMode,
+        embeddingModel: evaluationConfig.value.embeddingModel,
+        enableRerank: evaluationConfig.value.enableRerank,
+        rerankModel: evaluationConfig.value.rerankModel,
+      }
+      console.log('[Evaluation] Starting evaluation with config:', payload)
+      const detail = await start(payload)
+    // 开始轮询评估状态
+    startPolling(detail.id)
+    // API 返回的 KbEvaluation 不含 results，需补充空数组避免模板报错
+    currentEvaluation.value = { ...detail, results: detail.results || [] }
     resetDetailPager()
     showDetailDialog.value = true
-    ElMessage.success(`评估完成，综合评分 ${detail.overallScore}%`)
+    const scoreText = detail.overallScore != null ? `，综合评分 ${detail.overallScore}%` : ''
+    ElMessage.success(`评估已启动${scoreText}，请稍候查看结果`)
   } catch {
     ElMessage.error('评估失败，请重试')
   }
@@ -116,15 +157,42 @@ const {
   pageSize: detailPageSize,
   total: detailTotal,
   reset: resetDetailPager,
-} = usePagination(50)
+} = usePagination(10)
 const filteredResults = computed(() => {
   if (!currentEvaluation.value) return []
-  if (!onlyShowErrors.value) return currentEvaluation.value.results
-  return currentEvaluation.value.results.filter((r) => !r.answerJudgment.isCorrect)
+  const results = currentEvaluation.value.results || []
+  if (!onlyShowErrors.value) return results
+  return results.filter((r) => !r.isCorrect)
 })
 watch(() => filteredResults.value.length, (n) => {
   detailTotal.value = n
   detailPage.value = 1
+})
+
+// 当列表中当前查看的评估状态变更时，同步更新详情弹窗
+watch(evaluations, (newEvals) => {
+  if (!currentEvaluation.value || !showDetailDialog.value) return
+  const updated = newEvals.find((e: any) => e.id === currentEvaluation.value!.id)
+  if (!updated) return
+  const oldStatus = currentEvaluation.value.status
+  const newStatus = updated.status
+  if (oldStatus !== newStatus && (newStatus === 'completed' || newStatus === 'failed')) {
+    currentEvaluation.value = {
+      ...currentEvaluation.value,
+      status: newStatus,
+      overallScore: updated.overallScore ?? currentEvaluation.value.overallScore,
+      completedCount: updated.completedCount ?? currentEvaluation.value.completedCount,
+      duration: updated.duration ?? currentEvaluation.value.duration,
+      benchmarkCount: updated.benchmarkCount ?? currentEvaluation.value.totalQuestions,
+      recallAt1: updated.recallAt1 ?? currentEvaluation.value.recallAt1,
+      recallAt3: updated.recallAt3 ?? currentEvaluation.value.recallAt3,
+      recallAt5: updated.recallAt5 ?? currentEvaluation.value.recallAt5,
+      recallAt10: updated.recallAt10 ?? currentEvaluation.value.recallAt10,
+      answerAccuracy: updated.answerAccuracy ?? currentEvaluation.value.answerAccuracy,
+      // 如果列表项已有完整结果，直接使用
+      results: updated.results || currentEvaluation.value.results,
+    }
+  }
 })
 const pagedResults = computed(() => {
   const startIdx = (detailPage.value - 1) * detailPageSize.value
@@ -132,18 +200,21 @@ const pagedResults = computed(() => {
 })
 
 async function viewEvaluation(eval_: Evaluation) {
-  // 评估详情在评估完成时已缓存，这里若没有则提示重新评估
-  // 由于 mock 层 detailCache 在刷新后会丢失，这里采取：若列表项有对应 detail 就直接展示，
-  // 否则用最新的评估结果补展示（演示场景下足够）。
-  // 更稳妥的做法是 fetchEvaluationDetail，此处简化为从记录展示摘要 + 提示。
-  // 实际上 runEvaluation 已缓存详情，但刷新页面后缓存会丢。这里我们提供一个轻量重跑：
-  if (!currentEvaluation.value || currentEvaluation.value.id !== eval_.id) {
-    // 没有缓存的详情：用记录里的指标构造一个只读视图
-    currentEvaluation.value = {
+  // 优先从 localStorage 缓存取详情（仅评估仍在运行时有用）
+  const cached = getCachedDetail(eval_.id)
+  const isTerminal = eval_.status === 'completed' || eval_.status === 'failed'
+  if (cached && !isTerminal) {
+    currentEvaluation.value = cached
+  } else if (!currentEvaluation.value || currentEvaluation.value.id !== eval_.id || isTerminal) {
+    // 无缓存 / 评估已结束：用列表中的指标 + API 详情构造视图
+    const detail = cached && isTerminal
+      ? cached  // 缓存虽然过期，但总比空数据好（极少触发）
+      : await api.fetchEvaluationDetail(kbId, eval_.id).catch(() => null)
+    currentEvaluation.value = detail || {
       id: eval_.id,
       name: eval_.name,
       runId: eval_.runId,
-      status: '已完成',
+      status: eval_.status === 'completed' ? '已完成' : eval_.status === 'running' ? '进行中' : eval_.status === 'failed' ? '失败' : '待处理',
       overallScore: eval_.overallScore,
       totalQuestions: eval_.benchmarkCount,
       completedCount: eval_.completedCount,
@@ -151,7 +222,7 @@ async function viewEvaluation(eval_: Evaluation) {
       recallAt1: 0,
       recallAt3: 0,
       recallAt5: 0,
-      recallAt10: eval_.recallAt10,
+      recallAt10: eval_.recallAt10 || 0,
       answerAccuracy: 0,
       results: [],
     }
@@ -201,11 +272,15 @@ function getStatusText(status: string) {
 
 // --- Lifecycle ---
 onMounted(async () => {
-  await Promise.all([load(), loadBenchmarks()])
+  await Promise.all([load(), loadBenchmarks(), loadModelOptions()])
   // 若外部预选了基准，自动打开开始评估对话框
   if (props.preselectBenchmark) {
     openStartDialog()
   }
+})
+
+onUnmounted(() => {
+  stopPolling()
 })
 </script>
 
@@ -223,7 +298,7 @@ onMounted(async () => {
       <div v-if="latest" class="rag-evaluation__latest-content">
         <!-- Score circle -->
         <div class="rag-evaluation__score-circle">
-          <div class="rag-evaluation__score-value">{{ latest.overallScore }}%</div>
+          <div class="rag-evaluation__score-value">{{ latest.overallScore != null ? latest.overallScore + '%' : '评估中' }}</div>
         </div>
 
         <!-- Evaluation info -->
@@ -244,23 +319,23 @@ onMounted(async () => {
           <div class="rag-evaluation__metric-card">
             <span class="rag-evaluation__metric-label">Recall@10</span>
             <span class="rag-evaluation__metric-value rag-evaluation__metric-value--green">
-              {{ latest.recallAt10.toFixed(3) }}
+              {{ (latest.recallAt10 ?? 0).toFixed(3) }}
             </span>
           </div>
           <div class="rag-evaluation__metric-card">
             <span class="rag-evaluation__metric-label">耗时</span>
-            <span class="rag-evaluation__metric-value">{{ latest.duration }}</span>
+            <span class="rag-evaluation__metric-value">{{ latest.duration || '-' }}</span>
           </div>
           <div class="rag-evaluation__metric-card">
             <span class="rag-evaluation__metric-label">数据量</span>
             <span class="rag-evaluation__metric-value">
-              {{ latest.completedCount }}/{{ latest.dataCount }}
+              {{ latest.completedCount ?? 0 }}/{{ latest.dataCount ?? 0 }}
             </span>
           </div>
           <div class="rag-evaluation__metric-card">
             <span class="rag-evaluation__metric-label">完成率</span>
             <span class="rag-evaluation__metric-value">
-              {{ latest.dataCount ? Math.round((latest.completedCount / latest.dataCount) * 100) : 0 }}%
+              {{ latest.dataCount ? Math.round(((latest.completedCount ?? 0) / latest.dataCount) * 100) : 0 }}%
             </span>
           </div>
         </div>
@@ -289,12 +364,12 @@ onMounted(async () => {
         <el-table-column prop="duration" label="耗时" width="100" align="center" />
         <el-table-column label="Recall@10" width="120" align="center">
           <template #default="{ row }">
-            {{ row.recallAt10.toFixed(3) }}
+            {{ (row.recallAt10 ?? 0).toFixed(3) }}
           </template>
         </el-table-column>
         <el-table-column label="综合评分" width="100" align="center">
           <template #default="{ row }">
-            {{ row.overallScore }}%
+            {{ row.overallScore != null ? row.overallScore + '%' : '-' }}
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100" align="center">
@@ -358,7 +433,7 @@ onMounted(async () => {
         <el-form-item label="答案生成模型：">
           <el-select v-model="evaluationConfig.answerModel" style="width: 100%">
             <el-option
-              v-for="opt in modelOptions"
+              v-for="opt in llmModelOptions"
               :key="opt.value"
               :label="opt.label"
               :value="opt.value"
@@ -374,7 +449,41 @@ onMounted(async () => {
             clearable
           >
             <el-option
-              v-for="opt in modelOptions"
+              v-for="opt in llmModelOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="检索模式：">
+          <el-select v-model="evaluationConfig.retrievalMode" style="width: 100%">
+            <el-option label="混合检索（向量+全文）" value="hybrid" />
+            <el-option label="向量检索" value="vector" />
+            <el-option label="全文检索" value="fulltext" />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="向量化模型：">
+          <el-select v-model="evaluationConfig.embeddingModel" clearable placeholder="可选，默认使用 Gateway" style="width: 100%">
+            <el-option
+              v-for="opt in embeddingModelOptions"
+              :key="opt.value"
+              :label="opt.label"
+              :value="opt.value"
+            />
+          </el-select>
+        </el-form-item>
+
+        <el-form-item label="Rerank 重排序：">
+          <el-switch v-model="evaluationConfig.enableRerank" />
+        </el-form-item>
+
+        <el-form-item v-if="evaluationConfig.enableRerank" label="Rerank 模型：">
+          <el-select v-model="evaluationConfig.rerankModel" style="width: 100%">
+            <el-option
+              v-for="opt in rerankModelOptions"
               :key="opt.value"
               :label="opt.label"
               :value="opt.value"
@@ -384,7 +493,12 @@ onMounted(async () => {
       </el-form>
 
       <div class="rag-evaluation__dialog-tip">
-        当前为演示模式：答案由检索结果拼接生成，评判基于 gold 答案的关键数字/关键词匹配。
+        <strong>评估流程说明：</strong><br>
+        1. <strong>检索</strong> — 对每个问题在知识库中检索 top-K chunks（支持向量/混合/全文模式）<br>
+        2. <strong>召回计算</strong> — 对比 goldChunks 计算 Recall@1/3/5/10<br>
+        3. <strong>生成</strong> — 以检索结果为上下文，调用 LLM 生成答案<br>
+        4. <strong>评判</strong> — LLM judge 或规则评判（数字/关键词匹配）答案正确性<br>
+        5. <strong>聚合</strong> — overallScore = Recall@10 × 0.7 + AnswerAccuracy × 0.3
       </div>
 
       <template #footer>
@@ -408,7 +522,7 @@ onMounted(async () => {
           <div class="rag-evaluation__detail-meta">
             <span>运行ID：{{ currentEvaluation.runId }}</span>
             <span>状态：<el-tag type="success" size="small">{{ currentEvaluation.status }}</el-tag></span>
-            <span>总体评分：<el-tag type="success" size="small">{{ currentEvaluation.overallScore.toFixed(1) }}%</el-tag></span>
+            <span>总体评分：<el-tag type="success" size="small">{{ (currentEvaluation.overallScore ?? 0).toFixed(1) }}%</el-tag></span>
             <span>总问题数：{{ currentEvaluation.totalQuestions }}</span>
             <span>完成数：{{ currentEvaluation.completedCount }}</span>
             <span>总耗时：{{ currentEvaluation.duration }}</span>
@@ -421,12 +535,12 @@ onMounted(async () => {
 
         <!-- Metrics summary -->
         <div class="rag-evaluation__detail-metrics">
-          <span>显示 {{ filteredResults.length }} 条结果（共 {{ currentEvaluation.results.length }} 条）</span>
-          <span>召回率(1): <strong class="rag-evaluation__metric--green">{{ currentEvaluation.recallAt1.toFixed(3) }}</strong></span>
-          <span>召回率(3): <strong class="rag-evaluation__metric--green">{{ currentEvaluation.recallAt3.toFixed(3) }}</strong></span>
-          <span>召回率(5): <strong class="rag-evaluation__metric--green">{{ currentEvaluation.recallAt5.toFixed(3) }}</strong></span>
-          <span>召回率(10): <strong class="rag-evaluation__metric--green">{{ currentEvaluation.recallAt10.toFixed(3) }}</strong></span>
-          <span>答案准确率：<strong class="rag-evaluation__metric--red">{{ (currentEvaluation.answerAccuracy * 100).toFixed(1) }}%</strong></span>
+          <span>显示 {{ filteredResults.length }} 条结果（共 {{ (currentEvaluation.results || []).length }} 条）</span>
+          <span>召回率(1): <strong class="rag-evaluation__metric--green">{{ (currentEvaluation.recallAt1 ?? 0).toFixed(3) }}</strong></span>
+          <span>召回率(3): <strong class="rag-evaluation__metric--green">{{ (currentEvaluation.recallAt3 ?? 0).toFixed(3) }}</strong></span>
+          <span>召回率(5): <strong class="rag-evaluation__metric--green">{{ (currentEvaluation.recallAt5 ?? 0).toFixed(3) }}</strong></span>
+          <span>召回率(10): <strong class="rag-evaluation__metric--green">{{ (currentEvaluation.recallAt10 ?? 0).toFixed(3) }}</strong></span>
+          <span>答案准确率：<strong class="rag-evaluation__metric--red">{{ ((currentEvaluation.answerAccuracy ?? 0) * 100).toFixed(1) }}%</strong></span>
         </div>
 
         <!-- Results table -->
@@ -441,10 +555,10 @@ onMounted(async () => {
           <el-table-column prop="retrievalMetrics" label="检索指标" min-width="250" />
           <el-table-column label="答案评判" min-width="180">
             <template #default="{ row }">
-              <el-tag :type="row.answerJudgment.isCorrect ? 'success' : 'danger'" size="small">
-                {{ row.answerJudgment.isCorrect ? '正确' : '错误' }}
+              <el-tag :type="row.isCorrect ? 'success' : 'danger'" size="small">
+                {{ row.isCorrect ? '正确' : '错误' }}
               </el-tag>
-              <span class="rag-evaluation__judge-reason">{{ row.answerJudgment.reason }}</span>
+              <span class="rag-evaluation__judge-reason">{{ row.judgeReason }}</span>
             </template>
           </el-table-column>
         </el-table>

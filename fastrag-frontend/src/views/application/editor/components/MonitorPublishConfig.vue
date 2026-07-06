@@ -12,13 +12,13 @@ const metrics = ref({ totalPublish: 0, releasedCount: 0, rollbackCount: 0, succe
 
 // 发布管理
 async function loadPublishRecords() {
-  try { publishRecords.value = ((await api.getAppPublishRecords(appId())) as any) || [] } catch { publishRecords.value = [] }
+  try { publishRecords.value = ((await api.getAppPublishRecords(appId())) as any) || [] } catch (e) { publishRecords.value = [] }
 }
 async function handlePublish(row: any) {
-  try { await api.publishApp(appId(), { version: row.version, scopeType: row.environment || 'production' }); ElMessage.success('已上线'); await loadPublishRecords() } catch { ElMessage.error('发布失败') }
+  try { await api.publishApp(appId(), { version: row.version, scopeType: row.environment || 'production' }); ElMessage.success('已上线'); await loadPublishRecords() } catch (e) { ElMessage.error('发布失败') }
 }
 async function handleRevoke(row: any) {
-  try { await ElMessageBox.confirm('确认撤回该版本？', '确认', { type: 'warning' }); await api.revokeKnowledge(appId(), row.id); await loadPublishRecords(); ElMessage.success('已撤回') } catch {}
+  try { await ElMessageBox.confirm('确认撤回该版本？', '确认', { type: 'warning' }); await api.revokeKnowledge(appId(), row.id); await loadPublishRecords(); ElMessage.success('已撤回') } catch (e) {}
 }
 
 // 监控管理 — 从 getAppMonitor 获取真实数据
@@ -36,7 +36,7 @@ async function loadMetrics() {
         todayCalls: res.todayCalls ?? 0,
       }
     }
-  } catch {}
+  } catch (e) {}
 }
 
 // 告警设置

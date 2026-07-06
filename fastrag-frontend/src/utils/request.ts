@@ -38,11 +38,14 @@ service.interceptors.response.use(
         return res.data
       }
 
-      // 未授权 → 清除 token 跳转登录
-      if (res.code === 401) {
-        storage.remove('token')
-        storage.remove('userInfo')
-        window.location.href = '/login'
+      // 未授权 / 禁止访问 → 清除 token 跳转登录
+      if (res.code === 401 || res.code === 403) {
+        // 已在登录页则不重复跳转，避免循环
+        if (window.location.pathname !== '/login') {
+          storage.remove('token')
+          storage.remove('userInfo')
+          window.location.href = '/login'
+        }
         return Promise.reject(new Error(res.message || '未授权，请重新登录'))
       }
 
@@ -59,10 +62,12 @@ service.interceptors.response.use(
     const message = error.response?.data?.message || error.message || '网络异常'
     const status = error.response?.status
 
-    if (status === 401) {
-      storage.remove('token')
-      storage.remove('userInfo')
-      window.location.href = '/login'
+    if (status === 401 || status === 403) {
+      if (window.location.pathname !== '/login') {
+        storage.remove('token')
+        storage.remove('userInfo')
+        window.location.href = '/login'
+      }
     } else {
       ElMessage.error(message)
     }

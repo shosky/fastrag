@@ -68,7 +68,12 @@ export function useFiles(kbId: string = 'default') {
   }
 
   async function retry(id: string) {
-    await api.updateFile(kbId, id, { status: 'pending', progress: 0, stage: undefined })
+    await api.retryFile(kbId, id)
+    await load()
+  }
+
+  async function toggleGraphBuild(id: string, enabled: boolean) {
+    await api.updateFile(kbId, id, { enableGraphBuild: enabled ? 1 : 0 })
     await load()
   }
 

@@ -104,7 +104,6 @@ export const PERMISSION_TREE: PermissionTreeNode[] = [
       { key: PERMISSIONS.MENU_ADMIN_SYSTEM, label: '系统管理' },
       { key: PERMISSIONS.MENU_ADMIN_ACCOUNT, label: '账号权限' },
       { key: PERMISSIONS.MENU_ADMIN_AUDIT, label: '安全审计' },
-      { key: PERMISSIONS.MENU_ADMIN_CONTENT, label: '内容与工具' },
       { key: PERMISSIONS.MENU_ADMIN_PLATFORM, label: '开放平台' },
     ],
   },
@@ -223,7 +222,6 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
         children: [
           { path: '/admin/system/general-settings', title: '通用设置', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
           { path: '/admin/system/kb-config', title: '知识库配置', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
-          { path: '/admin/system/global-settings', title: '全局设置', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
           { path: '/admin/system/sensitive-words', title: '敏感词设置', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
           { path: '/admin/system/dictionary', title: '字典管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
           { path: '/admin/system/terminology', title: '术语管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
@@ -249,20 +247,7 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
         children: [
           { path: '/admin/audit/system-log', title: '系统日志', requiredPerms: [PERMISSIONS.ADMIN_AUDIT] },
           { path: '/admin/audit/device-login', title: '设备登录分析', requiredPerms: [PERMISSIONS.ADMIN_AUDIT] },
-          { path: '/admin/audit/login-security', title: '登录安全配置', requiredPerms: [PERMISSIONS.ADMIN_AUDIT] },
           { path: '/admin/audit/review-center', title: '审核中心', requiredPerms: [PERMISSIONS.REVIEW_APPROVE] },
-        ],
-      },
-      {
-        path: '/admin/content',
-        title: '内容与工具',
-        requiredPerms: [PERMISSIONS.MENU_ADMIN_CONTENT],
-        children: [
-          { path: '/admin/content/notification', title: '通知管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
-          { path: '/admin/content/tags', title: '标签管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
-          { path: '/admin/content/prompts', title: '提示词', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
-          { path: '/admin/content/templates', title: '文档模板', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
-          { path: '/admin/content/download', title: '下载中心', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
         ],
       },
       {
@@ -270,7 +255,6 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
         title: '开放平台',
         requiredPerms: [PERMISSIONS.MENU_ADMIN_PLATFORM],
         children: [
-          { path: '/admin/platform/third-party', title: '三方平台', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
           { path: '/admin/platform/model-management', title: '模型管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
           { path: '/admin/platform/api-keys', title: '开放密钥', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
         ],
@@ -303,7 +287,7 @@ export const ROLE_PERMISSIONS: Record<SystemRole, string[]> = {
     // 菜单权限
     PERMISSIONS.MENU_HOME, PERMISSIONS.MENU_KNOWLEDGE, PERMISSIONS.MENU_APPLICATION,
     PERMISSIONS.MENU_ADMIN, PERMISSIONS.MENU_ADMIN_SYSTEM, PERMISSIONS.MENU_ADMIN_ACCOUNT,
-    PERMISSIONS.MENU_ADMIN_CONTENT, PERMISSIONS.MENU_ADMIN_PLATFORM,
+    PERMISSIONS.MENU_ADMIN_PLATFORM,
     // 知识库权限
     PERMISSIONS.KB_CREATE, PERMISSIONS.KB_EDIT, PERMISSIONS.KB_DELETE,
     PERMISSIONS.KB_UPLOAD, PERMISSIONS.KB_MANAGE_CHUNKS, PERMISSIONS.KB_MANAGE_GRAPH,

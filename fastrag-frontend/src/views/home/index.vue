@@ -9,8 +9,8 @@ const loading = ref(true)
 const quickEntries = ref([
   { title: '知识库', icon: 'Collection', color: '#409eff', path: '/knowledge' },
   { title: '应用中心', icon: 'Grid', color: '#67c23a', path: '/application' },
-  { title: '知识加工', icon: 'Setting', color: '#e6a23c', path: '/process' },
-  { title: '运营中心', icon: 'TrendCharts', color: '#f56c6c', path: '/operation/kb-analytics' },
+  { title: '技能管理', icon: 'MagicStick', color: '#e6a23c', path: '/application/skill-management' },
+  { title: '工具管理', icon: 'Tools', color: '#909399', path: '/application/my-tools' },
 ])
 
 const recommendKBs = ref<any[]>([])

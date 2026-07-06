@@ -3,7 +3,7 @@ import { ref, reactive, computed, watch, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
-import { CircleCheck, InfoFilled, Search, Monitor, OfficeBuilding, User, Setting, Share, Document } from '@element-plus/icons-vue'
+import { CircleCheck, InfoFilled, Search, Monitor, OfficeBuilding, User, Setting, Share, Document, DataLine } from '@element-plus/icons-vue'
 import type { KnowledgeBase, KnowledgeBaseForm, FileTypeConfig, RetrievalSettingConfig } from '@/types/knowledge'
 import RetrievalSettingPanel from './detail/components/RetrievalSettingPanel.vue'
 import * as api from '@/api'
@@ -191,6 +191,7 @@ function defaultForm(): KnowledgeBaseForm {
     embeddingModel: 'text-embedding-v4',
     parseMode: 'auto',
     splitMode: 'auto',
+    graphAutoBuild: false,
     fileTypeConfig,
     retrievalConfig: defaultRetrievalConfig(),
   }
@@ -269,6 +270,7 @@ watch(
       if (extended.permission) form.permission = extended.permission
       if (extended.parseMode) form.parseMode = extended.parseMode
       if (extended.splitMode) form.splitMode = extended.splitMode
+      if (extended.graphAutoBuild !== undefined) form.graphAutoBuild = extended.graphAutoBuild === 1
       if (extended.fileTypeConfig) Object.assign(fileTypeConfig, extended.fileTypeConfig)
       if (extended.retrievalConfig) Object.assign(form.retrievalConfig, extended.retrievalConfig)
 
@@ -907,6 +909,20 @@ function goToParseStrategy() {
                 <el-checkbox v-model="fileTypeConfig.images">
                   图片 (JPG、PNG，需 OCR)
                 </el-checkbox>
+              </div>
+            </el-form-item>
+
+            <!-- 知识图谱自动构建 -->
+            <el-form-item label="知识图谱">
+              <div style="display: flex; align-items: center; gap: 8px">
+                <el-switch
+                  v-model="form.graphAutoBuild"
+                  :active-value="true"
+                  :inactive-value="false"
+                />
+                <span style="font-size: 13px; color: var(--text-secondary)">
+                  上传文件后自动构建知识图谱（需开启 Neo4j）
+                </span>
               </div>
             </el-form-item>
 

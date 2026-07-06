@@ -11,6 +11,7 @@ interface ModelRecord {
   brand: string
   apiUrl: string
   contextWindow?: number
+  enableThinking?: boolean
   status: string
 }
 
@@ -26,13 +27,31 @@ const MODEL_PURPOSE_COLORS: Record<string, string> = {
 }
 
 const models = ref<ModelRecord[]>([])
-const activeTab = ref('list')
 const loading = ref(false)
 
-const selectedModelId = ref<string | null>(null)
-const trainingRecords = ref<any[]>([])
-const testReports = ref<any[]>([])
-const callLogs = ref<any[]>([])
+// --- 模型测试 ---
+const showTestDialog = ref(false)
+const testingModelId = ref<string | null>(null)
+const testingModelName = ref('')
+const testPrompt = ref('你好，请简单介绍一下你自己')
+const testResult = ref<any>(null)
+const testLoading = ref(false)
+
+// --- 新增/编辑 ---
+const showDialog = ref(false)
+const dialogTitle = ref('新增模型')
+const editingId = ref<string | null>(null)
+const formData = ref({
+  name: '',
+  code: '',
+  purpose: 'LLM',
+  brand: '',
+  apiUrl: '',
+  apiKey: '',
+  contextWindow: 4096,
+  enableThinking: false,
+  status: 'online',
+})
 
 async function loadModels() {
   loading.value = true
@@ -46,113 +65,73 @@ async function loadModels() {
 
 onMounted(loadModels)
 
-async function loadLifecycle(modelId: string) {
-  selectedModelId.value = modelId
-  activeTab.value = 'lifecycle'
-  loading.value = true
-  try {
-    const [trainings, reports] = await Promise.all([
-      api.getModelTrainings(modelId),
-      api.getModelTestReports(modelId),
-    ])
-    trainingRecords.value = Array.isArray(trainings) ? trainings : (trainings as any)?.list || []
-    testReports.value = Array.isArray(reports) ? reports : (reports as any)?.list || []
-    // 调用日志 — 从 mock 模拟获取
-    const { getCallLogs } = await import('@/mock/models')
-    callLogs.value = getCallLogs(modelId)
-  } catch {
-    trainingRecords.value = []
-    testReports.value = []
-    callLogs.value = []
-  } finally {
-    loading.value = false
-  }
+// ==================== 模型测试 ====================
+
+function openTestDialog(model: ModelRecord) {
+  testingModelId.value = model.id
+  testingModelName.value = model.name
+  testPrompt.value = '你好，请简单介绍一下你自己'
+  testResult.value = null
+  showTestDialog.value = true
 }
 
-// 新增训练弹窗
-const showTrainDialog = ref(false)
-const trainForm = ref({
-  dataset: '',
-  epochs: 10,
-  learningRate: 0.001,
-  batchSize: 32,
-  description: '',
-})
-
-function handleShowTrain() {
-  trainForm.value = { dataset: '', epochs: 10, learningRate: 0.001, batchSize: 32, description: '' }
-  showTrainDialog.value = true
-}
-
-async function handleSubmitTrain() {
-  if (!trainForm.value.dataset) {
-    ElMessage.warning('请填写训练数据集')
+async function handleTestChat() {
+  if (!testPrompt.value.trim()) {
+    ElMessage.warning('请输入测试内容')
     return
   }
+  testLoading.value = true
+  testResult.value = null
   try {
-    await api.trainModel(selectedModelId.value!, {
-      dataset: trainForm.value.dataset,
-      epochs: trainForm.value.epochs,
-      learningRate: trainForm.value.learningRate,
-      batchSize: trainForm.value.batchSize,
-      description: trainForm.value.description,
-    })
-    ElMessage.success('训练任务已提交')
-    showTrainDialog.value = false
-    // 刷新训练记录
-    const trainings = await api.getModelTrainings(selectedModelId.value!)
-    trainingRecords.value = Array.isArray(trainings) ? trainings : (trainings as any)?.list || []
-  } catch {
-    ElMessage.error('提交训练任务失败')
+    const res = await api.testModelChat(testingModelId.value!, testPrompt.value)
+    testResult.value = res
+  } catch (e: any) {
+    testResult.value = { success: false, error: e?.message || '请求失败' }
+  } finally {
+    testLoading.value = false
   }
 }
 
-async function handleStartTrain() {
-  await api.trainModel(selectedModelId.value!)
-  ElMessage.success('训练任务已提交')
-  const trainings = await api.getModelTrainings(selectedModelId.value!)
-  trainingRecords.value = Array.isArray(trainings) ? trainings : (trainings as any)?.list || []
-}
-
-async function handleStartTest() {
-  await api.testModel(selectedModelId.value!)
-  ElMessage.success('测试任务已提交')
-  const reports = await api.getModelTestReports(selectedModelId.value!)
-  testReports.value = Array.isArray(reports) ? reports : (reports as any)?.list || []
-}
-
-const showDialog = ref(false)
-const dialogTitle = ref('新增模型')
-const editingId = ref<string | null>(null)
-const formData = ref({
-  name: '',
-  code: '',
-  purpose: '大语言模型' as any,
-  brand: '',
-  apiUrl: '',
-  apiKey: '',
-  contextWindow: 4096,
-  status: 'online' as any,
-})
+// ==================== 新增/编辑/删除 ====================
 
 function handleAdd() {
   dialogTitle.value = '新增模型'
   editingId.value = null
-  formData.value = { name: '', code: '', purpose: '大语言模型', brand: '', apiUrl: '', apiKey: '', contextWindow: 4096, status: 'online' }
+  formData.value = { name: '', code: '', purpose: 'LLM', brand: '', apiUrl: '', apiKey: '', contextWindow: 4096, enableThinking: false, status: 'online' }
   showDialog.value = true
 }
 
 function handleEdit(model: ModelRecord) {
   dialogTitle.value = '编辑模型'
   editingId.value = model.id
-  formData.value = { name: model.name, code: model.code, purpose: model.purpose, brand: model.brand, apiUrl: model.apiUrl, apiKey: '', contextWindow: (model as any).contextWindow || 4096, status: model.status }
+  formData.value = {
+    name: model.name,
+    code: model.code,
+    purpose: model.purpose,
+    brand: model.brand,
+    apiUrl: model.apiUrl,
+    apiKey: '',
+    contextWindow: model.contextWindow || 4096,
+    enableThinking: model.enableThinking || false,
+    status: model.status,
+  }
   showDialog.value = true
 }
 
 function handleClone(model: ModelRecord) {
   dialogTitle.value = '复刻模型'
   editingId.value = null
-  formData.value = { name: model.name + '_副本', code: model.code + '_copy', purpose: model.purpose, brand: model.brand, apiUrl: model.apiUrl, apiKey: '', contextWindow: (model as any).contextWindow || 4096, status: model.status }
+  formData.value = {
+    name: model.name + '_副本',
+    code: model.code + '_copy',
+    purpose: model.purpose,
+    brand: model.brand,
+    apiUrl: model.apiUrl,
+    apiKey: '',
+    contextWindow: model.contextWindow || 4096,
+    enableThinking: model.enableThinking || false,
+    status: model.status,
+  }
   showDialog.value = true
 }
 
@@ -175,7 +154,7 @@ async function handleToggleStatus(model: ModelRecord) {
   ElMessage.success(model.status === 'online' ? '已下架' : '已上架')
 }
 
-// 批量导入模型
+// --- 批量导入 ---
 const showImportDialog = ref(false)
 const importText = ref('')
 
@@ -185,49 +164,53 @@ function openImport() {
 }
 
 async function handleImport() {
-  let models: any[] = []
+  let items: any[] = []
   try {
-    models = JSON.parse(importText.value)
-    if (!Array.isArray(models)) throw new Error()
+    items = JSON.parse(importText.value)
+    if (!Array.isArray(items)) throw new Error()
   } catch {
     ElMessage.warning('请输入有效的JSON数组')
     return
   }
-  await api.importModels(models)
+  await api.importModels(items)
   showImportDialog.value = false
   await loadModels()
-  ElMessage.success(`成功导入 ${models.length} 个模型`)
+  ElMessage.success(`成功导入 ${items.length} 个模型`)
 }
 
+// --- 保存 ---
 async function handleSave() {
   if (!formData.value.name || !formData.value.code) {
     ElMessage.warning('请填写必填项')
     return
   }
-  if (editingId.value) {
-    await api.updateModel(editingId.value, {
-      name: formData.value.name,
-      code: formData.value.code,
-      purpose: formData.value.purpose,
-      brand: formData.value.brand,
-      apiUrl: formData.value.apiUrl,
-      contextWindow: formData.value.contextWindow,
-      status: formData.value.status,
-    })
-  } else {
-    await api.createModel({
-      name: formData.value.name,
-      code: formData.value.code,
-      purpose: formData.value.purpose,
-      brand: formData.value.brand,
-      apiUrl: formData.value.apiUrl,
-      contextWindow: formData.value.contextWindow,
-      status: formData.value.status,
-    })
+  const payload: Record<string, any> = {
+    name: formData.value.name,
+    code: formData.value.code,
+    purpose: formData.value.purpose,
+    brand: formData.value.brand,
+    apiUrl: formData.value.apiUrl,
+    contextWindow: formData.value.contextWindow,
+    enableThinking: formData.value.enableThinking,
+    status: formData.value.status,
   }
-  await loadModels()
-  showDialog.value = false
-  ElMessage.success('保存成功')
+  // 密钥字段：有值才发送（避免清空已有密钥）
+  if (formData.value.apiKey.trim()) {
+    payload.apiKey = formData.value.apiKey.trim()
+  }
+
+  try {
+    if (editingId.value) {
+      await api.updateModel(editingId.value, payload)
+    } else {
+      await api.createModel(payload)
+    }
+    await loadModels()
+    showDialog.value = false
+    ElMessage.success('保存成功')
+  } catch {
+    ElMessage.error('保存失败')
+  }
 }
 </script>
 
@@ -244,7 +227,8 @@ async function handleSave() {
       </div>
     </div>
 
-    <div v-if="activeTab === 'list'" class="model-grid">
+    <!-- 模型卡片列表 -->
+    <div v-if="models.length" class="model-grid">
       <div v-for="model in models" :key="model.id" class="model-card">
         <div class="card-header">
           <div class="model-brand">{{ model.brand }}</div>
@@ -261,9 +245,12 @@ async function handleSave() {
         </div>
         <div class="model-code">编码：{{ model.code }}</div>
         <div v-if="model.contextWindow" class="model-code">上下文窗口：{{ model.contextWindow.toLocaleString() }} tokens</div>
+        <div v-if="model.enableThinking" class="model-code">
+          <el-tag size="small" type="warning">思考模式已启用</el-tag>
+        </div>
         <div class="card-footer">
           <el-button size="small" @click="handleEdit(model)">编辑</el-button>
-          <el-button size="small" @click="loadLifecycle(model.id)">生命周期</el-button>
+          <el-button size="small" type="primary" @click="openTestDialog(model)">测试</el-button>
           <el-button size="small" type="danger" @click="handleDelete(model)">删除</el-button>
           <el-switch
             :model-value="model.status === 'online'"
@@ -275,92 +262,56 @@ async function handleSave() {
         </div>
       </div>
     </div>
+    <el-empty v-else-if="!loading" description="暂无模型，请新增或导入" :image-size="80" />
 
-    <!-- 生命周期详情 -->
-    <div v-if="activeTab === 'lifecycle' && selectedModelId" class="lifecycle-section">
-      <div class="section-header">
-        <h3>模型生命周期：{{ models.find(m => m.id === selectedModelId)?.name }}</h3>
-        <el-button @click="activeTab = 'list'">返回列表</el-button>
+    <!-- ==================== 模型测试弹窗 ==================== -->
+    <el-dialog v-model="showTestDialog" :title="`模型测试：${testingModelName}`" width="700px">
+      <el-form label-width="80px">
+        <el-form-item label="测试模型">
+          <el-tag>{{ testingModelName }}</el-tag>
+        </el-form-item>
+        <el-form-item label="输入内容">
+          <el-input v-model="testPrompt" type="textarea" :rows="3" placeholder="输入要测试的内容" />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="testLoading" @click="handleTestChat">发送测试</el-button>
+        </el-form-item>
+      </el-form>
+
+      <!-- 测试结果 -->
+      <div v-if="testResult" class="test-result">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="状态">
+            <el-tag :type="testResult.success ? 'success' : 'danger'" size="small">
+              {{ testResult.success ? '成功' : '失败' }}
+            </el-tag>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="testResult.modelName" label="模型名称">
+            {{ testResult.modelName }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="testResult.modelCode" label="模型编码">
+            {{ testResult.modelCode }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="testResult.apiUrl" label="接口地址">
+            {{ testResult.apiUrl }}
+          </el-descriptions-item>
+          <el-descriptions-item v-if="testResult.elapsedMs" label="响应耗时">
+            {{ testResult.elapsedMs }}ms
+          </el-descriptions-item>
+          <el-descriptions-item v-if="testResult.error" label="错误信息">
+            <span style="color: #f56c6c">{{ testResult.error }}</span>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="testResult.answer" label="模型回复">
+            <div class="test-answer">{{ testResult.answer }}</div>
+          </el-descriptions-item>
+          <el-descriptions-item label="输入内容">
+            {{ testResult.prompt || testPrompt }}
+          </el-descriptions-item>
+        </el-descriptions>
       </div>
+    </el-dialog>
 
-      <el-tabs>
-        <!-- 训练记录 -->
-        <el-tab-pane label="训练记录">
-          <div class="section-header">
-            <div class="section-title">训练记录</div>
-            <div style="display:flex;gap:8px">
-              <el-button size="small" type="primary" @click="handleShowTrain">新增训练</el-button>
-              <el-button size="small" @click="handleStartTrain">快速训练</el-button>
-            </div>
-          </div>
-          <el-table :data="trainingRecords" stripe size="small">
-            <el-table-column prop="status" label="状态" width="80" align="center">
-              <template #default="{ row }">
-                <el-tag :type="row.status === 'completed' ? 'success' : row.status === 'running' ? 'warning' : 'danger'" size="small">
-                  {{ row.status === 'completed' ? '完成' : row.status === 'running' ? '训练中' : '失败' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="dataSize" label="数据量" width="100" align="right" />
-            <el-table-column prop="epochs" label="轮次" width="60" align="center" />
-            <el-table-column label="准确率" width="80" align="right">
-              <template #default="{ row }">{{ row.metrics.accuracy ? (row.metrics.accuracy * 100).toFixed(1) + '%' : '-' }}</template>
-            </el-table-column>
-            <el-table-column label="Loss" width="80" align="right">
-              <template #default="{ row }">{{ row.metrics.loss?.toFixed(4) || '-' }}</template>
-            </el-table-column>
-            <el-table-column prop="startedAt" label="开始时间" width="170" />
-            <el-table-column prop="completedAt" label="完成时间" width="170" />
-          </el-table>
-          <el-empty v-if="trainingRecords.length === 0" description="暂无训练记录" :image-size="60" />
-        </el-tab-pane>
-
-        <!-- 测试报告 -->
-        <el-tab-pane label="测试报告">
-          <div class="section-header">
-            <div class="section-title">测试报告</div>
-            <el-button size="small" type="primary" @click="handleStartTest">开始测试</el-button>
-          </div>
-          <el-table :data="testReports" stripe size="small">
-            <el-table-column prop="testSet" label="测试集" min-width="150" />
-            <el-table-column label="准确率" width="80" align="right">
-              <template #default="{ row }">{{ (row.metrics.accuracy * 100).toFixed(1) }}%</template>
-            </el-table-column>
-            <el-table-column label="精确率" width="80" align="right">
-              <template #default="{ row }">{{ (row.metrics.precision * 100).toFixed(1) }}%</template>
-            </el-table-column>
-            <el-table-column label="召回率" width="80" align="right">
-              <template #default="{ row }">{{ (row.metrics.recall * 100).toFixed(1) }}%</template>
-            </el-table-column>
-            <el-table-column label="F1" width="80" align="right">
-              <template #default="{ row }">{{ (row.metrics.f1 * 100).toFixed(1) }}%</template>
-            </el-table-column>
-            <el-table-column prop="testedAt" label="测试时间" width="170" />
-          </el-table>
-          <el-empty v-if="testReports.length === 0" description="暂无测试报告" :image-size="60" />
-        </el-tab-pane>
-
-        <!-- 调用日志 -->
-        <el-tab-pane label="调用日志">
-          <el-table :data="callLogs" stripe size="small">
-            <el-table-column prop="caller" label="调用方" min-width="120" />
-            <el-table-column prop="inputTokens" label="输入Token" width="90" align="right" />
-            <el-table-column prop="outputTokens" label="输出Token" width="90" align="right" />
-            <el-table-column prop="duration" label="耗时(ms)" width="80" align="right" />
-            <el-table-column prop="status" label="状态" width="70" align="center">
-              <template #default="{ row }">
-                <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">
-                  {{ row.status === 'success' ? '成功' : '失败' }}
-                </el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="timestamp" label="时间" width="170" />
-          </el-table>
-          <el-empty v-if="callLogs.length === 0" description="暂无调用日志" :image-size="60" />
-        </el-tab-pane>
-      </el-tabs>
-    </div>
-
+    <!-- ==================== 新增/编辑弹窗 ==================== -->
     <el-dialog v-model="showDialog" :title="dialogTitle" width="600px">
       <el-form label-width="100px">
         <el-form-item label="模型用途">
@@ -380,14 +331,20 @@ async function handleSave() {
           </el-select>
         </el-form-item>
         <el-form-item label="接口地址">
-          <el-input v-model="formData.apiUrl" placeholder="请输入接口地址" />
+          <el-input v-model="formData.apiUrl" placeholder="请输入接口地址，如 https://api.siliconflow.cn" />
         </el-form-item>
         <el-form-item label="模型密钥">
-          <el-input v-model="formData.apiKey" type="password" placeholder="请输入模型密钥" show-password />
+          <el-input v-model="formData.apiKey" type="password" placeholder="留空则不修改" show-password />
         </el-form-item>
         <el-form-item label="上下文窗口">
           <el-input-number v-model="formData.contextWindow" :min="512" :max="1000000" :step="1024" style="width: 100%" />
           <div style="font-size: 12px; color: #909399; margin-top: 4px">模型支持的最大上下文 Token 数，常用值：4096、8192、32768、128000</div>
+        </el-form-item>
+        <el-form-item label="思考模式">
+          <div style="display:flex;align-items:center;gap:8px">
+            <el-switch v-model="formData.enableThinking" />
+            <span style="font-size: 12px; color: #909399">启用后模型在推理时会展示思考过程（DeepSeek 等模型支持）</span>
+          </div>
         </el-form-item>
         <el-form-item label="是否发布">
           <el-radio-group v-model="formData.status">
@@ -402,6 +359,7 @@ async function handleSave() {
       </template>
     </el-dialog>
 
+    <!-- ==================== 批量导入弹窗 ==================== -->
     <el-dialog v-model="showImportDialog" title="批量导入模型" width="600px">
       <el-form label-width="100px">
         <el-form-item label="模型JSON">
@@ -412,40 +370,6 @@ async function handleSave() {
       <template #footer>
         <el-button @click="showImportDialog = false">取消</el-button>
         <el-button type="primary" @click="handleImport">导入</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 新增训练弹窗 -->
-    <el-dialog v-model="showTrainDialog" title="新增训练" width="520px">
-      <el-form label-width="100px">
-        <el-form-item label="训练模型">
-          <el-tag>{{ models.find(m => m.id === selectedModelId)?.name || selectedModelId }}</el-tag>
-        </el-form-item>
-        <el-form-item label="训练数据集" required>
-          <el-input v-model="trainForm.dataset" placeholder="请输入数据集名称或路径" />
-        </el-form-item>
-        <el-form-item label="训练轮次">
-          <el-input-number v-model="trainForm.epochs" :min="1" :max="1000" style="width:160px" />
-        </el-form-item>
-        <el-form-item label="学习率">
-          <el-input-number v-model="trainForm.learningRate" :min="0.00001" :max="1" :step="0.0001" :precision="5" style="width:160px" />
-        </el-form-item>
-        <el-form-item label="批大小">
-          <el-select v-model="trainForm.batchSize" style="width:160px">
-            <el-option :value="8" label="8" />
-            <el-option :value="16" label="16" />
-            <el-option :value="32" label="32" />
-            <el-option :value="64" label="64" />
-            <el-option :value="128" label="128" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="备注说明">
-          <el-input v-model="trainForm.description" type="textarea" :rows="3" placeholder="可选，训练任务备注" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showTrainDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleSubmitTrain">提交训练</el-button>
       </template>
     </el-dialog>
   </div>
@@ -509,10 +433,21 @@ async function handleSave() {
   }
 }
 
-// 生命周期详情区
-.lifecycle-section {
-  background: $bg-white;
+.test-result {
+  margin-top: 16px;
+  padding: 12px;
+  background: $bg-hover;
   border-radius: $radius-base;
-  padding: $spacing-lg;
+}
+
+.test-answer {
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 300px;
+  overflow-y: auto;
+  padding: 8px;
+  background: $bg-white;
+  border-radius: $radius-sm;
+  font-family: monospace;
 }
 </style>

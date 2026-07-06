@@ -138,20 +138,6 @@ async function clearHistory() {
   ElMessage.success('历史记录已清空')
 }
 
-// --- 示例问题 ---
-const exampleQuestions = ref([
-  '小微企业申请ICT服务需要准备哪些材料？',
-  '小微ICT业务的技术支持范围是什么？',
-  '小微ICT业务与传统企业业务有什么区别？',
-  '如何查询小微ICT业务的办理进度？',
-  '小微ICT业务提供哪些主要产品和服务？',
-  '小微ICT业务的服务对象包括哪些企业类型？',
-  '小微ICT业务的合同期限和续约流程是什么？',
-  '小微ICT业务的售后服务包括哪些内容？',
-  '小微ICT业务的办理流程是怎样的？',
-  '小微ICT业务的收费标准是怎样的？',
-])
-
 // --- 搜索 ---
 async function handleSearch() {
   const isImageSearch = searchMode.value === 'image' && imageItems.value.length > 0
@@ -248,18 +234,6 @@ function handleClear() {
   correctionSuggestion.value = null
   correctionReason.value = ''
   rewriteRules.value = []
-}
-
-function handleExampleClick(question: string) {
-  searchQuery.value = question
-  searchMode.value = 'text'
-  clearAllImages()
-  handleSearch()
-}
-
-function handleRegenerate() {
-  exampleQuestions.value = [...exampleQuestions.value].sort(() => Math.random() - 0.5)
-  ElMessage.success('示例问题已刷新')
 }
 
 function handleSourceClick(result: SearchResultItem) {
@@ -399,26 +373,6 @@ function handleKeydown(e: Event | KeyboardEvent) {
           <span class="search-test__history-time">{{ item.timestamp }}</span>
         </div>
       </div>
-    </div>
-
-    <!-- 示例问题（未搜索时显示） -->
-    <div v-if="!hasSearched" class="search-test__examples">
-      <h4 class="search-test__examples-title">示例问题</h4>
-      <div class="search-test__examples-list">
-        <div
-          v-for="(question, index) in exampleQuestions"
-          :key="index"
-          class="search-test__example-item"
-          @click="handleExampleClick(question)"
-        >
-          <el-icon class="search-test__example-icon"><Search /></el-icon>
-          <span>{{ question }}</span>
-        </div>
-      </div>
-      <el-button link type="primary" class="search-test__regenerate" @click="handleRegenerate">
-        <el-icon><Refresh /></el-icon>
-        重新生成
-      </el-button>
     </div>
 
     <!-- 搜索结果 -->
@@ -732,53 +686,6 @@ function handleKeydown(e: Event | KeyboardEvent) {
   font-size: 11px;
 }
 
-// --- 示例问题 ---
-.search-test__examples {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-sm;
-}
-
-.search-test__examples-title {
-  font-size: 14px;
-  font-weight: 600;
-  color: $text-primary;
-  margin: 0;
-}
-
-.search-test__examples-list {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: $spacing-sm;
-}
-
-.search-test__example-item {
-  display: flex;
-  align-items: center;
-  gap: $spacing-xs;
-  padding: $spacing-sm $spacing-base;
-  background: $bg-white;
-  border: 1px solid $border-lighter;
-  border-radius: $radius-base;
-  cursor: pointer;
-  font-size: 13px;
-  color: $text-primary;
-  transition: all 0.2s;
-
-  &:hover {
-    border-color: $color-primary;
-    color: $color-primary;
-  }
-}
-
-.search-test__example-icon {
-  color: $text-secondary;
-  flex-shrink: 0;
-}
-
-.search-test__regenerate {
-  align-self: flex-start;
-}
 
 // --- 搜索结果 ---
 .search-test__results {

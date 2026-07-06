@@ -92,18 +92,15 @@ async function handleTestNotification() {
 
 <template>
   <div class="page-container" v-loading="loading">
+    <!-- 操作按钮 Teleport 到 Header -->
+    <Teleport to="#header-actions">
+      <el-tag v-if="unreadCount > 0" type="danger" size="small">{{ unreadCount }} 条未读</el-tag>
+      <el-button size="small" @click="handleShowConfig">通知配置</el-button>
+      <el-button size="small" type="primary" @click="showCreateDialog = true">创建通知</el-button>
+      <el-button size="small" @click="handleMarkAllRead" :disabled="unreadCount === 0">全部标为已读</el-button>
+    </Teleport>
+
     <div class="card-panel">
-      <div class="section-header">
-        <div class="section-title">
-          通知中心
-          <el-tag v-if="unreadCount > 0" type="danger" size="small" style="margin-left:8px">{{ unreadCount }} 条未读</el-tag>
-        </div>
-        <div style="display:flex;gap:12px">
-          <el-button size="small" @click="handleShowConfig">通知配置</el-button>
-          <el-button size="small" type="primary" @click="showCreateDialog = true">创建通知</el-button>
-          <el-button size="small" @click="handleMarkAllRead" :disabled="unreadCount === 0">全部标为已读</el-button>
-        </div>
-      </div>
       <el-tabs v-model="tab" @tab-change="handleTabChange">
         <el-tab-pane label="未读" name="unread" />
         <el-tab-pane label="已读" name="read" />
@@ -197,6 +194,4 @@ async function handleTestNotification() {
 
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
-.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; }
-.section-title { font-size: 15px; font-weight: 600; }
 </style>

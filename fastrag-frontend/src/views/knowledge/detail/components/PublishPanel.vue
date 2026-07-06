@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { PUBLISH_STATUS_LABELS, PUBLISH_STATUS_COLORS } from '@/types/audit'
-import { CircleCheck, Select, CloseBold, RefreshRight, InfoFilled, Plus, Clock, DataBoard, Timer } from '@element-plus/icons-vue'
+import { CircleCheck, Select, CloseBold, RefreshRight, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 import { useAuth } from '@/composables/useAuth'
@@ -173,7 +173,6 @@ const canReview = computed(() => hasPermission('review:approve'))
 const subTab = ref('versions')
 const publishHistory = ref<any[]>([])
 const publishPlans = ref<any[]>([])
-const strategyEffect = ref<any>(null)
 
 async function loadPublishHistory() {
   try {
@@ -188,15 +187,6 @@ async function loadPublishPlans() {
     publishPlans.value = Array.isArray(res) ? res : (res as any)?.list || []
   } catch {
     publishPlans.value = []
-  }
-}
-
-async function loadStrategyEffect() {
-  try {
-    const res = await api.getPublishStrategyEffect(props.kbId)
-    strategyEffect.value = res || null
-  } catch {
-    strategyEffect.value = null
   }
 }
 
@@ -291,8 +281,6 @@ const changeTypeColors: Record<string, 'success' | 'danger' | 'primary' | 'warni
 function onTabChange(name: string) {
   if (name === 'history') { loadPublishHistory(); loadPublishedVersion() }
   else if (name === 'plans') loadPublishPlans()
-  else if (name === 'strategy') loadStrategyEffect()
-  else if (name === 'reset') loadResetConfigs()
 }
 
 // ===== 发布历史：发布知识 / 撤回 =====
@@ -324,7 +312,6 @@ async function handleResetToPrev(row: any) {
     })
     await api.resetKnowledge(props.kbId, row.knowledgeId || row.id)
     ElMessage.success('知识已重置为上一个已发布版本')
-    addResetHistory(row.knowledgeId || row.id)
     await loadPublishHistory()
   } catch { /* cancelled */ }
 }
@@ -333,109 +320,6 @@ async function loadPublishedVersion() {
   try {
     publishedVersion.value = await api.getPublishedVersion(props.kbId).catch(() => null)
   } catch { /* ignore */ }
-}
-
-// ===== 知识重置管理 =====
-const resetConfigs = ref<any[]>([])
-const showResetDialog = ref(false)
-const resetForm = ref({ roleKey: '', canReset: true, maxResetCount: 3, config: '' })
-const editingResetId = ref<string | null>(null)
-const showResetConfirm = ref(false)
-const resetKnowledgeId = ref('')
-const resetTargetKbId = ref('')
-const resetHistory = ref<any[]>([])
-
-function addResetHistory(knowledgeId: string) {
-  resetHistory.value.unshift({
-    id: Date.now().toString(),
-    knowledgeId,
-    operator: '当前用户',
-    resetAt: new Date().toLocaleString('zh-CN'),
-    result: '成功',
-  })
-}
-
-async function loadResetConfigs() {
-  // 如果已有 mock 数据，不覆盖
-  if (resetConfigs.value.length > 0) return
-  try {
-    const res = await api.getResetConfigs(props.kbId)
-    resetConfigs.value = Array.isArray(res) ? res : (res as any)?.list || []
-  } catch {
-    // 保留 mock 数据
-  }
-}
-
-function handleAddReset() {
-  editingResetId.value = null
-  resetForm.value = { roleKey: '', canReset: true, maxResetCount: 3, config: '' }
-  showResetDialog.value = true
-}
-
-function handleEditReset(row: any) {
-  editingResetId.value = row.id
-  resetForm.value = {
-    roleKey: row.roleKey || '',
-    canReset: row.canReset === 1,
-    maxResetCount: row.maxResetCount || 3,
-    config: typeof row.config === 'string' ? row.config : JSON.stringify(row.config || {}),
-  }
-  showResetDialog.value = true
-}
-
-async function handleSaveReset() {
-  if (!resetForm.value.roleKey) { ElMessage.warning('请填写角色/权限标识'); return }
-  try {
-    await api.saveResetConfig(props.kbId, {
-      id: editingResetId.value || undefined,
-      roleKey: resetForm.value.roleKey,
-      canReset: resetForm.value.canReset ? 1 : 0,
-      maxResetCount: resetForm.value.maxResetCount,
-      config: resetForm.value.config || '{}',
-    })
-    ElMessage.success('重置配置已保存')
-    showResetDialog.value = false
-    await loadResetConfigs()
-  } catch {
-    ElMessage.error('保存失败')
-  }
-}
-
-function handleConfirmReset(row: any) {
-  resetKnowledgeId.value = row.knowledgeId || row.id
-  showResetConfirm.value = true
-}
-
-async function handleDoReset() {
-  try {
-    await api.resetKnowledge(props.kbId, resetKnowledgeId.value)
-    ElMessage.success('知识已重置到上一个已发布版本')
-    showResetConfirm.value = false
-    await loadResetConfigs()
-  } catch {
-    ElMessage.error('重置失败')
-  }
-}
-
-async function handleDeleteReset(row: any) {
-  try {
-    await ElMessageBox.confirm(`确定删除「${row.roleKey}」的重置权限配置？`, '删除确认', { type: 'warning' })
-    // 后端无独立删除端点，通过保存空配置覆盖
-    await api.saveResetConfig(props.kbId, { id: row.id, roleKey: row.roleKey, canReset: 0, maxResetCount: 0, config: '{}' })
-    ElMessage.success('已删除')
-    await loadResetConfigs()
-  } catch { /* cancelled */ }
-}
-
-async function handleResetWithInput() {
-  if (!resetTargetKbId.value.trim()) { ElMessage.warning('请输入知识ID'); return }
-  try {
-    await ElMessageBox.confirm(`确定将知识「${resetTargetKbId.value}」重置为上一次发布的版本？`, '重置确认', { type: 'warning' })
-    await api.resetKnowledge(props.kbId, resetTargetKbId.value.trim())
-    ElMessage.success('知识已重置为上一个已发布版本')
-    addResetHistory(resetTargetKbId.value.trim())
-    resetTargetKbId.value = ''
-  } catch { /* cancelled */ }
 }
 </script>
 
@@ -601,82 +485,6 @@ async function handleResetWithInput() {
         </div>
       </el-tab-pane>
 
-      <!-- ===== Tab 4: 发布策略 ===== -->
-      <el-tab-pane label="发布策略" name="strategy">
-        <div class="card-panel">
-          <div class="section-title" style="margin-bottom:16px">发布策略执行效果</div>
-          <div v-if="strategyEffect" class="strategy-grid">
-            <div class="strategy-card">
-              <div class="strategy-card__label">总发布次数</div>
-              <div class="strategy-card__value">{{ (strategyEffect as any).totalPublish || 0 }}</div>
-            </div>
-            <div class="strategy-card">
-              <div class="strategy-card__label">成功发布</div>
-              <div class="strategy-card__value strategy-card__value--success">{{ (strategyEffect as any).successCount || 0 }}</div>
-            </div>
-            <div class="strategy-card">
-              <div class="strategy-card__label">撤回次数</div>
-              <div class="strategy-card__value strategy-card__value--warning">{{ (strategyEffect as any).revokeCount || 0 }}</div>
-            </div>
-            <div class="strategy-card">
-              <div class="strategy-card__label">平均审核时长</div>
-              <div class="strategy-card__value">{{ (strategyEffect as any).avgReviewHours || '-' }}h</div>
-            </div>
-          </div>
-          <el-empty v-else description="暂无策略数据" :image-size="60" />
-        </div>
-      </el-tab-pane>
-
-      <!-- ===== Tab 5: 知识重置 ===== -->
-      <el-tab-pane label="知识重置" name="reset">
-        <div class="card-panel">
-          <div class="section-header">
-            <div class="section-title">重置权限配置</div>
-            <el-button size="small" type="primary" @click="handleAddReset"><el-icon><Plus /></el-icon> 新增规则</el-button>
-          </div>
-          <el-table :data="resetConfigs" stripe size="small">
-            <el-table-column prop="roleKey" label="角色/权限标识" min-width="160" />
-            <el-table-column label="允许重置" width="90" align="center">
-              <template #default="{ row }">
-                <el-tag :type="row.canReset === 1 ? 'success' : 'info'" size="small">{{ row.canReset === 1 ? '是' : '否' }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="maxResetCount" label="最大重置次数" width="110" align="center" />
-            <el-table-column prop="config" label="配置" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="createdAt" label="创建时间" width="160" />
-            <el-table-column label="操作" width="180" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="handleEditReset(row)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="handleDeleteReset(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <el-empty v-if="resetConfigs.length === 0" description="暂无重置配置，点击上方「新增规则」添加" :image-size="60" />
-          <!-- 重置操作区 -->
-          <div v-if="resetConfigs.length > 0" class="reset-operation" style="margin-top:20px;padding:16px;background:#fafafa;border-radius:8px;border:1px solid #eee">
-            <div class="section-title" style="margin-bottom:12px">重置为上一次发布的版本</div>
-            <div style="display:flex;align-items:center;gap:12px">
-              <el-input v-model="resetTargetKbId" placeholder="输入知识/文档ID" style="width:260px" />
-              <el-button type="warning" @click="handleResetWithInput">执行重置</el-button>
-            </div>
-            <div style="font-size:12px;color:#909399;margin-top:8px">将指定知识重置为上一个已发布版本的内容，此操作不可撤回</div>
-          </div>
-          <!-- 重置历史 -->
-          <div v-if="resetHistory.length > 0" style="margin-top:20px">
-            <div class="section-title" style="margin-bottom:12px">重置历史记录</div>
-            <el-table :data="resetHistory" stripe size="small">
-              <el-table-column prop="knowledgeId" label="知识ID" min-width="160" />
-              <el-table-column prop="operator" label="操作人" width="100" />
-              <el-table-column prop="resetAt" label="重置时间" width="170" />
-              <el-table-column prop="result" label="结果" width="70">
-                <template #default="{ row }">
-                  <el-tag type="success" size="small">{{ row.result }}</el-tag>
-                </template>
-              </el-table-column>
-            </el-table>
-          </div>
-        </div>
-      </el-tab-pane>
     </el-tabs>
 
     <!-- ===== 创建发布弹窗 ===== -->
@@ -802,39 +610,6 @@ async function handleResetWithInput() {
       <template #footer><el-button @click="showExecutionDialog = false">关闭</el-button></template>
     </el-dialog>
 
-    <!-- 重置配置编辑弹窗 -->
-    <el-dialog v-model="showResetDialog" :title="editingResetId ? '编辑重置规则' : '新增重置规则'" width="480px">
-      <el-form label-width="120px">
-        <el-form-item label="角色/权限标识" required>
-          <el-input v-model="resetForm.roleKey" placeholder="如：kb_admin, super_admin" />
-        </el-form-item>
-        <el-form-item label="允许重置">
-          <el-switch v-model="resetForm.canReset" />
-        </el-form-item>
-        <el-form-item label="最大重置次数">
-          <el-input-number v-model="resetForm.maxResetCount" :min="0" :max="100" style="width:160px" />
-        </el-form-item>
-        <el-form-item label="扩展配置">
-          <el-input v-model="resetForm.config" type="textarea" :rows="3" placeholder="JSON格式，可选" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showResetDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleSaveReset">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 重置确认弹窗 -->
-    <el-dialog v-model="showResetConfirm" title="确认重置" width="400px">
-      <p style="margin:0;font-size:14px;color:#606266">
-        <el-icon style="color:#e6a23c;margin-right:8px"><InfoFilled /></el-icon>
-        确定要将该知识重置为上一次发布的版本吗？此操作不可撤回。
-      </p>
-      <template #footer>
-        <el-button @click="showResetConfirm = false">取消</el-button>
-        <el-button type="warning" @click="handleDoReset">确认重置</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
@@ -987,31 +762,6 @@ async function handleResetWithInput() {
 .section-title {
   font-size: 15px;
   font-weight: 600;
-}
-
-// --- 发布策略 ---
-.strategy-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(180px, 1fr));
-  gap: $spacing-base;
-}
-.strategy-card {
-  background: $bg-hover;
-  border-radius: $radius-base;
-  padding: $spacing-lg;
-  text-align: center;
-}
-.strategy-card__label {
-  font-size: 13px;
-  color: $text-secondary;
-  margin-bottom: $spacing-sm;
-}
-.strategy-card__value {
-  font-size: 24px;
-  font-weight: 700;
-  color: $text-primary;
-  &--success { color: $color-success; }
-  &--warning { color: $color-warning; }
 }
 
 // --- 版本详情 ---

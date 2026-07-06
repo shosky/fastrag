@@ -32,7 +32,7 @@ export function useBenchmark(kbId: string = 'default') {
   function syncOptions() {
     benchmarkOptions.value = benchmarks.value.map((b) => ({
       label: `${b.name} (${b.questionCount} 个问题)`,
-      value: b.name,
+      value: b.id,
     }))
   }
 
@@ -45,8 +45,10 @@ export function useBenchmark(kbId: string = 'default') {
 
   async function generate(config: BenchmarkGenerateConfig) {
     const bench = await generateBenchmarkApi(kbId, config)
-    benchmarks.value.unshift(bench)
-    syncOptions()
+    if (bench) {
+      benchmarks.value.unshift(bench)
+      syncOptions()
+    }
     return bench
   }
 

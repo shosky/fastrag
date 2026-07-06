@@ -17,22 +17,13 @@ export interface DepartmentSharing {
   knowledgeBaseName: string; permission: 'read' | 'write'; status: 'active' | 'paused'; createdAt: string
 }
 
-export interface QaExtraction {
-  id: string; sourceFile: string; sourceType: 'document' | 'manual'
-  question: string; answer: string; confidence: number
-  status: 'extracted' | 'confirmed' | 'imported' | 'rejected'; createdAt: string
-}
-
 export const MEDIA_TYPE_LABELS: Record<string, string> = { image: '图片', audio: '音频', video: '视频', document: '文档' }
 export const MEDIA_TYPE_COLORS: Record<string, string> = { image: 'success', audio: 'warning', video: 'primary', document: 'info' }
 export const CHANNEL_TYPE_LABELS: Record<string, string> = { api: 'API接口', crawler: '爬虫', import: '文件导入', manual: '手动录入' }
-export const EXTRACTION_STATUS_LABELS: Record<string, string> = { extracted: '已抽取', confirmed: '已确认', imported: '已入库', rejected: '已拒绝' }
-export const EXTRACTION_STATUS_COLORS: Record<string, string> = { extracted: 'info', confirmed: 'warning', imported: 'success', rejected: 'danger' }
 
 let mediaStore: MediaItem[] = []
 let channelStore: KnowledgeChannel[] = []
 let sharingStore: DepartmentSharing[] = []
-let extractionStore: QaExtraction[] = []
 let seq = 100
 
 function initStore() {
@@ -124,31 +115,4 @@ export function deleteSharing(id: string): boolean {
   checkApiPermission('kb:delete'); initStore()
   const idx = sharingStore.findIndex(s => s.id === id); if (idx === -1) return false
   sharingStore.splice(idx, 1); return true
-}
-
-export function getExtractionList(params?: { page?: number; pageSize?: number; status?: string }) {
-  initStore(); let list = [...extractionStore]
-  if (params?.status) list = list.filter(e => e.status === params.status)
-  const total = list.length; const page = params?.page || 1; const pageSize = params?.pageSize || 20
-  return { list: list.slice((page - 1) * pageSize, page * pageSize), total }
-}
-export function confirmExtraction(id: string): QaExtraction | null {
-  checkApiPermission('kb:write'); initStore()
-  const idx = extractionStore.findIndex(e => e.id === id); if (idx === -1) return null
-  extractionStore[idx] = { ...extractionStore[idx], status: 'confirmed' }; return extractionStore[idx]
-}
-export function importExtraction(id: string): QaExtraction | null {
-  checkApiPermission('kb:write'); initStore()
-  const idx = extractionStore.findIndex(e => e.id === id); if (idx === -1) return null
-  extractionStore[idx] = { ...extractionStore[idx], status: 'imported' }; return extractionStore[idx]
-}
-export function rejectExtraction(id: string): QaExtraction | null {
-  checkApiPermission('kb:write'); initStore()
-  const idx = extractionStore.findIndex(e => e.id === id); if (idx === -1) return null
-  extractionStore[idx] = { ...extractionStore[idx], status: 'rejected' }; return extractionStore[idx]
-}
-export function deleteExtraction(id: string): boolean {
-  checkApiPermission('kb:delete'); initStore()
-  const idx = extractionStore.findIndex(e => e.id === id); if (idx === -1) return false
-  extractionStore.splice(idx, 1); return true
 }

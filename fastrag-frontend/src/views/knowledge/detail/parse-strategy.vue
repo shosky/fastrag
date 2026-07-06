@@ -52,6 +52,7 @@ const form = ref<ParseStrategyForm>({
   advanced: { ...DEFAULT_ADVANCED },
   llmModel: '',
   vlmModel: '',
+  enableGraphBuild: false,
 })
 
 // 模型列表（从 API 加载）
@@ -129,6 +130,9 @@ function handleEdit(strategy: ParseStrategy) {
     extensions: [...strategy.extensions],
     parseMethod: strategy.parseMethod,
     advanced: strategy.advanced ? { ...strategy.advanced } : { ...DEFAULT_ADVANCED },
+    llmModel: strategy.llmModel || '',
+    vlmModel: strategy.vlmModel || '',
+    enableGraphBuild: strategy.enableGraphBuild === 1,
   }
   customChunkLength.value = ''
   advancedCollapsed.value = []
@@ -431,6 +435,12 @@ onMounted(() => {
           </el-select>
           <div class="form-tip">用于理解文档中的图片、表格、图表等视觉内容</div>
         </el-form-item>
+
+        <!-- 知识图谱自动构建 -->
+        <div class="parse-strategy-page__switch-row">
+          <el-switch v-model="form.enableGraphBuild" />
+          <span>构建知识图谱（使用 LLM 从文档内容提取实体和关系）</span>
+        </div>
 
         <!-- 高级参数（可折叠） -->
         <el-collapse v-model="advancedCollapsed" class="parse-strategy-page__advanced-collapse">

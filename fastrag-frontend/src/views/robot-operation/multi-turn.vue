@@ -6,7 +6,7 @@ const loading = ref(false)
 const dataList = ref<any[]>([])
 const total = ref(0)
 const currentPage = ref(1)
-const pageSize = ref(20)
+const pageSize = ref(10)
 
 async function loadData() {
   loading.value = true

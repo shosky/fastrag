@@ -8,6 +8,18 @@ const routes: RouteRecordRaw[] = [
     meta: { title: '登录', requiresAuth: false },
   },
   {
+    path: '/register',
+    name: 'Register',
+    component: () => import('@/views/register/index.vue'),
+    meta: { title: '注册', requiresAuth: false },
+  },
+  {
+    path: '/forgot-password',
+    name: 'ForgotPassword',
+    component: () => import('@/views/forgot-password/index.vue'),
+    meta: { title: '忘记密码', requiresAuth: false },
+  },
+  {
     path: '/403',
     name: 'Forbidden',
     component: () => import('@/views/error/403.vue'),
@@ -87,48 +99,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/knowledge/detail/api-doc.vue'),
         meta: { title: 'API 文档', hidden: true },
       },
-      {
-        path: 'knowledge/:id/entities',
-        name: 'KnowledgeEntities',
-        component: () => import('@/views/knowledge/detail/entities.vue'),
-        meta: { title: '实体库管理', hidden: true },
-      },
-      {
-        path: 'knowledge/:id/production',
-        name: 'KnowledgeProduction',
-        component: () => import('@/views/knowledge/detail/production.vue'),
-        meta: { title: '知识生产与获取', hidden: true },
-      },
-      {
-        path: 'knowledge/:id/knowledge-edit',
-        name: 'KnowledgeProcessingEdit',
-        component: () => import('@/views/knowledge/detail/knowledge-edit.vue'),
-        meta: { title: '知识加工与采编', hidden: true },
-      },
-      {
-        path: 'knowledge/:id/tags-notes',
-        name: 'KnowledgeTagsNotes',
-        component: () => import('@/views/knowledge/detail/tags-notes.vue'),
-        meta: { title: '标签与笔记', hidden: true },
-      },
-      {
-        path: 'knowledge/:id/knowledge-manage',
-        name: 'KnowledgeManage',
-        component: () => import('@/views/knowledge/detail/knowledge-manage.vue'),
-        meta: { title: '知识管理与更新', hidden: true },
-      },
-      {
-        path: 'knowledge/:id/smart-search',
-        name: 'SmartSearch',
-        component: () => import('@/views/knowledge/detail/smart-search.vue'),
-        meta: { title: '智能搜索', hidden: true },
-      },
-      {
-        path: 'knowledge/:id/knowledge-qa',
-        name: 'KnowledgeQa',
-        component: () => import('@/views/knowledge/detail/knowledge-qa.vue'),
-        meta: { title: '知识问答', hidden: true },
-      },
+
       {
         path: 'knowledge-review/management',
         name: 'ReviewManagement',
@@ -141,18 +112,7 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/knowledge/detail/chunks.vue'),
         meta: { title: '分片管理', hidden: true },
       },
-      {
-        path: 'knowledge/categories',
-        name: 'KnowledgeCategories',
-        component: () => import('@/views/knowledge/categories.vue'),
-        meta: { title: '知识库分类' },
-      },
-      {
-        path: 'knowledge/tags',
-        name: 'KnowledgeTags',
-        component: () => import('@/views/knowledge/tags.vue'),
-        meta: { title: '知识库标签' },
-      },
+
       // ===== 业务流 =====
       // ===== 应用与运营 =====
       {
@@ -316,12 +276,6 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '通用设置', roles: ['super_admin'] as const },
           },
           {
-            path: 'system/config-management',
-            name: 'ConfigManagement',
-            component: () => import('@/views/admin/system/config-management.vue'),
-            meta: { title: '系统配置管理', roles: ['super_admin'] as const },
-          },
-          {
             path: 'system/sensitive-words',
             name: 'SensitiveWords',
             component: () => import('@/views/admin/system/sensitive-words.vue'),
@@ -346,21 +300,10 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '查询规则', roles: ['super_admin', 'kb_admin'] as const },
           },
           {
-            path: 'notifications',
-            component: () => import('@/views/notification/index.vue'),
-            meta: { title: '通知中心', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
             path: 'account/roles',
             name: 'Roles',
             component: () => import('@/views/admin/account/roles.vue'),
             meta: { title: '角色管理', roles: ['super_admin'] as const },
-          },
-          {
-            path: 'account/roles/:id/permissions',
-            name: 'RolePermissions',
-            component: () => import('@/views/admin/account/role-permissions.vue'),
-            meta: { title: '角色权限配置', roles: ['super_admin', 'kb_admin'] as const },
           },
           {
             path: 'account/organization',
@@ -399,52 +342,10 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '设备登录分析', roles: ['super_admin'] as const },
           },
           {
-            path: 'audit/login-security',
-            name: 'LoginSecurity',
-            component: () => import('@/views/admin/audit/login-security.vue'),
-            meta: { title: '登录安全配置', roles: ['super_admin'] as const },
-          },
-          {
             path: 'audit/review-center',
             name: 'ReviewCenter',
             component: () => import('@/views/admin/audit/review-center.vue'),
             meta: { title: '审核中心', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
-            path: 'content/notification',
-            name: 'Notification',
-            component: () => import('@/views/admin/content/notification.vue'),
-            meta: { title: '通知管理', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
-            path: 'content/tags',
-            name: 'Tags',
-            component: () => import('@/views/admin/content/tags.vue'),
-            meta: { title: '标签管理', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
-            path: 'content/prompts',
-            name: 'Prompts',
-            component: () => import('@/views/admin/content/prompts.vue'),
-            meta: { title: '提示词', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
-            path: 'content/templates',
-            name: 'Templates',
-            component: () => import('@/views/admin/content/templates.vue'),
-            meta: { title: '文档模板', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
-            path: 'content/download',
-            name: 'Download',
-            component: () => import('@/views/admin/content/download.vue'),
-            meta: { title: '下载中心', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
-            path: 'platform/third-party',
-            name: 'ThirdParty',
-            component: () => import('@/views/admin/platform/third-party.vue'),
-            meta: { title: '三方平台', roles: ['super_admin'] as const },
           },
           {
             path: 'platform/model-management',
@@ -499,17 +400,6 @@ const routes: RouteRecordRaw[] = [
         ],
       },
 
-      // ===== 插件与数据库管理 =====
-      {
-        path: 'plugin-db',
-        name: 'PluginDb',
-        redirect: '/plugin-db/plugins',
-        meta: { title: '插件与数据库', icon: 'Connection' },
-        children: [
-          { path: 'plugins', name: 'PluginManagement', component: () => import('@/views/plugin-db/plugins.vue'), meta: { title: '插件管理' } },
-          { path: 'databases', name: 'DatabaseManagement', component: () => import('@/views/plugin-db/databases.vue'), meta: { title: '数据库管理' } },
-        ],
-      },
     ],
   },
   {

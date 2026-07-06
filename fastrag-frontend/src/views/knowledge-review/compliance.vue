@@ -15,19 +15,7 @@ const ruleTypeOptions = [{ label: '内容检查', value: 'content' }, { label: '
 const page = ref(1)
 const pageSize = 5
 
-const kbList = ref<any[]>([])
 const selectedKbId = ref('')
-async function loadKbList() {
-  try {
-    const res: any = await api.getKnowledgeBases()
-    kbList.value = Array.isArray(res) ? res : (res?.list || res?.records || [])
-    if (kbList.value.length > 0 && !selectedKbId.value) selectedKbId.value = kbList.value[0].id
-  } catch {
-    kbList.value = [{ id: 'kb_sample', name: '示例知识库' }]
-    selectedKbId.value = 'kb_sample'
-  }
-}
-
 async function loadData() {
   if (!selectedKbId.value) return
   loading.value = true
@@ -39,7 +27,10 @@ async function loadData() {
     loading.value = false
   }
 }
-onMounted(async () => { await loadKbList(); loadData() })
+onMounted(async () => {
+  selectedKbId.value = 'default'
+  loadData()
+})
 
 function handleAdd() { editingId.value = null; formData.value = { ruleType: 'content', enabled: true }; dialogTitle.value = '新增合规规则'; showDialog.value = true }
 function handleEdit(row: any) { editingId.value = row.id; formData.value = { name: row.ruleName || row.name, ruleType: row.ruleType, rule: row.pattern || row.rule, description: row.description, enabled: row.enabled === true || row.enabled === 1 }; dialogTitle.value = '编辑合规规则'; showDialog.value = true }
@@ -67,70 +58,6 @@ async function handleSave() {
   } catch { ElMessage.error('操作失败') }
 }
 
-// ===== 执行合规检查 =====
-const knowledgeList = ref<any[]>([])
-const showCheckDialog = ref(false)
-const checkResult = ref<any>(null)
-const checkLoading = ref(false)
-const selectedKnowledgeId = ref('')
-
-async function loadKnowledgeList() {
-  if (!selectedKbId.value) return
-  try {
-    const res: any = await api.getKnowledgeList(selectedKbId.value)
-    knowledgeList.value = Array.isArray(res) ? res : (res?.list || res?.records || [])
-  } catch {
-    knowledgeList.value = []
-  }
-}
-
-async function handleExecuteCheck(row?: any) {
-  // 如果传入了具体规则，则对该规则执行检查；否则打开全量检查弹窗
-  if (row) {
-    // 单规则快速检查：需要选择知识的弹窗
-    await loadKnowledgeList()
-    selectedKnowledgeId.value = ''
-    checkResult.value = null
-    showCheckDialog.value = true
-    formData.value._singleRuleId = row.id
-    formData.value._singleRuleName = row.ruleName || row.name
-    return
-  }
-  // 全量检查
-  await loadKnowledgeList()
-  selectedKnowledgeId.value = ''
-  checkResult.value = null
-  formData.value._singleRuleId = null
-  showCheckDialog.value = true
-}
-
-async function doCheck() {
-  if (!selectedKnowledgeId.value) { ElMessage.warning('请选择要检查的知识'); return }
-  checkLoading.value = true
-  try {
-    const ruleIds = formData.value._singleRuleId ? [formData.value._singleRuleId] : undefined
-    const res: any = await api.executeComplianceCheck(selectedKbId.value, {
-      knowledgeId: selectedKnowledgeId.value,
-      ruleIds,
-    })
-    checkResult.value = res
-    if (res?.results) {
-      const total = res.results.length
-      const passed = res.results.filter((r: any) => r.passed).length
-      const failed = total - passed
-      if (failed === 0) {
-        ElMessage.success(`检查完成：${total}条规则全部通过`)
-      } else {
-        ElMessage.warning(`检查完成：${passed}条通过，${failed}条未通过`)
-      }
-    }
-  } catch (e: any) {
-    ElMessage.error(e?.message || '执行检查失败')
-  } finally {
-    checkLoading.value = false
-  }
-}
-
 function getSeverityTag(severity: string) {
   const map: Record<string, string> = { high: 'danger', medium: 'warning', low: 'info' }
   return map[severity] || 'info'
@@ -144,9 +71,8 @@ function getSeverityTag(severity: string) {
         <div class="section-title">合规性检查</div>
         <div style="display:flex;gap:12px;align-items:center">
           <el-select v-model="selectedKbId" @change="loadData" placeholder="选择知识库" style="width:200px">
-            <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
+            <el-option v-for="kb in [{ id: 'default', name: '默认知识库' }]" :key="kb.id" :label="kb.name" :value="kb.id" />
           </el-select>
-          <el-button type="primary" @click="handleExecuteCheck()">执行检查</el-button>
           <el-button type="primary" @click="handleAdd">新增规则</el-button>
         </div>
       </div>
@@ -217,55 +143,6 @@ function getSeverityTag(severity: string) {
       <template #footer>
         <el-button @click="showDialog = false">取消</el-button>
         <el-button type="primary" @click="handleSave">保存</el-button>
-      </template>
-    </el-dialog>
-
-    <!-- 合规检查执行弹窗 -->
-    <el-dialog v-model="showCheckDialog" title="执行合规检查" width="700px" :close-on-click-modal="false">
-      <el-form label-width="100px">
-        <el-form-item label="选择知识">
-          <el-select v-model="selectedKnowledgeId" placeholder="请选择要检查的知识条目" style="width:100%" filterable>
-            <el-option v-for="k in knowledgeList" :key="k.id" :label="k.title" :value="k.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="formData._singleRuleId" label="检查规则">
-          <el-tag type="primary">{{ formData._singleRuleName }}</el-tag>
-        </el-form-item>
-      </el-form>
-      <div style="text-align:center;margin-bottom:16px">
-        <el-button type="primary" :loading="checkLoading" @click="doCheck" :disabled="!selectedKnowledgeId">
-          开始检查
-        </el-button>
-      </div>
-
-      <!-- 检查结果 -->
-      <div v-if="checkResult">
-        <el-divider />
-        <div class="section-title" style="margin-bottom:12px">检查结果</div>
-        <el-table :data="checkResult.results || []" stripe size="small">
-          <el-table-column prop="ruleName" label="规则名称" min-width="130" />
-          <el-table-column label="规则类型" width="90">
-            <template #default="{ row }">{{ ruleTypeOptions.find(o => o.value === row.ruleType)?.label || row.ruleType }}</template>
-          </el-table-column>
-          <el-table-column label="结果" width="70" align="center">
-            <template #default="{ row }">
-              <el-tag :type="row.passed ? 'success' : 'danger'" size="small">
-                {{ row.passed ? '通过' : '未通过' }}
-              </el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="详情" min-width="250" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.details || '-' }}</template>
-          </el-table-column>
-        </el-table>
-
-        <div style="margin-top:12px;font-size:12px;color:#909399;text-align:right">
-          检查时间：{{ checkResult.executedAt || '-' }}
-        </div>
-      </div>
-
-      <template #footer>
-        <el-button @click="showCheckDialog = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>

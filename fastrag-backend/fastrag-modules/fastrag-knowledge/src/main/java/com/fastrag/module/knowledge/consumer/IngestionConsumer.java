@@ -3,6 +3,7 @@ package com.fastrag.module.knowledge.consumer;
 import com.fastrag.common.handler.IngestionHandler;
 import com.fastrag.ai.ocr.OcrService;
 import com.fastrag.infra.minio.MinioService;
+import com.fastrag.infra.rabbitmq.MessagePublisher;
 import com.fastrag.module.knowledge.chunking.ChunkData;
 import com.fastrag.module.knowledge.chunking.ChunkingService;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -16,17 +17,19 @@ import com.fastrag.module.platform.entity.SysNotification;
 import com.fastrag.module.platform.mapper.SysNotificationMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.amqp.rabbit.annotation.RabbitListener;
+import org.springframework.beans.factory.ObjectProvider;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
 import java.time.LocalDateTime;
-import java.util.List;
-import java.util.Map;
-import java.util.Set;
+import java.util.*;
+import java.util.stream.Collectors;
 
 /**
- * 文档摄入处理服务 (原 RabbitMQ Consumer，现改为直接调用)
+ * 文档摄入处理服务 (RabbitMQ Consumer)
  */
 @Slf4j
 @Service
@@ -42,10 +45,12 @@ public class IngestionConsumer implements IngestionHandler {
     private final SysNotificationMapper notificationMapper;
     private final MediaExtractor mediaExtractor;
     private final OcrService ocrService;
+    private final ObjectProvider<MessagePublisher> messagePublisherProvider;
 
     private static final Set<String> AUDIO_EXTENSIONS = Set.of("mp3", "wav", "m4a", "aac", "ogg", "flac", "wma");
 
     @Override
+    @RabbitListener(queues = "fastrag.ingestion.queue")
     public void handleIngestion(Map<String, Object> message) {
         String fileId = (String) message.get("fileId");
         String kbId = (String) message.get("kbId");
@@ -68,10 +73,7 @@ public class IngestionConsumer implements IngestionHandler {
             log.info("[TIMING] download complete: {} ms, file={}, size={}",
                     System.currentTimeMillis() - tStart, fileId, fileBytes.length);
 
-            // 判断是否为音频文件
-            boolean isAudio = extension != null && AUDIO_EXTENSIONS.contains(extension.toLowerCase());
-
-            // 3. 解析文档
+            // 3. 解析文档（QA 和 chunk 模式都需要）
             long t1 = System.currentTimeMillis();
             updateStatus(fileId, "processing", 30, "parsing");
             ParseResult parseResult = documentParser.parse(
@@ -81,10 +83,14 @@ public class IngestionConsumer implements IngestionHandler {
                     parseResult.getSegments() != null ? parseResult.getSegments().size() : 0,
                     parseResult.getText() != null ? parseResult.getText().length() : 0);
 
-            // 4. 文本切片
+            // 判断是否为音频文件
+            boolean isAudio = extension != null && AUDIO_EXTENSIONS.contains(extension.toLowerCase());
+
+            List<ChunkData> chunks = new ArrayList<>();
+
+            // 文本切片
             long t2 = System.currentTimeMillis();
             updateStatus(fileId, "processing", 60, "chunking");
-            List<ChunkData> chunks;
             boolean hasSegments = parseResult.getSegments() != null && !parseResult.getSegments().isEmpty();
             if (hasSegments) {
                 chunks = chunkingService.chunkBySegments(parseResult.getSegments(), strategyId);
@@ -96,117 +102,93 @@ public class IngestionConsumer implements IngestionHandler {
             log.info("[TIMING] chunking complete: {} ms, {} chunks",
                     System.currentTimeMillis() - t2, chunks.size());
 
-            // 4.5 音频切片：按 ASR 时间戳切割音频并上传到 MinIO
-            long tSplitStart = System.currentTimeMillis();
-            if (isAudio && hasSegments && !chunks.isEmpty()) {
-                try {
-                    updateStatus(fileId, "processing", 70, "slicing");
-                    List<byte[]> segments = mediaExtractor.splitAudio(
-                            fileBytes, extension, parseResult.getSegments());
-                    if (!segments.isEmpty() && segments.size() == chunks.size()) {
-                        for (int i = 0; i < segments.size(); i++) {
-                            String segKey = kbId + "/" + fileId + "/segments/" + i + "." + extension;
-                            try (ByteArrayInputStream segStream = new ByteArrayInputStream(segments.get(i))) {
-                                minioService.upload(segKey, segStream, "audio/" + extension);
-                            }
-                        }
-                        log.info("[TIMING] audio split & upload complete: {} segments, {} ms",
-                                segments.size(), System.currentTimeMillis() - tSplitStart);
-                    } else {
-                        log.warn("Audio split returned {} segments, expected {}, skipping",
-                                segments.size(), chunks.size());
-                    }
-                } catch (Exception e) {
-                    log.warn("Audio slicing failed, continuing without segment files: {}", e.getMessage());
-                }
-            }
-
-            // 4.6 PDF 图片提取 → 独立分片
-            long tPdf = System.currentTimeMillis();
-            if ("pdf".equals(extension) && fileBytes != null) {
-                try {
-                    updateStatus(fileId, "processing", 75, "extracting images");
-                    var doc = org.apache.pdfbox.Loader.loadPDF(fileBytes);
+                // 4.5 音频切片：按 ASR 时间戳切割音频并上传到 MinIO
+                long tSplitStart = System.currentTimeMillis();
+                if (isAudio && hasSegments && !chunks.isEmpty()) {
                     try {
-                        List<MediaExtractor.PdfImage> pdfImages = mediaExtractor.extractPdfImages(doc, kbId, fileId, minioService);
-                        if (!pdfImages.isEmpty()) {
-                            log.info("Extracted {} images from PDF", pdfImages.size());
-                            for (MediaExtractor.PdfImage img : pdfImages) {
-                                // 跳过过小的图片（图标等无 OCR 价值的图片）
-                                if (img.getWidth() < 48 || img.getHeight() < 48) {
-                                    log.debug("Skip OCR for too small image: {} ({}x{})", img.getImageKey(), img.getWidth(), img.getHeight());
-                                    // 仍创建图片分片，内容为占位描述
-                                    int idx = chunks.size();
-                                    chunks.add(ChunkData.builder()
-                                            .id("chunk_" + idx)
-                                            .index(idx)
-                                            .content("[图片: 第" + img.getPageNum() + "页, " + img.getWidth() + "x" + img.getHeight() + "px]")
-                                            .pageNumber(img.getPageNum())
-                                            .pageRange(String.valueOf(img.getPageNum()))
-                                            .imageKeys(java.util.List.of(img.getImageKey()))
-                                            .chunkType("image")
-                                            .build());
-                                    continue;
-                                }
-                                // OCR 识别图片文字
-                                String imageKey = img.getImageKey();
-                                String imgObjectKey = kbId + "/" + fileId + "/images/" + imageKey;
-                                try (InputStream imgStream = minioService.download(imgObjectKey)) {
-                                    byte[] imgBytes = imgStream.readAllBytes();
-                                    String ocrText = null;
-                                    try {
-                                        ocrText = ocrService.recognize(imgBytes, "png");
-                                    } catch (Exception e) {
-                                        log.warn("OCR failed for image {}, skipping: {}", imageKey, e.getMessage());
-                                    }
-                                    String content;
-                                    if (ocrText != null && !ocrText.isBlank()) {
-                                        content = ocrText.trim();
-                                    } else {
-                                        content = "[图片: 第" + img.getPageNum() + "页]";
-                                    }
-                                    int idx = chunks.size();
-                                    chunks.add(ChunkData.builder()
-                                            .id("chunk_" + idx)
-                                            .index(idx)
-                                            .content(content)
-                                            .pageNumber(img.getPageNum())
-                                            .pageRange(String.valueOf(img.getPageNum()))
-                                            .imageKeys(java.util.List.of(imageKey))
-                                            .chunkType("image")
-                                            .build());
+                        updateStatus(fileId, "processing", 70, "slicing");
+                        List<byte[]> segments = mediaExtractor.splitAudio(
+                                fileBytes, extension, parseResult.getSegments());
+                        if (!segments.isEmpty() && segments.size() == chunks.size()) {
+                            for (int i = 0; i < segments.size(); i++) {
+                                String segKey = kbId + "/" + fileId + "/segments/" + i + "." + extension;
+                                try (ByteArrayInputStream segStream = new ByteArrayInputStream(segments.get(i))) {
+                                    minioService.upload(segKey, segStream, "audio/" + extension);
                                 }
                             }
-                            log.info("[TIMING] PDF image extraction & OCR: {} ms, {} image chunks",
-                                    System.currentTimeMillis() - tPdf, pdfImages.size());
+                            log.info("[TIMING] audio split & upload complete: {} segments, {} ms",
+                                    segments.size(), System.currentTimeMillis() - tSplitStart);
+                        } else {
+                            log.warn("Audio split returned {} segments, expected {}, skipping",
+                                    segments.size(), chunks.size());
                         }
-                    } finally {
-                        doc.close();
+                    } catch (Exception e) {
+                        log.warn("Audio slicing failed, continuing without segment files: {}", e.getMessage());
                     }
-                } catch (Exception e) {
-                    log.warn("PDF image extraction failed, continuing: {}", e.getMessage());
                 }
-            }
 
-            // 5. 存储切片（含 Embedding + MySQL + Milvus）
-            long t3 = System.currentTimeMillis();
-            updateStatus(fileId, "processing", 80, "storing");
-            storageService.storeChunks(kbId, fileId, chunks);
-            log.info("[TIMING] storeChunks complete: {} ms, {} chunks",
-                    System.currentTimeMillis() - t3, chunks.size());
+                // 4.6 PDF 图片提取 → 独立分片
+                long tPdf = System.currentTimeMillis();
+                if ("pdf".equals(extension) && fileBytes != null) {
+                    try {
+                        updateStatus(fileId, "processing", 75, "extracting images");
+                        var doc = org.apache.pdfbox.Loader.loadPDF(fileBytes);
+                        try {
+                            List<MediaExtractor.PdfImage> pdfImages = mediaExtractor.extractPdfImages(doc, kbId, fileId, minioService);
+                            if (!pdfImages.isEmpty()) {
+                                log.info("Extracted {} images from PDF", pdfImages.size());
+                                for (MediaExtractor.PdfImage img : pdfImages) {
+                                    if (img.getWidth() < 48 || img.getHeight() < 48) {
+                                        int idx = chunks.size();
+                                        chunks.add(com.fastrag.module.knowledge.chunking.ChunkData.builder()
+                                                .id("chunk_" + idx).index(idx)
+                                                .content("[图片: 第" + img.getPageNum() + "页, " + img.getWidth() + "x" + img.getHeight() + "px]")
+                                                .pageNumber(img.getPageNum()).pageRange(String.valueOf(img.getPageNum()))
+                                                .imageKeys(java.util.List.of(img.getImageKey())).chunkType("image").build());
+                                        continue;
+                                    }
+                                    String imageKey = img.getImageKey();
+                                    String imgObjectKey = kbId + "/" + fileId + "/images/" + imageKey;
+                                    try (InputStream imgStream = minioService.download(imgObjectKey)) {
+                                        byte[] imgBytes = imgStream.readAllBytes();
+                                        String ocrText = null;
+                                        try { ocrText = ocrService.recognize(imgBytes, "png"); }
+                                        catch (Exception e) { log.warn("OCR failed for image {}, skipping: {}", imageKey, e.getMessage()); }
+                                        String content = (ocrText != null && !ocrText.isBlank()) ? ocrText.trim() : "[图片: 第" + img.getPageNum() + "页]";
+                                        int idx = chunks.size();
+                                        chunks.add(com.fastrag.module.knowledge.chunking.ChunkData.builder()
+                                                .id("chunk_" + idx).index(idx)
+                                                .content(content).chunkType("image")
+                                                .pageNumber(img.getPageNum()).pageRange(String.valueOf(img.getPageNum()))
+                                                .imageKeys(java.util.List.of(imageKey)).build());
+                                    }
+                                }
+                                log.info("[TIMING] PDF image extraction & OCR: {} ms, {} image chunks",
+                                        System.currentTimeMillis() - tPdf, pdfImages.size());
+                            }
+                        } finally { doc.close(); }
+                    } catch (Exception e) {
+                        log.warn("PDF image extraction failed, continuing: {}", e.getMessage());
+                    }
+                }
+
+                // 5. 存储切片（含 Embedding + MySQL + Milvus）
+                long t3 = System.currentTimeMillis();
+                updateStatus(fileId, "processing", 80, "storing");
+                storageService.storeChunks(kbId, fileId, chunks);
+                log.info("[TIMING] storeChunks complete: {} ms, {} chunks",
+                        System.currentTimeMillis() - t3, chunks.size());
 
             // 6. 记录更新日志
             long t4 = System.currentTimeMillis();
             try {
                 KbFile kf = fileMapper.selectById(fileId);
-                String fileName = kf != null ? kf.getName() : fileId;
-                logService.addUpdateLog(kbId, "file_added", fileName,
-                        "上传并处理了文档 " + fileName, operator);
+                String logFileName = kf != null ? kf.getName() : fileId;
+                logService.addUpdateLog(kbId, "file_added", logFileName, "上传并处理了文档 " + logFileName, operator);
 
-                // 创建系统通知
                 SysNotification notice = new SysNotification();
                 notice.setTitle("知识更新提醒");
-                notice.setContent("知识库新增文件: " + fileName);
+                notice.setContent("知识库新增文件: " + logFileName);
                 notice.setNotifyType("knowledge_update");
                 notice.setSourceType("kb");
                 notice.setSourceId(kbId);
@@ -219,11 +201,34 @@ public class IngestionConsumer implements IngestionHandler {
 
             log.info("[TIMING] notification complete: {} ms", System.currentTimeMillis() - t4);
 
-            // 7. 更新状态为 completed
+            // 7. 可选：自动触发知识图谱构建
+            Object rawEnableGraphBuild = message.getOrDefault("enableGraphBuild", false);
+            boolean enableGraphBuild = rawEnableGraphBuild instanceof Boolean
+                    ? (Boolean) rawEnableGraphBuild
+                    : (rawEnableGraphBuild instanceof Number
+                        ? ((Number) rawEnableGraphBuild).intValue() == 1
+                        : Boolean.TRUE.equals(rawEnableGraphBuild));
+            if (Boolean.TRUE.equals(enableGraphBuild)) {
+                try {
+                    Map<String, Object> graphMsg = new HashMap<>();
+                    graphMsg.put("kbId", kbId);
+                    graphMsg.put("fileId", fileId);
+                    graphMsg.put("mode", "incremental");
+                    MessagePublisher pub = messagePublisherProvider.getIfAvailable();
+                    if (pub != null) {
+                        pub.publishGraphBuild(graphMsg);
+                    }
+                    log.info("[Graph] Auto-triggered graph build for file: {}, kb: {}", fileId, kbId);
+                } catch (Exception e) {
+                    log.warn("[Graph] Failed to auto-trigger graph build for file {}: {}", fileId, e.getMessage());
+                }
+            }
+
+            // 8. 更新状态为 completed
             updateStatus(fileId, "completed", 100, "done");
 
             long tTotal = System.currentTimeMillis() - tStart;
-            log.info("File processing completed: {}, chunks: {}, total: {} ms", fileId, chunks.size(), tTotal);
+            log.info("File processing completed: {}, total time: {} ms", fileId, tTotal);
 
         } catch (Exception e) {
             log.error("File processing failed: {}", fileId, e);
@@ -248,5 +253,10 @@ public class IngestionConsumer implements IngestionHandler {
     private String getFileExtension(String fileId) {
         KbFile f = fileMapper.selectById(fileId);
         return f != null ? f.getExtension() : "txt";
+    }
+
+    private String getFileName(String fileId) {
+        KbFile f = fileMapper.selectById(fileId);
+        return f != null ? f.getName() : fileId;
     }
 }

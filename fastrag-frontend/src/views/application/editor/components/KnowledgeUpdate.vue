@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import * as api from '@/api'
 
 const props = defineProps<{ appInfo: { id: string } }>()
@@ -11,7 +11,7 @@ const autoUpdateConfig = ref({ enabled: false, schedule: '0 0 2 * * ?', incremen
 const showAutoConfig = ref(false)
 
 async function loadUpdateLogs() {
-  try { updateLogs.value = ((await api.getKnowledgeUpdateLogs(appId())) as any) || [] } catch { updateLogs.value = [] }
+  try { updateLogs.value = ((await api.getKnowledgeUpdateLogs(appId())) as any) || [] } catch (e) { updateLogs.value = [] }
   if (!updateLogs.value.length) {
     updateLogs.value = [
       { id: 'u1', updateType: 'auto', status: 'completed', summary: '增量更新：新增3个文档', detail: '新增：产品手册v2.docx、技术规格.pdf、API文档.md', operator: '系统', createdAt: '2026-06-29 02:00:00' },
@@ -21,19 +21,18 @@ async function loadUpdateLogs() {
   }
 }
 async function loadAutoConfig() {
-  try { const r: any = await api.getAutoKnowledgeUpdate(appId()); if (r) Object.assign(autoUpdateConfig.value, r) } catch {}
+  try { const r: any = await api.getAutoKnowledgeUpdate(appId()); if (r) Object.assign(autoUpdateConfig.value, r) } catch (e) {}
 }
 async function handleManualUpdate() {
   try {
     const { value } = await ElMessageBox.prompt('确认手动更新知识库？输入备注说明', '手动更新', { inputPlaceholder: '更新备注' })
     if (value !== null) { await api.triggerAppKnowledgeUpdate(appId(), { remark: value }); ElMessage.success('更新任务已提交'); await loadUpdateLogs() }
-  } catch {}
+  } catch (e) {}
 }
 async function handleSaveAutoConfig() {
-  await api.setAutoKnowledgeUpdate(appId(), autoUpdateConfig.value); showAutoConfig.value = false; ElMessage.success('自动更新配置已保存')
-}
-async function handleCompare(row: any) {
-  try { const r: any = await api.compareKnowledgeContent(appId(), row.oldId || row.id, row.newId || row.id); ElMessageBox.alert(JSON.stringify(r, null, 2), '内容比较') } catch { ElMessage.error('获取比较内容失败') }
+  await api.setAutoKnowledgeUpdate(appId(), autoUpdateConfig.value)
+  showAutoConfig.value = false
+  ElMessage.success('自动更新配置已保存')
 }
 onMounted(() => { loadUpdateLogs(); loadAutoConfig() })
 </script>
@@ -53,7 +52,7 @@ onMounted(() => { loadUpdateLogs(); loadAutoConfig() })
         <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
         <el-table-column prop="operator" label="操作人" width="100" />
         <el-table-column prop="createdAt" label="时间" width="160" />
-        <el-table-column label="操作" width="80"><template #default="{row}"><el-button link type="primary" size="small" @click="handleCompare(row)">比较</el-button></template></el-table-column>
+        <el-table-column label="操作" width="80" />
       </el-table>
       <el-empty v-if="!updateLogs.length" description="暂无更新记录" :image-size="60" />
     </div>

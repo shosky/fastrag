@@ -23,6 +23,8 @@ public class KbFile {
     private String parseStrategyId;
     private String parseStrategyName;
     private Integer chunkCount;
+    private String processingMode; // chunk 或 qa
+    private Integer enableGraphBuild; // 该文件是否构建知识图谱，默认 0
     private String folderId;
     private Long viewCount;
     private LocalDateTime deletedAt;

@@ -6,6 +6,8 @@ public interface ModelService {
     void delete(String id);
     void toggle(String id);
     List<ModelRecord> importModels(List<Map<String,Object>> models);
+    // 模型测试
+    Map<String,Object> testChat(String modelId, String prompt);
     // 模型预置
     List<Map<String,Object>> listPresets();
     Map<String,Object> createPreset(Map<String,Object> preset);

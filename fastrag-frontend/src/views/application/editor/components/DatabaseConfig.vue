@@ -31,7 +31,7 @@ async function loadAllDatabases() {
   try {
     const res: any = await api.getDatabases()
     allDatabases.value = Array.isArray(res) ? res : (res?.list || res?.records || [])
-  } catch {
+  } catch (e) {
     allDatabases.value = []
   }
 }
@@ -69,11 +69,11 @@ async function handleSave() {
     if (isEditing.value) { await api.updateAppDbBinding(appId(), editingId.value, form.value); ElMessage.success('已更新') }
     else { await api.createAppDbBinding(appId(), form.value); ElMessage.success('已添加') }
     showDialog.value = false; await loadData()
-  } catch { ElMessage.error('操作失败') }
+  } catch (e) { ElMessage.error('操作失败') }
 }
 
 async function handleDelete(row: any) {
-  try { await ElMessageBox.confirm('确认解除该数据库绑定？', '确认', { type: 'warning' }); await api.deleteAppDbBinding(appId(), row.id); await loadData(); ElMessage.success('已解除绑定') } catch {}
+  try { await ElMessageBox.confirm('确认解除该数据库绑定？', '确认', { type: 'warning' }); await api.deleteAppDbBinding(appId(), row.id); await loadData(); ElMessage.success('已解除绑定') } catch (e) {}
 }
 
 onMounted(loadData)

@@ -3,6 +3,12 @@
 // 通用页面容器
 .page-container {
   height: 100%;
+  padding: $spacing-xl;
+}
+
+// 首个子元素取消顶部间距（因为 padding 已提供）
+.page-container > :first-child {
+  margin-top: 0;
 }
 
 // ===== Empty State 收缩 Padding =====
