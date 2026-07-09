@@ -1,13 +1,17 @@
 package com.fastrag.module.graph.service.impl;
 
+import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.LogCategory;
 import com.fastrag.module.graph.entity.KbEvaluation;
 import com.fastrag.module.graph.entity.KbEvaluationResult;
 import com.fastrag.module.graph.mapper.KbEvaluationMapper;
 import com.fastrag.module.graph.mapper.KbEvaluationResultMapper;
 import com.fastrag.module.graph.model.EvaluationConfig;
 import com.fastrag.module.graph.service.EvaluationService;
+import com.fastrag.module.publish.service.LogService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 import java.util.List;
@@ -15,14 +19,16 @@ import java.util.List;
 /**
  * 评估服务实现
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class EvaluationServiceImpl implements EvaluationService {
 
+    private static final Logger log = LoggerFactory.getLogger(EvaluationServiceImpl.class);
+
     private final KbEvaluationMapper mapper;
     private final KbEvaluationResultMapper resultMapper;
     private final EvaluationExecutionHelper executionHelper;
+    private final LogService logService;
 
     @Override
     public List<KbEvaluation> list(String kbId) {
@@ -82,6 +88,15 @@ public class EvaluationServiceImpl implements EvaluationService {
         mapper.insert(evaluation);
         log.info("[Evaluation] Created evaluation record: id={}, benchmark={}", evaluation.getId(), benchmark);
 
+        // 记录评测启动日志
+        try {
+            logService.addLog(kbId, LogCategory.operation, ActionType.evaluation_run,
+                    evaluation.getId(), "启动评测，benchmark: " + benchmark + ", answerModel: " + config.getAnswerModel(),
+                    "system", "success", null);
+        } catch (Exception e) {
+            log.warn("[Log] Failed to record evaluation run log for kb={}", kbId);
+        }
+
         // 通过独立 Bean 调用，确保 @Async 代理生效
         executionHelper.execute(evaluation.getId(), kbId, config);
 
@@ -97,5 +112,12 @@ public class EvaluationServiceImpl implements EvaluationService {
         resultMapper.delete(new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<KbEvaluationResult>()
                 .eq(KbEvaluationResult::getEvaluationId, id));
         mapper.deleteById(id);
+        // 记录评测删除日志
+        try {
+            logService.addLog(kbId, LogCategory.operation, ActionType.evaluation_deleted,
+                    id, "删除评测记录", "system", "success", null);
+        } catch (Exception e) {
+            log.warn("[Log] Failed to record evaluation delete log for kb={}, id={}", kbId, id);
+        }
     }
 }

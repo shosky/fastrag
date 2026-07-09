@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import type { RetrievalConfig } from '@/types/knowledge'
-import type { GraphNode } from '@/types/evaluation'
+import type { GraphNode, GraphBuildStatus } from '@/types/evaluation'
 import { useRouter, useRoute } from 'vue-router'
 import {
   ArrowLeft,
@@ -139,6 +139,39 @@ const selectedGraphNode = ref<GraphNode | null>(null)
 const graphSettingsVisible = ref(false)
 const indexManagementVisible = ref(false)
 
+// --- 图谱构建状态（直接由父组件管理，避免 defineExpose 响应式问题） ---
+const graphBuildStatusData = ref<GraphBuildStatus>({
+  status: 'idle', progress: 0, entityCount: 0, relationCount: 0,
+  totalChunks: 0, builtChunks: 0, failedChunks: 0,
+  buildError: null, lastBuiltAt: null,
+})
+const isBuilding = computed(() => graphBuildStatusData.value.status === 'building')
+
+let buildPollTimer: number | null = null
+
+async function fetchBuildStatus() {
+  try {
+    const res = await api.getGraphBuildStatus(kbId || '')
+    if (res) graphBuildStatusData.value = res
+  } catch (e) {
+    console.warn('[GraphBuild] Failed to fetch build status:', e)
+  }
+}
+
+// 构建中时自动轮询
+watch(isBuilding, (building) => {
+  if (building) {
+    buildPollTimer = window.setInterval(fetchBuildStatus, 5000)
+  } else {
+    if (buildPollTimer) { clearInterval(buildPollTimer); buildPollTimer = null }
+  }
+})
+
+onMounted(() => { fetchBuildStatus() })
+onBeforeUnmount(() => { if (buildPollTimer) { clearInterval(buildPollTimer) } })
+
+function handleRefreshBuildStatus() { fetchBuildStatus() }
+
 function handleGraphNodeSelect(node: GraphNode | null) {
   selectedGraphNode.value = node
 }
@@ -237,6 +270,7 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
         <div class="kb-detail__graph-layout">
           <KnowledgeGraphPanel
             :kb-id="kbId"
+            :build-status="graphBuildStatusData"
             @select-node="handleGraphNodeSelect"
             @open-settings="handleOpenGraphSettings"
             @open-index="handleOpenIndexManagement"
@@ -245,7 +279,9 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
           <IndexManagementPanel
             v-model:visible="indexManagementVisible"
             :kb-id="kbId"
+            :build-status="graphBuildStatusData"
             @open-settings="handleOpenGraphSettings"
+            @refresh="handleRefreshBuildStatus"
           />
           <GraphSettingsPopup
             v-model:visible="graphSettingsVisible"

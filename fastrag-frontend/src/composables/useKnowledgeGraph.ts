@@ -56,6 +56,7 @@ export function useKnowledgeGraph(kbId: string = 'default') {
   const entityCount = computed(() => stats.value.entityCount)
   const relationCount = computed(() => stats.value.relationCount)
   const entityTypes = computed<EntityType[]>(() => stats.value.entityTypes)
+  const chunkCount = computed(() => stats.value.chunkCount ?? nodes.value.length)
 
   async function load() {
     loading.value = true
@@ -112,6 +113,7 @@ export function useKnowledgeGraph(kbId: string = 'default') {
     entityCount,
     relationCount,
     entityTypes,
+    chunkCount,
     // 方法
     load,
     selectNode,

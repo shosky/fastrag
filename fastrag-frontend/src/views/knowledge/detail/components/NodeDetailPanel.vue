@@ -11,18 +11,18 @@ const emit = defineEmits<{
   (e: 'close'): void
 }>()
 
-// --- Node details (纯派生自 props.node，不再用 Math.random 生成假 ID) ---
+// --- Node details (派生自 props.node，显示确定性实体ID) ---
 const nodeDetails = computed(() => {
   if (!props.node) return null
   return {
     name: props.node.name,
-    // 用真实 id 派生展示用的图数据库风格 ID，保证同一节点 ID 稳定
-    id: `4:${props.node.id}:${100 + (props.node.name.length % 20)}`,
-    kb_id: 'kb_q71peaezlw',
-    normalized_name: props.node.name,
-    attributes: [] as string[],
-    label: props.node.label,
-    entity_id: `entity_${props.node.id}`,
+    // 使用确定性实体 ID
+    entity_id: props.node.id,
+    kb_id: props.node.kbId || 'kb_default',
+    normalized_name: props.node.normalizedName || props.node.name.toLowerCase(),
+    label: props.node.label || props.node.entity_type || 'Entity',
+    description: props.node.description || '',
+    type: props.node.type || 'entity',
   }
 })
 </script>
@@ -44,14 +44,15 @@ const nodeDetails = computed(() => {
         </div>
 
         <div class="node-detail__row">
-          <span class="node-detail__label">ID</span>
-          <span class="node-detail__value node-detail__value--id">{{ nodeDetails.id }}</span>
+          <span class="node-detail__label">entity_id</span>
+          <span class="node-detail__value node-detail__value--id">{{ nodeDetails.entity_id }}</span>
         </div>
 
         <div class="node-detail__row">
           <span class="node-detail__label">标签</span>
           <div class="node-detail__labels">
-            <el-tag size="small" type="success">Entity</el-tag>
+            <el-tag size="small" type="success">{{ nodeDetails.label }}</el-tag>
+            <el-tag v-if="nodeDetails.type === 'chunk'" size="small" type="info">Chunk</el-tag>
           </div>
         </div>
 
@@ -61,28 +62,13 @@ const nodeDetails = computed(() => {
         </div>
 
         <div class="node-detail__row">
-          <span class="node-detail__label">name</span>
-          <span class="node-detail__value">{{ nodeDetails.name }}</span>
-        </div>
-
-        <div class="node-detail__row">
           <span class="node-detail__label">normalized_name</span>
           <span class="node-detail__value">{{ nodeDetails.normalized_name }}</span>
         </div>
 
-        <div class="node-detail__row">
-          <span class="node-detail__label">attributes</span>
-          <span class="node-detail__value">[]</span>
-        </div>
-
-        <div class="node-detail__row">
-          <span class="node-detail__label">label</span>
-          <span class="node-detail__value">{{ nodeDetails.label }}</span>
-        </div>
-
-        <div class="node-detail__row">
-          <span class="node-detail__label">entity_id</span>
-          <span class="node-detail__value node-detail__value--id">{{ nodeDetails.entity_id }}</span>
+        <div class="node-detail__row" v-if="nodeDetails.description">
+          <span class="node-detail__label">描述</span>
+          <span class="node-detail__value">{{ nodeDetails.description }}</span>
         </div>
       </div>
     </div>

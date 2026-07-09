@@ -8,6 +8,8 @@ import com.fastrag.ai.ocr.OcrService;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
+import com.fastrag.module.platform.entity.ModelRecord;
+import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import lombok.AllArgsConstructor;
 import lombok.Builder;
 import lombok.Data;
@@ -43,6 +45,7 @@ import java.nio.charset.StandardCharsets;
 public class DocumentParserImpl implements DocumentParser {
 
     private final KbParseStrategyMapper strategyMapper;
+    private final ModelRecordMapper modelRecordMapper;
     private final LlmService llmService;
     private final AsrService asrService;
     private final OcrService ocrService;
@@ -139,7 +142,8 @@ public class DocumentParserImpl implements DocumentParser {
             // LLM 增强（可选）
             String fullText = textWithMarkers.toString();
             if (strategy != null && strategy.getLlmModel() != null) {
-                fullText = enhanceWithLlm(fullText, strategy.getLlmModel());
+                LlmConfig llmCfg = resolveLlmConfig(strategy);
+                fullText = enhanceWithLlm(fullText, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
             }
 
             return ParseResult.builder()
@@ -415,7 +419,8 @@ public class DocumentParserImpl implements DocumentParser {
         String fullText = asrFullText;
         if (strategy != null && strategy.getLlmModel() != null && fullText != null) {
             try {
-                fullText = enhanceWithLlm(fullText, strategy.getLlmModel());
+                LlmConfig llmCfg = resolveLlmConfig(strategy);
+                fullText = enhanceWithLlm(fullText, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
             } catch (Exception e) {
                 log.warn("LLM enhancement failed, using original text", e);
             }
@@ -472,7 +477,8 @@ public class DocumentParserImpl implements DocumentParser {
 
         String fullText = asrResult.getText();
         if (strategy != null && strategy.getLlmModel() != null) {
-            fullText = enhanceWithLlm(fullText, strategy.getLlmModel());
+            LlmConfig llmCfg = resolveLlmConfig(strategy);
+            fullText = enhanceWithLlm(fullText, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
         }
 
         List<ParseResult.ChunkTimeSegment> segments = new ArrayList<>();
@@ -502,21 +508,61 @@ public class DocumentParserImpl implements DocumentParser {
         String text = ocrService.recognize(imageBytes, extension);
 
         if (strategy != null && strategy.getLlmModel() != null) {
-            text = enhanceWithLlm(text, strategy.getLlmModel());
+            LlmConfig llmCfg = resolveLlmConfig(strategy);
+            text = enhanceWithLlm(text, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
         }
 
         return ParseResult.builder().text(text).pages(1).build();
     }
 
-    private String enhanceWithLlm(String text, String model) {
+    /**
+     * 使用 LLM 增强文档解析结果（配置了正确的 API URL 和 Key）
+     */
+    private String enhanceWithLlm(String text, String model, String apiUrl, String apiKey) {
+        if (apiUrl == null || apiUrl.isBlank()) {
+            log.warn("[LLM-Enhance] apiUrl is null/blank, skipping LLM enhancement for model={}", model);
+            return text;
+        }
+        if (text == null || text.isBlank()) return text;
         try {
             String prompt = "请优化以下文档解析结果，保持原文内容，改善格式和可读性：\n\n" +
                     text.substring(0, Math.min(text.length(), 4000));
-            return llmService.chat(model, prompt);
+            log.info("[LLM-Enhance] Calling model={} via apiUrl={}, text length={}", model, apiUrl, text.length());
+            String result = llmService.chat(model, prompt, apiUrl, apiKey);
+            log.info("[LLM-Enhance] Enhancement done, result length={}", result != null ? result.length() : 0);
+            return result;
         } catch (Exception e) {
-            log.warn("LLM enhancement failed, using original text", e);
+            log.warn("[LLM-Enhance] Failed, using original text: {}", e.getMessage());
             return text;
         }
+    }
+
+    /**
+     * 解析 LLM 配置：从策略中获取 llmModel，查找 ModelRecord 得到 apiUrl/apiKey
+     */
+    private LlmConfig resolveLlmConfig(KbParseStrategy strategy) {
+        if (strategy == null || strategy.getLlmModel() == null || strategy.getLlmModel().isBlank()) {
+            return new LlmConfig(null, null);
+        }
+        String llmModel = strategy.getLlmModel();
+        ModelRecord modelRecord = modelRecordMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<ModelRecord>()
+                        .eq(ModelRecord::getCode, llmModel)
+                        .eq(ModelRecord::getStatus, "online")
+                        .last("LIMIT 1"));
+        if (modelRecord != null) {
+            log.info("[LLM-Enhance] Resolved model config: model={}, apiUrl={}", llmModel, modelRecord.getApiUrl());
+            return new LlmConfig(modelRecord.getApiUrl(), modelRecord.getApiKeyRef());
+        }
+        log.warn("[LLM-Enhance] ModelRecord not found for code={} with status=online, skipping LLM enhancement", llmModel);
+        return new LlmConfig(null, null);
+    }
+
+    /** LLM 配置内部 DTO */
+    @lombok.Data
+    private static class LlmConfig {
+        private final String apiUrl;
+        private final String apiKey;
     }
 
     /**

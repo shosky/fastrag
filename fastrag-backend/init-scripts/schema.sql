@@ -156,8 +156,11 @@ CREATE TABLE IF NOT EXISTS kb_chunk (
     page_range VARCHAR(16) DEFAULT NULL COMMENT '页码范围',
     image_keys JSON DEFAULT NULL COMMENT '关联图片 key',
     chunk_type VARCHAR(16) DEFAULT 'text' COMMENT '分片类型(text/image)',
+    graph_indexed TINYINT DEFAULT 0 COMMENT '是否已完成知识图谱提取',
+    extraction_result JSON DEFAULT NULL COMMENT '图谱提取结果缓存(JSON)',
     INDEX idx_kb_id (kb_id),
-    INDEX idx_file_id (file_id)
+    INDEX idx_file_id (file_id),
+    INDEX idx_graph_indexed (graph_indexed)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_parse_strategy (
@@ -199,6 +202,7 @@ CREATE TABLE IF NOT EXISTS kb_graph_index (
     relation_extract_progress INT DEFAULT 0,
     total_chunks INT DEFAULT 0,
     built_chunks INT DEFAULT 0,
+    failed_chunks INT DEFAULT 0,
     entity_count INT DEFAULT 0,
     relation_count INT DEFAULT 0,
     index_version INT DEFAULT 0,
@@ -208,26 +212,57 @@ CREATE TABLE IF NOT EXISTS kb_graph_index (
 
 -- 知识图谱实体表（MySQL fallback 存储）
 CREATE TABLE IF NOT EXISTS kb_graph_entity (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    entity_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
     kb_id VARCHAR(32) NOT NULL,
-    name VARCHAR(256) NOT NULL,
-    entity_type VARCHAR(64) DEFAULT 'UNKNOWN',
-    description TEXT,
+    name VARCHAR(256) NOT NULL COMMENT '原始显示名称',
+    normalized_name VARCHAR(256) NOT NULL COMMENT '标准化名称(小写+空白归一化)',
+    original_name VARCHAR(256) COMMENT '原始名称(同name)',
+    entity_type VARCHAR(64) DEFAULT 'UNKNOWN' COMMENT '实体类型/标签',
+    description TEXT COMMENT '描述/属性(兼容字段)',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_kb_entity (kb_id, name(255)),
+    UNIQUE KEY uk_kb_entity_identity (kb_id, normalized_name(255), entity_type),
     INDEX idx_kb_id (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 知识图谱关系表（MySQL fallback 存储）
 CREATE TABLE IF NOT EXISTS kb_graph_relation (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    triple_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
     kb_id VARCHAR(32) NOT NULL,
-    source VARCHAR(256) NOT NULL,
-    target VARCHAR(256) NOT NULL,
-    label VARCHAR(128) NOT NULL,
+    source VARCHAR(256) NOT NULL COMMENT '源实体名称',
+    target VARCHAR(256) NOT NULL COMMENT '目标实体名称',
+    label VARCHAR(128) NOT NULL COMMENT '关系类型',
+    content TEXT COMMENT '关系显示文本',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_kb_relation (kb_id, source(255), target(255), label(127)),
     INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 实体提及追踪表（chunk→entity 引用关系）
+CREATE TABLE IF NOT EXISTS kb_graph_entity_mention (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    entity_id VARCHAR(64) NOT NULL,
+    kb_id VARCHAR(32) NOT NULL,
+    file_id VARCHAR(32) NOT NULL,
+    chunk_id VARCHAR(64) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_entity_mention (entity_id, chunk_id),
+    INDEX idx_em_kb (kb_id),
+    INDEX idx_em_file (file_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 三元组提及追踪表（chunk→triple 引用关系）
+CREATE TABLE IF NOT EXISTS kb_graph_triple_mention (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    triple_id VARCHAR(64) NOT NULL,
+    kb_id VARCHAR(32) NOT NULL,
+    file_id VARCHAR(32) NOT NULL,
+    chunk_id VARCHAR(64) NOT NULL,
+    text TEXT COMMENT '关系显示文本',
+    extractor_type VARCHAR(32) COMMENT '提取器类型',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_triple_mention (triple_id, chunk_id),
+    INDEX idx_tm_kb (kb_id),
+    INDEX idx_tm_file (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_benchmark (
@@ -1264,29 +1299,61 @@ ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS total_chunks INT DEFAULT 0 C
 ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS built_chunks INT DEFAULT 0 COMMENT '已构建切片数';
 ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS entity_count INT DEFAULT 0 COMMENT '实体数';
 ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS relation_count INT DEFAULT 0 COMMENT '关系数';
+ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS failed_chunks INT DEFAULT 0 COMMENT '构建失败的切片数';
 
--- 知识图谱实体表（MySQL fallback 存储）
+-- 知识图谱实体表（MySQL fallback 存储，确定性 ID 哈希）
 CREATE TABLE IF NOT EXISTS kb_graph_entity (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    entity_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
     kb_id VARCHAR(32) NOT NULL,
-    name VARCHAR(256) NOT NULL,
-    entity_type VARCHAR(64) DEFAULT 'UNKNOWN',
-    description TEXT,
+    name VARCHAR(256) NOT NULL COMMENT '原始显示名称',
+    normalized_name VARCHAR(256) NOT NULL COMMENT '标准化名称(小写+空白归一化)',
+    original_name VARCHAR(256) COMMENT '原始名称(同name)',
+    entity_type VARCHAR(64) DEFAULT 'UNKNOWN' COMMENT '实体类型/标签',
+    description TEXT COMMENT '描述/属性(兼容字段)',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_kb_entity (kb_id, name(255)),
+    UNIQUE KEY uk_kb_entity_identity (kb_id, normalized_name(255), entity_type),
     INDEX idx_kb_id (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 知识图谱关系表（MySQL fallback 存储）
+-- 知识图谱关系表（MySQL fallback 存储，确定性 ID 哈希）
 CREATE TABLE IF NOT EXISTS kb_graph_relation (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    triple_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
     kb_id VARCHAR(32) NOT NULL,
-    source VARCHAR(256) NOT NULL,
-    target VARCHAR(256) NOT NULL,
-    label VARCHAR(128) NOT NULL,
+    source VARCHAR(256) NOT NULL COMMENT '源实体名称',
+    target VARCHAR(256) NOT NULL COMMENT '目标实体名称',
+    label VARCHAR(128) NOT NULL COMMENT '关系类型',
+    content TEXT COMMENT '关系显示文本',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_kb_relation (kb_id, source(255), target(255), label(127)),
     INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 实体提及追踪表（chunk→entity 引用关系）
+CREATE TABLE IF NOT EXISTS kb_graph_entity_mention (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    entity_id VARCHAR(64) NOT NULL,
+    kb_id VARCHAR(32) NOT NULL,
+    file_id VARCHAR(32) NOT NULL,
+    chunk_id VARCHAR(64) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_entity_mention (entity_id, chunk_id),
+    INDEX idx_em_kb (kb_id),
+    INDEX idx_em_file (file_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 三元组提及追踪表（chunk→triple 引用关系）
+CREATE TABLE IF NOT EXISTS kb_graph_triple_mention (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    triple_id VARCHAR(64) NOT NULL,
+    kb_id VARCHAR(32) NOT NULL,
+    file_id VARCHAR(32) NOT NULL,
+    chunk_id VARCHAR(64) NOT NULL,
+    text TEXT COMMENT '关系显示文本',
+    extractor_type VARCHAR(32) COMMENT '提取器类型',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_triple_mention (triple_id, chunk_id),
+    INDEX idx_tm_kb (kb_id),
+    INDEX idx_tm_file (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 评估基准表

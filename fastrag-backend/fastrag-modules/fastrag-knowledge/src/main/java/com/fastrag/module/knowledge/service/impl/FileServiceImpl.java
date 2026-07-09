@@ -7,6 +7,7 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fastrag.infra.milvus.MilvusService;
+import com.fastrag.infra.graph.GraphStore;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.infra.rabbitmq.MessagePublisher;
 import com.fastrag.module.knowledge.chunking.ChunkData;
@@ -55,6 +56,7 @@ public class FileServiceImpl implements FileService {
     private final ChunkingService chunkingService;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final MilvusService milvusService;
+    private final GraphStore graphStore;
 
     @Override
     public List<FileDto> list(String kbId) {
@@ -127,7 +129,13 @@ public class FileServiceImpl implements FileService {
                 && f.getCreatedAt() != null
                 && f.getUpdatedAt().isAfter(f.getCreatedAt());
         if (!userExplicitlySet && (f.getEnableGraphBuild() == null || f.getEnableGraphBuild() == 0)) {
-            f.setEnableGraphBuild(resolveDefaultGraphBuild(kbId, strategyId));
+            Integer resolvedGraphBuild = resolveDefaultGraphBuild(kbId, strategyId);
+            log.info("[GraphSwitch] Setting enableGraphBuild for file {}: current={}, resolved={}, userExplicitlySet={}",
+                    fileId, f.getEnableGraphBuild(), resolvedGraphBuild, userExplicitlySet);
+            f.setEnableGraphBuild(resolvedGraphBuild);
+        } else {
+            log.info("[GraphSwitch] File {} enableGraphBuild kept as-is: value={}, userExplicitlySet={}",
+                    fileId, f.getEnableGraphBuild(), userExplicitlySet);
         }
         fileMapper.updateById(f);
 
@@ -155,20 +163,39 @@ public class FileServiceImpl implements FileService {
      * 两者都为 1 时才返回 1，否则返回 0
      */
     private Integer resolveDefaultGraphBuild(String kbId, String strategyId) {
+        log.info("[GraphSwitch] Resolving default graph build for kbId={}, strategyId={}", kbId, strategyId);
+
         // KB 级开关
         boolean kbEnabled = false;
         KnowledgeBase kb = knowledgeBaseMapper.selectById(kbId);
         if (kb != null && kb.getGraphAutoBuild() != null) {
             kbEnabled = kb.getGraphAutoBuild() == 1;
+            log.info("[GraphSwitch] KB graphAutoBuild={} (value from DB), kbEnabled={}", kb.getGraphAutoBuild(), kbEnabled);
+        } else {
+            log.info("[GraphSwitch] KB not found or graphAutoBuild is null, kb={}", kb);
         }
-        if (!kbEnabled) return 0;
+        if (!kbEnabled) {
+            log.warn("[GraphSwitch] Graph build DISABLED at KB level (graphAutoBuild is 0 or null). " +
+                    "Set kb.graph_auto_build=1 to enable.");
+            return 0;
+        }
 
         // 策略级开关
         if (strategyId != null) {
             KbParseStrategy strategy = strategyMapper.selectById(strategyId);
             if (strategy != null && strategy.getEnableGraphBuild() != null) {
-                return strategy.getEnableGraphBuild() == 1 ? 1 : 0;
+                int strategyVal = strategy.getEnableGraphBuild();
+                log.info("[GraphSwitch] Strategy enableGraphBuild={} (strategy={})", strategyVal, strategy.getName());
+                if (strategyVal == 1) {
+                    return 1;
+                }
+                log.warn("[GraphSwitch] Graph build DISABLED at Strategy level (enableGraphBuild=0). " +
+                        "Set kb_parse_strategy.enable_graph_build=1 for strategy '{}'", strategy.getName());
+                return 0;
             }
+            log.info("[GraphSwitch] Strategy enableGraphBuild is null, treating as enabled");
+        } else {
+            log.info("[GraphSwitch] No strategyId provided, KB-level allows graph build, defaulting to enabled");
         }
         return 1; // KB 允许且策略未显式关闭
     }
@@ -208,7 +235,7 @@ public class FileServiceImpl implements FileService {
     }
 
     /**
-     * 清理文件数据：MySQL chunks、Milvus 向量、QA 对
+     * 清理文件数据：MySQL chunks、Milvus 向量、知识图谱、QA 对
      */
     private void cleanupFileData(String kbId, String fileId) {
         // 清理 MySQL kb_chunk 记录
@@ -223,6 +250,14 @@ public class FileServiceImpl implements FileService {
             milvusService.deleteByFileId(collection, fileId);
         } catch (Exception e) {
             log.warn("[Delete] Milvus cleanup failed for file {}: {}", fileId, e.getMessage());
+        }
+
+        // 清理知识图谱数据（含孤儿实体回收，Yuxi 方式）
+        try {
+            graphStore.deleteFileGraph(kbId, fileId);
+            log.info("[Delete] Graph data cleaned for file: {}", fileId);
+        } catch (Exception e) {
+            log.warn("[Delete] Graph cleanup failed for file {}: {}", fileId, e.getMessage());
         }
     }
 
@@ -260,7 +295,13 @@ public class FileServiceImpl implements FileService {
     @Override
     public void delete(String kbId, String fileId) {
         // 软删除：使用原生 SQL 确保 deleted_at 被更新
-        // 注意：不清理 chunks/Milvus，以便 restore 时可以恢复
+        // 清理知识图谱数据（保留 chunks/Milvus，以便 restore 后可重建图谱）
+        try {
+            graphStore.deleteFileGraph(kbId, fileId);
+            log.info("[Delete] Graph data cleaned for soft-deleted file: {}", fileId);
+        } catch (Exception e) {
+            log.warn("[Delete] Graph cleanup failed for file {}: {}", fileId, e.getMessage());
+        }
         jdbcTemplate.update("UPDATE kb_file SET deleted_at = NOW() WHERE id = ? AND kb_id = ?", fileId, kbId);
     }
 

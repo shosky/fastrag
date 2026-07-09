@@ -12,7 +12,8 @@ import com.fastrag.module.graph.mapper.KbEvaluationMapper;
 import com.fastrag.module.graph.mapper.KbEvaluationResultMapper;
 import com.fastrag.module.graph.model.EvaluationConfig;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -42,10 +43,11 @@ import java.util.stream.Collectors;
  *   <li>合并 LLM 调用 — 答案生成与评判合并为一次 API 调用，减少 50% LLM 请求</li>
  * </ul>
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class EvaluationExecutionHelper {
+
+    private static final Logger log = LoggerFactory.getLogger(EvaluationExecutionHelper.class);
 
     /** 并行处理的最大并发数（避免 API 限流） */
     private static final int MAX_CONCURRENT = 4;

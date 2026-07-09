@@ -2,7 +2,8 @@ package com.fastrag.infra.neo4j;
 
 import com.fastrag.infra.graph.GraphStore;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
@@ -17,10 +18,11 @@ import java.util.Map;
  * 当 neo4j.enabled=false 时，Neo4jGraphStore 不会被创建，此类使用空实现降级。
  * 建议新代码直接注入 {@link GraphStore}。
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class Neo4jService {
+
+    private static final Logger log = LoggerFactory.getLogger(Neo4jService.class);
 
     private final ObjectProvider<Neo4jGraphStore> neo4jGraphStoreProvider;
 
@@ -46,21 +48,21 @@ public class Neo4jService {
         return store.expandGraph(kbId, entities, depth, maxEntities);
     }
 
-    public void createEntity(String kbId, String name, String type) {
+    public void createEntity(String kbId, String entityId, String name, String normalizedName, String type) {
         Neo4jGraphStore store = neo4jGraphStoreProvider.getIfAvailable();
         if (store == null) {
             log.debug("Neo4j disabled - skip createEntity: {}", name);
             return;
         }
-        store.createEntity(kbId, name, type);
+        store.createEntity(kbId, entityId, name, normalizedName, type);
     }
 
-    public void createRelation(String kbId, String source, String target, String label) {
+    public void createRelation(String kbId, String tripleId, String source, String target, String label, String content) {
         Neo4jGraphStore store = neo4jGraphStoreProvider.getIfAvailable();
         if (store == null) {
             log.debug("Neo4j disabled - skip createRelation: {} -> {}", source, target);
             return;
         }
-        store.createRelation(kbId, source, target, label);
+        store.createRelation(kbId, tripleId, source, target, label, content);
     }
 }

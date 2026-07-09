@@ -103,8 +103,18 @@ public class RetrievalServiceImpl implements RetrievalService {
 
     @Override
     public long getChunkCount(String kbId) {
+        // 只统计未删除文件的 chunk（排除软删除文件）
+        List<KbFile> activeFiles = fileMapper.selectList(
+                new LambdaQueryWrapper<KbFile>()
+                        .eq(KbFile::getKbId, kbId)
+                        .isNull(KbFile::getDeletedAt));
+        if (activeFiles.isEmpty()) return 0;
+        List<String> activeFileIds = activeFiles.stream()
+                .map(KbFile::getId).collect(Collectors.toList());
         return chunkMapper.selectCount(
-                new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getKbId, kbId));
+                new LambdaQueryWrapper<KbChunk>()
+                        .eq(KbChunk::getKbId, kbId)
+                        .in(KbChunk::getFileId, activeFileIds));
     }
 
     // ========================================================================
@@ -355,11 +365,17 @@ public class RetrievalServiceImpl implements RetrievalService {
                 List<SearchResultItem> results = new ArrayList<>();
                 for (int i = 0; i < chunks.size(); i++) {
                     KbChunk chunk = chunks.get(i);
+                    // 跳过已删除文件的 chunk
+                    if (chunk.getFileId() != null && isFileDeleted(kbId, chunk.getFileId())) {
+                        continue;
+                    }
                     SearchResultItem item = buildResultItem(chunk, 1.0 - (double) i / chunks.size(),
                             0.0, "mysql_fulltext", "fulltext");
                     results.add(item);
+                    if (results.size() >= topK) break;
                 }
-                log.info("[FulltextSearch] kbId={}, query={}, hits={}", kbId, query, results.size());
+                log.info("[FulltextSearch] kbId={}, query={}, hits={} (filtered {})",
+                        kbId, query, results.size(), chunks.size() - results.size());
                 return results;
             }
         } catch (Exception e) {
@@ -468,6 +484,10 @@ public class RetrievalServiceImpl implements RetrievalService {
                                 .last("LIMIT " + (count / Math.max(entityNames.size(), 1))));
                 for (KbChunk chunk : chunks) {
                     if (results.size() >= count) break;
+                    // 跳过已删除文件的 chunk
+                    if (chunk.getFileId() != null && isFileDeleted(kbId, chunk.getFileId())) {
+                        continue;
+                    }
                     results.add(buildResultItem(chunk, 0.5, 0.5, "graph", "graph"));
                 }
             }
@@ -1013,11 +1033,17 @@ public class RetrievalServiceImpl implements RetrievalService {
                         .eq(KbChunk::getKbId, kbId)
                         .like(KbChunk::getContent, query)
                         .orderByDesc(KbChunk::getChunkIndex)
-                        .last("LIMIT " + topK));
+                        .last("LIMIT " + (topK * 3)));
         List<SearchResultItem> results = new ArrayList<>();
-        for (int i = 0; i < chunks.size(); i++) {
-            results.add(buildResultItem(chunks.get(i), 1.0, 0.0, "mysql", null));
+        for (int i = 0; i < chunks.size() && results.size() < topK; i++) {
+            KbChunk chunk = chunks.get(i);
+            // 跳过已删除文件的 chunk
+            if (chunk.getFileId() != null && isFileDeleted(kbId, chunk.getFileId())) {
+                continue;
+            }
+            results.add(buildResultItem(chunk, 1.0, 0.0, "mysql", null));
         }
+        log.info("[Fallback] kbId={}, query={}, hits={} (filtered from {})", kbId, query, results.size(), chunks.size());
         return results;
     }
 

@@ -7,10 +7,21 @@ public class ModelController {
     private final ModelService svc;
     @GetMapping public ApiResponse<?> list(@RequestParam(required=false) String keyword,@RequestParam(required=false) String purpose) { return ApiResponse.success(svc.list(keyword,purpose)); }
     @GetMapping("/{id}") public ApiResponse<?> get(@PathVariable String id) { return ApiResponse.success(svc.get(id)); }
+    // ===== 模型测试 =====
     @PostMapping("/{id}/test-chat") public ApiResponse<?> testChat(@PathVariable String id, @RequestBody Map<String,Object> body) {
         String prompt = (String) body.getOrDefault("prompt", "你好，请简单介绍一下你自己");
         return ApiResponse.success(svc.testChat(id, prompt));
     }
+    @PostMapping("/{id}/test-embedding") public ApiResponse<?> testEmbedding(@PathVariable String id, @RequestBody Map<String,Object> body) {
+        String text = (String) body.getOrDefault("text", "你好世界");
+        return ApiResponse.success(svc.testEmbedding(id, text));
+    }
+    @PostMapping("/{id}/test-rerank") public ApiResponse<?> testRerank(@PathVariable String id, @RequestBody Map<String,Object> body) {
+        String query = (String) body.getOrDefault("query", "测试查询");
+        @SuppressWarnings("unchecked") List<String> docs = (List<String>) body.getOrDefault("documents", List.of("文档1", "文档2", "文档3"));
+        return ApiResponse.success(svc.testRerank(id, query, docs));
+    }
+    // ===== 模型 CRUD =====
     @PostMapping public ApiResponse<?> create(@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.create(f)); }
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.update(id,f)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }

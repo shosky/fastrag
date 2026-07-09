@@ -10,13 +10,21 @@ export interface GraphNode {
   name: string
   /** 实体类型/标签，例如「服务」「客户类型」 */
   label: string
+  /** 实体类型（后端字段 entity_type） */
+  entity_type?: string
+  /** 节点类型 */
   type: 'entity' | 'chunk'
   /** kb 标识 */
   kbId?: string
+  /** 实体描述（可选） */
+  description?: string
+  /** 标准化名称（用于去重匹配） */
+  normalizedName?: string
 }
 
 /** 图谱关系（source/target 用实体名称，与 GraphRelation 对齐） */
 export interface GraphEdge {
+  id?: string
   source: string
   target: string
   label: string
@@ -29,12 +37,15 @@ export interface EntityType {
   color: string
 }
 
-/** 图谱视图节点 = 数据节点 + 渲染属性 */
+/** 图谱视图节点 = 数据节点 + 渲染属性（G6 兼容） */
 export interface GraphViewNode extends GraphNode {
-  /** SVG 内部坐标，由确定性布局算法计算 */
-  x: number
-  y: number
+  /** x 坐标（由力导向布局计算） */
+  x?: number
+  /** y 坐标（由力导向布局计算） */
+  y?: number
+  /** 节点颜色（由类型决定） */
   color: string
+  /** 节点大小 */
   size: number
 }
 
@@ -49,6 +60,27 @@ export interface GraphStats {
   entityCount: number
   relationCount: number
   entityTypes: EntityType[]
+  chunkCount?: number
+}
+
+/** 图谱构建状态（对应后端 /graph/index/build-status 返回） */
+export interface GraphBuildStatus {
+  status: 'idle' | 'building' | 'completed' | 'failed'
+  progress: number
+  entityCount: number
+  relationCount: number
+  totalChunks: number
+  builtChunks: number
+  failedChunks: number
+  buildError: string | null
+  lastBuiltAt: string | null
+}
+
+/** PPR 排序结果项 */
+export interface PprRankItem {
+  chunkId: string
+  score: number
+  entityCount: number
 }
 
 // ===========================================================================

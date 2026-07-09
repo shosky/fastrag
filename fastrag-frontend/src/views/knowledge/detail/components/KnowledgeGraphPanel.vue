@@ -1,11 +1,14 @@
 <script setup lang="ts">
-import { Search, Refresh, Setting, Document } from '@element-plus/icons-vue'
-import { useKnowledgeGraph } from '@/composables/useKnowledgeGraph'
-import type { GraphNode, GraphViewNode } from '@/types/evaluation'
+import { Search, Refresh, Setting, Document, Loading } from '@element-plus/icons-vue'
+import { useForceGraph } from '@/composables/useForceGraph'
+import type { GraphNode, GraphBuildStatus } from '@/types/evaluation'
+import { ElMessage } from 'element-plus'
+import { retryGraphBuild } from '@/api'
 
 // --- Props & Emits ---
 const props = defineProps<{
   kbId?: string
+  buildStatus: GraphBuildStatus
 }>()
 
 const emit = defineEmits<{
@@ -14,20 +17,56 @@ const emit = defineEmits<{
   (e: 'open-index'): void
 }>()
 
+// --- G6 container ref ---
+const graphContainer = ref<HTMLDivElement>()
+
+// --- Reactive kbId ---
+const kbIdRef = computed(() => props.kbId || 'default')
+
 // --- Data via composable ---
 const {
   nodes,
   edges,
-  viewNodes,
+  stats,
+  loading,
+  selectedNode,
   entityCount,
   relationCount,
+  visibleEntityCount,
+  visibleRelationCount,
+  isSearchActive,
   entityTypes,
+  initGraph,
   load,
   selectNode,
   clearSelection,
-  updateNodePosition,
   searchNodes,
-} = useKnowledgeGraph(props.kbId || 'default')
+  searchAndRender,
+  destroyGraph,
+} = useForceGraph(graphContainer, kbIdRef, (node) => {
+  selectNode(node)
+  emit('select-node', node)
+})
+
+// 构建状态从 props 获取
+const isBuilding = computed(() => props.buildStatus.status === 'building')
+
+// 标准化 entityTypes：兼容后端返回 string[] 和 EntityType[]
+const normalizedEntityTypes = computed(() => {
+  const raw = entityTypes.value
+  if (!raw || raw.length === 0) return []
+  // 如果是字符串数组（后端返回的 entity_type 列表）
+  if (typeof raw[0] === 'string') {
+    const colors = ['#409EFF','#67C23A','#E6A23C','#F56C6C','#909399','#B37FEB','#36CFC9','#F2A8B8']
+    return (raw as unknown as string[]).map((name, i) => ({
+      name,
+      count: 0,
+      color: colors[i % colors.length],
+    }))
+  }
+  // 已经是 EntityType[] 格式
+  return raw as { name: string; count: number; color: string }[]
+})
 
 // --- Search ---
 const searchQuery = ref('')
@@ -38,10 +77,23 @@ function handleSearch() {
   if (!searchQuery.value.trim()) {
     searchResults.value = []
     showSearchResults.value = false
+    load()
     return
   }
+  // 先本地搜索显示下拉
   searchResults.value = searchNodes(searchQuery.value)
   showSearchResults.value = true
+}
+
+function handleSearchSelect(node: GraphNode) {
+  selectNode(node)
+  emit('select-node', node)
+  showSearchResults.value = false
+}
+
+function handleRemoteSearch() {
+  searchAndRender(searchQuery.value)
+  showSearchResults.value = false
 }
 
 function handleRefresh() {
@@ -62,69 +114,7 @@ function handleClearSelection() {
   emit('select-node', null)
 }
 
-// --- Computed viewBox for centering ---
-const viewBox = computed(() => {
-  const vns = viewNodes.value
-  if (vns.length === 0) return '0 0 900 600'
-
-  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity
-  vns.forEach((n) => {
-    minX = Math.min(minX, n.x - n.size - 20)
-    maxX = Math.max(maxX, n.x + n.size + 20)
-    minY = Math.min(minY, n.y - n.size - 20)
-    maxY = Math.max(maxY, n.y + n.size + 20)
-  })
-
-  const padding = 80
-  const width = maxX - minX + padding * 2
-  const height = maxY - minY + padding * 2
-  return `${minX - padding} ${minY - padding} ${width} ${height}`
-})
-
-// --- SVG ref + coordinate conversion ---
-// 关键修复：用 getScreenCTM().inverse() 把屏幕像素坐标精确转换为 SVG 内部坐标，
-// 解决之前裸用 clientX - rect.left 在 viewBox 缩放下坐标错乱、节点乱飞的问题。
-const svgRef = ref<SVGSVGElement>()
-
-/** 屏幕坐标 -> SVG 用户坐标 */
-function clientToSvg(clientX: number, clientY: number): { x: number; y: number } {
-  const svg = svgRef.value
-  if (!svg) return { x: 0, y: 0 }
-  const pt = svg.createSVGPoint()
-  pt.x = clientX
-  pt.y = clientY
-  const ctm = svg.getScreenCTM()
-  if (!ctm) return { x: 0, y: 0 }
-  const transformed = pt.matrixTransform(ctm.inverse())
-  return { x: transformed.x, y: transformed.y }
-}
-
-// --- Dragging state ---
-const dragNode = ref<GraphViewNode | null>(null)
-const dragOffset = ref({ x: 0, y: 0 })
-
-function handleNodeMouseDown(e: MouseEvent, node: GraphViewNode) {
-  e.stopPropagation()
-  dragNode.value = node
-  const svgCoord = clientToSvg(e.clientX, e.clientY)
-  dragOffset.value = {
-    x: svgCoord.x - node.x,
-    y: svgCoord.y - node.y,
-  }
-  handleNodeSelect(node)
-}
-
-function handleMouseMove(e: MouseEvent) {
-  if (!dragNode.value) return
-  const { x, y } = clientToSvg(e.clientX, e.clientY)
-  updateNodePosition(dragNode.value.id, x - dragOffset.value.x, y - dragOffset.value.y)
-}
-
-function handleMouseUp() {
-  dragNode.value = null
-}
-
-// 节点详情弹窗（实体类型分布）
+// --- 节点详情弹窗 ---
 const showEntityTypePopup = ref(false)
 
 function handleEntityTypeClick() {
@@ -135,23 +125,98 @@ function closeEntityTypePopup() {
   showEntityTypePopup.value = false
 }
 
-// viewNodes 用于模板渲染
-const viewNodesById = computed(() => {
-  const map = new Map<string, GraphViewNode>()
-  viewNodes.value.forEach((n) => map.set(n.id, n))
-  return map
-})
+// --- 构建状态条 ---
+const showBuildBanner = ref(false)
+const bannerDismissTimer = ref<number | null>(null)
+
+watch(() => props.buildStatus.status, (newStatus) => {
+  if (newStatus === 'building') {
+    showBuildBanner.value = true
+  } else if (newStatus === 'completed' || newStatus === 'failed') {
+    // 完成后 8 秒自动隐藏
+    if (bannerDismissTimer.value) clearTimeout(bannerDismissTimer.value)
+    bannerDismissTimer.value = window.setTimeout(() => {
+      showBuildBanner.value = false
+    }, 8000)
+  }
+}, { immediate: true })
+
+async function handleBannerRetry() {
+  if (!props.kbId) return
+  try {
+    await retryGraphBuild(props.kbId)
+    ElMessage.success('已重试图谱构建')
+  } catch (e: any) {
+    ElMessage.error('重试失败: ' + (e.message || e))
+  }
+}
 
 // --- Lifecycle ---
 onMounted(() => {
-  load()
+  nextTick(() => {
+    initGraph()
+    load()
+  })
+})
+
+onBeforeUnmount(() => {
+  if (bannerDismissTimer.value) clearTimeout(bannerDismissTimer.value)
+  destroyGraph()
 })
 </script>
 
 <template>
   <div class="knowledge-graph">
     <!-- Graph visualization area -->
-    <div class="knowledge-graph__canvas" v-loading="false">
+    <div class="knowledge-graph__canvas" v-loading="loading">
+      <!-- Build status banner -->
+      <Transition name="banner-slide">
+        <div
+          v-if="showBuildBanner && (isBuilding || buildStatus.status === 'completed' || buildStatus.status === 'failed')"
+          class="knowledge-graph__build-banner"
+          :class="{
+            'knowledge-graph__build-banner--building': isBuilding,
+            'knowledge-graph__build-banner--completed': buildStatus.status === 'completed',
+            'knowledge-graph__build-banner--failed': buildStatus.status === 'failed',
+          }"
+        >
+          <template v-if="isBuilding">
+            <el-icon class="is-loading"><Loading /></el-icon>
+            <span class="knowledge-graph__banner-text">知识图谱构建中</span>
+            <el-progress
+              :percentage="buildStatus.progress"
+              :stroke-width="6"
+              :show-text="false"
+              class="knowledge-graph__banner-progress"
+            />
+            <span class="knowledge-graph__banner-stats">
+              {{ buildStatus.entityCount }} 实体 · {{ buildStatus.relationCount }} 关系
+              · {{ buildStatus.builtChunks }}/{{ buildStatus.totalChunks }} chunks
+            </span>
+          </template>
+          <template v-else-if="buildStatus.status === 'completed'">
+            <span style="font-size:16px;">✅</span>
+            <span class="knowledge-graph__banner-text">图谱构建完成</span>
+            <span class="knowledge-graph__banner-stats">
+              {{ buildStatus.entityCount }} 实体 · {{ buildStatus.relationCount }} 关系
+            </span>
+          </template>
+          <template v-else-if="buildStatus.status === 'failed'">
+            <span style="font-size:16px;">❌</span>
+            <span class="knowledge-graph__banner-text">图谱构建失败</span>
+            <span v-if="buildStatus.buildError" class="knowledge-graph__banner-error">
+              {{ buildStatus.buildError }}
+            </span>
+            <el-button size="small" type="warning" plain @click="handleBannerRetry">
+              重试
+            </el-button>
+          </template>
+        </div>
+      </Transition>
+
+      <!-- G6 渲染容器 -->
+      <div ref="graphContainer" class="knowledge-graph__g6-container" />
+
       <!-- Floating search bar -->
       <div class="knowledge-graph__search-float">
         <el-input
@@ -159,31 +224,14 @@ onMounted(() => {
           placeholder="搜索实体"
           clearable
           @input="handleSearch"
-          @keyup.enter="handleSearch"
+          @keyup.enter="handleRemoteSearch"
         >
           <template #prefix>
             <el-icon><Search /></el-icon>
           </template>
         </el-input>
-        <el-button :icon="Search" circle size="small" @click="handleSearch" />
+        <el-button :icon="Search" circle size="small" @click="handleRemoteSearch" />
         <el-button :icon="Refresh" circle size="small" @click="handleRefresh" />
-
-        <!-- Search results dropdown -->
-        <div v-if="showSearchResults && searchResults.length > 0" class="knowledge-graph__search-results">
-          <div
-            v-for="node in searchResults"
-            :key="node.id"
-            class="knowledge-graph__search-item"
-            @click="handleNodeSelect(node)"
-          >
-            <span
-              class="knowledge-graph__search-dot"
-              :style="{ backgroundColor: viewNodesById.get(node.id)?.color || '#1E88E5' }"
-            />
-            <span>{{ node.name }}</span>
-            <el-tag size="small" type="info">{{ node.label }}</el-tag>
-          </div>
-        </div>
       </div>
 
       <!-- Floating action buttons (top right) -->
@@ -200,66 +248,21 @@ onMounted(() => {
         </el-tooltip>
       </div>
 
-      <!-- SVG Graph -->
-      <svg
-        ref="svgRef"
-        class="knowledge-graph__svg"
-        :viewBox="viewBox"
-        preserveAspectRatio="xMidYMid meet"
-        @mousemove="handleMouseMove"
-        @mouseup="handleMouseUp"
-        @mouseleave="handleMouseUp"
-        @click="handleClearSelection"
-      >
-        <!-- Edges -->
-        <g class="knowledge-graph__edges">
-          <line
-            v-for="(edge, idx) in edges"
-            :key="idx"
-            :x1="viewNodesById.get(nodes.find((n) => n.name === edge.source)?.id || '')?.x || 0"
-            :y1="viewNodesById.get(nodes.find((n) => n.name === edge.source)?.id || '')?.y || 0"
-            :x2="viewNodesById.get(nodes.find((n) => n.name === edge.target)?.id || '')?.x || 0"
-            :y2="viewNodesById.get(nodes.find((n) => n.name === edge.target)?.id || '')?.y || 0"
-            class="knowledge-graph__edge"
-          />
-        </g>
-
-        <!-- Nodes -->
-        <g class="knowledge-graph__nodes">
-          <g
-            v-for="node in viewNodes"
-            :key="node.id"
-            :transform="`translate(${node.x}, ${node.y})`"
-            class="knowledge-graph__node"
-            :class="{ 'knowledge-graph__node--selected': false }"
-            @mousedown="handleNodeMouseDown($event, node)"
-            @click.stop="handleNodeSelect(node)"
-          >
-            <circle
-              :r="node.size"
-              :fill="node.color"
-              stroke="#fff"
-              :stroke-width="0"
-              class="knowledge-graph__node-circle"
-            />
-            <text
-              :dy="node.size + 14"
-              text-anchor="middle"
-              class="knowledge-graph__node-label"
-            >
-              {{ node.name }}
-            </text>
-          </g>
-        </g>
-      </svg>
-
       <!-- Stats bar (bottom left) -->
       <div class="knowledge-graph__stats-float">
         <span class="knowledge-graph__stat-item" @click="handleEntityTypeClick">
           实体 <strong>{{ entityCount }}</strong>
+          <template v-if="isSearchActive">
+            <span class="knowledge-graph__stat-sep">/</span>
+            <span class="knowledge-graph__stat-visible">{{ visibleEntityCount }}</span>
+          </template>
         </span>
         <span class="knowledge-graph__stat-item">
           关系 <strong>{{ relationCount }}</strong>
+          <template v-if="isSearchActive">
+            <span class="knowledge-graph__stat-sep">/</span>
+            <span class="knowledge-graph__stat-visible">{{ visibleRelationCount }}</span>
+          </template>
         </span>
       </div>
 
@@ -272,8 +275,8 @@ onMounted(() => {
           </div>
           <div class="knowledge-graph__entity-popup-body">
             <div
-              v-for="type in entityTypes"
-              :key="type.name"
+              v-for="(type, idx) in normalizedEntityTypes"
+              :key="idx"
               class="knowledge-graph__entity-type-item"
             >
               <span class="knowledge-graph__entity-dot" :style="{ backgroundColor: type.color }" />
@@ -305,6 +308,11 @@ onMounted(() => {
     overflow: hidden;
   }
 
+  &__g6-container {
+    width: 100%;
+    height: 100%;
+  }
+
   &__search-float {
     position: absolute;
     top: $spacing-base;
@@ -319,43 +327,6 @@ onMounted(() => {
     }
   }
 
-  &__search-results {
-    position: absolute;
-    top: 40px;
-    left: 0;
-    right: 0;
-    min-width: 280px;
-    background: $bg-white;
-    border: 1px solid $border-base;
-    border-radius: $radius-base;
-    box-shadow: $shadow-base;
-    max-height: 300px;
-    overflow-y: auto;
-    z-index: 200;
-  }
-
-  &__search-item {
-    display: flex;
-    align-items: center;
-    gap: $spacing-sm;
-    padding: $spacing-sm $spacing-base;
-    cursor: pointer;
-    font-size: 14px;
-    color: $text-primary;
-    transition: background-color 0.2s;
-
-    &:hover {
-      background: $bg-hover;
-    }
-  }
-
-  &__search-dot {
-    width: 10px;
-    height: 10px;
-    border-radius: 50%;
-    flex-shrink: 0;
-  }
-
   &__actions-float {
     position: absolute;
     top: $spacing-base;
@@ -363,51 +334,6 @@ onMounted(() => {
     z-index: 100;
     display: flex;
     gap: $spacing-xs;
-  }
-
-  &__svg {
-    width: 100%;
-    height: 100%;
-    cursor: grab;
-    display: block;
-
-    &:active {
-      cursor: grabbing;
-    }
-  }
-
-  &__edge {
-    stroke: $border-base;
-    stroke-width: 1.5;
-    stroke-dasharray: 4 2;
-  }
-
-  &__node {
-    cursor: pointer;
-
-    &:hover {
-      .knowledge-graph__node-circle {
-        filter: brightness(1.1);
-      }
-    }
-  }
-
-  &__node--selected {
-    .knowledge-graph__node-circle {
-      filter: brightness(1.2);
-    }
-  }
-
-  &__node-circle {
-    transition: filter 0.2s;
-    filter: drop-shadow(0 2px 4px rgba(0, 0, 0, 0.15));
-  }
-
-  &__node-label {
-    font-size: 12px;
-    fill: $text-regular;
-    pointer-events: none;
-    user-select: none;
   }
 
   &__stats-float {
@@ -503,6 +429,89 @@ onMounted(() => {
     color: $text-secondary;
     font-size: 13px;
   }
+
+  &__stat-sep {
+    color: $text-secondary;
+    margin: 0 2px;
+    font-size: 12px;
+  }
+
+  &__stat-visible {
+    color: $color-primary;
+    font-size: 12px;
+    font-weight: 400;
+  }
+
+  // --- Build banner ---
+  &__build-banner {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    z-index: 150;
+    display: flex;
+    align-items: center;
+    gap: $spacing-sm;
+    padding: $spacing-sm $spacing-base;
+    font-size: 13px;
+    color: #fff;
+
+    &--building {
+      background: linear-gradient(90deg, #409EFF, #67C23A);
+    }
+
+    &--completed {
+      background: $color-success;
+    }
+
+    &--failed {
+      background: $color-danger;
+    }
+  }
+
+  &__banner-text {
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  &__banner-progress {
+    flex: 1;
+    max-width: 200px;
+
+    :deep(.el-progress-bar__outer) {
+      background-color: rgba(255, 255, 255, 0.3);
+    }
+
+    :deep(.el-progress-bar__inner) {
+      background-color: #fff;
+    }
+  }
+
+  &__banner-stats {
+    opacity: 0.9;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+
+  &__banner-error {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    opacity: 0.9;
+    font-size: 12px;
+  }
+}
+
+.banner-slide-enter-active,
+.banner-slide-leave-active {
+  transition: all 0.3s ease;
+}
+
+.banner-slide-enter-from,
+.banner-slide-leave-to {
+  transform: translateY(-100%);
+  opacity: 0;
 }
 
 .popup-fade-enter-active,

@@ -2,6 +2,8 @@ package com.fastrag.module.graph.service.impl;
 
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.LogCategory;
 import com.fastrag.module.graph.entity.KbBenchmark;
 import com.fastrag.module.graph.entity.KbBenchmarkQuestion;
 import com.fastrag.module.graph.mapper.KbBenchmarkMapper;
@@ -9,8 +11,10 @@ import com.fastrag.module.graph.mapper.KbBenchmarkQuestionMapper;
 import com.fastrag.module.graph.model.BenchmarkConfig;
 import com.fastrag.module.graph.model.BenchmarkCreateForm;
 import com.fastrag.module.graph.service.BenchmarkService;
+import com.fastrag.module.publish.service.LogService;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.support.TransactionTemplate;
 
@@ -30,15 +34,17 @@ import java.util.List;
  * <p>LLM 自动生成使用 {@link BenchmarkGenerationHelper} 异步执行，
  * 确保基准记录创建后立即返回，不会因 LLM 调用阻塞。
  */
-@Slf4j
 @Service
 @RequiredArgsConstructor
 public class BenchmarkServiceImpl implements BenchmarkService {
+
+    private static final Logger log = LoggerFactory.getLogger(BenchmarkServiceImpl.class);
 
     private final KbBenchmarkMapper mapper;
     private final KbBenchmarkQuestionMapper questionMapper;
     private final TransactionTemplate transactionTemplate;
     private final BenchmarkGenerationHelper generationHelper;
+    private final LogService logService;
 
     @Override
     public List<KbBenchmark> list(String kbId) {
@@ -71,6 +77,13 @@ public class BenchmarkServiceImpl implements BenchmarkService {
         b.setHasGoldChunks(0);
         b.setHasGoldAnswer(0);
         mapper.insert(b);
+        // 记录基准创建日志
+        try {
+            logService.addLog(kbId, LogCategory.operation, ActionType.benchmark_created,
+                    b.getId(), "创建基准测试: " + b.getName(), "system", "success", null);
+        } catch (Exception e) {
+            log.warn("[Log] Failed to record benchmark create log for kb={}", kbId);
+        }
         return b;
     }
 
@@ -90,6 +103,15 @@ public class BenchmarkServiceImpl implements BenchmarkService {
         b.setHasGoldChunks(1);
         b.setHasGoldAnswer(1);
         mapper.insert(b);
+
+        // 记录基准自动生成日志
+        try {
+            logService.addLog(kbId, LogCategory.operation, ActionType.benchmark_generated,
+                    b.getId(), "自动生成基准测试: " + b.getName() + ", 模式: " + buildMethod + ", 题数: " + questionCount,
+                    "system", "success", null);
+        } catch (Exception e) {
+            log.warn("[Log] Failed to record benchmark generate log for kb={}", kbId);
+        }
 
         // 异步生成问题：通过独立 Bean 确保 @Async 通过代理生效
         generationHelper.generateQuestions(b.getId(), kbId, questionCount, buildMethod, config);
@@ -111,6 +133,15 @@ public class BenchmarkServiceImpl implements BenchmarkService {
      */
     public void importFromJsonl(String benchmarkId, String jsonlContent) {
         if (jsonlContent == null || jsonlContent.isBlank()) return;
+
+        // 获取 kbId 用于日志记录
+        String kbId = null;
+        try {
+            KbBenchmark benchmark = mapper.selectById(benchmarkId);
+            if (benchmark != null) kbId = benchmark.getKbId();
+        } catch (Exception e) {
+            // ignore
+        }
 
         String[] lines = jsonlContent.split("\\n");
         List<KbBenchmarkQuestion> entities = new ArrayList<>();
@@ -159,6 +190,16 @@ public class BenchmarkServiceImpl implements BenchmarkService {
         }
 
         log.info("[Benchmark] Imported {} questions from JSONL for benchmark: {}", entities.size(), benchmarkId);
+
+        // 记录 JSONL 导入日志
+        if (!entities.isEmpty() && kbId != null) {
+            try {
+                logService.addLog(kbId, LogCategory.operation, ActionType.benchmark_imported,
+                        benchmarkId, "导入 " + entities.size() + " 道题（JSONL）", "system", "success", null);
+            } catch (Exception e) {
+                log.warn("[Log] Failed to record benchmark import log for benchmark={}", benchmarkId);
+            }
+        }
     }
 
     @Override
@@ -166,5 +207,12 @@ public class BenchmarkServiceImpl implements BenchmarkService {
         questionMapper.delete(new LambdaQueryWrapper<KbBenchmarkQuestion>()
                 .eq(KbBenchmarkQuestion::getBenchmarkId, id));
         mapper.deleteById(id);
+        // 记录基准删除日志
+        try {
+            logService.addLog(kbId, LogCategory.operation, ActionType.benchmark_deleted,
+                    id, "删除基准测试", "system", "success", null);
+        } catch (Exception e) {
+            log.warn("[Log] Failed to record benchmark delete log for kb={}", kbId);
+        }
     }
 }

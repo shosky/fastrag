@@ -22,7 +22,7 @@ public class LlmService {
     @Value("${ai.gateway.url:http://localhost:11434}")
     private String defaultGatewayUrl;
 
-    @Value("${ai.gateway.timeout:120}")
+    @Value("${ai.gateway.timeout:30}")
     private int gatewayTimeoutSeconds;
 
     public String chat(String model, List<ChatMessage> messages, double temperature) {
@@ -45,6 +45,8 @@ public class LlmService {
         req.setStream(stream);
         if (enableThinking != null && enableThinking) {
             req.setEnableThinking(true);
+        }else{
+            req.setEnableThinking(false);
         }
 
         WebClient webClient = aiWebClient;
@@ -69,11 +71,14 @@ public class LlmService {
             String fullResponse;
             if (stream) {
                 // 流式：bodyToFlux 已自动解码 SSE，每个 chunk 是已去前缀的 JSON 字符串
+                // 总超时 = 首包超时 60s + 流式总时长上限 120s
+                int perItemTimeout = gatewayTimeoutSeconds;
+                int totalTimeout = gatewayTimeoutSeconds * 2;
                 java.util.List<String> chunks = requestSpec.bodyValue(req)
                         .retrieve().bodyToFlux(String.class)
-                        .timeout(Duration.ofSeconds(gatewayTimeoutSeconds))
+                        .timeout(Duration.ofSeconds(perItemTimeout))
                         .collectList()
-                        .block();
+                        .block(Duration.ofSeconds(totalTimeout));
                 if (chunks == null) return "模型返回空响应";
                 log.info("[LLM] stream chunks received: {}, first chunk: {}",
                         chunks.size(), chunks.stream().findFirst().orElse("").substring(0, Math.min(100, chunks.get(0).length())));

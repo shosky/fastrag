@@ -1,5 +1,8 @@
 package com.fastrag.module.knowledge.controller;
 
+import com.fastrag.common.annotation.Loggable;
+import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.LogCategory;
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -45,9 +48,21 @@ public class FileController {
 
     @PostMapping
     public ApiResponse<?> upload(@PathVariable String kbId, @RequestParam("file") MultipartFile file) {
-        return ApiResponse.success(svc.upload(kbId, file));
+        FileDto result = svc.upload(kbId, file);
+        // 记录文件上传日志（文件名在 Service 层生成，此处补充记录）
+        try {
+            String username = SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getUsername() : "system";
+            String fileName = result != null ? result.getName() : file.getOriginalFilename();
+            logService.addUpdateLog(kbId, "file_added", fileName, "上传文件: " + fileName, username);
+            logService.addLog(kbId, LogCategory.operation, ActionType.file_uploaded,
+                    fileName, "上传文件: " + fileName, username, "success", null);
+        } catch (Exception e) {
+            log.error("Failed to log file upload", e);
+        }
+        return ApiResponse.success(result);
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.file_processed, detail = "处理文件")
     @PostMapping("/{id}/process")
     public ApiResponse<?> process(@PathVariable String kbId, @PathVariable String id,
                                   @RequestBody(required = false) java.util.Map<String, Object> body) {
@@ -58,6 +73,7 @@ public class FileController {
         return ApiResponse.success();
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.file_retried, detail = "重新处理文件")
     @PostMapping("/{id}/retry")
     public ApiResponse<?> retry(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.retryFile(kbId, id));
@@ -65,13 +81,18 @@ public class FileController {
 
     @PutMapping("/{id}")
     public ApiResponse<?> update(@PathVariable String kbId, @PathVariable String id, @RequestBody Map<String, Object> p) {
+        // update 前先取原始文件信息，用于对比日志
+        KbFile before = fileMapper.selectById(id);
         FileDto result = svc.update(kbId, id, p);
-        // 记录文件更新日志
         try {
-            KbFile kf = fileMapper.selectById(id);
+            KbFile after = fileMapper.selectById(id);
+            String fileName = after != null ? after.getName() : (before != null ? before.getName() : id);
             String username = SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getUsername() : "system";
-            logService.addUpdateLog(kbId, "file_updated",
-                    kf != null ? kf.getName() : id, "更新文件信息", username);
+            // 根据 patch 内容区分具体操作
+            String detail = buildUpdateDetail(p, before, after);
+            logService.addUpdateLog(kbId, "file_updated", fileName, detail, username);
+            logService.addLog(kbId, LogCategory.operation, ActionType.file_updated,
+                    fileName, detail, username, "success", null);
         } catch (Exception e) {
             log.error("Failed to log file update", e);
         }
@@ -80,12 +101,13 @@ public class FileController {
 
     @DeleteMapping("/{id}")
     public ApiResponse<?> delete(@PathVariable String kbId, @PathVariable String id) {
-        // 先记录文件名，再删除
         try {
             KbFile kf = fileMapper.selectById(id);
             String username = SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getUsername() : "system";
-            logService.addUpdateLog(kbId, "file_removed",
-                    kf != null ? kf.getName() : id, "删除文件", username);
+            String fileName = kf != null ? kf.getName() : id;
+            logService.addUpdateLog(kbId, "file_removed", fileName, "删除文件", username);
+            logService.addLog(kbId, LogCategory.operation, ActionType.file_removed,
+                    fileName, "删除文件: " + fileName, username, "success", null);
         } catch (Exception e) {
             log.error("Failed to log file removal", e);
         }
@@ -93,24 +115,28 @@ public class FileController {
         return ApiResponse.success();
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.file_restored, detail = "恢复文件")
     @PostMapping("/{id}/restore")
     public ApiResponse<?> restore(@PathVariable String kbId, @PathVariable String id) {
         svc.restore(kbId, id);
         return ApiResponse.success();
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.file_permanent_deleted, detail = "永久删除文件")
     @DeleteMapping("/{id}/permanent")
     public ApiResponse<?> permDelete(@PathVariable String kbId, @PathVariable String id) {
         svc.permanentDelete(kbId, id);
         return ApiResponse.success();
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.file_permanent_deleted, detail = "清空回收站")
     @DeleteMapping("/recycle-bin")
     public ApiResponse<?> emptyBin(@PathVariable String kbId) {
         svc.emptyRecycleBin(kbId);
         return ApiResponse.success();
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.file_copied, detail = "复制文件")
     @PostMapping("/{id}/copy")
     public ApiResponse<?> copy(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.copy(kbId, id));
@@ -127,6 +153,7 @@ public class FileController {
         return ApiResponse.success(svc.previewChunks(kbId, id, strategyId));
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.file_downloaded, detail = "下载文件")
     @GetMapping("/{id}/download")
     public ResponseEntity<InputStreamResource> download(@PathVariable String kbId, @PathVariable String id) {
         KbFile file = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
@@ -208,5 +235,23 @@ public class FileController {
             log.warn("Page image not found: {} / {}", id, imageKey);
             return ResponseEntity.notFound().build();
         }
+    }
+
+    /**
+     * 根据 patch 内容和前后文件状态，生成差异化的日志 detail
+     */
+    private String buildUpdateDetail(Map<String, Object> patch, KbFile before, KbFile after) {
+        java.util.ArrayList<String> parts = new java.util.ArrayList<>();
+        if (patch.containsKey("name") && before != null && after != null) {
+            parts.add("重命名: " + before.getName() + " → " + after.getName());
+        }
+        if (patch.containsKey("folderId")) {
+            String newFolderId = after != null && after.getFolderId() != null ? after.getFolderId() : "根目录";
+            parts.add("移动到文件夹: " + newFolderId);
+        }
+        if (patch.containsKey("enableGraphBuild")) {
+            parts.add("图谱构建开关已变更");
+        }
+        return parts.isEmpty() ? "更新文件信息" : String.join("，", parts);
     }
 }

@@ -8,6 +8,8 @@ import org.springframework.core.annotation.Order;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 
+import java.sql.SQLException;
+
 @Component
 public class SchemaInitializer {
 
@@ -201,11 +203,12 @@ public class SchemaInitializer {
             jdbc.execute("CREATE FULLTEXT INDEX idx_content_fulltext ON kb_chunk(content) WITH PARSER ngram");
             log.info("FULLTEXT index idx_content_fulltext created on kb_chunk.content");
         } catch (Exception e) {
-            String msg = e.getMessage();
-            if (msg != null && (msg.contains("1061") || msg.contains("already exists"))) {
-                log.info("FULLTEXT index idx_content_fulltext already exists");
+            int errorCode = getRootSqlErrorCode(e);
+            if (errorCode == 1061 || errorCode == 1146) {
+                // 1061 = duplicate index; 1146 = table doesn't exist yet (deferred by migration)
+                log.info("FULLTEXT index idx_content_fulltext: {}", errorCode == 1061 ? "already exists" : "table kb_chunk not ready, will be created by migration");
             } else {
-                log.warn("FULLTEXT index creation failed: {}", msg);
+                log.warn("FULLTEXT index creation failed: {}", e.getMessage());
             }
         }
 
@@ -246,6 +249,9 @@ public class SchemaInitializer {
             log.error("Failed to create email_verification: {}", e.getMessage());
         }
 
+        // kb_graph_index 表新增字段
+        addColumnIfNotExists("kb_graph_index", "failed_chunks", "INT DEFAULT 0 COMMENT '构建失败的切片数'");
+
         log.info("Schema initialization completed.");
     }
 
@@ -255,11 +261,27 @@ public class SchemaInitializer {
             log.info("Added column {}.{}", table, column);
         } catch (Exception e) {
             // Column already exists - MySQL error code 1060
-            if (e.getMessage() != null && e.getMessage().contains("1060")) {
+            if (getRootSqlErrorCode(e) == 1060) {
                 log.info("Column {}.{} already exists", table, column);
             } else {
                 log.warn("Failed to add column {}.{}: {}", table, column, e.getMessage());
             }
         }
+    }
+
+    /**
+     * 提取根因的 MySQL 错误码，避免字符串匹配脆弱性。
+     * 例如 Connector/J 8.x 抛出 "Duplicate column name 'xxx'" 时，
+     * 错误码 1060 不在 message 中，必须通过 SQLException#getErrorCode 获取。
+     */
+    private static int getRootSqlErrorCode(Throwable e) {
+        Throwable t = e;
+        while (t.getCause() != null && t.getCause() != t) {
+            t = t.getCause();
+        }
+        if (t instanceof SQLException sqlEx) {
+            return sqlEx.getErrorCode();
+        }
+        return -1;
     }
 }

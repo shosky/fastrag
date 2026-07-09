@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from 'vue-router'
 import { onBeforeUnmount, watch } from 'vue'
-import { ArrowLeft, Download, Search, Edit, Grid, ArrowDown, ArrowUp, Delete, Upload, Setting, VideoPlay, VideoPause } from '@element-plus/icons-vue'
+import { ArrowLeft, Download, Search, Edit, Grid, ArrowDown, ArrowUp, Delete, Upload, Setting, VideoPlay, VideoPause, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 
@@ -94,6 +94,18 @@ const searchMode = ref<'id' | 'content'>('id')
 const editDialogVisible = ref(false)
 const editingChunk = ref<Chunk | null>(null)
 const editingContent = ref('')
+const editSaving = ref(false)
+
+// --- Create state ---
+const createDialogVisible = ref(false)
+const createSaving = ref(false)
+const newChunkContent = ref('')
+const newChunkInsertMode = ref<'append' | 'after'>('append')
+const newChunkInsertIndex = ref<number>(0)
+const newChunkType = ref<'text' | 'image'>('text')
+const newChunkPageNumber = ref<number>(0)
+const newChunkStartTime = ref<number>(0)
+const newChunkEndTime = ref<number>(0)
 
 // --- UI state ---
 const metadataCollapsed = ref(false)
@@ -421,14 +433,67 @@ watch(() => chunks.value, (list) => {
   }
 }, { immediate: true })
 
-function saveEdit() {
+async function saveEdit() {
   if (!editingChunk.value) return
-  editingChunk.value.content = editingContent.value
-  editingChunk.value.metadata.updatedAt = new Date().toLocaleString('zh-CN')
-  editDialogVisible.value = false
-  editingChunk.value = null
-  editingContent.value = ''
-  ElMessage.success('分片内容已更新')
+  if (!editingContent.value.trim()) { ElMessage.warning('分片内容不能为空'); return }
+  editSaving.value = true
+  try {
+    await api.updateChunk(kbId, editingChunk.value.id, { content: editingContent.value })
+    editDialogVisible.value = false
+    editingChunk.value = null
+    editingContent.value = ''
+    ElMessage.success('分片内容已更新')
+    loadChunks()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '更新失败')
+  } finally {
+    editSaving.value = false
+  }
+}
+
+// --- Create chunk methods ---
+function openCreateDialog() {
+  newChunkContent.value = ''
+  newChunkInsertMode.value = 'append'
+  newChunkInsertIndex.value = 0
+  newChunkType.value = 'text'
+  newChunkPageNumber.value = 0
+  newChunkStartTime.value = 0
+  newChunkEndTime.value = 0
+  createDialogVisible.value = true
+}
+
+async function handleCreateChunk() {
+  if (!newChunkContent.value.trim()) { ElMessage.warning('分片内容不能为空'); return }
+  createSaving.value = true
+  try {
+    const data: any = {
+      fileId,
+      content: newChunkContent.value,
+      chunkType: newChunkType.value,
+    }
+    if (newChunkInsertMode.value === 'after') {
+      data.insertAfterIndex = newChunkInsertIndex.value
+    }
+    if (fileInfo.value.category === 'document') {
+      if (newChunkType.value === 'image' && newChunkPageNumber.value > 0) {
+        data.pageNumber = newChunkPageNumber.value
+      }
+    }
+    if (fileInfo.value.category === 'audio' || fileInfo.value.category === 'video') {
+      if (newChunkStartTime.value > 0) data.startTime = newChunkStartTime.value
+      if (newChunkEndTime.value > 0) data.endTime = newChunkEndTime.value
+    }
+    await api.createChunk(kbId, data)
+    createDialogVisible.value = false
+    ElMessage.success('分片创建成功')
+    currentPage.value = 1
+    loadChunks()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '创建失败')
+  } finally {
+    createSaving.value = false
+  }
 }
 
 function handleDownload() {
@@ -535,17 +600,21 @@ const mediaCurrentChunk = computed(() => {
 async function deleteMediaChunk(chunkId: string) {
   try {
     await ElMessageBox.confirm(
-      '确定要删除这个切片吗？',
+      '确定要删除这个切片吗？删除后将同时移除其向量数据。',
       '删除确认',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
+    await api.deleteChunk(kbId, chunkId)
     chunks.value = chunks.value.filter(c => c.id !== chunkId)
     if (mediaSelectedChunkId.value === chunkId) {
       mediaSelectedChunkId.value = null
     }
     ElMessage.success('删除成功')
-  } catch {
-    // User cancelled
+    loadChunks()
+  } catch (e: any) {
+    if (e !== 'cancel' && e?.message) {
+      ElMessage.error(e?.message || '删除失败')
+    }
   }
 }
 
@@ -578,16 +647,19 @@ async function batchDelete() {
   }
   try {
     await ElMessageBox.confirm(
-      `确定要删除选中的 ${selectedChunks.value.size} 个分片吗？`,
+      `确定要删除选中的 ${selectedChunks.value.size} 个分片吗？删除后将同时移除其向量数据。`,
       '批量删除',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
-    chunks.value = chunks.value.filter(c => !selectedChunks.value.has(c.id))
+    await api.batchDeleteChunks(kbId, [...selectedChunks.value])
     selectedChunks.value.clear()
     selectAll.value = false
     ElMessage.success('删除成功')
-  } catch {
-    // User cancelled
+    loadChunks()
+  } catch (e: any) {
+    if (e !== 'cancel' && e?.message) {
+      ElMessage.error(e?.message || '批量删除失败')
+    }
   }
 }
 
@@ -635,6 +707,7 @@ onBeforeUnmount(() => {
         </div>
       </div>
       <div class="chunks-page__header-right">
+        <el-button type="primary" :icon="Plus" @click="openCreateDialog">新增分片</el-button>
         <el-button :icon="Download" @click="handleDownload">下载分片</el-button>
       </div>
     </div>
@@ -1253,7 +1326,73 @@ onBeforeUnmount(() => {
       <template #footer>
         <div class="edit-dialog__footer">
           <el-button @click="cancelEdit">取消</el-button>
-          <el-button type="primary" @click="saveEdit">保存</el-button>
+          <el-button type="primary" :loading="editSaving" @click="saveEdit">保存</el-button>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- Create Chunk Dialog -->
+    <el-dialog
+      v-model="createDialogVisible"
+      title="新增分片"
+      width="70%"
+      style="max-width: 900px"
+      :close-on-click-modal="false"
+      destroy-on-close
+    >
+      <div class="create-dialog">
+        <el-form label-position="top">
+          <el-form-item label="分片内容" required>
+            <el-input
+              v-model="newChunkContent"
+              type="textarea"
+              :rows="10"
+              placeholder="请输入分片内容..."
+            />
+          </el-form-item>
+
+          <el-form-item label="插入位置">
+            <div class="create-dialog__insert-position">
+              <el-radio-group v-model="newChunkInsertMode">
+                <el-radio value="append">追加到末尾</el-radio>
+                <el-radio value="after">指定索引之后</el-radio>
+              </el-radio-group>
+              <el-input-number
+                v-if="newChunkInsertMode === 'after'"
+                v-model="newChunkInsertIndex"
+                :min="0"
+                :max="totalChunks"
+                placeholder="chunkIndex"
+                style="margin-left: 16px; width: 180px"
+              />
+            </div>
+          </el-form-item>
+
+          <el-form-item label="分片类型" v-if="fileInfo.category === 'document'">
+            <el-radio-group v-model="newChunkType">
+              <el-radio value="text">文本</el-radio>
+              <el-radio value="image">图片</el-radio>
+            </el-radio-group>
+          </el-form-item>
+
+          <el-form-item label="页码" v-if="fileInfo.category === 'document' && newChunkType === 'image'">
+            <el-input-number v-model="newChunkPageNumber" :min="1" placeholder="PDF 页码" style="width: 180px" />
+          </el-form-item>
+
+          <template v-if="fileInfo.category === 'audio' || fileInfo.category === 'video'">
+            <el-form-item label="开始时间（秒）">
+              <el-input-number v-model="newChunkStartTime" :min="0" :precision="1" placeholder="开始时间" style="width: 180px" />
+            </el-form-item>
+            <el-form-item label="结束时间（秒）">
+              <el-input-number v-model="newChunkEndTime" :min="0" :precision="1" placeholder="结束时间" style="width: 180px" />
+            </el-form-item>
+          </template>
+        </el-form>
+      </div>
+      <template #footer>
+        <div class="edit-dialog__footer">
+          <el-button @click="createDialogVisible = false">取消</el-button>
+          <el-button type="primary" :loading="createSaving" @click="handleCreateChunk">创建</el-button>
         </div>
       </template>
     </el-dialog>
@@ -2144,6 +2283,14 @@ onBeforeUnmount(() => {
     display: flex;
     justify-content: flex-end;
     gap: $spacing-sm;
+  }
+}
+
+// --- Create Chunk Dialog ---
+.create-dialog {
+  &__insert-position {
+    display: flex;
+    align-items: center;
   }
 }
 

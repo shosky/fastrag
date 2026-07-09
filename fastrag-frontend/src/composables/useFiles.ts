@@ -103,8 +103,21 @@ export function useFiles(kbId: string = 'default') {
     await load()
   }
 
-  async function createFolder(name: string, parentId: string = 'root') {
-    await api.createFolderApi(kbId, name, parentId)
+  async function createFolder(name: string, parentId?: string | null) {
+    // 根级文件夹传 null（后端 buildTree 只认 null 为根节点）
+    await api.createFolderApi(kbId, name, parentId || null)
+    const folderRes = await api.fetchFolders(kbId)
+    folders.value = (folderRes as any) || []
+  }
+
+  async function renameFolder(folderId: string, newName: string) {
+    await api.renameFolderApi(kbId, folderId, newName)
+    const folderRes = await api.fetchFolders(kbId)
+    folders.value = (folderRes as any) || []
+  }
+
+  async function deleteFolder(folderId: string) {
+    await api.deleteFolderApi(kbId, folderId)
     const folderRes = await api.fetchFolders(kbId)
     folders.value = (folderRes as any) || []
   }
@@ -153,6 +166,8 @@ export function useFiles(kbId: string = 'default') {
     upload,
     changeStrategy,
     createFolder,
+    renameFolder,
+    deleteFolder,
     getFolderName,
     loadDeletedFiles,
     restore,

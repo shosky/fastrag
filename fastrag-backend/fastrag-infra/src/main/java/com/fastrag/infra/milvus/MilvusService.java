@@ -15,7 +15,8 @@ import io.milvus.param.index.CreateIndexParam;
 import io.milvus.response.SearchResultsWrapper;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -27,9 +28,10 @@ import java.util.stream.Collectors;
  * Milvus 向量数据库服务
  * 连接 Milvus 实例，提供 Collection 创建、向量插入、相似度搜索、按文件删除等功能。
  */
-@Slf4j
 @Service
 public class MilvusService {
+
+    private static final Logger log = LoggerFactory.getLogger(MilvusService.class);
 
     @Value("${milvus.host:127.0.0.1}")
     private String host;
@@ -276,6 +278,57 @@ public class MilvusService {
             }
         } catch (Exception e) {
             log.error("Milvus deleteByFileId failed for fileId={} in {}: {}", fileId, collection, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 按 chunk ID 删除向量数据（用于单个分片删除/更新时的向量清理）
+     */
+    public void deleteById(String collection, String chunkId) {
+        if (milvusClient == null) {
+            log.warn("Milvus client not available, skip deleteById: {} in {}", chunkId, collection);
+            return;
+        }
+        try {
+            String expr = "id == \"" + chunkId + "\"";
+            R<MutationResult> deleteR = milvusClient.delete(DeleteParam.newBuilder()
+                    .withCollectionName(collection)
+                    .withExpr(expr)
+                    .build());
+            if (deleteR.getStatus() == R.Status.Success.getCode()) {
+                log.info("Milvus deleted vector for chunkId={} in collection={}", chunkId, collection);
+            } else {
+                log.warn("Milvus deleteById failed for chunkId={} in {}: {}", chunkId, collection, deleteR.getMessage());
+            }
+        } catch (Exception e) {
+            log.error("Milvus deleteById failed for chunkId={} in {}: {}", chunkId, collection, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 按 chunk ID 列表批量删除向量数据
+     */
+    public void deleteByIds(String collection, List<String> chunkIds) {
+        if (milvusClient == null) {
+            log.warn("Milvus client not available, skip deleteByIds in {}", collection);
+            return;
+        }
+        if (chunkIds == null || chunkIds.isEmpty()) {
+            return;
+        }
+        try {
+            String expr = "id in [" + chunkIds.stream().map(id -> "\"" + id + "\"").collect(Collectors.joining(",")) + "]";
+            R<MutationResult> deleteR = milvusClient.delete(DeleteParam.newBuilder()
+                    .withCollectionName(collection)
+                    .withExpr(expr)
+                    .build());
+            if (deleteR.getStatus() == R.Status.Success.getCode()) {
+                log.info("Milvus deleted {} vectors in collection={}", chunkIds.size(), collection);
+            } else {
+                log.warn("Milvus deleteByIds failed in {}: {}", collection, deleteR.getMessage());
+            }
+        } catch (Exception e) {
+            log.error("Milvus deleteByIds failed in {}: {}", collection, e.getMessage(), e);
         }
     }
 }

@@ -1,6 +1,7 @@
 package com.fastrag.infra.minio;
 
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
@@ -10,9 +11,10 @@ import java.nio.file.*;
 /**
  * 文件存储服务 - 使用本地文件系统替代 MinIO
  */
-@Slf4j
 @Service
 public class MinioService {
+
+    private static final Logger log = LoggerFactory.getLogger(MinioService.class);
 
     @Value("${storage.local.path:./uploads}")
     private String basePath;

@@ -1,21 +1,21 @@
 <script setup lang="ts">
-import { Refresh, Close } from '@element-plus/icons-vue'
+import { Refresh, Close, Loading } from '@element-plus/icons-vue'
 import { ElMessage } from 'element-plus'
-import { useKnowledgeGraph } from '@/composables/useKnowledgeGraph'
+import { buildGraphIndex, retryGraphBuild } from '@/api'
+import type { GraphBuildStatus } from '@/types/evaluation'
 
 // --- Props & Emits ---
 const props = defineProps<{
   visible: boolean
   kbId?: string
+  buildStatus: GraphBuildStatus
 }>()
 
 const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
   (e: 'open-settings'): void
+  (e: 'refresh'): void
 }>()
-
-// 复用父级图谱 composable 的数据来源，保证统计数字一致
-const { entityCount, relationCount, chunkCount, load } = useKnowledgeGraph(props.kbId || 'default')
 
 // --- Popup visibility ---
 const popupVisible = computed({
@@ -23,35 +23,65 @@ const popupVisible = computed({
   set: (val: boolean) => emit('update:visible', val),
 })
 
-// --- Index stats (派生自真实数据) ---
-const indexStats = computed(() => ({
-  totalChunks: chunkCount.value,
-  pendingBuild: 0,
-  built: chunkCount.value,
-  entities: entityCount.value,
-  relations: relationCount.value,
-}))
+// --- Derived state ---
+const isBuilding = computed(() => props.buildStatus.status === 'building')
+const isCompleted = computed(() => props.buildStatus.status === 'completed')
+const isFailed = computed(() => props.buildStatus.status === 'failed')
+const isIdle = computed(() => props.buildStatus.status === 'idle')
+const hasPending = computed(() => {
+  const t = props.buildStatus.totalChunks || 0
+  const b = props.buildStatus.builtChunks || 0
+  return t > b
+})
 
-// --- Building state ---
-const isBuilding = ref(false)
+// --- Status tag ---
+const statusTag = computed(() => {
+  if (isBuilding.value) return { type: 'warning' as const, text: '构建中' }
+  if (isCompleted.value) return { type: 'success' as const, text: '已完成' }
+  if (isFailed.value) return { type: 'danger' as const, text: '构建失败' }
+  return { type: 'info' as const, text: '待构建' }
+})
+
+// --- Actions ---
+const actionLoading = ref(false)
 
 async function handleStartIndex() {
-  isBuilding.value = true
-  ElMessage.info('开始索引...')
-  // 模拟索引：重新拉取数据
-  await new Promise((r) => setTimeout(r, 1500))
-  await load()
-  isBuilding.value = false
-  ElMessage.success('索引完成')
+  if (!props.kbId) return
+  actionLoading.value = true
+  try {
+    await buildGraphIndex(props.kbId)
+    ElMessage.success('开始索引')
+    emit('refresh')
+  } catch (e: any) {
+    ElMessage.error('启动索引失败: ' + (e.message || e))
+  } finally {
+    actionLoading.value = false
+  }
 }
 
-function handleReset() {
-  ElMessage.warning('配置已重置')
+async function handleRetry() {
+  if (!props.kbId) return
+  actionLoading.value = true
+  try {
+    await retryGraphBuild(props.kbId)
+    ElMessage.success('已重试索引')
+    emit('refresh')
+  } catch (e: any) {
+    ElMessage.error('重试失败: ' + (e.message || e))
+  } finally {
+    actionLoading.value = false
+  }
 }
 
 function handleRefresh() {
-  load()
+  emit('refresh')
   ElMessage.success('状态已刷新')
+}
+
+function handleReset() {
+  ElMessage.warning('请先清空图谱数据后再重新索引')
+  // 目前重置通过 retry 完成，retry 会先 clearGraph 再 full 模式构建
+  handleRetry()
 }
 </script>
 
@@ -71,57 +101,112 @@ function handleRefresh() {
         <!-- Status -->
         <div class="index-popup__status">
           <span class="index-popup__status-label">状态</span>
-          <el-tag type="success" size="small">已就绪</el-tag>
+          <el-tag :type="statusTag.type" size="small">{{ statusTag.text }}</el-tag>
+        </div>
+
+        <!-- Progress bar (仅构建中) -->
+        <div v-if="isBuilding" class="index-popup__progress">
+          <el-progress
+            :percentage="buildStatus.progress"
+            :stroke-color="{ '0%': '#409EFF', '100%': '#67C23A' }"
+            :format="() => buildStatus.progress + '%'"
+          />
         </div>
 
         <!-- Chunk stats -->
         <div class="index-popup__chunks">
           <div class="index-popup__chunk-item">
-            <span class="index-popup__chunk-value">{{ indexStats.totalChunks }}</span>
+            <span class="index-popup__chunk-value">{{ buildStatus.totalChunks }}</span>
             <span class="index-popup__chunk-label">总 Chunk</span>
           </div>
           <div class="index-popup__chunk-item">
             <span class="index-popup__chunk-value index-popup__chunk-value--warning">
-              {{ indexStats.pendingBuild }}
+              {{ Math.max(0, (buildStatus.totalChunks || 0) - (buildStatus.builtChunks || 0)) }}
             </span>
             <span class="index-popup__chunk-label">待构建</span>
           </div>
           <div class="index-popup__chunk-item">
             <span class="index-popup__chunk-value index-popup__chunk-value--success">
-              {{ indexStats.built }}
+              {{ buildStatus.builtChunks }}
             </span>
             <span class="index-popup__chunk-label">已构建</span>
+          </div>
+          <div v-if="buildStatus.failedChunks > 0" class="index-popup__chunk-item">
+            <span class="index-popup__chunk-value index-popup__chunk-value--danger">
+              {{ buildStatus.failedChunks }}
+            </span>
+            <span class="index-popup__chunk-label">失败</span>
           </div>
         </div>
 
         <!-- Entity & Relation stats -->
         <div class="index-popup__entities">
           <div class="index-popup__entity-item">
-            <span class="index-popup__entity-value">{{ indexStats.entities }}</span>
+            <span class="index-popup__entity-value">{{ buildStatus.entityCount }}</span>
             <span class="index-popup__entity-label">实体</span>
           </div>
           <div class="index-popup__entity-item">
-            <span class="index-popup__entity-value">{{ indexStats.relations }}</span>
+            <span class="index-popup__entity-value">{{ buildStatus.relationCount }}</span>
             <span class="index-popup__entity-label">关系</span>
           </div>
         </div>
 
-        <!-- Start index button -->
+        <!-- Build error (仅失败时) -->
+        <div v-if="isFailed && buildStatus.buildError" class="index-popup__error">
+          <el-alert
+            :title="buildStatus.buildError"
+            type="error"
+            :closable="false"
+            show-icon
+          />
+        </div>
+
+        <!-- Action buttons -->
         <el-button
+          v-if="isBuilding"
           type="primary"
-          class="index-popup__start-btn"
-          :loading="isBuilding"
+          class="index-popup__action-btn"
+          :icon="Loading"
+          disabled
+        >
+          构建中 {{ buildStatus.progress }}%
+        </el-button>
+
+        <el-button
+          v-else-if="isFailed"
+          type="primary"
+          class="index-popup__action-btn"
+          :loading="actionLoading"
+          @click="handleRetry"
+        >
+          重试索引
+        </el-button>
+
+        <el-button
+          v-else
+          type="primary"
+          class="index-popup__action-btn"
+          :loading="actionLoading"
+          :disabled="!hasPending"
           @click="handleStartIndex"
         >
-          开始索引
+          {{ hasPending ? '开始索引' : '已全部构建' }}
         </el-button>
 
         <!-- Config actions -->
         <div class="index-popup__actions">
-          <el-button link type="primary" @click="emit('open-settings')">
+          <el-button
+            v-if="!isBuilding"
+            link type="primary"
+            @click="emit('open-settings')"
+          >
             修改配置
           </el-button>
-          <el-button link type="danger" @click="handleReset">
+          <el-button
+            v-if="!isBuilding"
+            link type="danger"
+            @click="handleReset"
+          >
             重置
           </el-button>
         </div>
@@ -138,7 +223,7 @@ function handleRefresh() {
   top: 60px;
   right: $spacing-base;
   z-index: 300;
-  width: 280px;
+  width: 300px;
   background: $bg-white;
   border-radius: $radius-base;
   box-shadow: $shadow-lg;
@@ -180,6 +265,10 @@ function handleRefresh() {
     color: $text-regular;
   }
 
+  &__progress {
+    margin: -4px 0;
+  }
+
   &__chunks {
     display: grid;
     grid-template-columns: repeat(3, 1fr);
@@ -201,13 +290,9 @@ function handleRefresh() {
     font-weight: 600;
     color: $text-primary;
 
-    &--warning {
-      color: $color-warning;
-    }
-
-    &--success {
-      color: $color-success;
-    }
+    &--warning { color: $color-warning; }
+    &--success { color: $color-success; }
+    &--danger { color: $color-danger; }
   }
 
   &__chunk-label {
@@ -242,7 +327,11 @@ function handleRefresh() {
     color: $text-secondary;
   }
 
-  &__start-btn {
+  &__error {
+    margin: -4px 0;
+  }
+
+  &__action-btn {
     width: 100%;
     height: 40px;
     font-size: 15px;

@@ -33,7 +33,16 @@ const loading = ref(false)
 const showTestDialog = ref(false)
 const testingModelId = ref<string | null>(null)
 const testingModelName = ref('')
+const testingModelPurpose = ref('LLM')
+
+// LLM 入参
 const testPrompt = ref('你好，请简单介绍一下你自己')
+// Embedding 入参
+const testEmbeddingText = ref('你好世界')
+// Rerank 入参
+const testRerankQuery = ref('这是一段测试查询文本')
+const testRerankDocs = ref('这是一条测试文档内容\n这是另一条测试文档内容\n第三条测试文档')
+
 const testResult = ref<any>(null)
 const testLoading = ref(false)
 
@@ -70,20 +79,37 @@ onMounted(loadModels)
 function openTestDialog(model: ModelRecord) {
   testingModelId.value = model.id
   testingModelName.value = model.name
+  testingModelPurpose.value = model.purpose || 'LLM'
   testPrompt.value = '你好，请简单介绍一下你自己'
+  testRerankQuery.value = '这是一段测试查询文本'
+  testRerankDocs.value = '这是一条测试文档内容\n这是另一条测试文档内容\n第三条测试文档'
   testResult.value = null
   showTestDialog.value = true
 }
 
-async function handleTestChat() {
-  if (!testPrompt.value.trim()) {
-    ElMessage.warning('请输入测试内容')
-    return
-  }
+async function handleSendTest() {
+  const purpose = testingModelPurpose.value.toUpperCase()
   testLoading.value = true
   testResult.value = null
   try {
-    const res = await api.testModelChat(testingModelId.value!, testPrompt.value)
+    let res: any
+    if (purpose === 'EMBEDDING') {
+      const text = testEmbeddingText.value.trim() || '你好世界'
+      res = await api.testModelEmbedding(testingModelId.value!, text)
+    } else if (purpose === 'RERANK') {
+      const query = testRerankQuery.value.trim() || '测试查询'
+      const docs = testRerankDocs.value.split('\n').map((d) => d.trim()).filter((d) => d.length > 0)
+      if (docs.length === 0) {
+        ElMessage.warning('请输入至少一条文档')
+        testLoading.value = false
+        return
+      }
+      res = await api.testModelRerank(testingModelId.value!, query, docs)
+    } else {
+      // LLM / ASR / TTS / OCR 默认走 chat
+      const prompt = testPrompt.value.trim() || '你好，请简单介绍一下你自己'
+      res = await api.testModelChat(testingModelId.value!, prompt)
+    }
     testResult.value = res
   } catch (e: any) {
     testResult.value = { success: false, error: e?.message || '请求失败' }
@@ -250,7 +276,9 @@ async function handleSave() {
         </div>
         <div class="card-footer">
           <el-button size="small" @click="handleEdit(model)">编辑</el-button>
-          <el-button size="small" type="primary" @click="openTestDialog(model)">测试</el-button>
+          <el-button size="small" type="primary" @click="openTestDialog(model)">
+            {{ model.purpose === 'Embedding' ? '向量测试' : model.purpose === 'Rerank' ? '排序测试' : '对话测试' }}
+          </el-button>
           <el-button size="small" type="danger" @click="handleDelete(model)">删除</el-button>
           <el-switch
             :model-value="model.status === 'online'"
@@ -269,12 +297,38 @@ async function handleSave() {
       <el-form label-width="80px">
         <el-form-item label="测试模型">
           <el-tag>{{ testingModelName }}</el-tag>
+          <el-tag :type="testingModelPurpose === 'LLM' ? '' : testingModelPurpose === 'Embedding' ? 'success' : testingModelPurpose === 'Rerank' ? 'warning' : 'info'" size="small" style="margin-left: 8px">
+            {{ testingModelPurpose }}
+          </el-tag>
         </el-form-item>
-        <el-form-item label="输入内容">
-          <el-input v-model="testPrompt" type="textarea" :rows="3" placeholder="输入要测试的内容" />
-        </el-form-item>
+
+        <!-- LLM 测试：对话 -->
+        <template v-if="testingModelPurpose.toUpperCase() === 'LLM' || testingModelPurpose.toUpperCase() === 'ASR' || testingModelPurpose.toUpperCase() === 'TTS' || testingModelPurpose.toUpperCase() === 'OCR'">
+          <el-form-item label="输入内容">
+            <el-input v-model="testPrompt" type="textarea" :rows="3" placeholder="输入要测试的内容" />
+          </el-form-item>
+        </template>
+
+        <!-- Embedding 测试：文本向量化 -->
+        <template v-if="testingModelPurpose.toUpperCase() === 'EMBEDDING'">
+          <el-form-item label="输入文本">
+            <el-input v-model="testEmbeddingText" placeholder="输入要向量化的文本" />
+          </el-form-item>
+        </template>
+
+        <!-- Rerank 测试：查询 + 多文档排序 -->
+        <template v-if="testingModelPurpose.toUpperCase() === 'RERANK'">
+          <el-form-item label="查询语句">
+            <el-input v-model="testRerankQuery" placeholder="输入查询语句" />
+          </el-form-item>
+          <el-form-item label="待排序文档">
+            <el-input v-model="testRerankDocs" type="textarea" :rows="5" placeholder="每行一条文档" />
+            <div style="font-size: 12px; color: #909399; margin-top: 4px">每行一条文档，将按与查询的相关性排序返回</div>
+          </el-form-item>
+        </template>
+
         <el-form-item>
-          <el-button type="primary" :loading="testLoading" @click="handleTestChat">发送测试</el-button>
+          <el-button type="primary" :loading="testLoading" @click="handleSendTest">发送测试</el-button>
         </el-form-item>
       </el-form>
 
@@ -298,14 +352,44 @@ async function handleSave() {
           <el-descriptions-item v-if="testResult.elapsedMs" label="响应耗时">
             {{ testResult.elapsedMs }}ms
           </el-descriptions-item>
-          <el-descriptions-item v-if="testResult.error" label="错误信息">
-            <span style="color: #f56c6c">{{ testResult.error }}</span>
-          </el-descriptions-item>
+
+          <!-- LLM 结果：回复内容 -->
           <el-descriptions-item v-if="testResult.answer" label="模型回复">
             <div class="test-answer">{{ testResult.answer }}</div>
           </el-descriptions-item>
+
+          <!-- Embedding 结果：向量维度 + 前10维预览 -->
+          <el-descriptions-item v-if="testResult.dimensions" label="向量维度">
+            {{ testResult.dimensions }} 维
+          </el-descriptions-item>
+          <el-descriptions-item v-if="testResult.vectorPreview" label="向量预览（前10维）">
+            <code style="font-size: 12px">{{ JSON.stringify(testResult.vectorPreview) }}</code>
+          </el-descriptions-item>
+          <el-descriptions-item v-if="testResult.input" label="输入文本">
+            {{ testResult.input }}
+          </el-descriptions-item>
+
+          <!-- Rerank 结果：排序列表 -->
+          <el-descriptions-item v-if="testResult.results" label="排序结果">
+            <el-table :data="testResult.results" stripe size="small" max-height="300">
+              <el-table-column prop="index" label="原文序号" width="80" align="center" />
+              <el-table-column prop="relevance_score" label="相关性分数" width="120" align="right">
+                <template #default="{ row }">{{ (row.relevance_score * 100).toFixed(1) }}%</template>
+              </el-table-column>
+              <el-table-column prop="document" label="文档内容">
+                <template #default="{ row, $index }">
+                  {{ testRerankDocs.split('\n').filter((d: string) => d.trim())[row.index] || ('文档[' + row.index + ']') }}
+                </template>
+              </el-table-column>
+            </el-table>
+          </el-descriptions-item>
+
+          <el-descriptions-item v-if="testResult.error" label="错误信息">
+            <span style="color: #f56c6c">{{ testResult.error }}</span>
+          </el-descriptions-item>
+
           <el-descriptions-item label="输入内容">
-            {{ testResult.prompt || testPrompt }}
+            {{ testResult.prompt || testResult.input || testResult.query || testPrompt }}
           </el-descriptions-item>
         </el-descriptions>
       </div>

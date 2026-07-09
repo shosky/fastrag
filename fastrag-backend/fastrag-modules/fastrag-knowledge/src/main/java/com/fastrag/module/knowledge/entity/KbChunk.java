@@ -23,4 +23,10 @@ public class KbChunk {
     private String pageRange;         // 页码范围 "3-4"
     private String imageKeys;         // JSON 数组 ["page_1_img_0.png"]
     private String chunkType;         // "text" | "image"，默认 "text"
+
+    // 知识图谱相关
+    /** 是否已完成知识图谱提取（0=未提取，1=已提取） */
+    private Integer graphIndexed;
+    /** 图谱提取结果缓存（JSON 格式） */
+    private String extractionResult;
 }

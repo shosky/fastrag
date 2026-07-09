@@ -39,4 +39,11 @@ public interface KbChunkMapper extends BaseMapper<KbChunk> {
      */
     @Select("SELECT * FROM kb_chunk WHERE file_id = #{fileId} ORDER BY chunk_index ASC")
     List<KbChunk> selectByFileId(@Param("fileId") String fileId);
+
+    /**
+     * 获取指定文件下最大的 chunkIndex，用于新增分片时确定插入位置
+     * 返回 -1 表示该文件还没有分片
+     */
+    @Select("SELECT COALESCE(MAX(chunk_index), -1) FROM kb_chunk WHERE file_id = #{fileId}")
+    int selectMaxChunkIndex(@Param("fileId") String fileId);
 }

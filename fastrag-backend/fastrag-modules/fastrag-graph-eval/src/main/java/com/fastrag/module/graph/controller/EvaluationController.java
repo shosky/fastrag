@@ -1,9 +1,13 @@
 package com.fastrag.module.graph.controller;
 
+import com.fastrag.common.annotation.Loggable;
+import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.LogCategory;
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.graph.entity.KbEvaluation;
 import com.fastrag.module.graph.model.EvaluationConfig;
 import com.fastrag.module.graph.service.EvaluationService;
+import com.fastrag.module.publish.service.LogService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
@@ -15,6 +19,7 @@ import java.util.Map;
 public class EvaluationController {
 
     private final EvaluationService svc;
+    private final LogService logService;
 
     @GetMapping
     public ApiResponse<?> list(@PathVariable String kbId) {
@@ -48,11 +53,13 @@ public class EvaluationController {
                 "progress", progress));
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.evaluation_run, detail = "启动评测任务")
     @PostMapping("/run")
     public ApiResponse<?> run(@PathVariable String kbId, @RequestBody(required = false) EvaluationConfig config) {
         return ApiResponse.success(svc.run(kbId, config != null ? config : new EvaluationConfig()));
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.evaluation_deleted, detail = "删除评测任务")
     @DeleteMapping("/{id}")
     public ApiResponse<?> delete(@PathVariable String kbId, @PathVariable String id) {
         svc.delete(kbId, id);

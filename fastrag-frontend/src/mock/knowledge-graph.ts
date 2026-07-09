@@ -22,6 +22,28 @@ export const ENTITY_TYPE_COLORS: Record<string, string> = {
   '网络': '#9C27B0',
   '业务': '#FF9800',
   '扩展实体': '#1E88E5',
+  // LLM 提取常见类型（参考 Yuxi ExtractionNormalizer）
+  'Person': '#E91E63',
+  'Organization': '#F44336',
+  'Location': '#4CAF50',
+  'Concept': '#FF9800',
+  'Event': '#FF5722',
+  'Product': '#00BCD4',
+  'Technology': '#9C27B0',
+  'Document': '#607D8B',
+  'Time': '#795548',
+  'Quantity': '#009688',
+  'Entity': '#1E88E5',
+  '人物': '#E91E63',
+  '地点': '#4CAF50',
+  '概念': '#FF9800',
+  '事件': '#FF5722',
+  '产品': '#00BCD4',
+  '技术': '#9C27B0',
+  '文档': '#607D8B',
+  '时间': '#795548',
+  '数量': '#009688',
+  'UNKNOWN': '#90A4AE',
 }
 
 /** 默认知识库的图谱节点 */

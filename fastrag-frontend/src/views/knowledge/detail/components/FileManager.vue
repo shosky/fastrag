@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { KnowledgeFile } from '@/types/knowledge'
 import { getFileCategory } from '@/types/knowledge'
-import { Document, CircleCheck, TrendCharts, Upload, FolderAdd, Delete, Rank } from '@element-plus/icons-vue'
+import { Document, CircleCheck, TrendCharts, Upload, FolderAdd, Delete, Rank, FolderOpened, Folder, MoreFilled, Edit } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import * as api from '@/api'
@@ -56,6 +56,7 @@ const kbId = props.kbId || 'default'
 // --- Data via composable ---
 const {
   files,
+  folders,
   loading,
   selectedFiles,
   deletedFiles,
@@ -72,6 +73,8 @@ const {
   upload,
   changeStrategy,
   createFolder,
+  renameFolder,
+  deleteFolder,
   loadDeletedFiles,
   restore,
   permanentDelete,
@@ -145,6 +148,88 @@ function handleNewFolderConfirm() {
   createFolder(newFolderName.value.trim(), newFolderParentId.value)
   newFolderDialogVisible.value = false
   ElMessage.success(`已创建文件夹：${newFolderName.value}`)
+}
+
+// --- Folder tree selection ---
+const selectedFolderId = ref<string | null>(null)
+
+const filteredFilesByFolder = computed(() => {
+  if (!selectedFolderId.value || selectedFolderId.value === 'root') {
+    return files.value
+  }
+  return files.value.filter(f => f.folderId === selectedFolderId.value)
+})
+
+const folderFileCount = (folderId: string): number => {
+  if (!folderId || folderId === 'root') return files.value.length
+  return files.value.filter(f => f.folderId === folderId).length
+}
+
+function selectFolder(folderId: string | null) {
+  selectedFolderId.value = folderId
+}
+
+// --- Folder context menu ---
+const contextFolderId = ref<string | null>(null)
+const contextFolderName = ref('')
+
+// Rename dialog
+const folderRenameDialogVisible = ref(false)
+const folderRenameId = ref<string>('')
+const folderRenameName = ref('')
+
+function handleFolderRename(folderId: string, currentName: string) {
+  folderRenameId.value = folderId
+  folderRenameName.value = currentName
+  folderRenameDialogVisible.value = true
+}
+
+async function handleFolderRenameConfirm() {
+  if (!folderRenameName.value.trim()) { ElMessage.warning('文件夹名称不能为空'); return }
+  try {
+    await renameFolder(folderRenameId.value, folderRenameName.value.trim())
+    folderRenameDialogVisible.value = false
+    ElMessage.success('文件夹已重命名')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '重命名失败')
+  }
+}
+
+async function handleDeleteFolder(folderId: string) {
+  try {
+    await ElMessageBox.confirm(
+      '确定要删除该文件夹吗？\n要求：文件夹必须为空（无子文件夹，无文件）才能删除。',
+      '删除文件夹',
+      { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
+    )
+    await deleteFolder(folderId)
+    // 如果删的是当前选中的文件夹，重置筛选
+    if (selectedFolderId.value === folderId) {
+      selectedFolderId.value = null
+    }
+    ElMessage.success('文件夹已删除')
+  } catch (e: any) {
+    if (e !== 'cancel' && e?.message) {
+      ElMessage.error(e?.message || '删除失败')
+    }
+  }
+}
+
+function handleCreateSubFolder(folderId: string) {
+  contextFolderId.value = folderId
+  newFolderParentId.value = folderId
+  newFolderName.value = ''
+  newFolderDialogVisible.value = true
+}
+
+function handleFolderCommand(cmd: string, data: { id: string; label: string }) {
+  if (cmd === 'createSub') {
+    handleCreateSubFolder(data.id)
+  } else if (cmd === 'rename') {
+    handleFolderRename(data.id, data.label)
+  } else if (cmd === 'delete') {
+    handleDeleteFolder(data.id)
+  }
 }
 
 // --- FileTable event handlers ---
@@ -350,7 +435,14 @@ function handleChangeStrategy(file: KnowledgeFile, strategyId: string, strategyN
 async function handleToggleGraphBuild(file: KnowledgeFile, enabled: boolean) {
   try {
     await toggleGraphBuild(file.id, enabled)
-    ElMessage.success(enabled ? `已开启「${file.name}」的知识图谱构建` : `已关闭「${file.name}」的知识图谱构建`)
+    if (enabled) {
+      // 开启图谱后自动重新处理文件，触发知识图谱提取
+      await api.processFile(props.kbId!, file.id)
+      startPolling([file.id])
+      ElMessage.success(`已开启「${file.name}」的知识图谱构建，正在重新处理...`)
+    } else {
+      ElMessage.success(`已关闭「${file.name}」的知识图谱构建`)
+    }
   } catch {
     ElMessage.error('操作失败')
   }
@@ -368,80 +460,130 @@ onBeforeUnmount(() => {
 
 <template>
   <div class="file-manager">
-    <!-- Stat cards -->
-    <div class="file-manager__stats">
-      <div class="file-manager__stat-card">
-        <div class="file-manager__stat-icon file-manager__stat-icon--blue">
-          <el-icon :size="24"><Document /></el-icon>
-        </div>
-        <div class="file-manager__stat-info">
-          <span class="file-manager__stat-value">{{ totalFiles }}</span>
-          <span class="file-manager__stat-label">文件总数</span>
+    <div class="file-manager__body">
+      <!-- Folder tree sidebar -->
+      <div class="file-manager__sidebar">
+        <div class="file-manager__sidebar-title">文件目录</div>
+        <div class="file-manager__tree-wrapper">
+          <div
+            class="file-manager__tree-node"
+            :class="{ 'is-active': selectedFolderId === null || selectedFolderId === 'root' }"
+            @click="selectFolder(null)"
+          >
+            <el-icon class="file-manager__tree-icon"><FolderOpened /></el-icon>
+            <span class="file-manager__tree-label">全部文件</span>
+            <span class="file-manager__tree-count">{{ files.length }}</span>
+          </div>
+          <el-tree
+            :data="folders"
+            :props="{ label: 'label', children: 'children' }"
+            node-key="id"
+            default-expand-all
+            highlight-current
+            :current-node-key="selectedFolderId"
+            @node-click="(data: any) => selectFolder(data.id)"
+            class="file-manager__tree"
+          >
+            <template #default="{ node, data }">
+              <div class="file-manager__tree-node-inner">
+                <el-icon class="file-manager__tree-icon"><Folder /></el-icon>
+                <span class="file-manager__tree-label">{{ node.label }}</span>
+                <span class="file-manager__tree-count">{{ folderFileCount(data.id) }}</span>
+                <el-dropdown trigger="click" @command="(cmd: string) => handleFolderCommand(cmd, data)">
+                  <el-button class="file-manager__tree-menu-btn" :icon="MoreFilled" link size="small" @click.stop />
+                  <template #dropdown>
+                    <el-dropdown-menu>
+                      <el-dropdown-item command="createSub">新建子文件夹</el-dropdown-item>
+                      <el-dropdown-item command="rename">重命名</el-dropdown-item>
+                      <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
+                    </el-dropdown-menu>
+                  </template>
+                </el-dropdown>
+              </div>
+            </template>
+          </el-tree>
         </div>
       </div>
 
-      <div class="file-manager__stat-card">
-        <div class="file-manager__stat-icon file-manager__stat-icon--green">
-          <el-icon :size="24"><CircleCheck /></el-icon>
-        </div>
-        <div class="file-manager__stat-info">
-          <span class="file-manager__stat-value">{{ completedFiles }}</span>
-          <span class="file-manager__stat-label">已处理</span>
-        </div>
-      </div>
+      <!-- Main content (right side) -->
+      <div class="file-manager__main">
+        <!-- Stat cards -->
+        <div class="file-manager__stats">
+          <div class="file-manager__stat-card">
+            <div class="file-manager__stat-icon file-manager__stat-icon--blue">
+              <el-icon :size="24"><Document /></el-icon>
+            </div>
+            <div class="file-manager__stat-info">
+              <span class="file-manager__stat-value">{{ totalFiles }}</span>
+              <span class="file-manager__stat-label">文件总数</span>
+            </div>
+          </div>
 
-      <div class="file-manager__stat-card">
-        <div class="file-manager__stat-icon file-manager__stat-icon--orange">
-          <el-icon :size="24"><TrendCharts /></el-icon>
-        </div>
-        <div class="file-manager__stat-info">
-          <span class="file-manager__stat-value">{{ completionRate }}%</span>
-          <span class="file-manager__stat-label">完成进度</span>
-        </div>
-      </div>
-    </div>
+          <div class="file-manager__stat-card">
+            <div class="file-manager__stat-icon file-manager__stat-icon--green">
+              <el-icon :size="24"><CircleCheck /></el-icon>
+            </div>
+            <div class="file-manager__stat-info">
+              <span class="file-manager__stat-value">{{ completedFiles }}</span>
+              <span class="file-manager__stat-label">已处理</span>
+            </div>
+          </div>
 
-    <!-- Action bar -->
-    <div class="file-manager__actions">
-      <div class="file-manager__actions-left">
-        <el-button v-permission="'kb:upload'" type="primary" :icon="Upload" @click="openUploader">
-          上传
-        </el-button>
-        <el-button :icon="FolderAdd" @click="handleNewFolder">
-          新建文件夹
-        </el-button>
-        <el-button :icon="Delete" @click="openRecycleBin">
-          回收站
-        </el-button>
-      </div>
-      <!-- 批量操作栏：仅当有选中文件时显示 -->
-      <div v-if="selectedFiles.length > 0" class="file-manager__bulk-actions">
-        <span class="file-manager__bulk-count">已选 {{ selectedFiles.length }} 项</span>
-        <el-button :icon="Rank" size="small" @click="handleBulkMove">批量移动</el-button>
-        <el-button :icon="Delete" size="small" type="danger" @click="handleBulkDelete">批量删除</el-button>
-        <el-button size="small" @click="handleBulkExport">导出</el-button>
-      </div>
-    </div>
+          <div class="file-manager__stat-card">
+            <div class="file-manager__stat-icon file-manager__stat-icon--orange">
+              <el-icon :size="24"><TrendCharts /></el-icon>
+            </div>
+            <div class="file-manager__stat-info">
+              <span class="file-manager__stat-value">{{ completionRate }}%</span>
+              <span class="file-manager__stat-label">完成进度</span>
+            </div>
+          </div>
+        </div>
 
-    <!-- File table -->
-    <FileTable
-      :files="files"
-      :loading="loading"
-      :kb-id="kbId"
-      :strategies="strategies"
-      @preview="handlePreview"
-      @download="handleDownload"
-      @delete="handleDelete"
-      @retry="handleRetry"
-      @refresh="handleRefresh"
-      @manage-chunks="handleManageChunks"
-      @move="handleMove"
-      @rename="handleRename"
-      @copy="handleCopy"
-      @selection-change="handleSelectionChange"
-      @change-strategy="handleChangeStrategy"
-    @toggle-graph-build="handleToggleGraphBuild"
-    />
+        <!-- Action bar -->
+        <div class="file-manager__actions">
+          <div class="file-manager__actions-left">
+            <el-button v-permission="'kb:upload'" type="primary" :icon="Upload" @click="openUploader">
+              上传
+            </el-button>
+            <el-button :icon="FolderAdd" @click="handleNewFolder">
+              新建文件夹
+            </el-button>
+            <el-button :icon="Delete" @click="openRecycleBin">
+              回收站
+            </el-button>
+          </div>
+          <!-- 批量操作栏：仅当有选中文件时显示 -->
+          <div v-if="selectedFiles.length > 0" class="file-manager__bulk-actions">
+            <span class="file-manager__bulk-count">已选 {{ selectedFiles.length }} 项</span>
+            <el-button :icon="Rank" size="small" @click="handleBulkMove">批量移动</el-button>
+            <el-button :icon="Delete" size="small" type="danger" @click="handleBulkDelete">批量删除</el-button>
+            <el-button size="small" @click="handleBulkExport">导出</el-button>
+          </div>
+        </div>
+
+        <!-- File table -->
+        <FileTable
+          :files="filteredFilesByFolder"
+          :loading="loading"
+          :kb-id="kbId"
+          :strategies="strategies"
+          @preview="handlePreview"
+          @download="handleDownload"
+          @delete="handleDelete"
+          @retry="handleRetry"
+          @refresh="handleRefresh"
+          @manage-chunks="handleManageChunks"
+          @move="handleMove"
+          @rename="handleRename"
+          @copy="handleCopy"
+          @selection-change="handleSelectionChange"
+          @change-strategy="handleChangeStrategy"
+          @toggle-graph-build="handleToggleGraphBuild"
+        />
+
+      </div> <!-- /.file-manager__main -->
+    </div> <!-- /.file-manager__body -->
 
     <!-- Upload dialog -->
     <FileUploader
@@ -503,6 +645,19 @@ onBeforeUnmount(() => {
       </template>
     </el-dialog>
 
+    <!-- Folder rename dialog -->
+    <el-dialog v-model="folderRenameDialogVisible" title="重命名文件夹" width="420px">
+      <el-form label-position="top">
+        <el-form-item label="文件夹名称" required>
+          <el-input v-model="folderRenameName" placeholder="请输入新名称" maxlength="50" show-word-limit />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="folderRenameDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleFolderRenameConfirm">确认</el-button>
+      </template>
+    </el-dialog>
+
     <!-- 回收站 -->
     <RecycleBinDialog
       v-model:visible="recycleBinVisible"
@@ -521,6 +676,132 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: $spacing-base;
+  height: 100%;
+
+  &__body {
+    display: flex;
+    gap: $spacing-base;
+    flex: 1;
+    min-height: 0;
+  }
+
+  // --- Folder tree sidebar ---
+  &__sidebar {
+    width: 220px;
+    min-width: 220px;
+    background: $bg-white;
+    border-radius: $radius-base;
+    box-shadow: $shadow-sm;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+
+  &__sidebar-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: $text-primary;
+    padding: $spacing-base $spacing-base $spacing-sm;
+    border-bottom: 1px solid $border-lighter;
+  }
+
+  &__tree-wrapper {
+    flex: 1;
+    overflow-y: auto;
+    padding: $spacing-xs;
+  }
+
+  &__tree-node {
+    display: flex;
+    align-items: center;
+    gap: $spacing-xs;
+    padding: 8px 10px;
+    border-radius: $radius-base;
+    cursor: pointer;
+    transition: background 0.15s;
+    margin-bottom: 2px;
+
+    &:hover {
+      background: $bg-hover;
+    }
+
+    &.is-active {
+      background: $bg-active;
+      color: $color-primary;
+      font-weight: 500;
+    }
+  }
+
+  &__tree-node-inner {
+    display: flex;
+    align-items: center;
+    gap: $spacing-xs;
+    flex: 1;
+    min-width: 0;
+  }
+
+  &__tree-icon {
+    color: $color-warning;
+    flex-shrink: 0;
+  }
+
+  &__tree-label {
+    font-size: 13px;
+    color: $text-primary;
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  &__tree-count {
+    font-size: 12px;
+    color: $text-secondary;
+    background: $bg-hover;
+    padding: 0 6px;
+    border-radius: 10px;
+    line-height: 18px;
+    flex-shrink: 0;
+  }
+
+  &__tree-menu-btn {
+    visibility: hidden;
+    margin-left: 2px;
+    flex-shrink: 0;
+  }
+
+  &__tree-node-inner:hover &__tree-menu-btn {
+    visibility: visible;
+  }
+
+  // --- Tree overrides ---
+  :deep(.file-manager__tree) {
+    background: transparent;
+    border: none;
+
+    .el-tree-node__content {
+      height: auto;
+      padding: 2px 0;
+      border-radius: $radius-base;
+
+      &:hover {
+        background: $bg-hover;
+      }
+    }
+
+    .el-tree-node.is-current > .el-tree-node__content {
+      background: $bg-active;
+    }
+  }
+
+  // --- Main content area ---
+  &__main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-base;
+  }
 
   // --- Stat cards ---
   &__stats {

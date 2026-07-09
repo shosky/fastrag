@@ -11,9 +11,9 @@ spring:
   application:
     name: fastrag-backend
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/fastrag?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
-    username: root
-    password: 123456
+    url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:3306/fastrag?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
+    username: ${MYSQL_USER:root}
+    password: ${MYSQL_PASSWORD:}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 20
@@ -66,7 +66,7 @@ mybatis-plus:
       id-type: assign_id
 
 jwt:
-  secret: FastRAGSecretKeyForJWT2024PleaseChangeInProd!
+  secret: ${JWT_SECRET:}
   expiration: 86400000
 
 ai:
@@ -94,6 +94,7 @@ storage:
     path: ./uploads
 
 # Neo4j 图数据库（默认禁用，通过环境变量启用）
+# 本地开发需设置 NEO4J_ENABLED=true + NEO4J_URI
 neo4j:
   enabled: ${NEO4J_ENABLED:false}
   uri: ${NEO4J_URI:bolt://localhost:7687}

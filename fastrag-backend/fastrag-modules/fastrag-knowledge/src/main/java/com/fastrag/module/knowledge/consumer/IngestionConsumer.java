@@ -4,6 +4,8 @@ import com.fastrag.common.handler.IngestionHandler;
 import com.fastrag.ai.ocr.OcrService;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.infra.rabbitmq.MessagePublisher;
+import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.LogCategory;
 import com.fastrag.module.knowledge.chunking.ChunkData;
 import com.fastrag.module.knowledge.chunking.ChunkingService;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -60,6 +62,14 @@ public class IngestionConsumer implements IngestionHandler {
 
         long tStart = System.currentTimeMillis();
         log.info("Start processing file: {}, kbId: {}", fileId, kbId);
+
+        // 记录处理开始日志
+        try {
+            logService.addLog(kbId, LogCategory.operation, ActionType.file_processing_started,
+                    getFileName(fileId), "开始处理文件", operator, "success", null);
+        } catch (Exception e) {
+            log.warn("Failed to record processing start log for file: {}", fileId);
+        }
 
         try {
             // 1. 更新状态为 processing
@@ -208,7 +218,10 @@ public class IngestionConsumer implements IngestionHandler {
                     : (rawEnableGraphBuild instanceof Number
                         ? ((Number) rawEnableGraphBuild).intValue() == 1
                         : Boolean.TRUE.equals(rawEnableGraphBuild));
+            log.info("[Graph] File={}, enableGraphBuild raw={} (type={}), resolved={}",
+                    fileId, rawEnableGraphBuild, rawEnableGraphBuild.getClass().getName(), enableGraphBuild);
             if (Boolean.TRUE.equals(enableGraphBuild)) {
+                log.info("[Graph] Condition met, about to trigger graph build for file={}", fileId);
                 try {
                     Map<String, Object> graphMsg = new HashMap<>();
                     graphMsg.put("kbId", kbId);
@@ -216,12 +229,18 @@ public class IngestionConsumer implements IngestionHandler {
                     graphMsg.put("mode", "incremental");
                     MessagePublisher pub = messagePublisherProvider.getIfAvailable();
                     if (pub != null) {
+                        log.info("[Graph] Publishing graph build message for file={}", fileId);
                         pub.publishGraphBuild(graphMsg);
+                        log.info("[Graph] Graph build message published successfully for file={}", fileId);
+                    } else {
+                        log.warn("[Graph] MessagePublisher bean not available via ObjectProvider, cannot trigger graph build for file={}", fileId);
                     }
-                    log.info("[Graph] Auto-triggered graph build for file: {}, kb: {}", fileId, kbId);
                 } catch (Exception e) {
-                    log.warn("[Graph] Failed to auto-trigger graph build for file {}: {}", fileId, e.getMessage());
+                    log.warn("[Graph] Failed to auto-trigger graph build for file {}: {}", fileId, e.getMessage(), e);
                 }
+            } else {
+                log.info("[Graph] Graph build NOT triggered for file={}. Reason: enableGraphBuild={} (raw={})",
+                        fileId, enableGraphBuild, rawEnableGraphBuild);
             }
 
             // 8. 更新状态为 completed
@@ -232,6 +251,12 @@ public class IngestionConsumer implements IngestionHandler {
 
         } catch (Exception e) {
             log.error("File processing failed: {}", fileId, e);
+            try {
+                logService.addLog(kbId, LogCategory.operation, ActionType.file_processing_failed,
+                        getFileName(fileId), "处理失败: " + e.getMessage(), operator, "failed", null);
+            } catch (Exception le) {
+                log.warn("Failed to record processing failure log for file: {}", fileId);
+            }
             updateStatus(fileId, "failed", 0, "error: " + e.getMessage());
         }
     }

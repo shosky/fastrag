@@ -6,6 +6,8 @@ import com.fastrag.module.platform.entity.ModelRecord;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import com.fastrag.module.platform.service.ModelService;
 import com.fastrag.ai.llm.LlmService;
+import com.fastrag.ai.embedding.EmbeddingService;
+import com.fastrag.ai.rerank.RerankService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -16,6 +18,8 @@ import java.util.*;
 public class ModelServiceImpl implements ModelService {
     private final ModelRecordMapper mapper;
     private final LlmService llmService;
+    private final EmbeddingService embeddingService;
+    private final RerankService rerankService;
 
     @Override
     public List<ModelRecord> list(String kw, String purpose) {
@@ -30,8 +34,27 @@ public class ModelServiceImpl implements ModelService {
         return mapper.selectById(id);
     }
 
+    // ===== 模型测试 =====
+
     @Override
     public Map<String, Object> testChat(String modelId, String prompt) {
+        return testModel(modelId, "LLM", Map.of("prompt", prompt));
+    }
+
+    @Override
+    public Map<String, Object> testEmbedding(String modelId, String text) {
+        return testModel(modelId, "Embedding", Map.of("text", text));
+    }
+
+    @Override
+    public Map<String, Object> testRerank(String modelId, String query, List<String> documents) {
+        return testModel(modelId, "Rerank", Map.of("query", query, "documents", documents));
+    }
+
+    /**
+     * 通用模型测试入口，根据模型 purpose 路由到对应服务
+     */
+    public Map<String, Object> testModel(String modelId, String purpose, Map<String, Object> params) {
         var model = mapper.selectById(modelId);
         if (model == null) {
             return Map.of("success", false, "error", "模型不存在");
@@ -39,24 +62,84 @@ public class ModelServiceImpl implements ModelService {
         if (StrUtil.isBlank(model.getApiUrl())) {
             return Map.of("success", false, "error", "模型未配置接口地址");
         }
+
+        String apiUrl = model.getApiUrl();
+        String apiKey = model.getApiKeyRef();
+        String code = model.getCode();
+
         try {
-            long t0 = System.currentTimeMillis();
-            String apiKey = model.getApiKeyRef();
-            String answer = llmService.chat(model.getCode(), prompt, model.getApiUrl(), apiKey);
-            long elapsed = System.currentTimeMillis() - t0;
-            return Map.of(
-                    "success", true,
-                    "modelName", model.getName(),
-                    "modelCode", model.getCode(),
-                    "prompt", prompt,
-                    "answer", answer,
-                    "elapsedMs", elapsed,
-                    "apiUrl", model.getApiUrl()
-            );
+            switch (purpose != null ? purpose.toUpperCase() : "LLM") {
+                case "EMBEDDING" -> {
+                    String text = (String) params.getOrDefault("text", "你好世界");
+                    long t0 = System.currentTimeMillis();
+                    List<List<Float>> vectors = embeddingService.embed(code, List.of(text), apiUrl, apiKey);
+                    long elapsed = System.currentTimeMillis() - t0;
+                    List<Float> vec = vectors.isEmpty() ? List.of() : vectors.get(0);
+                    return Map.of(
+                            "success", true,
+                            "modelName", model.getName(),
+                            "modelCode", code,
+                            "purpose", "Embedding",
+                            "input", text,
+                            "dimensions", vec.size(),
+                            "vectorPreview", vec.subList(0, Math.min(10, vec.size())),
+                            "elapsedMs", elapsed,
+                            "apiUrl", apiUrl
+                    );
+                }
+                case "RERANK" -> {
+                    String query = (String) params.getOrDefault("query", "测试查询");
+                    @SuppressWarnings("unchecked")
+                    List<String> docs = (List<String>) params.getOrDefault("documents", List.of("文档1", "文档2", "文档3"));
+                    if (docs.isEmpty()) docs = List.of("文档1", "文档2", "文档3");
+                    long t0 = System.currentTimeMillis();
+                    List<Map<String, Object>> results = rerankService.rerank(code, query, docs, docs.size(), apiUrl, apiKey);
+                    long elapsed = System.currentTimeMillis() - t0;
+                    return Map.of(
+                            "success", true,
+                            "modelName", model.getName(),
+                            "modelCode", code,
+                            "purpose", "Rerank",
+                            "query", query,
+                            "documentCount", docs.size(),
+                            "results", results,
+                            "elapsedMs", elapsed,
+                            "apiUrl", apiUrl
+                    );
+                }
+                case "ASR", "TTS", "OCR" -> {
+                    return Map.of(
+                            "success", false,
+                            "modelName", model.getName(),
+                            "modelCode", code,
+                            "purpose", purpose,
+                            "error", purpose + " 类型暂不支持在线测试，请通过实际业务流程验证"
+                    );
+                }
+                default -> {
+                    // LLM 及未知类型
+                    String prompt = (String) params.getOrDefault("prompt", "你好，请简单介绍一下你自己");
+                    long t0 = System.currentTimeMillis();
+                    String answer = llmService.chat(code, prompt, apiUrl, apiKey);
+                    long elapsed = System.currentTimeMillis() - t0;
+                    return Map.of(
+                            "success", true,
+                            "modelName", model.getName(),
+                            "modelCode", code,
+                            "purpose", "LLM",
+                            "prompt", prompt,
+                            "answer", answer,
+                            "elapsedMs", elapsed,
+                            "apiUrl", apiUrl
+                    );
+                }
+            }
         } catch (Exception e) {
-            return Map.of("success", false, "modelName", model.getName(), "error", e.getMessage());
+            return Map.of("success", false, "modelName", model.getName(), "modelCode", code, "error", e.getMessage());
         }
     }
+
+    // ===== 模型 CRUD =====
 
     @Override
     public ModelRecord create(Map<String, Object> f) {

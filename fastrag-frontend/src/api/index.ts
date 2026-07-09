@@ -1,4 +1,5 @@
 import request from '@/utils/request'
+import type { GraphData, GraphStats, PprRankItem } from '@/types/evaluation'
 import type { GraphExpansionResult, ParseStrategy, ParseStrategyForm } from '@/types/knowledge'
 
 // ===========================================================================
@@ -170,8 +171,18 @@ export async function fetchFolders(kbId: string): Promise<FolderNode[]> {
   return request.get(`/kb/${kbId}/folders`)
 }
 
-export async function createFolderApi(kbId: string, name: string, parentId: string = 'root'): Promise<void> {
-  return request.post(`/kb/${kbId}/folders`, { name, parentId })
+export async function createFolderApi(kbId: string, name: string, parentId?: string | null): Promise<void> {
+  // 根级文件夹传 null（后端 buildTree 只认 null 为根节点）
+  const pid = (!parentId || parentId === 'root') ? null : parentId
+  return request.post(`/kb/${kbId}/folders`, { name, parentId: pid })
+}
+
+export async function renameFolderApi(kbId: string, folderId: string, name: string): Promise<void> {
+  return request.put(`/kb/${kbId}/folders/${folderId}`, { name })
+}
+
+export async function deleteFolderApi(kbId: string, folderId: string): Promise<void> {
+  return request.delete(`/kb/${kbId}/folders/${folderId}`)
 }
 
 export async function fetchFolderName(kbId: string, folderId: string): Promise<string> {
@@ -188,6 +199,34 @@ export async function getChunks(kbId: string, params?: { fileId?: string; page?:
 
 export async function fetchChunkCount(kbId: string): Promise<number> {
   return request.get(`/kb/${kbId}/chunks/count`)
+}
+
+export async function getChunk(kbId: string, chunkId: string) {
+  return request.get(`/kb/${kbId}/chunks/${chunkId}`)
+}
+
+export async function createChunk(kbId: string, data: {
+  fileId: string
+  content: string
+  insertAfterIndex?: number
+  startTime?: number
+  endTime?: number
+  chunkType?: string
+  pageNumber?: number
+}) {
+  return request.post(`/kb/${kbId}/chunks`, data)
+}
+
+export async function updateChunk(kbId: string, chunkId: string, data: Record<string, any>) {
+  return request.put(`/kb/${kbId}/chunks/${chunkId}`, data)
+}
+
+export async function deleteChunk(kbId: string, chunkId: string) {
+  return request.delete(`/kb/${kbId}/chunks/${chunkId}`)
+}
+
+export async function batchDeleteChunks(kbId: string, ids: string[]) {
+  return request.post(`/kb/${kbId}/chunks/batch-delete`, ids)
 }
 
 // ===========================================================================
@@ -321,6 +360,35 @@ export async function getGraphSettings(kbId: string) {
 
 export async function saveGraphSettings(kbId: string, settings: Record<string, unknown>) {
   return request.put(`/kb/${kbId}/graph/settings`, settings)
+}
+
+/** 关键词子图搜索 */
+export async function searchGraphNodes(kbId: string, keyword: string, maxNodes: number = 50): Promise<GraphData> {
+  return request.get(`/kb/${kbId}/graph/search`, { params: { keyword, maxNodes } })
+}
+
+/** 获取实体类型标签列表 */
+export async function fetchGraphLabels(kbId: string): Promise<string[]> {
+  return request.get(`/kb/${kbId}/graph/labels`)
+}
+
+/** 删除文件关联的图谱数据 */
+export async function deleteFileGraph(kbId: string, fileId: string) {
+  return request.delete(`/kb/${kbId}/graph/file/${fileId}`)
+}
+
+/** 重试图谱构建 */
+export async function retryGraphBuild(kbId: string) {
+  return request.post(`/kb/${kbId}/graph/index/retry`)
+}
+
+/** Personalized PageRank 排序（检索增强用） */
+export async function rankChunksByPpr(
+  kbId: string,
+  entities: string[],
+  topK: number = 10,
+): Promise<PprRankItem[]> {
+  return request.post(`/kb/${kbId}/graph/rank`, { entities, topK })
 }
 
 // ===========================================================================
@@ -1063,6 +1131,12 @@ export async function testModel(modelId: string, data: Record<string, unknown>) 
 }
 export async function testModelChat(modelId: string, prompt: string) {
   return request.post(`/models/${modelId}/test-chat`, { prompt })
+}
+export async function testModelEmbedding(modelId: string, text: string) {
+  return request.post(`/models/${modelId}/test-embedding`, { text })
+}
+export async function testModelRerank(modelId: string, query: string, documents: string[]) {
+  return request.post(`/models/${modelId}/test-rerank`, { query, documents })
 }
 export async function getModelTrainings(modelId: string) {
   return request.get(`/models/${modelId}/trainings`)

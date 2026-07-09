@@ -8,7 +8,8 @@ import com.fastrag.module.graph.mapper.KbBenchmarkMapper;
 import com.fastrag.module.graph.mapper.KbBenchmarkQuestionMapper;
 import com.fastrag.module.graph.model.BenchmarkConfig;
 import lombok.RequiredArgsConstructor;
-import lombok.extern.slf4j.Slf4j;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -24,10 +25,11 @@ import java.util.Map;
  * <p>单独抽取为 Spring Bean，确保 {@link Async} 注解通过代理生效，
  * 避免同类自调用时异步失效的问题。
  */
-@Slf4j
 @Component
 @RequiredArgsConstructor
 public class BenchmarkGenerationHelper {
+
+    private static final Logger log = LoggerFactory.getLogger(BenchmarkGenerationHelper.class);
 
     private final KbBenchmarkMapper mapper;
     private final KbBenchmarkQuestionMapper questionMapper;
