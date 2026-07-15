@@ -28,6 +28,23 @@ public class FolderServiceImpl implements FolderService {
 
     @Override
     public FolderNodeDto create(String kbId, String name, String parentId) {
+        // 检查同级别下是否有重名文件夹
+        long dupCount;
+        if (parentId == null) {
+            dupCount = mapper.selectCount(new LambdaQueryWrapper<KbFolder>()
+                    .eq(KbFolder::getKbId, kbId)
+                    .eq(KbFolder::getName, name)
+                    .isNull(KbFolder::getParentId));
+        } else {
+            dupCount = mapper.selectCount(new LambdaQueryWrapper<KbFolder>()
+                    .eq(KbFolder::getKbId, kbId)
+                    .eq(KbFolder::getName, name)
+                    .eq(KbFolder::getParentId, parentId));
+        }
+        if (dupCount > 0) {
+            throw new RuntimeException("同级别下已存在同名文件夹");
+        }
+
         var f = new KbFolder();
         f.setKbId(kbId);
         f.setName(name);
@@ -53,6 +70,25 @@ public class FolderServiceImpl implements FolderService {
                 .eq(KbFolder::getKbId, kbId).eq(KbFolder::getId, folderId));
         if (f == null) {
             throw new RuntimeException("文件夹不存在");
+        }
+        // 检查同级别下是否有重名文件夹（排除自身）
+        String parentId = f.getParentId();
+        long dupCount;
+        if (parentId == null) {
+            dupCount = mapper.selectCount(new LambdaQueryWrapper<KbFolder>()
+                    .eq(KbFolder::getKbId, kbId)
+                    .eq(KbFolder::getName, newName)
+                    .isNull(KbFolder::getParentId)
+                    .ne(KbFolder::getId, folderId));
+        } else {
+            dupCount = mapper.selectCount(new LambdaQueryWrapper<KbFolder>()
+                    .eq(KbFolder::getKbId, kbId)
+                    .eq(KbFolder::getName, newName)
+                    .eq(KbFolder::getParentId, parentId)
+                    .ne(KbFolder::getId, folderId));
+        }
+        if (dupCount > 0) {
+            throw new RuntimeException("同级别下已存在同名文件夹");
         }
         f.setName(newName);
         mapper.updateById(f);
@@ -87,7 +123,9 @@ public class FolderServiceImpl implements FolderService {
 
     private List<FolderNodeDto> buildTree(List<KbFolder> all, String pid) {
         return all.stream()
-                .filter(f -> pid == null ? f.getParentId() == null : pid.equals(f.getParentId()))
+                .filter(f -> pid == null
+                        ? (f.getParentId() == null || "root".equals(f.getParentId()))
+                        : pid.equals(f.getParentId()))
                 .map(f -> {
                     var n = new FolderNodeDto();
                     n.setId(f.getId());

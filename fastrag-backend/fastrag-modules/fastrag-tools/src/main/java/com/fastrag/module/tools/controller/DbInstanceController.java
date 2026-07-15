@@ -16,4 +16,5 @@ public class DbInstanceController {
     @PostMapping("/{id}/tables") public ApiResponse<?> createTable(@PathVariable String id, @RequestBody DbTable table) { table.setDbId(id); return ApiResponse.success(svc.createTable(table)); }
     @PostMapping("/{id}/test-conn") public ApiResponse<?> testConn(@PathVariable String id) { return ApiResponse.success(svc.testConnection(id)); }
     @PostMapping("/{id}/query") public ApiResponse<?> query(@PathVariable String id,@RequestBody Map<String,String> b) { return ApiResponse.success(svc.query(id,b.get("sql"))); }
+    @PostMapping("/{id}/sync-tables") public ApiResponse<?> syncTables(@PathVariable String id) { return ApiResponse.success(svc.syncTables(id)); }
 }

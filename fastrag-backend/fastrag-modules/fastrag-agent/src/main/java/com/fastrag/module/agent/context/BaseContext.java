@@ -1,5 +1,6 @@
 package com.fastrag.module.agent.context;
 
+import com.fastrag.module.agent.executor.ModelConfig;
 import lombok.Data;
 
 import java.lang.reflect.Field;
@@ -42,6 +43,12 @@ public class BaseContext {
     @ConfigField(type = "list", kind = "skills")
     private List<String> skills;
 
+    @ConfigField(type = "list", kind = "databases")
+    private List<String> databases;
+
+    @ConfigField(type = "number")
+    private Integer maxSteps;
+
     @ConfigField(type = "number", auth = "admin")
     private Integer summaryThreshold;
 
@@ -58,24 +65,45 @@ public class BaseContext {
 
     private transient Map<String, Object> runtimeSkillDependencyMap;
 
+    /** 运行时模型配置（由 ContextMiddleware 或 AppServiceImpl 填充） */
+    private transient ModelConfig modelConfig;
+
+    /** 运行时状态（todos、artifacts 等，由中间件读写） */
+    private transient Map<String, Object> runtimeState = new HashMap<>();
+
+    /**
+     * 获取运行时状态 Map，确保非 null。
+     */
+    public Map<String, Object> getRuntimeState() {
+        if (runtimeState == null) {
+            runtimeState = new HashMap<>();
+        }
+        return runtimeState;
+    }
+
     public void updateFromMap(Map<String, Object> map) {
         if (map == null) {
             return;
         }
-        for (Field field : this.getClass().getDeclaredFields()) {
-            ConfigField configField = field.getAnnotation(ConfigField.class);
-            if (configField == null) {
-                continue;
-            }
-            String fieldName = field.getName();
-            if (map.containsKey(fieldName)) {
-                field.setAccessible(true);
-                try {
-                    field.set(this, map.get(fieldName));
-                } catch (IllegalAccessException e) {
-                    throw new RuntimeException("Failed to set field: " + fieldName, e);
+        // Traverse the class hierarchy to pick up @ConfigField from superclasses too
+        Class<?> clazz = this.getClass();
+        while (clazz != null && clazz != Object.class) {
+            for (Field field : clazz.getDeclaredFields()) {
+                ConfigField configField = field.getAnnotation(ConfigField.class);
+                if (configField == null) {
+                    continue;
+                }
+                String fieldName = field.getName();
+                if (map.containsKey(fieldName)) {
+                    field.setAccessible(true);
+                    try {
+                        field.set(this, map.get(fieldName));
+                    } catch (IllegalAccessException e) {
+                        throw new RuntimeException("Failed to set field: " + fieldName, e);
+                    }
                 }
             }
+            clazz = clazz.getSuperclass();
         }
     }
 

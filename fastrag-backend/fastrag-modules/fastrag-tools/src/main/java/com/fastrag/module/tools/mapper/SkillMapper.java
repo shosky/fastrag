@@ -15,4 +15,7 @@ public interface SkillMapper extends BaseMapper<Skill> {
 
     @Select("SELECT * FROM skill WHERE is_builtin = 1 ORDER BY name")
     List<Skill> selectBuiltin();
+
+    @Select("SELECT created_by FROM skill WHERE id = #{id}")
+    String selectCreatedBy(String id);
 }

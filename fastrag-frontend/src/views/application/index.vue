@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { ChatDotRound, Search, Plus, CopyDocument, Delete, Cpu, User, Setting, MagicStick, Collection, Star, VideoPlay, DataLine, Tools } from '@element-plus/icons-vue'
 import * as api from '@/api'
 
 const router = useRouter()
@@ -22,18 +23,27 @@ const newApp = ref({
 // 应用列表
 const apps = ref<any[]>([])
 
-// 模板市场
-const templates = ref<any[]>([])
+/** 图标映射：根据 icon 字段值返回对应的 Element Plus 图标组件 */
+function getAppIcon(icon: string) {
+  const map: Record<string, any> = {
+    robot: Cpu,
+    user: User,
+    setting: Setting,
+    magic: MagicStick,
+    kb: Collection,
+    star: Star,
+    video: VideoPlay,
+    data: DataLine,
+    tools: Tools,
+  }
+  return map[icon] || ChatDotRound
+}
 
 async function loadApps() {
   loading.value = true
   try {
-    const [appRes, tplRes] = await Promise.all([
-      api.getApps(),
-      api.getAppTemplates().catch(() => []),
-    ])
+    const appRes = await api.getApps()
     apps.value = (appRes as any)?.list || (appRes as any) || []
-    templates.value = (tplRes as any)?.list || (tplRes as any) || []
   } finally {
     loading.value = false
   }
@@ -101,53 +111,14 @@ function goToEditor(id: string) {
   router.push(`/application/${id}/editor`)
 }
 
-async function handleCreateFromTemplate(templateId: string) {
-  try {
-    await api.createApp({ templateId })
-    ElMessage.success('创建成功')
-    await loadApps()
-  } catch (e: any) {
-    ElMessage.error(e.message || '创建失败')
-  }
+function goToRuntime(id: string) {
+  router.push(`/application/runtime?appId=${id}`)
 }
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
     <el-tabs v-model="activeTab">
-      <el-tab-pane label="应用市场" name="market">
-        <div class="filter-bar">
-          <el-input v-model="searchKeyword" placeholder="搜索应用" clearable style="width: 300px">
-            <template #prefix><el-icon><Search /></el-icon></template>
-          </el-input>
-          <div class="tag-filter">
-            <el-check-tag
-              v-for="tag in allTags"
-              :key="tag"
-              :checked="selectedTag === tag"
-              @change="selectedTag = selectedTag === tag ? '' : tag"
-            >
-              {{ tag }}
-            </el-check-tag>
-          </div>
-        </div>
-        <div class="app-grid">
-          <div v-for="app in filteredApps" :key="app.id" class="app-card" @click="goToEditor(app.id)">
-            <div class="app-card-header">
-              <div class="app-icon" :style="{ background: app.icon }">
-                <el-icon :size="24" color="#fff"><ChatDotRound /></el-icon>
-              </div>
-              <div class="app-type">{{ app.type }}</div>
-            </div>
-            <h4>{{ app.name }}</h4>
-            <p>{{ app.description }}</p>
-            <div class="app-tags">
-              <el-tag v-for="tag in app.tags" :key="tag" size="small" type="info">{{ tag }}</el-tag>
-            </div>
-          </div>
-        </div>
-      </el-tab-pane>
-
       <el-tab-pane label="我的应用" name="my">
         <div class="filter-bar">
           <el-input v-model="searchKeyword" placeholder="搜索应用" clearable style="width: 300px">
@@ -160,6 +131,9 @@ async function handleCreateFromTemplate(templateId: string) {
         <div class="app-grid">
           <div v-for="app in filteredApps" :key="app.id" class="app-card">
             <div class="card-actions">
+              <el-button link size="small" type="primary" @click.stop="goToRuntime(app.id)">
+                <el-icon><VideoPlay /></el-icon>
+              </el-button>
               <el-button link size="small" @click.stop="handleCopyId(app.id)">
                 <el-icon><CopyDocument /></el-icon>
               </el-button>
@@ -169,7 +143,7 @@ async function handleCreateFromTemplate(templateId: string) {
             </div>
             <div class="app-card-header" @click="goToEditor(app.id)">
               <div class="app-icon" :style="{ background: app.icon }">
-                <el-icon :size="24" color="#fff"><ChatDotRound /></el-icon>
+                <el-icon :size="24" color="#fff" :component="getAppIcon(app.icon)"></el-icon>
               </div>
               <div class="app-type">{{ app.type }}</div>
             </div>
@@ -181,25 +155,6 @@ async function handleCreateFromTemplate(templateId: string) {
           </div>
         </div>
         <el-empty v-if="!filteredApps.length" description="暂无应用" />
-      </el-tab-pane>
-
-      <el-tab-pane label="模板市场" name="template">
-        <div class="template-grid">
-          <div v-for="tpl in templates" :key="tpl.id" class="template-card">
-            <div class="template-header">
-              <el-icon :size="32" color="#409eff"><ChatDotRound /></el-icon>
-              <el-tag size="small">{{ tpl.type }}</el-tag>
-            </div>
-            <h4>{{ tpl.name }}</h4>
-            <p>{{ tpl.description }}</p>
-            <div class="template-footer">
-              <span>{{ tpl.usageCount }} 人使用</span>
-              <el-button type="primary" size="small" @click="handleCreateFromTemplate(tpl.id)">
-                创建应用
-              </el-button>
-            </div>
-          </div>
-        </div>
       </el-tab-pane>
     </el-tabs>
 
@@ -236,19 +191,14 @@ async function handleCreateFromTemplate(templateId: string) {
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
 
-.tag-filter {
-  display: flex;
-  gap: $spacing-sm;
-}
-
-.app-grid, .template-grid {
+.app-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
   gap: $spacing-base;
   margin-top: $spacing-base;
 }
 
-.app-card, .template-card {
+.app-card {
   background: $bg-white;
   border-radius: $radius-base;
   padding: $spacing-lg;
@@ -304,14 +254,5 @@ async function handleCreateFromTemplate(templateId: string) {
 .app-tags {
   display: flex;
   gap: $spacing-xs;
-}
-
-.template-footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: $spacing-sm;
-  font-size: 12px;
-  color: $text-secondary;
 }
 </style>

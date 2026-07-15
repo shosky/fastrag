@@ -83,6 +83,10 @@ export async function deleteKbCategory(id: string) {
   return request.delete(`/kb-categories/${id}`)
 }
 
+export async function getAllKbTags() {
+  return request.get('/kb-tags')
+}
+
 export async function getKnowledgeBaseDetail(id: string) {
   return request.get(`/kb/${id}`)
 }
@@ -147,6 +151,10 @@ export async function emptyRecycleBin(kbId: string) {
 
 export async function copyFile(kbId: string, fileId: string) {
   return request.post(`/kb/${kbId}/files/${fileId}/copy`)
+}
+
+export async function moveFileToKb(kbId: string, fileId: string, targetKbId: string, targetFolderId?: string) {
+  return request.post(`/kb/${kbId}/files/${fileId}/move`, { targetKbId, targetFolderId: targetFolderId || null })
 }
 
 export async function getFileProcessingStatus(kbId: string, fileId: string) {
@@ -545,8 +553,72 @@ export async function saveAppConfig(id: string, config: Record<string, unknown>)
   return request.put(`/apps/${id}/config`, config)
 }
 
+/** 保存系统提示词 */
+export async function saveAppPrompt(appId: string, prompt: string) {
+  return request.put(`/apps/${appId}/config/prompt`, { prompt })
+}
+
+/** 保存上下文压缩配置（阈值 + 提示词） */
+export async function saveAppSummary(appId: string, data: { summaryThreshold: number; summaryPrompt: string }) {
+  return request.put(`/apps/${appId}/config/summary`, data)
+}
+
+/** 保存最大轮数 */
+export async function saveAppMaxTurns(appId: string, maxTurns: number) {
+  return request.put(`/apps/${appId}/config/max-turns`, { maxTurns })
+}
+
+/** 保存最大执行步数 */
+export async function saveAppMaxSteps(appId: string, maxSteps: number) {
+  return request.put(`/apps/${appId}/config/max-steps`, { maxSteps })
+}
+
+/** 保存重试次数 */
+export async function saveAppRetryTimes(appId: string, retryTimes: number) {
+  return request.put(`/apps/${appId}/config/retry-times`, { retryTimes })
+}
+
 export async function runApp(id: string, query: string) {
   return request.post(`/apps/${id}/run`, { query })
+}
+
+// ===========================================================================
+// 应用对话 API（流式 + 会话管理）
+// ===========================================================================
+
+/** 创建新会话 */
+export async function createAppSession(appId: string) {
+  return request.post(`/apps/${appId}/chat/sessions`)
+}
+
+/** 获取会话列表 */
+export async function getAppSessions(appId: string) {
+  return request.get(`/apps/${appId}/chat/sessions`)
+}
+
+/** 获取会话消息历史 */
+export async function getAppSessionMessages(appId: string, sessionId: string) {
+  return request.get(`/apps/${appId}/chat/sessions/${sessionId}/messages`)
+}
+
+/** 删除会话 */
+export async function deleteAppSession(appId: string, sessionId: string) {
+  return request.delete(`/apps/${appId}/chat/sessions/${sessionId}`)
+}
+
+/** 软删除单条消息 */
+export async function deleteAppMessage(appId: string, messageId: string) {
+  return request.delete(`/apps/${appId}/chat/messages/${messageId}`)
+}
+
+/** 消息反馈（like/dislike/null） */
+export async function feedbackAppMessage(appId: string, messageId: string, feedback: string) {
+  return request.post(`/apps/${appId}/chat/messages/${messageId}/feedback`, { feedback })
+}
+
+/** 编辑消息内容 */
+export async function updateAppMessage(appId: string, messageId: string, content: string) {
+  return request.put(`/apps/${appId}/chat/messages/${messageId}`, { content })
 }
 
 // ===========================================================================
@@ -621,6 +693,17 @@ export async function toggleTool(id: string) {
   return request.post(`/tools/${id}/toggle`)
 }
 
+/** 工具测试代理：后端转发 HTTP 请求，避免 CORS */
+export async function testProxy(data: {
+  method: string
+  url: string
+  headers: Record<string, string>
+  body?: string
+  timeout?: number
+}) {
+  return request.post('/tools/test-proxy', data)
+}
+
 // ===========================================================================
 // 技能 API
 // ===========================================================================
@@ -633,6 +716,11 @@ export async function getSkillDetail(id: string) {
   return request.get(`/skills/${id}`)
 }
 
+export async function getSkillBySlug(slug: string) {
+  return request.get(`/skills/slug/${slug}`)
+}
+
+/** 快速创建技能（只需 name/description/slug，其余字段自动生成） */
 export async function createSkill(data: Record<string, unknown>) {
   return request.post('/skills', data)
 }
@@ -647,6 +735,70 @@ export async function deleteSkill(id: string) {
 
 export async function toggleSkill(id: string) {
   return request.post(`/skills/${id}/toggle`)
+}
+
+export async function setSkillEnabled(id: string, enabled: boolean) {
+  return request.put(`/skills/${id}/enabled`, { enabled })
+}
+
+// -- 技能文件管理 --
+export async function getSkillTree(slug: string) {
+  return request.get(`/skills/${slug}/tree`)
+}
+
+export async function getSkillFile(slug: string, path: string) {
+  return request.get(`/skills/${slug}/file`, { params: { path } })
+}
+
+export async function updateSkillFile(slug: string, path: string, content: string) {
+  return request.put(`/skills/${slug}/file`, { path, content })
+}
+
+export async function createSkillFile(slug: string, path: string, isDir: boolean, content?: string) {
+  return request.post(`/skills/${slug}/file`, { path, isDir, content })
+}
+
+export async function deleteSkillFile(slug: string, path: string) {
+  return request.delete(`/skills/${slug}/file`, { params: { path } })
+}
+
+export async function exportSkillZip(slug: string) {
+  return request.get(`/skills/${slug}/export`, { responseType: 'blob' })
+}
+
+// -- 依赖管理 --
+export async function getSkillDependencies(id: string) {
+  return request.get(`/skills/${id}/dependencies`)
+}
+
+export async function updateSkillDependencies(id: string, dependencies: any[]) {
+  return request.put(`/skills/${id}/dependencies`, dependencies)
+}
+
+export async function getDependencyOptions(excludeSkillId?: string) {
+  return request.get('/skills/dependency-options', { params: { excludeSkillId } })
+}
+
+// -- 分享配置 --
+export async function updateSkillShareConfig(id: string, config: Record<string, any>) {
+  return request.put(`/skills/${id}/share-config`, config)
+}
+
+// -- 草稿安装 --
+export async function prepareSkillImport(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post('/skills/import/prepare', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
+export async function confirmSkillDraft(draftId: string, shareConfig?: Record<string, any>) {
+  return request.post(`/skills/install-drafts/${draftId}/confirm`, { shareConfig })
+}
+
+export async function discardSkillDraft(draftId: string) {
+  return request.delete(`/skills/install-drafts/${draftId}`)
 }
 
 // ===========================================================================
@@ -681,6 +833,21 @@ export async function getMcpServiceTools(id: string) {
   return request.get(`/mcp-services/${id}/tools`)
 }
 
+/** 解析 MCP URL：连接服务器发现工具，不持久化，用于创建前的「解析」按钮 */
+export async function parseMcpUrl(data: Record<string, unknown>) {
+  return request.post('/mcp-services/parse-url', data)
+}
+
+/** 刷新 MCP 服务：连接服务器、发现工具、更新状态 */
+export async function refreshMcpService(id: string) {
+  return request.post(`/mcp-services/${id}/refresh`)
+}
+
+/** 测试 MCP 工具调用 */
+export async function testMcpTool(toolId: number, args: Record<string, unknown>) {
+  return request.post(`/mcp-services/tools/${toolId}/test`, { arguments: args })
+}
+
 // ===========================================================================
 // 模型 API
 // ===========================================================================
@@ -703,26 +870,6 @@ export async function updateModel(id: string, data: Record<string, unknown>) {
 
 export async function deleteModel(id: string) {
   return request.delete(`/models/${id}`)
-}
-
-// ===========================================================================
-// 查询规则 API
-// ===========================================================================
-
-export async function getQueryRules(params?: { type?: string }) {
-  return request.get('/query-rules', { params })
-}
-
-export async function createQueryRule(data: Record<string, unknown>) {
-  return request.post('/query-rules', data)
-}
-
-export async function deleteQueryRule(id: string) {
-  return request.delete(`/query-rules/${id}`)
-}
-
-export async function toggleQueryRule(id: string) {
-  return request.post(`/query-rules/${id}/toggle`)
 }
 
 // ===========================================================================
@@ -993,10 +1140,6 @@ export async function getUserKbRole(userId: string, kbId: string) {
 
 export async function getAuditLogs(params?: { module?: string; limit?: number }) {
   return request.get('/audit/system-log', { params })
-}
-
-export async function getLoginLogs(params?: Record<string, unknown>) {
-  return request.get('/audit/login-log', { params })
 }
 
 // ===========================================================================
@@ -1351,6 +1494,46 @@ export async function exportAppOptimizations(appId: string) {
 }
 
 // ===========================================================================
+// 技能/工具/MCP 绑定 API
+// ===========================================================================
+export async function getAppSkillBindings(appId: string) {
+  return request.get(`/apps/${appId}/skills`)
+}
+export async function bindAppSkill(appId: string, data: Record<string, unknown>) {
+  return request.post(`/apps/${appId}/skills`, data)
+}
+export async function updateAppSkillBinding(appId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/apps/${appId}/skills/${id}`, data)
+}
+export async function unbindAppSkill(appId: string, id: string) {
+  return request.delete(`/apps/${appId}/skills/${id}`)
+}
+export async function getAppToolBindings(appId: string) {
+  return request.get(`/apps/${appId}/tools`)
+}
+export async function bindAppTool(appId: string, data: Record<string, unknown>) {
+  return request.post(`/apps/${appId}/tools`, data)
+}
+export async function updateAppToolBinding(appId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/apps/${appId}/tools/${id}`, data)
+}
+export async function unbindAppTool(appId: string, id: string) {
+  return request.delete(`/apps/${appId}/tools/${id}`)
+}
+export async function getAppMcpBindings(appId: string) {
+  return request.get(`/apps/${appId}/mcp-services`)
+}
+export async function bindAppMcp(appId: string, data: Record<string, unknown>) {
+  return request.post(`/apps/${appId}/mcp-services`, data)
+}
+export async function updateAppMcpBinding(appId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/apps/${appId}/mcp-services/${id}`, data)
+}
+export async function unbindAppMcp(appId: string, id: string) {
+  return request.delete(`/apps/${appId}/mcp-services/${id}`)
+}
+
+// ===========================================================================
 // M17 业务流管理（扩展）
 // ===========================================================================
 
@@ -1433,6 +1616,9 @@ export async function getDatabaseTables(id: string) {
 }
 export async function createDatabaseTable(id: string, data: Record<string, unknown>) {
   return request.post(`/databases/${id}/tables`, data)
+}
+export async function syncDatabaseTables(id: string) {
+  return request.post(`/databases/${id}/sync-tables`)
 }
 
 // ===========================================================================
@@ -1550,10 +1736,26 @@ export async function markUpdateLogRead(kbId: string, id: string) {
   return request.put(`/kb/${kbId}/update-logs/${id}/read`)
 }
 export async function setAutoKnowledgeUpdate(appId: string, config: Record<string, unknown>) {
-  return request.put(`/apps/${appId}/knowledge-update`, config)
+  return request.put(`/apps/${appId}/knowledge-update/config`, config)
 }
 export async function getAutoKnowledgeUpdate(appId: string) {
-  return request.get(`/apps/${appId}/knowledge-update`)
+  return request.get(`/apps/${appId}/knowledge-update/config`)
+}
+
+// ===========================================================================
+// 对话记录 API
+// ===========================================================================
+export async function getAppConversations(appId: string, params?: { keyword?: string; rating?: number; startDate?: string; endDate?: string; page?: number; size?: number }) {
+  return request.get(`/apps/${appId}/conversations`, { params })
+}
+export async function getAppConversationDetail(appId: string, convId: string) {
+  return request.get(`/apps/${appId}/conversations/${convId}`)
+}
+export async function deleteAppConversation(appId: string, convId: string) {
+  return request.delete(`/apps/${appId}/conversations/${convId}`)
+}
+export async function exportAppConversations(appId: string) {
+  return request.get(`/apps/${appId}/conversations/export`, { responseType: 'blob' })
 }
 
 // ===========================================================================

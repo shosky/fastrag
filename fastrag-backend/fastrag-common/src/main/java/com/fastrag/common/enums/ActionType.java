@@ -22,6 +22,7 @@ public enum ActionType {
     file_copied,
     file_retried,
     file_downloaded,
+    file_moved,
 
     // 文件夹
     folder_created,

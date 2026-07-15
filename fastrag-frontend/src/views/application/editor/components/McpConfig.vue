@@ -1,69 +1,55 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as api from '@/api'
 
 const props = defineProps<{ appInfo: { id: string } }>()
 const appId = () => props.appInfo.id
 
-// ===========================================================================
-// MCP 配置
-// ===========================================================================
-
 const availableMcpServices = ref<any[]>([])
-const selectedMcpIds = ref<string[]>([])
-const loading = ref(false)
+const bindings = ref<Array<{ id: string; mcpServiceId: string; mcpServiceName: string; enabled: number }>>([])
 
-async function loadMcpServices() {
+const selectedMcpIds = ref<Set<string>>(new Set())
+
+const loading = ref(false)
+const saving = ref(false)
+
+const selectedCount = computed(() => selectedMcpIds.value.size)
+
+async function loadData() {
   loading.value = true
   try {
-    const res: any = await api.getMcpServices()
-    availableMcpServices.value = Array.isArray(res) ? res : (res?.list || res?.records || [])
+    const [mcpRes, bindingsRes]: any[] = await Promise.all([
+      api.getMcpServices(),
+      api.getAppMcpBindings(appId()),
+    ])
+    const list = Array.isArray(mcpRes) ? mcpRes : (mcpRes?.list || mcpRes?.records || [])
+    availableMcpServices.value = (list || []).map((s: any) => ({
+      ...s,
+      enabled: s.enabled === 1 || s.enabled === true,
+    }))
+    bindings.value = Array.isArray(bindingsRes) ? bindingsRes : (bindingsRes?.list || bindingsRes?.records || [])
+    selectedMcpIds.value = new Set(bindings.value.map(b => b.mcpServiceId))
   } catch (e) {
     availableMcpServices.value = []
+    bindings.value = []
   } finally {
     loading.value = false
   }
 }
 
-async function loadAppConfig() {
-  try {
-    const config: any = await api.getAppConfig(appId())
-    const toolIds = config?.toolIds || ''
-    if (toolIds) {
-      const ids = String(toolIds).split(',').filter(Boolean)
-      selectedMcpIds.value = ids.filter((id: string) => id.startsWith('mcp_') || id.startsWith('mcp:'))
-    }
-  } catch (e) {
-    // 静默处理
-  }
-}
-
-async function handleSave() {
-  loading.value = true
-  try {
-    const config: any = await api.getAppConfig(appId())
-    const toolIds = String(config?.toolIds || '').split(',').filter(Boolean)
-    const skillIds = toolIds.filter((id: string) => id.startsWith('skill_') || id.startsWith('skill:'))
-    const otherToolIds = toolIds.filter((id: string) => !id.startsWith('mcp_') && !id.startsWith('mcp:'))
-    const merged = [...skillIds, ...otherToolIds, ...selectedMcpIds.value].join(',')
-    await api.saveAppConfig(appId(), { toolIds: merged })
-    ElMessage.success('MCP 配置已保存')
-  } catch (e) {
-    ElMessage.error('保存失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-function handleToggleMcp(mcp: any) {
-  const id = String(mcp.id)
-  const idx = selectedMcpIds.value.indexOf(id)
-  if (idx >= 0) {
-    selectedMcpIds.value.splice(idx, 1)
+function toggleMcp(mcpId: string) {
+  const id = String(mcpId)
+  if (selectedMcpIds.value.has(id)) {
+    selectedMcpIds.value.delete(id)
   } else {
-    selectedMcpIds.value.push(id)
+    selectedMcpIds.value.add(id)
   }
+  selectedMcpIds.value = new Set(selectedMcpIds.value)
+}
+
+function isSelected(mcpId: string): boolean {
+  return selectedMcpIds.value.has(String(mcpId))
 }
 
 async function copyToClipboard(text: string) {
@@ -75,51 +61,78 @@ async function copyToClipboard(text: string) {
   }
 }
 
-onMounted(async () => {
-  await Promise.all([loadMcpServices(), loadAppConfig()])
-})
+async function handleSave() {
+  saving.value = true
+  try {
+    const currentlyBound = new Set(bindings.value.map(b => b.mcpServiceId))
+    const toAdd = [...selectedMcpIds.value].filter(id => !currentlyBound.has(id))
+    const toRemove = bindings.value.filter(b => !selectedMcpIds.value.has(b.mcpServiceId))
+
+    for (const b of toRemove) {
+      await api.unbindAppMcp(appId(), b.id)
+    }
+    for (const mcpId of toAdd) {
+      const mcp = availableMcpServices.value.find(s => String(s.id) === mcpId)
+      await api.bindAppMcp(appId(), {
+        mcpServiceId: mcpId,
+        mcpServiceName: mcp?.name || '',
+        enabled: 1,
+      })
+    }
+
+    bindings.value = bindings.value.filter(b => selectedMcpIds.value.has(b.mcpServiceId))
+    for (const id of toAdd) {
+      bindings.value.push({ id: '', mcpServiceId: id, mcpServiceName: '', enabled: 1 })
+    }
+
+    ElMessage.success(`已保存（新增 ${toAdd.length}，移除 ${toRemove.length}）`)
+  } catch (e) {
+    ElMessage.error('保存失败，请重试')
+  } finally {
+    saving.value = false
+  }
+}
+
+onMounted(loadData)
 </script>
 
 <template>
   <div class="config-section">
-    <h3>MCP 配置</h3>
-    <p class="desc">配置应用可用的 MCP 服务，扩展智能体的外部能力。</p>
-
-    <div v-loading="loading" class="mcp-list">
-      <el-empty v-if="!availableMcpServices.length" description="暂无可用 MCP 服务" :image-size="60" />
-
-      <div v-for="mcp in availableMcpServices" :key="mcp.id" class="mcp-option">
-        <div class="mcp-info">
-          <el-checkbox
-            :model-value="selectedMcpIds.includes(String(mcp.id))"
-            @change="handleToggleMcp(mcp)"
-          >
-            <span class="mcp-name">{{ mcp.name }}</span>
-          </el-checkbox>
-          <span class="mcp-url" :title="mcp.mcpUrl || mcp.command || ''">
-            {{ mcp.mcpUrl || mcp.command || '-' }}
-            <el-button v-if="mcp.mcpUrl || mcp.command" link type="primary" size="small" @click.stop="copyToClipboard(mcp.mcpUrl || mcp.command)">
-              复制
-            </el-button>
-          </span>
-          <div class="mcp-tools" v-if="mcp.tools && mcp.tools.length">
-            <el-tag v-for="tool in mcp.tools" :key="tool" size="small" type="info">{{ tool }}</el-tag>
+    <div class="card-panel">
+      <div class="section-header">
+        <div class="section-title">MCP 配置</div>
+        <span class="selected-count">已选 {{ selectedCount }} 个 MCP 服务</span>
+      </div>
+      <p style="font-size:13px;color:var(--el-text-color-secondary);margin-bottom:12px">
+        配置应用可用的 MCP 服务，扩展智能体的外部能力
+      </p>
+      <div v-loading="loading" class="option-list">
+        <el-empty v-if="!availableMcpServices.length" description="暂无可用 MCP 服务" :image-size="60" />
+        <div v-for="mcp in availableMcpServices" :key="mcp.id" class="option-item">
+          <div class="option-info">
+            <el-checkbox
+              :model-value="isSelected(String(mcp.id))"
+              @change="toggleMcp(String(mcp.id))"
+            >
+              <span class="option-name">{{ mcp.name }}</span>
+            </el-checkbox>
+            <span class="option-url" :title="mcp.mcpUrl || mcp.command || ''">
+              {{ mcp.mcpUrl || mcp.command || '-' }}
+              <el-button v-if="mcp.mcpUrl || mcp.command" link type="primary" size="small" @click.stop="copyToClipboard(mcp.mcpUrl || mcp.command)">
+                复制
+              </el-button>
+            </span>
+            <div v-if="mcp.tools && mcp.tools.length" class="option-tools">
+              <el-tag v-for="tool in mcp.tools" :key="tool" size="small" type="info">{{ tool }}</el-tag>
+            </div>
           </div>
+          <el-switch :model-value="mcp.enabled" size="small" disabled @click.stop />
         </div>
-        <el-switch
-          :model-value="mcp.enabled"
-          size="small"
-          disabled
-          @click.stop
-        />
       </div>
     </div>
 
-    <div v-if="availableMcpServices.length" class="selected-count">
-      已选 {{ selectedMcpIds.length }} 个 MCP 服务
-      <el-button type="primary" size="small" style="margin-left: 16px" :loading="loading" @click="handleSave">
-        保 存
-      </el-button>
+    <div class="save-bar">
+      <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
     </div>
   </div>
 </template>
@@ -127,45 +140,46 @@ onMounted(async () => {
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
 
-.config-section {
-  h3 { margin: 0 0 $spacing-lg; }
-  .desc { color: $text-secondary; margin-bottom: $spacing-base; }
+.config-section { padding-bottom: 72px; }
+
+.card-panel {
+  background: var(--el-bg-color-overlay);
+  border-radius: $radius-base;
+  padding: 20px;
+  border: 1px solid var(--el-border-color-light);
 }
 
-.mcp-list {
-  border: 1px solid $border-lighter;
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: $spacing-base;
+}
+
+.section-title { font-size: 15px; font-weight: 600; color: $text-primary; }
+.selected-count { font-size: 13px; color: $text-secondary; }
+
+.option-list {
+  border: 1px solid var(--el-border-color-lighter);
   border-radius: $radius-base;
   overflow: hidden;
 }
 
-.mcp-option {
+.option-item {
   padding: $spacing-base;
-  border-bottom: 1px solid $border-extra-light;
+  border-bottom: 1px solid var(--el-border-color-extra-light);
   display: flex;
   align-items: flex-start;
   justify-content: space-between;
 
-  &:last-child {
-    border-bottom: none;
-  }
-
-  &:hover {
-    background: $bg-hover;
-  }
+  &:last-child { border-bottom: none; }
+  &:hover { background: var(--el-fill-color-light); }
 }
 
-.mcp-info {
-  display: flex;
-  flex-direction: column;
-  gap: $spacing-xs;
-  flex: 1;
-}
+.option-info { display: flex; flex-direction: column; gap: $spacing-xs; flex: 1; }
+.option-name { font-weight: 500; }
 
-.mcp-name {
-  font-weight: 500;
-}
-
-.mcp-url {
+.option-url {
   font-size: 12px;
   color: $text-secondary;
   margin-left: 24px;
@@ -175,18 +189,24 @@ onMounted(async () => {
   gap: 8px;
 }
 
-.mcp-tools {
+.option-tools {
   display: flex;
   gap: $spacing-xs;
   margin-left: 24px;
   margin-top: $spacing-xs;
 }
 
-.selected-count {
-  margin-top: $spacing-base;
-  color: $text-secondary;
-  font-size: 13px;
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: $spacing-lg;
+  height: 56px;
   display: flex;
   align-items: center;
+  justify-content: flex-end;
+  padding: 0 4px;
+  background: var(--el-bg-color);
+  border-top: 1px solid var(--el-border-color-lighter);
+  z-index: 10;
 }
 </style>

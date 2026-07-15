@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import * as api from '@/api'
-import { Download, UploadFilled, ZoomIn, CopyDocument } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   appInfo: {
@@ -14,9 +13,8 @@ const props = defineProps<{
   }
 }>()
 
-// ===========================================================================
-// 基础配置
-// ===========================================================================
+const appId = () => props.appInfo.id
+
 const basicForm = ref({
   memoryRounds: 5,
   outputFormat: 'markdown',
@@ -32,107 +30,133 @@ const advancedForm = ref({
   frequencyPenalty: 0,
   presencePenalty: 0,
 })
-const showAdvanced = ref(false)
-const showDetailDialog = ref(false)
-const detailData = ref('')
+const promptForm = ref({
+  prompt: '',
+})
+const summaryForm = ref({
+  summaryThreshold: 8000,
+  summaryPrompt: '',
+})
+const runControlForm = ref({
+  maxTurns: 10,
+  maxSteps: 15,
+  retryTimes: 2,
+})
+const showAdvanced = ref(true)
+const showPrompt = ref(true)
+const showSummary = ref(false)
+const showRunControl = ref(false)
+const saving = ref(false)
 
-const appId = () => props.appInfo.id
+// 模型列表
+const modelOptions = ref<{ code: string; name: string }[]>([])
+const modelsLoading = ref(false)
+
+async function loadModels() {
+  modelsLoading.value = true
+  try {
+    const list: any[] = await api.getModels({ purpose: 'LLM' })
+    // 只显示在线模型
+    modelOptions.value = (list || [])
+      .filter((m: any) => m.status === 'online')
+      .map((m: any) => ({
+        code: m.code || m.id,
+        name: m.name || m.code,
+      }))
+  } catch (e) {
+    /* ignore */
+  } finally {
+    modelsLoading.value = false
+  }
+}
 
 async function loadBasic() {
   try {
     const r: any = await api.getAppBasicConfig(appId())
-    if (r) Object.assign(basicForm.value, r)
-    if (r?.advanced) Object.assign(advancedForm.value, r.advanced)
+    if (r) {
+      // 只取基本配置字段，避免 advancedOptions JSON 字符串覆盖
+      basicForm.value = {
+        memoryRounds: r.memoryRounds ?? 5,
+        outputFormat: r.outputFormat ?? 'markdown',
+        timeoutSeconds: r.timeoutSeconds ?? 30,
+        greeting: r.greeting ?? '',
+        goodbyeMessage: r.goodbyeMessage ?? '',
+      }
+      // 从 advancedOptions JSON 字符串解析高级配置
+      if (r.advancedOptions) {
+        try {
+          const adv = typeof r.advancedOptions === 'string'
+            ? JSON.parse(r.advancedOptions)
+            : r.advancedOptions
+          if (adv) Object.assign(advancedForm.value, adv)
+        } catch (e) { /* ignore parse error */ }
+      }
+    }
   } catch (e) { /* ignore */ }
 }
 
-async function saveBasic() {
-  await api.saveAppBasicConfig(appId(), basicForm.value)
-  ElMessage.success('基础配置已保存')
-}
-
-async function saveAdvancedOpts() {
-  await api.saveAppAdvanced(appId(), advancedForm.value)
-  ElMessage.success('高级选项已保存')
-}
-
-async function handleViewDetail() {
+async function loadConfig() {
   try {
-    const r: any = await api.getAppBasicConfig(appId())
-    detailData.value = JSON.stringify({ basic: r, advanced: advancedForm.value }, null, 2)
-    showDetailDialog.value = true
-  } catch (e) {
-    ElMessage.error('获取配置详情失败')
-  }
-}
-
-async function handleExportBasic() {
-  try {
-    const r: any = await api.exportAppConfig(appId())
-    const blob = new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' })
-    const url = URL.createObjectURL(blob)
-    const a = document.createElement('a')
-    a.href = url
-    a.download = `basic_config_${appId()}.json`
-    a.click()
-    URL.revokeObjectURL(url)
-    ElMessage.success('基础配置已导出')
-  } catch (e) {
-    ElMessage.error('导出失败')
-  }
-}
-
-async function handleImportBasic() {
-  const input = document.createElement('input')
-  input.type = 'file'
-  input.accept = '.json'
-  input.onchange = async (e: any) => {
-    try {
-      const file = e.target.files[0]
-      if (!file) return
-      const text = await file.text()
-      const data = JSON.parse(text)
-      await api.importAppConfig(appId(), data)
-      await loadBasic()
-      ElMessage.success('基础配置已导入')
-    } catch (e) {
-      ElMessage.error('导入失败，请检查文件格式')
+    const r: any = await api.getAppConfig(appId())
+    if (r) {
+      promptForm.value.prompt = r.prompt ?? ''
+      summaryForm.value.summaryThreshold = r.summaryThreshold ?? 8000
+      summaryForm.value.summaryPrompt = r.summaryPrompt ?? ''
+      runControlForm.value.maxTurns = r.maxTurns ?? 10
+      runControlForm.value.maxSteps = r.maxSteps ?? 15
+      runControlForm.value.retryTimes = r.retryTimes ?? 2
+      // 同步 maxTokens 到高级表单
+      if (r.maxTokens) advancedForm.value.maxTokens = r.maxTokens
+      if (r.model) advancedForm.value.model = r.model
+      if (r.temperature != null) advancedForm.value.temperature = r.temperature
     }
-  }
-  input.click()
+  } catch (e) { /* ignore */ }
 }
 
-function copyToClipboard(text: string) {
-  navigator.clipboard.writeText(text).then(() => {
-    ElMessage.success('复制成功')
-  }).catch(() => {
-    ElMessage.error('复制失败')
-  })
+async function handleSave() {
+  saving.value = true
+  try {
+    await api.saveAppBasicConfig(appId(), basicForm.value)
+    await api.saveAppAdvanced(appId(), advancedForm.value)
+    // 保存系统提示词
+    await api.saveAppPrompt(appId(), promptForm.value.prompt)
+    // 保存上下文压缩配置
+    await api.saveAppSummary(appId(), {
+      summaryThreshold: summaryForm.value.summaryThreshold,
+      summaryPrompt: summaryForm.value.summaryPrompt,
+    })
+    // 保存运行控制参数
+    await api.saveAppMaxTurns(appId(), runControlForm.value.maxTurns)
+    await api.saveAppMaxSteps(appId(), runControlForm.value.maxSteps)
+    await api.saveAppRetryTimes(appId(), runControlForm.value.retryTimes)
+    ElMessage.success('基础配置已保存')
+  } catch (e) {
+    ElMessage.error('保存失败')
+  } finally {
+    saving.value = false
+  }
 }
 
 onMounted(() => {
   loadBasic()
+  loadConfig()
+  loadModels()
 })
 </script>
 
 <template>
   <div class="config-section">
-    <!-- 基础信息配置 -->
+    <!-- 基础信息 -->
     <div class="card-panel">
       <div class="section-header">
         <div class="section-title">基础信息配置</div>
-        <div class="section-actions">
-          <el-button size="small" :icon="ZoomIn" @click="handleViewDetail">查看配置详情</el-button>
-          <el-button size="small" :icon="Download" @click="handleExportBasic">导出配置</el-button>
-          <el-button size="small" :icon="UploadFilled" @click="handleImportBasic">导入配置</el-button>
-        </div>
       </div>
-      <el-form label-width="120px" style="margin-top:16px">
+      <el-form label-width="120px">
         <el-form-item label="对话记忆轮数">
           <el-input-number v-model="basicForm.memoryRounds" :min="0" :max="50" />
         </el-form-item>
         <el-form-item label="输出格式">
-          <el-select v-model="basicForm.outputFormat" style="width:160px">
+          <el-select v-model="basicForm.outputFormat" style="width: 160px">
             <el-option label="Markdown" value="markdown" />
             <el-option label="HTML" value="html" />
             <el-option label="纯文本" value="text" />
@@ -147,102 +171,147 @@ onMounted(() => {
         <el-form-item label="结束语">
           <el-input v-model="basicForm.goodbyeMessage" type="textarea" :rows="2" placeholder="请输入结束语" />
         </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="saveBasic">保存基础配置</el-button>
-        </el-form-item>
       </el-form>
     </div>
 
     <!-- 高级选项 -->
-    <div class="card-panel" style="margin-top:16px">
+    <div class="card-panel">
       <div class="section-header">
         <div class="section-title">高级选项</div>
         <el-button size="small" text @click="showAdvanced = !showAdvanced">
           {{ showAdvanced ? '收起' : '展开' }}
         </el-button>
       </div>
-      <el-form v-if="showAdvanced" label-width="120px" style="margin-top:16px">
+      <el-form v-if="showAdvanced" label-width="120px">
         <el-form-item label="模型选择">
-          <el-input v-model="advancedForm.model" placeholder="默认使用系统模型" />
+          <el-select
+            v-model="advancedForm.model"
+            placeholder="选择 LLM 模型"
+            clearable
+            filterable
+            :loading="modelsLoading"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="m in modelOptions"
+              :key="m.code"
+              :label="m.name"
+              :value="m.code"
+            />
+          </el-select>
+          <div v-if="modelOptions.length === 0 && !modelsLoading" style="font-size: 12px; color: var(--el-text-color-secondary); margin-top: 4px">
+            暂无在线 LLM 模型，请先在模型管理中添加并启用模型
+          </div>
         </el-form-item>
         <el-form-item label="温度">
-          <el-slider v-model="advancedForm.temperature" :min="0" :max="2" :step="0.1" show-input style="width:300px" />
+          <el-slider v-model="advancedForm.temperature" :min="0" :max="2" :step="0.1" show-input style="width: 300px" />
         </el-form-item>
         <el-form-item label="最大Token数">
           <el-input-number v-model="advancedForm.maxTokens" :min="128" :max="8192" :step="128" />
         </el-form-item>
         <el-form-item label="Top P">
-          <el-slider v-model="advancedForm.topP" :min="0" :max="1" :step="0.05" show-input style="width:300px" />
+          <el-slider v-model="advancedForm.topP" :min="0" :max="1" :step="0.05" show-input style="width: 300px" />
         </el-form-item>
         <el-form-item label="频率惩罚">
-          <el-slider v-model="advancedForm.frequencyPenalty" :min="-2" :max="2" :step="0.1" show-input style="width:300px" />
+          <el-slider v-model="advancedForm.frequencyPenalty" :min="-2" :max="2" :step="0.1" show-input style="width: 300px" />
         </el-form-item>
         <el-form-item label="存在惩罚">
-          <el-slider v-model="advancedForm.presencePenalty" :min="-2" :max="2" :step="0.1" show-input style="width:300px" />
-        </el-form-item>
-        <el-form-item>
-          <el-button type="primary" @click="saveAdvancedOpts">保存高级选项</el-button>
+          <el-slider v-model="advancedForm.presencePenalty" :min="-2" :max="2" :step="0.1" show-input style="width: 300px" />
         </el-form-item>
       </el-form>
+      <div v-else style="font-size: 13px; color: var(--el-text-color-secondary)">展开后可调整模型参数</div>
     </div>
 
-    <!-- 原有基本信息 + 开发信息 -->
-    <div class="card-panel" style="margin-top:16px">
-      <div class="section-title">基本信息</div>
-      <el-form label-width="100px" style="max-width:700px; margin-top:16px">
-        <el-form-item label="应用类型：">
-          <el-input :value="basicForm.outputFormat ? props.appInfo.type : props.appInfo.type" disabled />
-        </el-form-item>
-        <el-form-item label="应用名称：" required>
-          <el-input v-model="props.appInfo.name" disabled />
-        </el-form-item>
-        <el-form-item label="应用简介：">
-          <el-input :value="props.appInfo.description" type="textarea" :rows="2" disabled />
+    <!-- 系统提示词 -->
+    <div class="card-panel">
+      <div class="section-header">
+        <div class="section-title">系统提示词</div>
+        <el-button size="small" text @click="showPrompt = !showPrompt">
+          {{ showPrompt ? '收起' : '展开' }}
+        </el-button>
+      </div>
+      <el-form v-if="showPrompt" label-width="120px">
+        <el-form-item label="提示词">
+          <el-input
+            v-model="promptForm.prompt"
+            type="textarea"
+            :rows="6"
+            placeholder="请输入系统提示词，用于定义 AI 的角色、行为规则和回答风格"
+          />
         </el-form-item>
       </el-form>
+      <div v-else style="font-size: 13px; color: var(--el-text-color-secondary)">展开后可设置系统提示词</div>
     </div>
 
-    <div class="card-panel" style="margin-top:16px">
-      <div class="section-title">开发信息</div>
-      <el-form label-width="100px" style="max-width:700px; margin-top:16px">
-        <el-form-item label="AccessToken：">
-          <el-input :value="props.appInfo.accessToken" readonly>
-            <template #append>
-              <el-button @click="copyToClipboard(props.appInfo.accessToken)">
-                <el-icon><CopyDocument /></el-icon>
-              </el-button>
-            </template>
-          </el-input>
+    <!-- 上下文压缩 -->
+    <div class="card-panel">
+      <div class="section-header">
+        <div class="section-title">上下文压缩</div>
+        <el-button size="small" text @click="showSummary = !showSummary">
+          {{ showSummary ? '收起' : '展开' }}
+        </el-button>
+      </div>
+      <el-form v-if="showSummary" label-width="120px">
+        <el-form-item label="摘要阈值">
+          <el-input-number v-model="summaryForm.summaryThreshold" :min="1000" :max="32000" :step="1000" />
+          <span style="font-size: 12px; color: var(--el-text-color-secondary); margin-left: 8px">当上下文 token 数超过此值时触发摘要压缩</span>
+        </el-form-item>
+        <el-form-item label="摘要提示词">
+          <el-input
+            v-model="summaryForm.summaryPrompt"
+            type="textarea"
+            :rows="4"
+            placeholder="请输入上下文压缩的提示词（留空使用默认提示词）"
+          />
         </el-form-item>
       </el-form>
+      <div v-else style="font-size: 13px; color: var(--el-text-color-secondary)">展开后可配置上下文压缩策略</div>
     </div>
 
-    <!-- 配置详情对话框 -->
-    <el-dialog v-model="showDetailDialog" title="配置详情" width="640px">
-      <pre style="background:#f5f7fa;padding:16px;border-radius:4px;overflow:auto;max-height:400px;font-size:13px;white-space:pre-wrap;word-break:break-all">{{ detailData }}</pre>
-      <template #footer>
-        <el-button @click="showDetailDialog = false">关闭</el-button>
-      </template>
-    </el-dialog>
+    <!-- 运行控制 -->
+    <div class="card-panel">
+      <div class="section-header">
+        <div class="section-title">运行控制</div>
+        <el-button size="small" text @click="showRunControl = !showRunControl">
+          {{ showRunControl ? '收起' : '展开' }}
+        </el-button>
+      </div>
+      <el-form v-if="showRunControl" label-width="120px">
+        <el-form-item label="最大轮数">
+          <el-input-number v-model="runControlForm.maxTurns" :min="1" :max="100" />
+          <span style="font-size: 12px; color: var(--el-text-color-secondary); margin-left: 8px">单次对话最大交互轮数</span>
+        </el-form-item>
+        <el-form-item label="最大步数">
+          <el-input-number v-model="runControlForm.maxSteps" :min="1" :max="50" />
+          <span style="font-size: 12px; color: var(--el-text-color-secondary); margin-left: 8px">Agent 最大执行步数</span>
+        </el-form-item>
+        <el-form-item label="重试次数">
+          <el-input-number v-model="runControlForm.retryTimes" :min="0" :max="10" />
+          <span style="font-size: 12px; color: var(--el-text-color-secondary); margin-left: 8px">模型调用失败时的重试次数</span>
+        </el-form-item>
+      </el-form>
+      <div v-else style="font-size: 13px; color: var(--el-text-color-secondary)">展开后可配置运行控制参数</div>
+    </div>
+
+    <!-- 固定底部保存按钮 -->
+    <div class="save-bar">
+      <el-button type="primary" :loading="saving" @click="handleSave">保存配置</el-button>
+    </div>
   </div>
 </template>
 
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
 
+.config-section {
+  padding-bottom: 72px; /* 给固定底栏留空间 */
+}
+
 .section-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
   margin-bottom: $spacing-base;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-
-.section-actions {
-  display: flex;
-  align-items: center;
-  gap: 8px;
 }
 
 .section-title {
@@ -253,8 +322,23 @@ onMounted(() => {
 
 .card-panel {
   background: var(--el-bg-color-overlay);
-  border-radius: 8px;
+  border-radius: $radius-base;
   padding: 20px;
   border: 1px solid var(--el-border-color-light);
+  margin-bottom: $spacing-base;
+}
+
+.save-bar {
+  position: sticky;
+  bottom: 0;
+  margin-top: $spacing-lg;
+  height: 56px;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 0 4px;
+  background: var(--el-bg-color);
+  border-top: 1px solid var(--el-border-color-lighter);
+  z-index: 10;
 }
 </style>

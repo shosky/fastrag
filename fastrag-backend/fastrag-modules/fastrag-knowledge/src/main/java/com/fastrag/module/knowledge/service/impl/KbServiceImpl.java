@@ -4,13 +4,18 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fastrag.module.knowledge.entity.KbTag;
+import com.fastrag.module.knowledge.entity.KbTagRelation;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
+import com.fastrag.module.knowledge.mapper.KbTagMapper;
+import com.fastrag.module.knowledge.mapper.KbTagRelationMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.knowledge.model.KbCreateRequest;
 import com.fastrag.module.knowledge.model.KbDto;
 import com.fastrag.module.knowledge.service.KbService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
@@ -19,6 +24,8 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class KbServiceImpl implements KbService {
     private final KnowledgeBaseMapper mapper;
+    private final KbTagMapper kbTagMapper;
+    private final KbTagRelationMapper kbTagRelationMapper;
 
     @Override
     public Map<String, Object> list(String kw, String cat, int page, int pageSize) {
@@ -43,6 +50,7 @@ public class KbServiceImpl implements KbService {
     }
 
     @Override
+    @Transactional
     public KbDto create(KbCreateRequest req, String creator) {
         var e = new KnowledgeBase();
         e.setName(req.getName());
@@ -61,10 +69,20 @@ public class KbServiceImpl implements KbService {
         e.setTotalSize(0L);
         e.setType("personal");
         mapper.insert(e);
+
+        // 处理标签实体
+        if (req.getTags() != null && !req.getTags().isEmpty()) {
+            syncTagRelations(e.getId(), req.getTags(), creator);
+            // 更新非规范化缓存
+            e.setTags(JSONUtil.toJsonStr(req.getTags()));
+            mapper.updateById(e);
+        }
+
         return toDto(e);
     }
 
     @Override
+    @Transactional
     public KbDto update(String id, KbCreateRequest req) {
         var e = mapper.selectById(id);
         if (e == null) throw new RuntimeException("KB not found: " + id);
@@ -80,6 +98,12 @@ public class KbServiceImpl implements KbService {
         if (req.getRetrievalConfig() != null) e.setRetrievalConfig(JSONUtil.toJsonStr(req.getRetrievalConfig()));
         if (req.getGraphAutoBuild() != null) e.setGraphAutoBuild(req.getGraphAutoBuild() ? 1 : 0);
         mapper.updateById(e);
+
+        // 同步标签实体
+        if (req.getTags() != null) {
+            syncTagRelations(id, req.getTags(), null);
+        }
+
         return toDto(e);
     }
 
@@ -102,6 +126,58 @@ public class KbServiceImpl implements KbService {
             result.add(m);
         });
         return result;
+    }
+
+    /**
+     * 同步 KB 的标签关联：删除旧关联，创建新关联，更新标签使用计数
+     */
+    private void syncTagRelations(String kbId, List<String> tagNames, String creator) {
+        // 1. 删除该 KB 的所有旧关联
+        kbTagRelationMapper.delete(new LambdaQueryWrapper<KbTagRelation>()
+                .eq(KbTagRelation::getTargetType, "kb")
+                .eq(KbTagRelation::getTargetId, kbId));
+
+        // 2. 获取旧标签列表以便减少 usage_count
+        List<KbTagRelation> oldRels = kbTagRelationMapper.selectList(
+                new LambdaQueryWrapper<KbTagRelation>()
+                        .eq(KbTagRelation::getTargetType, "kb")
+                        .eq(KbTagRelation::getTargetId, kbId));
+        for (var rel : oldRels) {
+            KbTag tag = kbTagMapper.selectById(rel.getTagId());
+            if (tag != null && tag.getUsageCount() != null && tag.getUsageCount() > 0) {
+                tag.setUsageCount(tag.getUsageCount() - 1);
+                kbTagMapper.updateById(tag);
+            }
+        }
+        // 已在上一步删除，重新查为空列表
+
+        // 3. 为每个标签名创建/查找标签，创建关联
+        for (String name : tagNames) {
+            if (StrUtil.isBlank(name)) continue;
+            name = name.trim();
+
+            // 查找或创建标签
+            KbTag tag = kbTagMapper.selectOne(
+                    new LambdaQueryWrapper<KbTag>().eq(KbTag::getName, name));
+            if (tag == null) {
+                tag = new KbTag();
+                tag.setName(name);
+                tag.setUsageCount(0);
+                tag.setCreatedBy(creator);
+                kbTagMapper.insert(tag);
+            }
+
+            // 创建关联
+            KbTagRelation rel = new KbTagRelation();
+            rel.setTagId(tag.getId());
+            rel.setTargetType("kb");
+            rel.setTargetId(kbId);
+            kbTagRelationMapper.insert(rel);
+
+            // 增加使用计数
+            tag.setUsageCount(tag.getUsageCount() == null ? 1 : tag.getUsageCount() + 1);
+            kbTagMapper.updateById(tag);
+        }
     }
 
     private KbDto toDto(KnowledgeBase e) {

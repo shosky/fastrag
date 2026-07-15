@@ -12,7 +12,37 @@ const router = useRouter()
 const services = ref<McpService[]>([])
 
 async function loadServices() {
-  services.value = (await api.getMcpServices()) as any || []
+  const raw: any[] = (await api.getMcpServices()) as any || []
+  services.value = raw.map(normalizeService)
+}
+
+/** 将后端返回的 Integer 字段转为前端需要的 boolean 等类型 */
+function normalizeService(s: any): McpService {
+  const toolsList = (s.toolsList || []).map((t: any) => ({
+    ...t,
+    params: normalizeToolParams(t.params),
+  }))
+  return {
+    ...s,
+    enabled: s.enabled === 1 || s.enabled === true,
+    toolsList,
+    callLogs: s.callLogs || [],
+  }
+}
+
+/** 将 JSON Schema Map 格式的工具参数转为前端数组格式 */
+function normalizeToolParams(params: any): any[] {
+  if (!params) return []
+  if (Array.isArray(params)) return params.map((p: any) => ({ ...p }))
+  if (typeof params === 'object' && params.properties) {
+    return Object.entries(params.properties).map(([name, prop]: [string, any]) => ({
+      name,
+      type: prop.type || 'string',
+      description: prop.description || '',
+      required: (params.required || []).includes(name),
+    }))
+  }
+  return []
 }
 
 onMounted(loadServices)
@@ -28,7 +58,7 @@ const filteredServices = computed(() => {
       (s) =>
         s.name.toLowerCase().includes(kw) ||
         s.mcpUrl.toLowerCase().includes(kw) ||
-        s.toolsList.some((t) => t.name.toLowerCase().includes(kw)),
+        (s.toolsList || []).some((t) => t.name?.toLowerCase().includes(kw)),
     )
   }
   if (selectedStatus.value) {
@@ -117,7 +147,7 @@ async function handleToggleEnabled(service: McpService) {
           <p class="mcp-url-text" :title="service.mcpUrl">{{ service.mcpUrl }}</p>
           <div class="mcp-tags">
             <span class="tag-text">{{ service.authType }}</span>
-            <span class="tag-text">{{ service.toolsList.length }} 个工具</span>
+            <span class="tag-text">{{ service.toolCount || (service.toolsList || []).length || 0 }} 个工具</span>
           </div>
         </div>
         <div class="mcp-card-footer">
@@ -134,7 +164,7 @@ async function handleToggleEnabled(service: McpService) {
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item @click="openDetail(service)">查看详情</el-dropdown-item>
-                  <el-dropdown-item divided @click="handleDelete(service)">
+                  <el-dropdown-item v-if="!service.isBuiltin" divided @click="handleDelete(service)">
                     <span style="color: var(--el-color-danger)">删除</span>
                   </el-dropdown-item>
                 </el-dropdown-menu>

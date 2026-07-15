@@ -84,8 +84,7 @@ function handleRetry() {
       <!-- 左侧提示 -->
       <div class="debug-sidebar">
         <div class="debug-tip">
-          <p>当前参数调整后问答对话调试验证效果，满意后点击发布配置生效；若不发布不影响原有应用参数配置，离开当前页面后所做临时调整将丢失。</p>
-          <el-button type="primary" size="small" @click="ElMessage.info('请点击底部「发布配置」按钮使配置生效')">发布配置</el-button>
+          <p>当前参数调整后可在右侧进行问答对话调试验证效果，所做调整实时生效。离开当前页面后所做临时调整将丢失。</p>
         </div>
       </div>
 

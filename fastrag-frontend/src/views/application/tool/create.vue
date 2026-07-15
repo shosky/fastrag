@@ -17,14 +17,17 @@ async function handleSubmit(data: Tool) {
       name: data.name,
       identifier: data.identifier,
       description: data.description,
-      type: 'http',
+      type: data.type,
       tags: data.tags,
       icon: data.icon,
       httpConfig: data.httpConfig,
       inputs: data.inputs,
+      inputSchema: data.inputSchema,
+      outputs: data.outputSchema,
+      outputMapping: data.outputMapping,
       enabled: data.enabled,
     })
-    ElMessage.success(`HTTP 工具「${created?.name || data.name}」创建成功`)
+    ElMessage.success(`工具「${created?.name || data.name}」创建成功`)
     router.push('/application/my-tools')
   } finally {
     saving.value = false
@@ -47,7 +50,6 @@ function handleCancel() {
 
     <ToolForm
       mode="create"
-      http-only
       @submit="handleSubmit"
       @cancel="handleCancel"
     />

@@ -65,30 +65,6 @@ async function handleToggleEnabled(tool: Tool) {
   ElMessage.success(tool.enabled ? '已禁用' : '已启用')
 }
 
-// API插件配置
-const showApiConfigDialog = ref(false)
-const apiConfigTool = ref<Tool | null>(null)
-const apiConfigForm = ref<Record<string, any>>({})
-const apiConfigLoading = ref(false)
-
-async function openApiConfig(tool: Tool) {
-  apiConfigTool.value = tool
-  apiConfigLoading.value = true
-  showApiConfigDialog.value = true
-  try {
-    const res: any = await api.getToolApiConfig(tool.id)
-    apiConfigForm.value = res || { method: 'GET', url: '', authType: 'none', params: '', headers: '', bodyType: 'none', body: '' }
-  } finally {
-    apiConfigLoading.value = false
-  }
-}
-
-async function handleSaveApiConfig() {
-  if (!apiConfigTool.value) return
-  await api.saveToolApiConfig(apiConfigTool.value.id, apiConfigForm.value)
-  showApiConfigDialog.value = false
-  ElMessage.success('API配置已保存')
-}
 </script>
 
 <template>
@@ -144,14 +120,13 @@ async function handleSaveApiConfig() {
             <span>{{ tool.createdAt }}</span>
           </div>
           <div class="actions">
-            <el-switch :model-value="tool.enabled" size="small" @change="handleToggleEnabled(tool)" />
+            <el-switch :model-value="tool.enabled" :active-value="1" :inactive-value="0" size="small" @change="handleToggleEnabled(tool)" />
             <el-button link type="primary" size="small" @click="openEdit(tool)">编辑</el-button>
             <el-dropdown trigger="click">
               <el-icon class="more-icon"><MoreFilled /></el-icon>
               <template #dropdown>
                 <el-dropdown-menu>
                   <el-dropdown-item @click="openEdit(tool)">编辑</el-dropdown-item>
-                  <el-dropdown-item @click="openApiConfig(tool)">API配置</el-dropdown-item>
                   <el-dropdown-item divided @click="handleDelete(tool)">
                     <span style="color: var(--el-color-danger)">删除</span>
                   </el-dropdown-item>
@@ -164,48 +139,6 @@ async function handleSaveApiConfig() {
     </div>
     <el-empty v-else description="暂无工具，点击右上角创建 HTTP 工具" />
 
-    <el-dialog v-model="showApiConfigDialog" :title="`API配置 - ${apiConfigTool?.name || ''}`" width="600px">
-      <el-form label-width="100px" v-loading="apiConfigLoading">
-        <el-form-item label="请求方法">
-          <el-select v-model="apiConfigForm.method" style="width: 120px">
-            <el-option label="GET" value="GET" />
-            <el-option label="POST" value="POST" />
-            <el-option label="PUT" value="PUT" />
-            <el-option label="DELETE" value="DELETE" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="请求URL">
-          <el-input v-model="apiConfigForm.url" placeholder="https://api.example.com/v1/data" />
-        </el-form-item>
-        <el-form-item label="鉴权方式">
-          <el-select v-model="apiConfigForm.authType" style="width: 160px">
-            <el-option label="无" value="none" />
-            <el-option label="API Key" value="api_key" />
-            <el-option label="Bearer Token" value="bearer" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="请求头(JSON)">
-          <el-input v-model="apiConfigForm.headers" type="textarea" :rows="2" placeholder='{"Content-Type":"application/json"}' />
-        </el-form-item>
-        <el-form-item label="参数(JSON)">
-          <el-input v-model="apiConfigForm.params" type="textarea" :rows="2" placeholder='{"key":"value"}' />
-        </el-form-item>
-        <el-form-item label="请求体类型">
-          <el-select v-model="apiConfigForm.bodyType" style="width: 160px">
-            <el-option label="无" value="none" />
-            <el-option label="JSON" value="json" />
-            <el-option label="Form" value="form" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="请求体内容" v-if="apiConfigForm.bodyType !== 'none'">
-          <el-input v-model="apiConfigForm.body" type="textarea" :rows="3" placeholder="请求体内容" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showApiConfigDialog = false">取消</el-button>
-        <el-button type="primary" @click="handleSaveApiConfig">保存配置</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 

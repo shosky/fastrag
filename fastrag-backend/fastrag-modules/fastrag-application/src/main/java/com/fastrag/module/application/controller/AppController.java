@@ -11,7 +11,5 @@ public class AppController {
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.update(id,f)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }
     @GetMapping("/templates") public ApiResponse<?> templates() { return ApiResponse.success(svc.getTemplates()); }
-    @GetMapping("/{id}/config") public ApiResponse<?> config(@PathVariable String id) { return ApiResponse.success(svc.getConfig(id)); }
-    @PutMapping("/{id}/config") public ApiResponse<?> saveConfig(@PathVariable String id,@RequestBody com.fastrag.module.application.entity.AppConfig c) { return ApiResponse.success(svc.saveConfig(id,c)); }
     @PostMapping("/{id}/run") public ApiResponse<?> run(@PathVariable String id,@RequestBody Map<String,Object> b) { return ApiResponse.success(svc.run(id,(String)b.get("query"))); }
 }

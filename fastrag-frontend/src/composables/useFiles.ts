@@ -67,6 +67,11 @@ export function useFiles(kbId: string = 'default') {
     await load()
   }
 
+  async function moveFileToKb(fileId: string, targetKbId: string, targetFolderId?: string) {
+    await api.moveFileToKb(kbId, fileId, targetKbId, targetFolderId)
+    await load()
+  }
+
   async function retry(id: string) {
     await api.retryFile(kbId, id)
     await load()
@@ -162,6 +167,7 @@ export function useFiles(kbId: string = 'default') {
     move,
     bulkMove,
     copy,
+    moveFileToKb,
     retry,
     upload,
     changeStrategy,

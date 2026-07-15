@@ -204,6 +204,7 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
       { path: '/application/my-tools', title: '我的工具', requiredPerms: [PERMISSIONS.APP_USE] },
       { path: '/application/mcp-management', title: 'MCP管理', requiredPerms: [PERMISSIONS.APP_EDIT] },
       { path: '/application/skill-management', title: '技能管理', requiredPerms: [PERMISSIONS.APP_EDIT] },
+      { path: '/application/database-management', title: '数据库管理', requiredPerms: [PERMISSIONS.APP_EDIT] },
       { path: '/application/workflow', title: '业务流', requiredPerms: [PERMISSIONS.WORKFLOW_EDIT] },
       { path: '/application/test-cases', title: '测试案例', requiredPerms: [PERMISSIONS.TEST_CASE_MANAGE] },
       { path: '/operation/kb-analytics', title: '运营中心', requiredPerms: [PERMISSIONS.ADMIN_ACCESS] },
@@ -224,8 +225,7 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
           { path: '/admin/system/kb-config', title: '知识库配置', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
           { path: '/admin/system/sensitive-words', title: '敏感词设置', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
           { path: '/admin/system/dictionary', title: '字典管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
-          { path: '/admin/system/terminology', title: '术语管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
-          { path: '/admin/system/query-rules', title: '查询规则', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
+	          { path: '/admin/system/terminology', title: '术语管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
         ],
       },
       {
@@ -245,9 +245,7 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
         title: '安全审计',
         requiredPerms: [PERMISSIONS.MENU_ADMIN_AUDIT],
         children: [
-          { path: '/admin/audit/system-log', title: '系统日志', requiredPerms: [PERMISSIONS.ADMIN_AUDIT] },
-          { path: '/admin/audit/device-login', title: '设备登录分析', requiredPerms: [PERMISSIONS.ADMIN_AUDIT] },
-          { path: '/admin/audit/review-center', title: '审核中心', requiredPerms: [PERMISSIONS.REVIEW_APPROVE] },
+	          { path: '/admin/audit/system-log', title: '系统日志', requiredPerms: [PERMISSIONS.ADMIN_AUDIT] },
         ],
       },
       {

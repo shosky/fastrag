@@ -23,6 +23,10 @@ public class McpService {
     /** 显示名称 */
     private String name;
 
+    /** 描述 */
+    @TableField(exist = false)
+    private String description;
+
     /** 传输协议: stdio / sse */
     private String transport;
 

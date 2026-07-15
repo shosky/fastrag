@@ -1,6 +1,7 @@
 package com.fastrag.security.config;
 
 import com.fastrag.security.filter.JwtAuthFilter;
+import jakarta.servlet.DispatcherType;
 import lombok.RequiredArgsConstructor;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
@@ -26,6 +27,7 @@ public class SecurityConfig {
         http.csrf(AbstractHttpConfigurer::disable)
             .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
+                .dispatcherTypeMatchers(DispatcherType.ASYNC).permitAll()
                 .requestMatchers("/api/auth/login", "/api/auth/send-code", "/api/auth/register", "/api/auth/reset-password").permitAll()
                 .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/actuator/**").permitAll()
                 .requestMatchers("/api/**").authenticated()

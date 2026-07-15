@@ -59,4 +59,22 @@ public class MinioService {
             log.error("Failed to delete file: {}", objectKey, e);
         }
     }
+
+    /**
+     * 复制文件到新路径（用于跨知识库移动文件）
+     */
+    public void copy(String sourceKey, String destKey) {
+        if (sourceKey == null || destKey == null || sourceKey.equals(destKey)) {
+            return;
+        }
+        try {
+            Path source = getBasePath().resolve(sourceKey);
+            Path dest = getBasePath().resolve(destKey);
+            Files.createDirectories(dest.getParent());
+            Files.copy(source, dest, StandardCopyOption.REPLACE_EXISTING);
+            log.debug("File copied from {} to {}", sourceKey, destKey);
+        } catch (IOException e) {
+            throw new RuntimeException("文件复制失败: " + sourceKey + " → " + destKey, e);
+        }
+    }
 }

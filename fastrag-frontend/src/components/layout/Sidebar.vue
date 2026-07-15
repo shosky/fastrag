@@ -75,7 +75,7 @@ const allModules: NavModule[] = [
         icon: 'Grid',
         children: [
           { path: '/application', title: '应用中心', icon: 'Grid' },
-          { path: '/publish-eval/release', title: '发布与评估', icon: 'Upload' },
+          { path: '/application/runtime', title: '应用运行', icon: 'VideoPlay' },
         ],
       },
       {
@@ -86,6 +86,7 @@ const allModules: NavModule[] = [
           { path: '/application/my-tools', title: '我的工具', icon: 'Tools' },
           { path: '/application/mcp-management', title: 'MCP管理', icon: 'Connection' },
           { path: '/application/skill-management', title: '技能管理', icon: 'MagicStick' },
+          { path: '/application/database-management', title: '数据库管理', icon: 'Coin' },
         ],
       },
       {
@@ -118,8 +119,7 @@ const allModules: NavModule[] = [
           { path: '/admin/system/kb-config', title: '知识库配置', icon: 'Collection' },
           { path: '/admin/system/sensitive-words', title: '敏感词设置', icon: 'WarningFilled' },
           { path: '/admin/system/dictionary', title: '字典管理', icon: 'Notebook' },
-          { path: '/admin/system/terminology', title: '术语管理', icon: 'Reading' },
-          { path: '/admin/system/query-rules', title: '查询规则', icon: 'List' },
+	          { path: '/admin/system/terminology', title: '术语管理', icon: 'Reading' },
         ],
       },
       {
@@ -141,9 +141,7 @@ const allModules: NavModule[] = [
         icon: 'Lock',
         requirePerm: 'admin:audit',
         children: [
-          { path: '/admin/audit/system-log', title: '系统日志', icon: 'Document' },
-          { path: '/admin/audit/device-login', title: '设备登录分析', icon: 'Monitor' },
-          { path: '/admin/audit/review-center', title: '审核中心', icon: 'View' },
+	          { path: '/admin/audit/system-log', title: '系统日志', icon: 'Document' },
         ],
       },
       {
@@ -215,8 +213,7 @@ const activeModule = computed(() => {
   const path = route.path
   if (path.startsWith('/admin')) return 'admin'
   if (path.startsWith('/application')) return 'application'
-  if (path.startsWith('/publish-eval')) return 'application'
-  if (path.startsWith('/operation/kb-analytics')) return 'knowledge'
+	  if (path.startsWith('/operation/kb-analytics')) return 'knowledge'
   if (path.startsWith('/operation/retrieval-analysis')) return 'knowledge'
   if (path.startsWith('/operation')) return 'application'
   if (path.startsWith('/knowledge')) return 'knowledge'

@@ -2,15 +2,22 @@ package com.fastrag.module.agent.service.impl;
 
 import cn.hutool.core.util.IdUtil;
 import com.fastrag.common.exception.BusinessException;
+import com.fastrag.module.agent.context.BaseContext;
+import com.fastrag.module.agent.context.ContextBuilder;
 import com.fastrag.module.agent.context.User;
 import com.fastrag.module.agent.dto.AgentRunCreateDTO;
 import com.fastrag.module.agent.entity.Agent;
 import com.fastrag.module.agent.entity.AgentRun;
+import com.fastrag.module.agent.executor.AgentExecutor;
+import com.fastrag.module.agent.executor.AgentResult;
 import com.fastrag.module.agent.mapper.AgentRunMapper;
 import com.fastrag.module.agent.service.AgentRunService;
 import com.fastrag.module.agent.service.AgentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
+import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -27,8 +34,14 @@ public class AgentRunServiceImpl implements AgentRunService {
 
     private final AgentRunMapper agentRunMapper;
     private final AgentService agentService;
+    private final AgentExecutor agentExecutor;
+    private final ContextBuilder contextBuilder;
 
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
+
+    @Lazy
+    @Autowired
+    private AgentRunServiceImpl self;
 
     @Override
     public Map<String, Object> createRun(AgentRunCreateDTO dto, User user) {
@@ -65,6 +78,10 @@ public class AgentRunServiceImpl implements AgentRunService {
         agentRunMapper.insert(run);
 
         log.info("创建Agent运行: id={}, agent={}, thread={}", run.getId(), dto.getAgentId(), dto.getThreadId());
+
+        // 异步执行 Agent
+        self.executeRunAsync(run);
+
         return buildRunData(run);
     }
 
@@ -150,6 +167,58 @@ public class AgentRunServiceImpl implements AgentRunService {
         run.setFinishedAt(LocalDateTime.now());
         run.setUpdatedAt(LocalDateTime.now());
         agentRunMapper.updateById(run);
+    }
+
+    @Async("agentTaskExecutor")
+    public void executeRunAsync(AgentRun run) {
+        try {
+            log.info("[AgentRunService] 开始异步执行: runId={}", run.getId());
+
+            // 更新状态为 running
+            run.setStatus("running");
+            run.setUpdatedAt(LocalDateTime.now());
+            agentRunMapper.updateById(run);
+
+            // 构建上下文
+            BaseContext context = contextBuilder.buildContext(run);
+
+            // 执行 Agent
+            AgentResult result = agentExecutor.execute(run, context);
+
+            // 更新结果
+            run.setStatus(result.isSuccess() ? "completed" : "failed");
+            if (!result.isSuccess()) {
+                run.setErrorType("execution_error");
+                run.setErrorMessage(result.getError());
+            }
+            run.setFinishedAt(LocalDateTime.now());
+            run.setUpdatedAt(LocalDateTime.now());
+            agentRunMapper.updateById(run);
+
+            log.info("[AgentRunService] Run {} 完成: status={}", run.getId(), run.getStatus());
+
+        } catch (Exception e) {
+            log.error("[AgentRunService] Run {} 失败", run.getId(), e);
+            run.setStatus("failed");
+            run.setErrorType("system_error");
+            run.setErrorMessage(e.getMessage());
+            run.setFinishedAt(LocalDateTime.now());
+            run.setUpdatedAt(LocalDateTime.now());
+            agentRunMapper.updateById(run);
+        }
+    }
+
+    @Override
+    public void createRunDirect(AgentRun run) {
+        if (run.getId() == null) {
+            run.setId(IdUtil.fastSimpleUUID());
+        }
+        if (run.getCreatedAt() == null) {
+            run.setCreatedAt(LocalDateTime.now());
+        }
+        run.setUpdatedAt(LocalDateTime.now());
+        agentRunMapper.insert(run);
+        log.info("[AgentRunService] Direct run created: id={}, agentId={}", run.getId(), run.getAgentId());
     }
 
     private Map<String, Object> buildRunData(AgentRun run) {

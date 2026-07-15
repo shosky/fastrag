@@ -1,20 +1,16 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Plus } from '@element-plus/icons-vue'
 import * as api from '@/api'
 
 const props = defineProps<{ appInfo: { id: string } }>()
 const appId = () => props.appInfo.id
 
-// ===========================================================================
-// 成员管理
-// ===========================================================================
-
 const members = ref<Array<{ id: string; name: string; account: string; role: string; status: string }>>([])
 const searchKeyword = ref('')
 const saving = ref(false)
 
-// 弹窗
 const showMemberDialog = ref(false)
 const isEditing = ref(false)
 const editingId = ref('')
@@ -38,21 +34,12 @@ const filteredMembers = computed(() => {
 
 async function loadMembers() {
   try {
-    // 从 IAM 模块加载人员列表
     const res: any = await api.getPersonnel()
     const personnelList = Array.isArray(res) ? res : (res?.list || res?.records || [])
-
-    // 从 app advancedOptions 读取应用成员
     const appRes: any = await api.getAppBasicConfig(appId())
     const advanced = appRes?.advancedOptions || appRes?.advanced || {}
     const appMembers = advanced?.members || []
-
-    if (appMembers.length) {
-      members.value = appMembers
-    } else {
-      // 初始化为空列表，用户可手动添加
-      members.value = []
-    }
+    members.value = appMembers.length ? appMembers : []
   } catch (e) {
     members.value = []
   }
@@ -77,14 +64,11 @@ async function handleSaveMember() {
     ElMessage.warning('请填写完整信息')
     return
   }
-
   saving.value = true
   try {
     if (isEditing.value) {
       const member = members.value.find(m => m.id === editingId.value)
-      if (member) {
-        Object.assign(member, memberForm.value)
-      }
+      if (member) Object.assign(member, memberForm.value)
       ElMessage.success('成员信息已更新')
     } else {
       members.value.push({
@@ -96,7 +80,6 @@ async function handleSaveMember() {
       })
       ElMessage.success('成员添加成功')
     }
-
     showMemberDialog.value = false
     await persistMembers()
   } catch (e) {
@@ -116,9 +99,7 @@ async function handleSaveRole() {
   saving.value = true
   try {
     const member = members.value.find(m => m.id === editingId.value)
-    if (member) {
-      member.role = memberRoleForm.value.role
-    }
+    if (member) member.role = memberRoleForm.value.role
     showRoleDialog.value = false
     await persistMembers()
     ElMessage.success('角色分配成功')
@@ -135,42 +116,36 @@ async function handleDeleteMember(id: string) {
     members.value = members.value.filter(m => m.id !== id)
     await persistMembers()
     ElMessage.success('成员已移除')
-  } catch (e) {
-    // 取消
-  }
+  } catch (e) {}
 }
 
-// 将成员列表持久化到 advancedOptions
 async function persistMembers() {
   try {
     const current: any = await api.getAppBasicConfig(appId())
     const advanced = current?.advancedOptions || current?.advanced || {}
-    await api.saveAppAdvanced(appId(), {
-      ...advanced,
-      members: members.value,
-    })
-  } catch (e) {
-    // 静默处理，成员变更已在本地生效
-  }
+    await api.saveAppAdvanced(appId(), { ...advanced, members: members.value })
+  } catch (e) {}
 }
 
-onMounted(() => {
-  loadMembers()
-})
+onMounted(loadMembers)
 </script>
 
 <template>
   <div class="config-section">
-    <div class="section-group">
-      <div class="section-title">成员管理</div>
-      <p class="desc">管理应用的成员及其角色权限</p>
-      <div style="margin-bottom:16px;display:flex;gap:8px;justify-content:space-between;align-items:center">
+    <div class="card-panel">
+      <div class="section-header">
+        <div class="section-title">成员管理</div>
+      </div>
+      <p style="font-size:13px;color:var(--el-text-color-secondary);margin-bottom:16px">
+        管理应用的成员及其角色权限
+      </p>
+      <div class="toolbar">
         <el-button type="primary" size="small" @click="handleAddMember">
           <el-icon><Plus /></el-icon>添加成员
         </el-button>
         <el-input v-model="searchKeyword" placeholder="搜索成员..." prefix-icon="Search" style="width:260px" size="small" clearable />
       </div>
-      <el-table :data="filteredMembers" border stripe size="small" style="width:100%">
+      <el-table :data="filteredMembers" border stripe size="small" style="width:100%;margin-top:12px">
         <el-table-column type="index" label="#" width="50" />
         <el-table-column prop="name" label="成员名称" min-width="140" />
         <el-table-column prop="account" label="账号" min-width="160" />
@@ -199,7 +174,6 @@ onMounted(() => {
       <el-empty v-if="!filteredMembers.length" description="暂无成员" :image-size="60" />
     </div>
 
-    <!-- 添加/编辑成员对话框 -->
     <el-dialog v-model="showMemberDialog" :title="isEditing ? '编辑成员' : '添加成员'" width="480px">
       <el-form :model="memberForm" label-width="100px">
         <el-form-item label="成员名称" required>
@@ -220,7 +194,6 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <!-- 角色分配对话框 -->
     <el-dialog v-model="showRoleDialog" title="分配角色" width="400px">
       <el-form label-width="100px">
         <el-form-item label="成员">
@@ -243,21 +216,28 @@ onMounted(() => {
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
 
-.config-section {
-  .section-group {
-    margin-bottom: $spacing-xl;
-  }
+.config-section { padding-bottom: 24px; }
 
-  .section-title {
-    font-size: 16px;
-    font-weight: 600;
-    color: $text-primary;
-    margin-bottom: $spacing-lg;
-  }
+.card-panel {
+  background: var(--el-bg-color-overlay);
+  border-radius: $radius-base;
+  padding: 20px;
+  border: 1px solid var(--el-border-color-light);
+}
 
-  .desc {
-    color: $text-secondary;
-    margin-bottom: $spacing-base;
-  }
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: $spacing-base;
+}
+
+.section-title { font-size: 15px; font-weight: 600; color: $text-primary; }
+
+.toolbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: $spacing-sm;
 }
 </style>

@@ -1,0 +1,22 @@
+package com.fastrag.module.knowledge.entity;
+
+import com.baomidou.mybatisplus.annotation.FieldFill;
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+import lombok.Data;
+
+import java.time.LocalDateTime;
+
+@Data
+@TableName("kb_tag_relation")
+public class KbTagRelation {
+    @TableId(type = IdType.ASSIGN_ID)
+    private String id;
+    private String tagId;
+    private String targetType;
+    private String targetId;
+    @TableField(fill = FieldFill.INSERT)
+    private LocalDateTime createdAt;
+}

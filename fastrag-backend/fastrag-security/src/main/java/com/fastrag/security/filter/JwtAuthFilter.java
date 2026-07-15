@@ -26,6 +26,13 @@ public class JwtAuthFilter extends OncePerRequestFilter {
     private final StringRedisTemplate redisTemplate;
 
     @Override
+    protected boolean shouldNotFilterAsyncDispatch() {
+        // SSE 的 async dispatch（连接已建立后 Tomcat 的完成回调）不需要重新鉴权，
+        // 此时 response 已 committed，重新鉴权会导致 AccessDeniedException
+        return true;
+    }
+
+    @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
             throws ServletException, IOException {
         String header = request.getHeader("Authorization");

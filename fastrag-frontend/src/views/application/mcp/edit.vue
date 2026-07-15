@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowLeft } from '@element-plus/icons-vue'
@@ -16,6 +16,9 @@ const saving = ref(false)
 
 const id = route.params.id as string
 
+/** 是否为内置服务（内置服务不允许删除） */
+const isBuiltin = computed(() => (service.value as any)?.isBuiltin === 1)
+
 async function loadService() {
   loading.value = true
   try {
@@ -25,7 +28,12 @@ async function loadService() {
       router.push('/application/mcp-management')
       return
     }
-    service.value = data
+    service.value = {
+      ...data,
+      enabled: data.enabled === 1 || data.enabled === true,
+      toolsList: data.toolsList || [],
+      callLogs: data.callLogs || [],
+    }
   } finally {
     loading.value = false
   }
@@ -78,7 +86,7 @@ onMounted(() => {
       </el-button>
       <h3>编辑 MCP 服务</h3>
       <el-button
-        v-if="service"
+        v-if="service && !isBuiltin"
         type="danger"
         plain
         size="small"

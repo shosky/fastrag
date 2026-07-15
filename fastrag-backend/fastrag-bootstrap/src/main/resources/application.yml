@@ -1,5 +1,5 @@
 server:
-  port: 8080
+  port: 8081
   servlet:
     context-path: /
     encoding:
@@ -116,4 +116,6 @@ springdoc:
 logging:
   level:
     com.fastrag: INFO
+    com.fastrag.ai.llm.LlmService: DEBUG
+    com.fastrag.module.agent.executor.AgentEngine: DEBUG
     org.springframework.security: INFO

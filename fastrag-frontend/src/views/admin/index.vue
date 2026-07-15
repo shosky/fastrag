@@ -33,11 +33,10 @@ const modules = [
     title: '安全审计',
     icon: 'Lock',
     color: '#e6a23c',
-    description: '查看系统日志、登录设备与安全策略配置，用于风险排查和安全治理。',
-    children: [
-      { name: '系统日志', path: '/admin/audit/system-log' },
-      { name: '设备登录分析', path: '/admin/audit/device-login' },
-    ],
+	    description: '查看系统日志，用于风险排查和安全治理。',
+	    children: [
+	      { name: '系统日志', path: '/admin/audit/system-log' },
+	    ],
   },
   {
     title: '开放平台',

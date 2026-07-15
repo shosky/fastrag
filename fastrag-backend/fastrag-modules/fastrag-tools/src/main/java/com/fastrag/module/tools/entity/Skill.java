@@ -71,6 +71,10 @@ public class Skill {
     @TableField(typeHandler = JacksonTypeHandler.class)
     private Map<String, Object> metadata;
 
+    /** 分享配置 JSON：{accessLevel, departmentIds[], userUids[]} */
+    @TableField(typeHandler = JacksonTypeHandler.class, exist = false)
+    private Map<String, Object> shareConfig;
+
     private Integer enabled;
     private Integer recommended;
     private Integer usageCount;

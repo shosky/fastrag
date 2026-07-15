@@ -13,10 +13,12 @@ declare module 'vue' {
   export interface GlobalComponents {
     AppLayout: typeof import('./components/layout/AppLayout.vue')['default']
     ElAlert: typeof import('element-plus/es')['ElAlert']
+    ElAutocomplete: typeof import('element-plus/es')['ElAutocomplete']
     ElBadge: typeof import('element-plus/es')['ElBadge']
     ElBreadcrumb: typeof import('element-plus/es')['ElBreadcrumb']
     ElBreadcrumbItem: typeof import('element-plus/es')['ElBreadcrumbItem']
     ElButton: typeof import('element-plus/es')['ElButton']
+    ElCard: typeof import('element-plus/es')['ElCard']
     ElCheckbox: typeof import('element-plus/es')['ElCheckbox']
     ElCheckboxGroup: typeof import('element-plus/es')['ElCheckboxGroup']
     ElCheckTag: typeof import('element-plus/es')['ElCheckTag']
@@ -73,6 +75,8 @@ declare module 'vue' {
     RouterLink: typeof import('vue-router')['RouterLink']
     RouterView: typeof import('vue-router')['RouterView']
     Sidebar: typeof import('./components/layout/Sidebar.vue')['default']
+    ThinkingBlock: typeof import('./components/ThinkingBlock.vue')['default']
+    ToolCallRenderer: typeof import('./components/ToolCallRenderer.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

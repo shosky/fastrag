@@ -7,11 +7,20 @@ public interface AppConfigService {
     // 对话配置
     AppDialogConfig getDialog(String appId);
     AppDialogConfig saveDialog(String appId,AppDialogConfig config);
+    // 智能体配置（对齐Yuxi）
+    AppConfig getConfig(String appId);
+    AppConfig savePrompt(String appId, String prompt);
+    AppConfig saveSummary(String appId, Map<String,Object> cfg);
+    AppConfig saveMaxSteps(String appId, int maxSteps);
+    AppConfig saveMaxTurns(String appId, int maxTurns);
+    AppConfig saveRetryTimes(String appId, int retryTimes);
+    AppConfig saveMaxTokens(String appId, int maxTokens);
     List<AppTrigger> listTriggers(String appId);
     AppTrigger createTrigger(String appId,AppTrigger t);
     AppTrigger updateTrigger(String id,AppTrigger t);
     void deleteTrigger(String id);
     AppTrigger testTrigger(String id,String input);
+    AppTrigger runTrigger(String id,String input);
     // 全局策略
     AppGlobalPolicy getGlobalPolicy(String appId);
     AppGlobalPolicy saveGlobalPolicy(String appId,AppGlobalPolicy p);
@@ -27,6 +36,21 @@ public interface AppConfigService {
     AppDbBinding bindDb(String appId,AppDbBinding b);
     AppDbBinding updateDbBinding(String id,AppDbBinding b);
     void unbindDb(String id);
+    // 技能绑定
+    List<AppSkillBinding> listSkillBindings(String appId);
+    AppSkillBinding bindSkill(String appId,AppSkillBinding b);
+    AppSkillBinding updateSkillBinding(String id,AppSkillBinding b);
+    void unbindSkill(String id);
+    // 工具绑定
+    List<AppToolBinding> listToolBindings(String appId);
+    AppToolBinding bindTool(String appId,AppToolBinding b);
+    AppToolBinding updateToolBinding(String id,AppToolBinding b);
+    void unbindTool(String id);
+    // MCP 绑定
+    List<AppMcpBinding> listMcpBindings(String appId);
+    AppMcpBinding bindMcp(String appId,AppMcpBinding b);
+    AppMcpBinding updateMcpBinding(String id,AppMcpBinding b);
+    void unbindMcp(String id);
     // 发布
     List<AppPublishRecord> listPublishRecords(String appId);
     AppPublishRecord publish(String appId,AppPublishRecord r);
@@ -58,4 +82,12 @@ public interface AppConfigService {
     Map<String,Object> getDebugInfo(String appId);
     Map<String,Object> saveDebugConfig(String appId, Map<String,Object> cfg);
     Map<String,Object> triggerKnowledgeUpdate(String appId, Map<String,Object> cfg);
+    // 知识库自动更新配置
+    AppKbAutoUpdateConfig getAutoKnowledgeUpdate(String appId);
+    AppKbAutoUpdateConfig saveAutoKnowledgeUpdate(String appId, AppKbAutoUpdateConfig cfg);
+    // 对话记录
+    Map<String,Object> listConversations(String appId, String keyword, Integer rating, String startDate, String endDate, int page, int size);
+    Map<String,Object> getConversationDetail(String convId);
+    void deleteConversation(String convId);
+    void exportConversationsCsv(String appId, jakarta.servlet.http.HttpServletResponse resp) throws Exception;
 }

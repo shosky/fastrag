@@ -4,15 +4,12 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import BasicConfig from './components/BasicConfig.vue'
 import KnowledgeConfig from './components/KnowledgeConfig.vue'
-import DialogConfig from './components/DialogConfig.vue'
 import SkillConfig from './components/SkillConfig.vue'
 import ToolConfig from './components/ToolConfig.vue'
 import McpConfig from './components/McpConfig.vue'
-import VmConfig from './components/VmConfig.vue'
-import UiConfig from './components/UiConfig.vue'
-import DebugChat from './components/DebugChat.vue'
+import DatabaseConfig from './components/DatabaseConfig.vue'
+import AppChat from './components/AppChat.vue'
 import MemberConfig from './components/MemberConfig.vue'
-import PublishConfig from './components/PublishConfig.vue'
 import ChatLogs from './components/ChatLogs.vue'
 import * as api from '@/api'
 
@@ -24,37 +21,28 @@ const activeMenu = ref('basic')
 // ===========================================================================
 // 菜单
 // ===========================================================================
-const menuGroups = reactive([
-  {
-    name: '配置',
-    expanded: true,
-    items: [
-      { key: 'basic', label: '基础配置', icon: 'Setting' },
-      { key: 'kb', label: '知识库配置', icon: 'Collection' },
-      { key: 'skill', label: '技能', icon: 'MagicStick' },
-      { key: 'tool', label: '工具', icon: 'SetUp' },
-      { key: 'mcp', label: 'MCP', icon: 'Connection' },
-      { key: 'vm', label: '虚拟机', icon: 'Monitor' },
-      { key: 'ui', label: '界面', icon: 'Monitor' },
-      { key: 'dialog', label: '对话', icon: 'ChatDotRound' },
-      { key: 'debug', label: '对话调试', icon: 'ChatDotRound' },
-      { key: 'member', label: '成员', icon: 'User' },
-    ],
-  },
-  {
-    name: '发布',
-    expanded: true,
-    items: [
-      { key: 'publish', label: '分享发布', icon: 'Share' },
-    ],
-  },
-  {
-    name: '运营',
-    expanded: true,
-    items: [
-      { key: 'chat-log', label: '对话记录', icon: 'ChatLineRound' },
-    ],
-  },
+	const menuGroups = reactive([
+	  {
+		  name: '配置',
+		  expanded: true,
+			  items: [
+			    { key: 'basic', label: '基础配置', icon: 'Setting' },
+			    { key: 'kb', label: '知识库配置', icon: 'Collection' },
+			    { key: 'skill', label: '技能', icon: 'MagicStick' },
+			    { key: 'tool', label: '工具', icon: 'SetUp' },
+			    { key: 'mcp', label: 'MCP', icon: 'Connection' },
+				    { key: 'database', label: '数据库', icon: 'Coin' },
+				    { key: 'member', label: '成员', icon: 'User' },
+			  ],
+	  },
+		  {
+		    name: '对话',
+		    expanded: true,
+		    items: [
+			      { key: 'chat', label: '对话调试', icon: 'ChatLineRound' },
+		      { key: 'chat-log', label: '对话记录', icon: 'Document' },
+		    ],
+		  },
 ])
 
 // 扁平化菜单项
@@ -105,32 +93,6 @@ function copyToClipboard(text: string) {
     ElMessage.error('复制失败')
   })
 }
-
-// ===========================================================================
-// 底部操作栏
-// ===========================================================================
-async function handleSave() {
-  try {
-    await api.saveAppConfig(appId, {})
-    ElMessage.success('保存成功')
-  } catch {
-    ElMessage.error('保存失败')
-  }
-}
-
-async function handlePublish() {
-  try {
-    const configSnapshot = await api.getAppConfig(appId)
-    await api.publishApp(appId, {
-      version: '1.0.0',
-      scopeType: 'production',
-      configSnapshot,
-    })
-    ElMessage.success('发布成功')
-  } catch {
-    ElMessage.error('发布失败')
-  }
-}
 </script>
 
 <template>
@@ -171,30 +133,20 @@ async function handlePublish() {
     </div>
 
     <!-- 右侧内容区 -->
-    <div class="editor-content">
-      <!-- 配置 -->
-      <BasicConfig v-if="activeMenu === 'basic'" :app-info="appInfo" />
-      <KnowledgeConfig v-if="activeMenu === 'kb'" :app-info="appInfo" />
-      <SkillConfig v-if="activeMenu === 'skill'" :app-info="appInfo" />
-      <ToolConfig v-if="activeMenu === 'tool'" :app-info="appInfo" />
-      <McpConfig v-if="activeMenu === 'mcp'" :app-info="appInfo" />
-      <VmConfig v-if="activeMenu === 'vm'" :app-info="appInfo" />
-      <UiConfig v-if="activeMenu === 'ui'" :app-info="appInfo" />
-      <DialogConfig v-if="activeMenu === 'dialog'" :app-info="appInfo" />
-      <DebugChat v-if="activeMenu === 'debug'" :app-info="appInfo" />
+	    <div class="editor-content">
+	      <!-- 配置 -->
+	      <BasicConfig v-if="activeMenu === 'basic'" :app-info="appInfo" />
+	      <KnowledgeConfig v-if="activeMenu === 'kb'" :app-info="appInfo" />
+	      <SkillConfig v-if="activeMenu === 'skill'" :app-info="appInfo" />
+	      <ToolConfig v-if="activeMenu === 'tool'" :app-info="appInfo" />
+	      <McpConfig v-if="activeMenu === 'mcp'" :app-info="appInfo" />
+      <DatabaseConfig v-if="activeMenu === 'database'" :app-info="appInfo" />
       <MemberConfig v-if="activeMenu === 'member'" :app-info="appInfo" />
+	      <!-- 对话 -->
+	      <AppChat v-if="activeMenu === 'chat'" :app-info="appInfo" />
+	      <!-- 运营 -->
+	      <ChatLogs v-if="activeMenu === 'chat-log'" :app-info="appInfo" />
 
-      <!-- 发布 -->
-      <PublishConfig v-if="activeMenu === 'publish'" :app-info="appInfo" />
-
-      <!-- 运营 -->
-      <ChatLogs v-if="activeMenu === 'chat-log'" :app-info="appInfo" />
-
-      <!-- 底部操作栏 -->
-      <div class="editor-footer">
-        <el-button @click="handleSave">保存</el-button>
-        <el-button type="primary" @click="handlePublish">发布配置</el-button>
-      </div>
     </div>
   </div>
 </template>
@@ -294,14 +246,5 @@ async function handlePublish() {
   flex: 1;
   overflow-y: auto;
   padding: $spacing-lg;
-}
-
-.editor-footer {
-  margin-top: $spacing-lg;
-  padding-top: $spacing-base;
-  border-top: 1px solid $border-lighter;
-  display: flex;
-  justify-content: flex-end;
-  gap: $spacing-sm;
 }
 </style>

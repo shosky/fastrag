@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, reactive, computed, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ArrowLeft, Refresh, Edit, Delete } from '@element-plus/icons-vue'
+import { ArrowLeft, Refresh, Edit, Delete, CaretRight } from '@element-plus/icons-vue'
 import { getStatusLabel } from '@/mock/mcp'
 import type { McpService } from '@/mock/mcp'
 import * as api from '@/api'
@@ -17,6 +17,55 @@ const activeTab = ref('tools')
 
 const id = route.params.id as string
 
+/** 是否为内置服务（内置服务不允许删除） */
+const isBuiltin = computed(() => (service.value as any)?.isBuiltin === 1)
+
+// ========== 工具测试对话框 ==========
+const testDialog = reactive({
+  visible: false,
+  loading: false,
+  tool: null as any,
+  form: {} as Record<string, any>,
+  result: null as string | null,
+  resultSuccess: false,
+  duration: 0,
+})
+
+function openTestDialog(tool: any) {
+  testDialog.tool = tool
+  testDialog.form = {}
+  testDialog.result = null
+  testDialog.resultSuccess = false
+  testDialog.duration = 0
+  // 初始化表单字段
+  if (tool.params?.length) {
+    tool.params.forEach((p: any) => {
+      testDialog.form[p.name] = ''
+    })
+  }
+  testDialog.visible = true
+}
+
+async function handleTestTool() {
+  if (!testDialog.tool) return
+  testDialog.loading = true
+  testDialog.result = null
+  try {
+    const toolId = testDialog.tool.id || testDialog.tool.toolId
+    const res: any = await api.testMcpTool(toolId, testDialog.form)
+    const data = res?.data || res
+    testDialog.resultSuccess = data?.success !== false
+    testDialog.result = data?.output || JSON.stringify(data, null, 2)
+    testDialog.duration = data?.durationMs || 0
+  } catch (e: any) {
+    testDialog.resultSuccess = false
+    testDialog.result = e?.message || '调用失败'
+    testDialog.duration = 0
+  } finally {
+    testDialog.loading = false
+  }
+}
+
 async function loadService() {
   loading.value = true
   try {
@@ -26,10 +75,39 @@ async function loadService() {
       router.push('/application/mcp-management')
       return
     }
-    service.value = data
+    service.value = normalizeService(data)
   } finally {
     loading.value = false
   }
+}
+
+/** 将后端返回的 Integer 字段转为前端需要的 boolean 等类型 */
+function normalizeService(s: any): any {
+  const toolsList = (s.toolsList || []).map((t: any) => ({
+    ...t,
+    params: normalizeToolParams(t.params),
+  }))
+  return {
+    ...s,
+    enabled: s.enabled === 1 || s.enabled === true,
+    toolsList,
+    callLogs: s.callLogs || [],
+  }
+}
+
+/** 将 JSON Schema Map 格式的工具参数转为前端数组格式 */
+function normalizeToolParams(params: any): any[] {
+  if (!params) return []
+  if (Array.isArray(params)) return params.map((p: any) => ({ ...p }))
+  if (typeof params === 'object' && params.properties) {
+    return Object.entries(params.properties).map(([name, prop]: [string, any]) => ({
+      name,
+      type: prop.type || 'string',
+      description: prop.description || '',
+      required: (params.required || []).includes(name),
+    }))
+  }
+  return []
 }
 
 /** 刷新服务：重新拉取工具列表 + 检测连通性 */
@@ -37,11 +115,16 @@ async function handleRefresh() {
   if (!service.value) return
   refreshing.value = true
   try {
+    // 先调后端 refresh 端点：连接 MCP 服务器、发现工具、更新状态
+    await api.refreshMcpService(id)
+    // 再重新加载服务详情
     const refreshed = (await api.getMcpServiceDetail(id)) as any
     if (refreshed) {
-      service.value = refreshed
+      service.value = normalizeService(refreshed)
       ElMessage.success(`已刷新，当前状态：${getStatusLabel(refreshed.status)}，工具 ${(refreshed.toolsList || []).length} 个`)
     }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '刷新失败')
   } finally {
     refreshing.value = false
   }
@@ -104,7 +187,7 @@ onMounted(() => {
         <el-button type="primary" plain @click="goEdit">
           <el-icon><Edit /></el-icon>编辑
         </el-button>
-        <el-button type="danger" plain @click="handleDelete">
+        <el-button v-if="!isBuiltin" type="danger" plain @click="handleDelete">
           <el-icon><Delete /></el-icon>删除
         </el-button>
       </div>
@@ -124,7 +207,7 @@ onMounted(() => {
             <span :class="['status-text', service.status === 'online' ? 'is-on' : 'is-off']">
               {{ getStatusLabel(service.status) }}
             </span>
-            <span class="title-meta">{{ service.toolsList.length }} 个工具</span>
+            <span class="title-meta">{{ (service.toolsList || []).length }} 个工具</span>
           </div>
           <p class="meta-url" :title="service.mcpUrl">{{ service.mcpUrl }}</p>
           <div class="meta-info">
@@ -143,10 +226,10 @@ onMounted(() => {
       <div class="detail-tabs-card">
         <el-tabs v-model="activeTab">
           <!-- 工具列表 -->
-          <el-tab-pane :label="`工具列表 (${service.toolsList.length})`" name="tools">
-            <el-empty v-if="!service.toolsList.length" description="暂无工具，可点击右上角「刷新」重新拉取" :image-size="80" />
+          <el-tab-pane :label="`工具列表 (${(service.toolsList || []).length})`" name="tools">
+            <el-empty v-if="!(service.toolsList || []).length" description="暂无工具，可点击右上角「刷新」重新拉取" :image-size="80" />
             <template v-else>
-              <el-table :data="service.toolsList" border>
+              <el-table :data="service.toolsList || []" border>
                 <el-table-column prop="name" label="工具名称" min-width="160">
                   <template #default="{ row }">
                     <span class="tool-name">{{ row.name }}</span>
@@ -158,11 +241,18 @@ onMounted(() => {
                     {{ row.params?.length || 0 }}
                   </template>
                 </el-table-column>
+                <el-table-column label="操作" width="100" align="center" fixed="right">
+                  <template #default="{ row }">
+                    <el-button type="primary" link size="small" @click="openTestDialog(row)">
+                      <el-icon><CaretRight /></el-icon>测试
+                    </el-button>
+                  </template>
+                </el-table-column>
               </el-table>
 
               <!-- 工具参数详情（展开） -->
               <div class="tool-params-list">
-                <div v-for="tool in service.toolsList" :key="tool.name" class="tool-param-block">
+                <div v-for="tool in (service.toolsList || [])" :key="tool.name" class="tool-param-block">
                   <div class="tool-param-title">
                     <el-icon><Tools /></el-icon>
                     <span>{{ tool.name }}</span>
@@ -184,6 +274,62 @@ onMounted(() => {
                 </div>
               </div>
             </template>
+
+            <!-- 工具测试对话框 -->
+            <el-dialog
+              v-model="testDialog.visible"
+              :title="`测试工具：${testDialog.tool?.name || ''}`"
+              width="700px"
+              destroy-on-close
+            >
+              <div v-if="testDialog.tool" class="test-dialog-body">
+                <p class="test-dialog-desc">{{ testDialog.tool.description }}</p>
+
+                <el-form :model="testDialog.form" label-width="120px" v-if="testDialog.tool.params?.length">
+                  <el-form-item
+                    v-for="param in testDialog.tool.params"
+                    :key="param.name"
+                    :label="param.name"
+                    :required="param.required"
+                  >
+                    <el-input
+                      v-model="testDialog.form[param.name]"
+                      :placeholder="param.description || `请输入${param.name}`"
+                      :type="param.type === 'number' ? 'number' : 'text'"
+                    />
+                  </el-form-item>
+                </el-form>
+                <el-empty v-else description="该工具无参数" :image-size="40" />
+
+                <div class="test-result" v-if="testDialog.result !== null">
+                  <div class="test-result-header">
+                    <span :class="['test-status', testDialog.resultSuccess ? 'success' : 'error']">
+                      {{ testDialog.resultSuccess ? '✅ 调用成功' : '❌ 调用失败' }}
+                    </span>
+                    <span class="test-duration">{{ testDialog.duration }}ms</span>
+                  </div>
+                  <el-input
+                    type="textarea"
+                    :rows="8"
+                    :model-value="testDialog.result"
+                    readonly
+                    class="test-result-output"
+                  />
+                </div>
+              </div>
+
+              <template #footer>
+                <el-button @click="testDialog.visible = false">关闭</el-button>
+                <el-button
+                  type="primary"
+                  :loading="testDialog.loading"
+                  :disabled="testDialog.loading"
+                  @click="handleTestTool"
+                >
+                  {{ testDialog.loading ? '调用中...' : '调用' }}
+                </el-button>
+              </template>
+            </el-dialog>
           </el-tab-pane>
 
           <!-- 基础信息 -->
@@ -203,15 +349,15 @@ onMounted(() => {
                   {{ service.enabled ? '已启用' : '已禁用' }}
                 </span>
               </el-descriptions-item>
-              <el-descriptions-item label="工具数量">{{ service.toolsList.length }}</el-descriptions-item>
+              <el-descriptions-item label="工具数量">{{ (service.toolsList || []).length }}</el-descriptions-item>
               <el-descriptions-item label="创建时间" :span="2">{{ service.createdAt }}</el-descriptions-item>
             </el-descriptions>
           </el-tab-pane>
 
           <!-- 调用日志 -->
-          <el-tab-pane :label="`调用日志 (${service.callLogs.length})`" name="logs">
-            <el-empty v-if="!service.callLogs.length" description="暂无调用记录" :image-size="80" />
-            <el-table v-else :data="service.callLogs" border>
+          <el-tab-pane :label="`调用日志 (${(service.callLogs || []).length})`" name="logs">
+            <el-empty v-if="!(service.callLogs || []).length" description="暂无调用记录" :image-size="80" />
+            <el-table v-else :data="service.callLogs || []" border>
               <el-table-column prop="caller" label="调用方" min-width="140" />
               <el-table-column prop="tool" label="调用工具" min-width="140" />
               <el-table-column label="状态" width="100" align="center">

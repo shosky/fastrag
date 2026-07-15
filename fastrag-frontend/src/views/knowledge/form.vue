@@ -142,7 +142,7 @@ const filteredUsers = computed(() => {
 onMounted(async () => {
   try {
     const [catsRes, modelsRes, orgListRes, personnelRes] = await Promise.all([
-      api.getKnowledgeBaseCategories(),
+      api.getKbCategories(),
       api.getModels({ purpose: 'Embedding' }),
       api.getOrgFlat(),
       api.getPersonnel(),
@@ -324,6 +324,25 @@ const rules: FormRules = {
 }
 
 // --------------- Tag helpers ---------------
+let allTagSuggestions: string[] = []
+
+async function queryTagSuggestions(query: string, cb: (results: { value: string }[]) => void) {
+  if (allTagSuggestions.length === 0) {
+    try {
+      const res: any = await api.getAllKbTags()
+      const tags: any[] = res?.list || res || []
+      allTagSuggestions = tags.map((t: any) => t.name)
+    } catch {
+      allTagSuggestions = []
+    }
+  }
+  const q = query.trim().toLowerCase()
+  const filtered = q
+    ? allTagSuggestions.filter(name => name.toLowerCase().includes(q) && !form.tags.includes(name))
+    : allTagSuggestions.filter(name => !form.tags.includes(name))
+  cb(filtered.map(name => ({ value: name })))
+}
+
 function handleAddTag() {
   const val = tagInput.value.trim()
   if (val && !form.tags.includes(val)) {
@@ -610,12 +629,14 @@ function goToParseStrategy() {
                 >
                   {{ tag }}
                 </el-tag>
-                <el-input
+                <el-autocomplete
                   v-model="tagInput"
+                  :fetch-suggestions="queryTagSuggestions"
                   size="small"
                   style="width: 120px"
                   placeholder="输入标签"
                   @keyup.enter="handleAddTag"
+                  @select="handleAddTag"
                 />
               </div>
             </el-form-item>

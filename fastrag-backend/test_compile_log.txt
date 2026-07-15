@@ -1,0 +1,183 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] FastRAG Backend                                                    [pom]
+[INFO] fastrag-common                                                     [jar]
+[INFO] fastrag-security                                                   [jar]
+[INFO] fastrag-infra                                                      [jar]
+[INFO] fastrag-ai                                                         [jar]
+[INFO] fastrag-tools                                                      [jar]
+[INFO] fastrag-agent                                                      [jar]
+[INFO] 
+[INFO] --------------------< com.fastrag:fastrag-backend >---------------------
+[INFO] Building FastRAG Backend 1.0.0-SNAPSHOT                            [1/7]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] ---------------------< com.fastrag:fastrag-common >---------------------
+[INFO] Building fastrag-common 1.0.0-SNAPSHOT                             [2/7]
+[INFO]   from fastrag-common\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-common ---
+[INFO] Copying 0 resource from src\main\resources to target\classes
+[INFO] Copying 0 resource from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-common ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ fastrag-common ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-common\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ fastrag-common ---
+[INFO] No sources to compile
+[INFO] 
+[INFO] --------------------< com.fastrag:fastrag-security >--------------------
+[INFO] Building fastrag-security 1.0.0-SNAPSHOT                           [3/7]
+[INFO]   from fastrag-security\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-security ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-security\src\main\resources
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-security\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-security ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ fastrag-security ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-security\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ fastrag-security ---
+[INFO] No sources to compile
+[INFO] 
+[INFO] ---------------------< com.fastrag:fastrag-infra >----------------------
+[INFO] Building fastrag-infra 1.0.0-SNAPSHOT                              [4/7]
+[INFO]   from fastrag-infra\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-infra ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-infra\src\main\resources
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-infra\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-infra ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ fastrag-infra ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-infra\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ fastrag-infra ---
+[INFO] No sources to compile
+[INFO] 
+[INFO] -----------------------< com.fastrag:fastrag-ai >-----------------------
+[INFO] Building fastrag-ai 1.0.0-SNAPSHOT                                 [5/7]
+[INFO]   from fastrag-ai\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-ai ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-ai\src\main\resources
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-ai\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-ai ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ fastrag-ai ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-ai\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ fastrag-ai ---
+[INFO] No sources to compile
+[INFO] 
+[INFO] ---------------------< com.fastrag:fastrag-tools >----------------------
+[INFO] Building fastrag-tools 1.0.0-SNAPSHOT                              [6/7]
+[INFO]   from fastrag-modules\fastrag-tools\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-tools ---
+[INFO] Copying 0 resource from src\main\resources to target\classes
+[INFO] Copying 10 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-tools ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ fastrag-tools ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-tools\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ fastrag-tools ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] ---------------------< com.fastrag:fastrag-agent >----------------------
+[INFO] Building fastrag-agent 1.0.0-SNAPSHOT                              [7/7]
+[INFO]   from fastrag-modules\fastrag-agent\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-agent ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-agent\src\main\resources
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-agent\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-agent ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --- resources:3.3.1:testResources (default-testResources) @ fastrag-agent ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-agent\src\test\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:testCompile (default-testCompile) @ fastrag-agent ---
+[INFO] Changes detected - recompiling the module! :source
+[INFO] Compiling 8 source files with javac [debug release 17] to target\test-classes
+[INFO] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/test/java/com/fastrag/module/agent/middleware/DatabaseMiddlewareTest.java: D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-agent\src\test\java\com\fastrag\module\agent\middleware\DatabaseMiddlewareTest.java使用了未经检查或不安全的操作。
+[INFO] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/test/java/com/fastrag/module/agent/middleware/DatabaseMiddlewareTest.java: 有关详细信息, 请使用 -Xlint:unchecked 重新编译。
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/test/java/com/fastrag/module/agent/middleware/MiddlewareChainOrderTest.java:[29,25] 无法将类 com.fastrag.module.agent.middleware.TodoListMiddleware中的构造器 TodoListMiddleware应用到给定类型;
+  需要: com.fasterxml.jackson.databind.ObjectMapper
+  找到:    没有参数
+  原因: 实际参数列表和形式参数列表长度不同
+[ERROR] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/test/java/com/fastrag/module/agent/middleware/MiddlewareChainOrderTest.java:[74,20] 无法将类 com.fastrag.module.agent.middleware.TodoListMiddleware中的构造器 TodoListMiddleware应用到给定类型;
+  需要: com.fasterxml.jackson.databind.ObjectMapper
+  找到:    没有参数
+  原因: 实际参数列表和形式参数列表长度不同
+[ERROR] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/test/java/com/fastrag/module/agent/middleware/MiddlewareChainOrderTest.java:[86,19] 无法将类 com.fastrag.module.agent.middleware.TodoListMiddleware中的构造器 TodoListMiddleware应用到给定类型;
+  需要: com.fasterxml.jackson.databind.ObjectMapper
+  找到:    没有参数
+  原因: 实际参数列表和形式参数列表长度不同
+[INFO] 3 errors 
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for FastRAG Backend 1.0.0-SNAPSHOT:
+[INFO] 
+[INFO] FastRAG Backend .................................... SUCCESS [  0.005 s]
+[INFO] fastrag-common ..................................... SUCCESS [  2.582 s]
+[INFO] fastrag-security ................................... SUCCESS [  0.781 s]
+[INFO] fastrag-infra ...................................... SUCCESS [  1.032 s]
+[INFO] fastrag-ai ......................................... SUCCESS [  0.213 s]
+[INFO] fastrag-tools ...................................... SUCCESS [  0.952 s]
+[INFO] fastrag-agent ...................................... FAILURE [  6.160 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  14.199 s
+[INFO] Finished at: 2026-07-14T23:14:52+08:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.11.0:testCompile (default-testCompile) on project fastrag-agent: Compilation failure: Compilation failure: 
+[ERROR] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/test/java/com/fastrag/module/agent/middleware/MiddlewareChainOrderTest.java:[29,25] 无法将类 com.fastrag.module.agent.middleware.TodoListMiddleware中的构造器 TodoListMiddleware应用到给定类型;
+[ERROR]   需要: com.fasterxml.jackson.databind.ObjectMapper
+[ERROR]   找到:    没有参数
+[ERROR]   原因: 实际参数列表和形式参数列表长度不同
+[ERROR] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/test/java/com/fastrag/module/agent/middleware/MiddlewareChainOrderTest.java:[74,20] 无法将类 com.fastrag.module.agent.middleware.TodoListMiddleware中的构造器 TodoListMiddleware应用到给定类型;
+[ERROR]   需要: com.fasterxml.jackson.databind.ObjectMapper
+[ERROR]   找到:    没有参数
+[ERROR]   原因: 实际参数列表和形式参数列表长度不同
+[ERROR] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/test/java/com/fastrag/module/agent/middleware/MiddlewareChainOrderTest.java:[86,19] 无法将类 com.fastrag.module.agent.middleware.TodoListMiddleware中的构造器 TodoListMiddleware应用到给定类型;
+[ERROR]   需要: com.fasterxml.jackson.databind.ObjectMapper
+[ERROR]   找到:    没有参数
+[ERROR]   原因: 实际参数列表和形式参数列表长度不同
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :fastrag-agent

@@ -15,6 +15,10 @@
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-common</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-security</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-infra</artifactId></dependency>
-            <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
+        <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-ai</artifactId></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-webflux</artifactId></dependency>
+        <dependency><groupId>com.fasterxml.jackson.dataformat</groupId><artifactId>jackson-dataformat-yaml</artifactId></dependency>
+        <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
+        <dependency><groupId>org.springframework.boot</groupId><artifactId>spring-boot-starter-test</artifactId><scope>test</scope></dependency>
     </dependencies>
 </project>

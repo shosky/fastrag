@@ -5,7 +5,7 @@
 // MCP 管理列表 / 创建 / 编辑 / 详情 共享本文件。
 // ===========================================================================
 
-export type McpStatus = 'online' | 'offline'
+export type McpStatus = 'online' | 'offline' | 'error'
 export type McpAuthType = 'Bearer' | 'API Key' | 'none'
 
 export interface McpToolParam {
@@ -49,6 +49,8 @@ export interface McpService {
   status: McpStatus
   /** 是否启用 */
   enabled: boolean
+  /** 是否为内置服务 (1=内置, 0=用户创建) */
+  isBuiltin?: number
   /** 暴露的工具列表 */
   toolsList: McpTool[]
   /** 最近使用时间 */
@@ -63,6 +65,7 @@ export interface McpService {
 export const STATUS_LABELS: Record<McpStatus, string> = {
   online: '在线',
   offline: '离线',
+  error: '错误',
 }
 
 export const AUTH_TYPE_OPTIONS: { label: string; value: McpAuthType }[] = [

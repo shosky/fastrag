@@ -178,14 +178,20 @@ const routes: RouteRecordRaw[] = [
       {
         path: 'application/skill-management/create',
         name: 'SkillCreate',
-        component: () => import('@/views/application/skill/create.vue'),
-        meta: { title: '创建技能', hidden: true },
+        component: () => import('@/views/application/skill/SkillCreate.vue'),
+        meta: { title: '新建技能', hidden: true },
       },
       {
-        path: 'application/skill-management/:id/edit',
-        name: 'SkillEdit',
-        component: () => import('@/views/application/skill/edit.vue'),
-        meta: { title: '编辑技能', hidden: true },
+        path: 'application/database-management',
+        name: 'DatabaseManagement',
+        component: () => import('@/views/application/database-management.vue'),
+        meta: { title: '数据库管理', hidden: true },
+      },
+      {
+        path: 'application/skill-management/:slug',
+        name: 'SkillDetail',
+        component: () => import('@/views/application/skill/SkillDetail.vue'),
+        meta: { title: '技能详情', hidden: true },
       },
       {
         path: 'application/:id/editor',
@@ -206,8 +212,14 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '业务流管理', hidden: true },
       },
       {
-        path: 'application/:id/runtime',
+        path: 'application/runtime',
         name: 'AppRuntime',
+        component: () => import('@/views/application/runtime.vue'),
+        meta: { title: '应用运行', hidden: true },
+      },
+      {
+        path: 'application/:id/runtime',
+        name: 'AppRuntimeOld',
         component: () => import('@/views/application/runtime.vue'),
         meta: { title: '应用运行', hidden: true },
       },
@@ -294,12 +306,6 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '术语管理', roles: ['super_admin', 'kb_admin'] as const },
           },
           {
-            path: 'system/query-rules',
-            name: 'QueryRules',
-            component: () => import('@/views/admin/system/query-rules.vue'),
-            meta: { title: '查询规则', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
             path: 'account/roles',
             name: 'Roles',
             component: () => import('@/views/admin/account/roles.vue'),
@@ -330,24 +336,6 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '权限管理', roles: ['super_admin', 'kb_admin'] as const },
           },
           {
-            path: 'audit/system-log',
-            name: 'SystemLog',
-            component: () => import('@/views/admin/audit/system-log.vue'),
-            meta: { title: '系统日志', roles: ['super_admin'] as const },
-          },
-          {
-            path: 'audit/device-login',
-            name: 'DeviceLogin',
-            component: () => import('@/views/admin/audit/device-login.vue'),
-            meta: { title: '设备登录分析', roles: ['super_admin'] as const },
-          },
-          {
-            path: 'audit/review-center',
-            name: 'ReviewCenter',
-            component: () => import('@/views/admin/audit/review-center.vue'),
-            meta: { title: '审核中心', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
             path: 'platform/model-management',
             name: 'ModelManagement',
             component: () => import('@/views/admin/platform/model-management.vue'),
@@ -360,14 +348,6 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '开放密钥', roles: ['super_admin'] as const },
           },
         ],
-      },
-
-      // ===== 发布与评估（仅保留机器人发布） =====
-      {
-        path: 'publish-eval/release',
-        name: 'RobotRelease',
-        component: () => import('@/views/publish-eval/release.vue'),
-        meta: { title: '机器人发布' },
       },
 
       // ===== 机器人运营 =====

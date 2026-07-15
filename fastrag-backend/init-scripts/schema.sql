@@ -406,7 +406,12 @@ CREATE TABLE IF NOT EXISTS app_config (
     temperature DECIMAL(3,2) DEFAULT 0.70,
     knowledge_ids JSON,
     tool_ids JSON,
-    max_turns INT DEFAULT 10
+    max_turns INT DEFAULT 10,
+    summary_threshold INT DEFAULT 8000 COMMENT '上下文摘要触发阈值（token数）',
+    summary_prompt TEXT COMMENT '上下文摘要提示词',
+    max_steps INT DEFAULT 15 COMMENT '最大执行步数',
+    retry_times INT DEFAULT 2 COMMENT '模型重试次数',
+    max_tokens INT DEFAULT 2048 COMMENT '最大输出token数'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS app_template (
@@ -441,6 +446,8 @@ CREATE TABLE IF NOT EXISTS tool (
     icon VARCHAR(512),
     enabled TINYINT DEFAULT 1,
     inputs JSON,
+    outputs JSON,
+    output_mapping VARCHAR(512),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -452,7 +459,8 @@ CREATE TABLE IF NOT EXISTS tool_http_config (
     params JSON,
     headers JSON,
     body_type VARCHAR(32) DEFAULT 'none',
-    body TEXT
+    body TEXT,
+    auth_value VARCHAR(512)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS skill (
@@ -498,21 +506,32 @@ CREATE TABLE IF NOT EXISTS skill_scope (
 CREATE TABLE IF NOT EXISTS mcp_service (
     id VARCHAR(32) PRIMARY KEY,
     name VARCHAR(128) NOT NULL,
+    slug VARCHAR(64),
+    transport VARCHAR(16) DEFAULT 'sse',
     mcp_url VARCHAR(512),
+    command VARCHAR(256),
+    args JSON,
+    env JSON,
     auth_type VARCHAR(16) DEFAULT 'none',
     auth_value VARCHAR(256),
     status VARCHAR(16) DEFAULT 'offline',
     enabled TINYINT DEFAULT 1,
+    is_builtin TINYINT DEFAULT 0,
+    config_hash VARCHAR(64),
+    metadata JSON,
     last_used DATETIME,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS mcp_tool (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     service_id VARCHAR(32) NOT NULL,
     name VARCHAR(128) NOT NULL,
+    tool_id VARCHAR(128),
     description TEXT,
     params JSON,
+    enabled TINYINT DEFAULT 1,
     INDEX idx_service_id (service_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -1107,6 +1126,71 @@ CREATE TABLE IF NOT EXISTS app_optimization (
     INDEX idx_app_id (app_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 对话记录
+CREATE TABLE IF NOT EXISTS app_conversation (
+    id VARCHAR(32) PRIMARY KEY,
+    app_id VARCHAR(32) NOT NULL,
+    session_id VARCHAR(64),
+    user_id VARCHAR(32),
+    user_name VARCHAR(128),
+    title VARCHAR(256),
+    first_question TEXT,
+    answer_summary TEXT,
+    message_count INT DEFAULT 0,
+    token_count INT DEFAULT 0,
+    rating TINYINT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_conv_app (app_id),
+    INDEX idx_conv_created (created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS app_conversation_message (
+    id VARCHAR(32) PRIMARY KEY,
+    conversation_id VARCHAR(32) NOT NULL,
+    role VARCHAR(16) NOT NULL,
+    content TEXT,
+    tokens INT DEFAULT 0,
+    latency_ms INT,
+    feedback VARCHAR(16) DEFAULT NULL COMMENT 'like/dislike/null',
+    deleted_at DATETIME DEFAULT NULL COMMENT '软删除时间',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_conv_msg_conv (conversation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 技能/工具/MCP 绑定
+CREATE TABLE IF NOT EXISTS app_skill_binding (
+    id VARCHAR(32) PRIMARY KEY,
+    app_id VARCHAR(32) NOT NULL,
+    skill_id VARCHAR(32) NOT NULL,
+    skill_name VARCHAR(128),
+    params JSON,
+    enabled TINYINT DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_skill_app (app_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS app_tool_binding (
+    id VARCHAR(32) PRIMARY KEY,
+    app_id VARCHAR(32) NOT NULL,
+    tool_id VARCHAR(32) NOT NULL,
+    tool_name VARCHAR(128),
+    config JSON,
+    enabled TINYINT DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_tool_app (app_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS app_mcp_binding (
+    id VARCHAR(32) PRIMARY KEY,
+    app_id VARCHAR(32) NOT NULL,
+    mcp_service_id VARCHAR(32) NOT NULL,
+    mcp_service_name VARCHAR(128),
+    enabled TINYINT DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_mcp_app (app_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ==================== M17 业务流管理 ====================
 CREATE TABLE IF NOT EXISTS wf_node (
     id VARCHAR(32) PRIMARY KEY,
@@ -1226,6 +1310,29 @@ CREATE TABLE IF NOT EXISTS db_table (
     INDEX idx_db_id (db_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ==================== 标签管理 ====================
+CREATE TABLE IF NOT EXISTS kb_tag (
+    id VARCHAR(32) PRIMARY KEY,
+    name VARCHAR(64) NOT NULL,
+    color VARCHAR(16),
+    description VARCHAR(256),
+    usage_count INT DEFAULT 0,
+    created_by VARCHAR(32),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS kb_tag_relation (
+    id VARCHAR(32) PRIMARY KEY,
+    tag_id VARCHAR(32) NOT NULL,
+    target_type VARCHAR(16) NOT NULL DEFAULT 'kb',
+    target_id VARCHAR(32) NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_tag_target (tag_id, target_type, target_id),
+    INDEX idx_target (target_type, target_id),
+    INDEX idx_tag_id (tag_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ==================== M20 知识库分类 & 通知 ====================
 CREATE TABLE IF NOT EXISTS kb_category (
     id VARCHAR(32) PRIMARY KEY,
@@ -1282,6 +1389,17 @@ CREATE TABLE IF NOT EXISTS sys_publish_strategy (
 
 -- ==================== 已有数据库升级脚本（知识图谱 + 评估 + 处理模式） ====================
 -- 如已有 fastrag 数据库，执行以下语句补充新增字段和表
+
+-- app_conversation_message 表新增字段
+ALTER TABLE app_conversation_message ADD COLUMN IF NOT EXISTS feedback VARCHAR(16) DEFAULT NULL COMMENT 'like/dislike/null';
+ALTER TABLE app_conversation_message ADD COLUMN IF NOT EXISTS deleted_at DATETIME DEFAULT NULL COMMENT '软删除时间';
+
+-- app_config 表新增字段
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS summary_threshold INT DEFAULT 8000 COMMENT '上下文摘要触发阈值（token数）';
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS summary_prompt TEXT COMMENT '上下文摘要提示词';
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS max_steps INT DEFAULT 15 COMMENT '最大执行步数';
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS retry_times INT DEFAULT 2 COMMENT '模型重试次数';
+ALTER TABLE app_config ADD COLUMN IF NOT EXISTS max_tokens INT DEFAULT 2048 COMMENT '最大输出token数';
 
 -- kb 表新增字段
 ALTER TABLE kb ADD COLUMN IF NOT EXISTS graph_auto_build TINYINT DEFAULT 0 COMMENT '是否自动构建知识图谱（默认关闭）';
@@ -1416,12 +1534,6 @@ CREATE TABLE IF NOT EXISTS kb_evaluation_result (
     recall_at_3 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@3',
     recall_at_5 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@5',
     recall_at_10 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@10',
-    is_correct TINYINT,
-    judge_reason TEXT,
-    INDEX idx_evaluation_id (evaluation_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-    generated_answer TEXT,
-    retrieval_metrics JSON,
     is_correct TINYINT,
     judge_reason TEXT,
     INDEX idx_evaluation_id (evaluation_id)

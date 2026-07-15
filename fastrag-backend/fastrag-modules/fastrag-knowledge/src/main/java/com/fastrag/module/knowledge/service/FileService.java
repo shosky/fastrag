@@ -20,4 +20,5 @@ public interface FileService {
     Map<String, Object> getProcessingStatus(String kbId, String fileId);
     Map<String, Object> previewChunks(String kbId, String fileId, String strategyId);
     FileDto retryFile(String kbId, String fileId);
+    FileDto moveToKb(String sourceKbId, String fileId, String targetKbId, String targetFolderId);
 }

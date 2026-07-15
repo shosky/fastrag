@@ -5,4 +5,5 @@ public interface DbInstanceService {
     DbInstance get(String id); DbInstance create(DbInstance db); DbInstance update(String id,DbInstance db); void delete(String id);
     List<DbTable> listTables(String dbId); DbTable createTable(DbTable t);
     Map<String,Object> testConnection(String dbId); Map<String,Object> query(String dbId,String sql);
+    Map<String,Object> syncTables(String dbId);
 }

@@ -142,6 +142,18 @@ public class FileController {
         return ApiResponse.success(svc.copy(kbId, id));
     }
 
+    @Loggable(category = LogCategory.operation, action = ActionType.file_moved, detail = "跨知识库移动文件")
+    @PostMapping("/{id}/move")
+    public ApiResponse<?> moveToKb(@PathVariable String kbId, @PathVariable String id,
+                                   @RequestBody Map<String, String> body) {
+        String targetKbId = body.get("targetKbId");
+        String targetFolderId = body.get("targetFolderId");
+        if (targetKbId == null || targetKbId.isBlank()) {
+            return ApiResponse.badRequest("目标知识库 ID 不能为空");
+        }
+        return ApiResponse.success(svc.moveToKb(kbId, id, targetKbId, targetFolderId));
+    }
+
     @GetMapping("/{id}/processing-status")
     public ApiResponse<?> status(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.getProcessingStatus(kbId, id));

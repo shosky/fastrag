@@ -32,6 +32,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
+import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
 
 import java.io.ByteArrayInputStream;
@@ -347,6 +348,77 @@ public class FileServiceImpl implements FileService {
         c.setChunkCount(0);
         fileMapper.insert(c);
         return toDto(c);
+    }
+
+    @Override
+    @Transactional
+    public FileDto moveToKb(String sourceKbId, String fileId, String targetKbId, String targetFolderId) {
+        // 查找文件
+        var f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
+                .eq(KbFile::getId, fileId)
+                .eq(KbFile::getKbId, sourceKbId)
+                .isNull(KbFile::getDeletedAt));
+        if (f == null) throw new RuntimeException("File not found in source KB");
+
+        // 校验目标知识库存在
+        var targetKb = knowledgeBaseMapper.selectById(targetKbId);
+        if (targetKb == null) throw new RuntimeException("目标知识库不存在");
+
+        // 校验目标 KB 下没有同名文件
+        long dupCount = fileMapper.selectCount(new LambdaQueryWrapper<KbFile>()
+                .eq(KbFile::getKbId, targetKbId)
+                .eq(KbFile::getName, f.getName())
+                .isNull(KbFile::getDeletedAt));
+        if (dupCount > 0) {
+            throw new RuntimeException("目标知识库下已存在同名文件: " + f.getName());
+        }
+
+        // 1. 清理旧 KB 的所有关联数据（chunks、Milvus 向量、图谱）
+        cleanupFileData(sourceKbId, fileId);
+
+        // 2. 清理 QA 对
+        qaPairMapper.delete(new LambdaQueryWrapper<KbQaPair>()
+                .eq(KbQaPair::getKbId, sourceKbId)
+                .eq(KbQaPair::getFileId, fileId));
+
+        // 3. 复制 MinIO 文件内容到目标 KB 路径
+        String sourceKey = sourceKbId + "/" + fileId;
+        String destKey = targetKbId + "/" + fileId;
+        if (!sourceKey.equals(destKey)) {
+            minioService.copy(sourceKey, destKey);
+            minioService.delete(sourceKey);
+        }
+
+        // 4. 更新文件元数据到目标 KB
+        f.setKbId(targetKbId);
+        f.setFolderId(targetFolderId != null && !targetFolderId.isBlank()
+                && !"root".equals(targetFolderId) ? targetFolderId : null);
+        f.setStatus("pending");
+        f.setProgress(0);
+        f.setStage(null);
+        f.setChunkCount(0);
+        f.setProcessingMode(null);
+        fileMapper.updateById(f);
+
+        // 5. 触发重新处理（异步）
+        String strategyId = resolveStrategy(targetKbId, f.getExtension());
+        Map<String, Object> msg = new HashMap<>();
+        msg.put("fileId", f.getId());
+        msg.put("kbId", targetKbId);
+        msg.put("objectKey", f.getObjectKey());
+        msg.put("strategyId", strategyId);
+        msg.put("operator", SecurityUtil.getCurrentUser() != null
+                ? SecurityUtil.getCurrentUser().getUsername() : "system");
+        msg.put("processingMode", "chunk");
+        try {
+            messagePublisher.publishIngestion(msg);
+            log.info("[MoveToKb] Sent process message for file: {} to KB: {}", fileId, targetKbId);
+        } catch (Exception e) {
+            log.warn("[MoveToKb] Failed to trigger re-processing for file {}: {}", fileId, e.getMessage());
+        }
+
+        log.info("[MoveToKb] Moved file {} from KB {} to KB {}, folder={}", fileId, sourceKbId, targetKbId, targetFolderId);
+        return toDto(f);
     }
 
     @Override

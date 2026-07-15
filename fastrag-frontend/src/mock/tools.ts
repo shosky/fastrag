@@ -13,6 +13,14 @@ export interface ToolInputParam {
   type: string
   /** 是否工具参数 */
   isToolParam: boolean
+  /** 是否必填 */
+  required?: boolean
+  /** 默认值 */
+  default?: string
+  /** 枚举值（逗号分隔字符串或数组） */
+  enum?: string[]
+  /** 数组元素类型（type=array 时） */
+  items?: { type: string }
 }
 
 export interface KeyValue {
@@ -28,6 +36,8 @@ export interface HttpToolConfig {
   method: HttpMethod
   url: string
   authType: AuthType
+  /** 鉴权值（apiKey / Bearer token / OAuth2 token） */
+  authValue: string
   params: KeyValue[]
   bodyType: BodyType
   body: string
@@ -50,12 +60,70 @@ export interface Tool {
   icon: string
   /** HTTP 工具的配置（仅 type === 'http' 有值） */
   httpConfig?: HttpToolConfig
-  /** 输入参数 */
+  /** 输入参数（前端表单格式，兼容模式） */
   inputs: ToolInputParam[]
+  /** 输入参数 JSON Schema（标准格式，用于 LLM tool calling） */
+  inputSchema?: JsonSchema
+  /** 输出参数 JSON Schema */
+  outputSchema?: JsonSchema
+  /** 输出映射规则（JSONPath） */
+  outputMapping?: string
   /** 是否启用 */
   enabled: boolean
   /** 创建时间 */
   createdAt: string
+}
+
+/** 标准 JSON Schema 定义 */
+export interface JsonSchema {
+  type?: string
+  properties?: Record<string, PropertySchema>
+  required?: string[]
+}
+
+export interface PropertySchema {
+  type: string
+  description?: string
+  default?: any
+  enum?: string[]
+  items?: { type: string }
+}
+
+/**
+ * 将前端 ToolInputParam[] 转为标准 JSON Schema（发给后端和 LLM）
+ */
+export function inputsToSchema(inputs: ToolInputParam[]): JsonSchema {
+  const properties: Record<string, PropertySchema> = {}
+  const required: string[] = []
+  for (const p of inputs) {
+    if (!p.name) continue
+    const prop: PropertySchema = { type: p.type || 'string' }
+    if (p.description) prop.description = p.description
+    if (p.default !== undefined) prop.default = p.default
+    if (p.enum && p.enum.length > 0) prop.enum = p.enum
+    if (p.type === 'array' && p.items) prop.items = p.items
+    properties[p.name] = prop
+    if (p.required) required.push(p.name)
+  }
+  return { type: 'object', properties, required }
+}
+
+/**
+ * 将标准 JSON Schema 转为前端 ToolInputParam[]（用于编辑表单回显）
+ */
+export function schemaToInputs(schema: JsonSchema): ToolInputParam[] {
+  if (!schema?.properties) return [{ name: '', description: '', type: 'string', isToolParam: true }]
+  const required = schema.required || []
+  return Object.entries(schema.properties).map(([name, prop]: [string, PropertySchema]) => ({
+    name,
+    description: prop.description || '',
+    type: prop.type || 'string',
+    isToolParam: true,
+    required: required.includes(name),
+    default: prop.default !== undefined ? String(prop.default) : undefined,
+    enum: prop.enum,
+    items: prop.items,
+  }))
 }
 
 // --- 工具分类标签 ---
@@ -323,6 +391,7 @@ export function defaultHttpConfig(): HttpToolConfig {
     method: 'POST',
     url: '',
     authType: 'none',
+    authValue: '',
     params: [{ key: '', value: '' }],
     bodyType: 'json',
     body: '',
@@ -330,7 +399,7 @@ export function defaultHttpConfig(): HttpToolConfig {
   }
 }
 
-/** 默认的输入参数 */
+/** 默认的输入参数（空） */
 export function defaultInputs(): ToolInputParam[] {
-  return [{ name: '', description: '', type: 'string', isToolParam: true }]
+  return []
 }

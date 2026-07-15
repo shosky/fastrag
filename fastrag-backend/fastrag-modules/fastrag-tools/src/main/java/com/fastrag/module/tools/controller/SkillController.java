@@ -1,10 +1,19 @@
 package com.fastrag.module.tools.controller;
 
 import com.fastrag.common.response.ApiResponse;
+import com.fastrag.module.tools.entity.SkillInstallDraft;
+import com.fastrag.module.tools.service.SkillDraftService;
+import com.fastrag.module.tools.service.SkillFileService;
 import com.fastrag.module.tools.service.SkillService;
+import com.fastrag.module.tools.skill.SkillDependencyValidator;
+import com.fastrag.security.util.SecurityUtil;
+import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 
+import java.io.IOException;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -12,6 +21,9 @@ import java.util.Map;
 @RequiredArgsConstructor
 public class SkillController {
     private final SkillService svc;
+    private final SkillDependencyValidator dependencyValidator;
+    private final SkillFileService skillFileService;
+    private final SkillDraftService skillDraftService;
 
     /** 列出所有技能 */
     @GetMapping
@@ -72,5 +84,162 @@ public class SkillController {
     public ApiResponse<?> toggle(@PathVariable String id) {
         svc.toggleEnabled(id);
         return ApiResponse.success();
+    }
+
+    /** 更新技能依赖 */
+    @PutMapping("/{id}/dependencies")
+    public ApiResponse<?> updateDependencies(
+            @PathVariable String id,
+            @RequestBody List<Map<String, Object>> dependencies) {
+        return ApiResponse.success(svc.updateDependencies(id, dependencies));
+    }
+
+    /** 更新技能分享配置 */
+    @PutMapping("/{id}/share-config")
+    public ApiResponse<?> updateShareConfig(
+            @PathVariable String id,
+            @RequestBody Map<String, Object> config) {
+        return ApiResponse.success(svc.updateShareConfig(id, config));
+    }
+
+    /** 设置技能启用状态 */
+    @PutMapping("/{id}/enabled")
+    public ApiResponse<?> setEnabled(
+            @PathVariable String id,
+            @RequestBody Map<String, Object> body) {
+        boolean enabled = Boolean.TRUE.equals(body.get("enabled"));
+        svc.setEnabled(id, enabled);
+        return ApiResponse.success();
+    }
+
+    /** 获取技能依赖列表 */
+    @GetMapping("/{id}/dependencies")
+    public ApiResponse<?> getDependencies(@PathVariable String id) {
+        return ApiResponse.success(svc.getDependencies(id));
+    }
+
+    /** 获取技能作用域列表 */
+    @GetMapping("/{id}/scopes")
+    public ApiResponse<?> getScopes(@PathVariable String id) {
+        return ApiResponse.success(svc.getScopes(id));
+    }
+
+    /** 获取依赖选项（用于前端下拉框） */
+    @GetMapping("/dependency-options")
+    public ApiResponse<?> getDependencyOptions(
+            @RequestParam(required = false) String excludeSkillId) {
+        return ApiResponse.success(dependencyValidator.getDependencyOptions(excludeSkillId));
+    }
+
+    // ========== 技能文件管理 ==========
+
+    /** 获取技能文件树 */
+    @GetMapping("/{slug}/tree")
+    public ApiResponse<?> getFileTree(@PathVariable String slug) {
+        return ApiResponse.success(skillFileService.getTree(slug));
+    }
+
+    /** 读取技能文件 */
+    @GetMapping("/{slug}/file")
+    public ApiResponse<?> readFile(
+            @PathVariable String slug,
+            @RequestParam String path) {
+        return ApiResponse.success(skillFileService.readFile(slug, path));
+    }
+
+    /** 创建技能文件或目录 */
+    @PostMapping("/{slug}/file")
+    public ApiResponse<?> createFile(
+            @PathVariable String slug,
+            @RequestBody Map<String, Object> body) {
+        skillFileService.createNode(slug,
+            (String) body.get("path"),
+            Boolean.TRUE.equals(body.get("isDir")),
+            (String) body.get("content"),
+            getCurrentUserId());
+        return ApiResponse.success();
+    }
+
+    /** 更新技能文件 */
+    @PutMapping("/{slug}/file")
+    public ApiResponse<?> updateFile(
+            @PathVariable String slug,
+            @RequestBody Map<String, Object> body) {
+        skillFileService.updateFile(slug,
+            (String) body.get("path"),
+            (String) body.get("content"),
+            getCurrentUserId());
+        return ApiResponse.success();
+    }
+
+    /** 删除技能文件或目录 */
+    @DeleteMapping("/{slug}/file")
+    public ApiResponse<?> deleteFile(
+            @PathVariable String slug,
+            @RequestParam String path) {
+        skillFileService.deleteNode(slug, path, getCurrentUserId());
+        return ApiResponse.success();
+    }
+
+    /** 导出技能为 ZIP */
+    @GetMapping("/{slug}/export")
+    public void exportZip(
+            @PathVariable String slug,
+            HttpServletResponse response) {
+        java.io.File zip = skillFileService.exportZip(slug);
+        try {
+            response.setContentType("application/zip");
+            response.setHeader("Content-Disposition",
+                "attachment; filename=\"" + slug + ".zip\"");
+            try (var os = response.getOutputStream();
+                 var is = new java.io.FileInputStream(zip)) {
+                is.transferTo(os);
+            }
+        } catch (IOException e) {
+            throw new RuntimeException("导出 ZIP 失败", e);
+        } finally {
+            zip.delete();
+        }
+    }
+
+    // ========== 安装草稿流水线 ==========
+
+    /** 上传 ZIP/SKILL.md 并自动完成安装（创建草稿 → 确认安装 → 清理草稿） */
+    @PostMapping("/import/prepare")
+    public ApiResponse<?> prepareImport(@RequestParam("file") MultipartFile file) {
+        try {
+            String operator = SecurityUtil.getCurrentUserId();
+            SkillInstallDraft draft = skillDraftService.prepareUpload(
+                file.getOriginalFilename(), file.getBytes(), operator);
+            // 自动确认安装（单步完成，无需前端二次调用）
+            List<SkillInstallDraft.DraftItem> results = skillDraftService.confirmDraft(
+                draft.getDraftId(), Map.of("accessLevel", "user"), operator);
+            return ApiResponse.success(results);
+        } catch (IOException e) {
+            return ApiResponse.error(400, "文件读取失败: " + e.getMessage());
+        }
+    }
+
+    /** 确认安装草稿 */
+    @PostMapping("/install-drafts/{draftId}/confirm")
+    public ApiResponse<?> confirmDraft(
+            @PathVariable String draftId,
+            @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        Map<String, Object> shareConfig = (Map<String, Object>) body.getOrDefault("shareConfig", Map.of());
+        return ApiResponse.success(
+            skillDraftService.confirmDraft(draftId, shareConfig, SecurityUtil.getCurrentUserId()));
+    }
+
+    /** 丢弃安装草稿 */
+    @DeleteMapping("/install-drafts/{draftId}")
+    public ApiResponse<?> discardDraft(@PathVariable String draftId) {
+        skillDraftService.discardDraft(draftId, SecurityUtil.getCurrentUserId());
+        return ApiResponse.success();
+    }
+
+    /** 获取当前用户 ID（占位，后续从 SecurityContext 获取） */
+    private String getCurrentUserId() {
+        return "system";
     }
 }

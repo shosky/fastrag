@@ -75,6 +75,7 @@ const {
   createFolder,
   renameFolder,
   deleteFolder,
+  moveFileToKb,
   loadDeletedFiles,
   restore,
   permanentDelete,
@@ -140,14 +141,18 @@ function handleNewFolder() {
   newFolderDialogVisible.value = true
 }
 
-function handleNewFolderConfirm() {
+async function handleNewFolderConfirm() {
   if (!newFolderName.value.trim()) {
     ElMessage.warning('请输入文件夹名称')
     return
   }
-  createFolder(newFolderName.value.trim(), newFolderParentId.value)
-  newFolderDialogVisible.value = false
-  ElMessage.success(`已创建文件夹：${newFolderName.value}`)
+  try {
+    await createFolder(newFolderName.value.trim(), newFolderParentId.value)
+    newFolderDialogVisible.value = false
+    ElMessage.success(`已创建文件夹：${newFolderName.value}`)
+  } catch (e: any) {
+    ElMessage.error(e?.message || '创建文件夹失败')
+  }
 }
 
 // --- Folder tree selection ---
@@ -340,10 +345,23 @@ async function handleBulkExport() {
 // --- 批量移动对话框复用 MoveFileDialog 的文件夹树，简化为选目标文件夹 ---
 const bulkMoveTargetVisible = ref(false)
 
-function handleBulkMoveConfirm(_fileId: string, targetFolderId: string) {
-  bulkMove(targetFolderId)
-  bulkMoveTargetVisible.value = false
-  ElMessage.success('已移动选中文件')
+async function handleBulkMoveConfirm(_fileId: string, targetFolderId: string, targetKbId?: string) {
+  try {
+    if (targetKbId && targetKbId !== kbId) {
+      // 跨 KB 批量移动
+      for (const f of selectedFiles.value) {
+        await moveFileToKb(f.id, targetKbId, targetFolderId)
+      }
+      selectedFiles.value = []
+      ElMessage.success('已移动选中文件到其他知识库')
+    } else {
+      await bulkMove(targetFolderId)
+      ElMessage.success('已移动选中文件')
+    }
+    bulkMoveTargetVisible.value = false
+  } catch (e: any) {
+    ElMessage.error(e?.message || '批量移动失败')
+  }
 }
 
 function handleSelectionChange(selected: KnowledgeFile[]) {
@@ -400,9 +418,18 @@ function handleMove(file: KnowledgeFile) {
   moveDialogVisible.value = true
 }
 
-function handleMoveConfirm(fileId: string, targetFolderId: string) {
-  move(fileId, targetFolderId)
-  ElMessage.success('文件已移动')
+async function handleMoveConfirm(fileId: string, targetFolderId: string, targetKbId?: string) {
+  try {
+    if (targetKbId && targetKbId !== kbId) {
+      await moveFileToKb(fileId, targetKbId, targetFolderId)
+      ElMessage.success('文件已移动到其他知识库，正在重新处理')
+    } else {
+      await move(fileId, targetFolderId)
+      ElMessage.success('文件已移动')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '移动失败')
+  }
 }
 
 // --- Rename file dialog ---
@@ -463,7 +490,10 @@ onBeforeUnmount(() => {
     <div class="file-manager__body">
       <!-- Folder tree sidebar -->
       <div class="file-manager__sidebar">
-        <div class="file-manager__sidebar-title">文件目录</div>
+        <div class="file-manager__sidebar-header">
+          <span class="file-manager__sidebar-title">文件目录</span>
+          <el-button :icon="FolderAdd" link size="small" @click="handleNewFolder" />
+        </div>
         <div class="file-manager__tree-wrapper">
           <div
             class="file-manager__tree-node"
@@ -546,9 +576,6 @@ onBeforeUnmount(() => {
             <el-button v-permission="'kb:upload'" type="primary" :icon="Upload" @click="openUploader">
               上传
             </el-button>
-            <el-button :icon="FolderAdd" @click="handleNewFolder">
-              新建文件夹
-            </el-button>
             <el-button :icon="Delete" @click="openRecycleBin">
               回收站
             </el-button>
@@ -613,6 +640,7 @@ onBeforeUnmount(() => {
       v-model:visible="moveDialogVisible"
       :kb-id="kbId"
       :file="moveFile"
+      :folders="folders"
       @confirm="handleMoveConfirm"
     />
 
@@ -621,6 +649,7 @@ onBeforeUnmount(() => {
       v-model:visible="bulkMoveTargetVisible"
       :kb-id="kbId"
       :file="selectedFiles[0] || null"
+      :folders="folders"
       :title="`批量移动 ${selectedFiles.length} 个文件到`"
       @confirm="handleBulkMoveConfirm"
     />
@@ -697,12 +726,18 @@ onBeforeUnmount(() => {
     overflow: hidden;
   }
 
+  &__sidebar-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: $spacing-base $spacing-base $spacing-sm;
+    border-bottom: 1px solid $border-lighter;
+  }
+
   &__sidebar-title {
     font-size: 14px;
     font-weight: 600;
     color: $text-primary;
-    padding: $spacing-base $spacing-base $spacing-sm;
-    border-bottom: 1px solid $border-lighter;
   }
 
   &__tree-wrapper {

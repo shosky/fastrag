@@ -3,6 +3,7 @@ import { ref, reactive, watch } from 'vue'
 import { ElMessage } from 'element-plus'
 import { AUTH_TYPE_OPTIONS } from '@/mock/mcp'
 import type { McpService, McpAuthType } from '@/mock/mcp'
+import * as api from '@/api'
 
 const props = withDefaults(
   defineProps<{
@@ -46,7 +47,22 @@ function syncFromProps() {
     form.authValue = props.initialData.authValue
     form.status = props.initialData.status
     form.enabled = props.initialData.enabled
-    form.toolsList = props.initialData.toolsList.map((t) => ({ ...t, params: t.params.map((p) => ({ ...p })) }))
+    form.toolsList = (props.initialData.toolsList || []).map((t: any) => {
+      // 后端返回的 params 是 JSON Schema Map，前端表单期望数组格式
+      let params = t.params || []
+      if (Array.isArray(params)) {
+        params = params.map((p: any) => ({ ...p }))
+      } else if (typeof params === 'object' && params.properties) {
+        // JSON Schema 格式 → 转成前端数组格式 [{name, type, description, required}]
+        params = Object.entries(params.properties).map(([name, prop]: [string, any]) => ({
+          name,
+          type: prop.type || 'string',
+          description: prop.description || '',
+          required: params.required?.includes(name) || false,
+        }))
+      }
+      return { ...t, params }
+    })
   }
 }
 
@@ -67,8 +83,38 @@ async function handleParseUrl() {
     ElMessage.warning('请先输入 MCP 地址')
     return
   }
-  // 无后端解析接口时，提示用户手动维护工具列表
-  ElMessage.info('暂不支持自动解析 MCP 地址，请手动添加工具列表')
+  parsing.value = true
+  try {
+    const res: any = await api.parseMcpUrl({
+      mcpUrl: form.mcpUrl.trim(),
+      transport: 'sse',
+      authType: form.authType,
+      authValue: form.authValue,
+    })
+    const tools = res?.tools || res?.data?.tools || []
+    if (tools.length) {
+      form.toolsList = tools.map((t: any) => ({
+        name: t.name,
+        description: t.description || '',
+        params: t.params?.properties
+          ? Object.entries(t.params.properties).map(([name, prop]: [string, any]) => ({
+              name,
+              type: prop.type || 'string',
+              description: prop.description || '',
+              required: t.params.required?.includes(name) || false,
+            }))
+          : [],
+      }))
+      activeTab.value = 'tools'
+      ElMessage.success(`解析成功，共发现 ${tools.length} 个工具`)
+    } else {
+      ElMessage.info('未发现任何工具，请检查 MCP 地址是否正确')
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '解析失败，请检查 MCP 地址是否正确可达')
+  } finally {
+    parsing.value = false
+  }
 }
 
 // --- 提交 ---
