@@ -11,7 +11,10 @@ public class SysPermission {
     private String permKey;
     private String name;
     private String type; // menu / action
+
+    @TableField("`group`")
     private String group; // menu / kb / app / workflow / review / admin
     private String parentKey;
+    private String category; // menu / page_action / api
     private String description;
 }

@@ -39,6 +39,8 @@ public class McpProtocolClient implements AutoCloseable {
     private HttpClient httpClient;
     private boolean connected = false;
     private final AtomicInteger requestId = new AtomicInteger(1);
+    /** MCP 会话 ID，从 initialize 响应的 mcp-session-id 头获取 */
+    private String sessionId;
 
     // ======================== 构造函数 ========================
 
@@ -88,9 +90,25 @@ public class McpProtocolClient implements AutoCloseable {
         initParams.put("capabilities", Map.of());
         initParams.put("clientInfo", Map.of("name", "fastrag", "version", "1.0.0"));
 
-        JsonNode initResult = sendJsonRpc("initialize", initParams);
+        JsonRpcResponse initResponse = sendJsonRpcWithHeaders("initialize", initParams);
         log.info("[McpClient] Initialize response: server={}",
-                initResult.path("serverInfo").path("name").asText("unknown"));
+                initResponse.result().path("serverInfo").path("name").asText("unknown"));
+
+        // 提取 mcp-session-id（Streamable HTTP 协议要求后续请求带上此头）
+        List<String> sessionHeaders = initResponse.headers().get("mcp-session-id");
+        if (sessionHeaders != null && !sessionHeaders.isEmpty()) {
+            sessionId = sessionHeaders.get(0);
+            log.info("[McpClient] Got sessionId: {}", sessionId);
+        } else {
+            // 某些 MCP 服务将 sessionId 放在响应体的 result 中
+            String resultSessionId = initResponse.result().path("sessionId").asText("");
+            if (!resultSessionId.isEmpty()) {
+                sessionId = resultSessionId;
+                log.info("[McpClient] Got sessionId from body: {}", sessionId);
+            } else {
+                log.info("[McpClient] No sessionId in response (stateless MCP server)");
+            }
+        }
 
         // 2. Send initialized notification (fire-and-forget)
         sendNotification("notifications/initialized", Map.of());
@@ -112,7 +130,7 @@ public class McpProtocolClient implements AutoCloseable {
         long t0 = System.currentTimeMillis();
 
         try {
-            JsonNode result = sendJsonRpc("tools/list", null);
+            JsonNode result = sendJsonRpc("tools/list", Map.of());
             long elapsed = System.currentTimeMillis() - t0;
 
             List<McpToolInfo> tools = new ArrayList<>();
@@ -185,6 +203,16 @@ public class McpProtocolClient implements AutoCloseable {
      * 发送 JSON-RPC 请求并等待响应。
      */
     private JsonNode sendJsonRpc(String method, Map<String, Object> params) {
+        return sendJsonRpcWithHeaders(method, params).result();
+    }
+
+    /** JSON-RPC 响应，包含 result 和 HTTP 响应头 */
+    private record JsonRpcResponse(JsonNode result, Map<String, List<String>> headers) {}
+
+    /**
+     * 发送 JSON-RPC 请求并等待响应，同时返回 HTTP 响应头。
+     */
+    private JsonRpcResponse sendJsonRpcWithHeaders(String method, Map<String, Object> params) {
         try {
             int id = requestId.getAndIncrement();
             ObjectNode request = om.createObjectNode();
@@ -196,7 +224,7 @@ public class McpProtocolClient implements AutoCloseable {
             }
 
             String jsonStr = om.writeValueAsString(request);
-            log.debug("[McpClient] Send: method={}, id={}", method, id);
+            log.info("[McpClient] Send: method={}, id={}, body={}", method, id, jsonStr);
 
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(mcpUrl))
@@ -207,6 +235,11 @@ public class McpProtocolClient implements AutoCloseable {
 
             // 添加自定义请求头
             headers.forEach(reqBuilder::header);
+
+            // 如果有 session ID，添加到请求头
+            if (sessionId != null && !sessionId.isEmpty()) {
+                reqBuilder.header("mcp-session-id", sessionId);
+            }
 
             HttpResponse<String> response = httpClient.send(
                     reqBuilder.build(),
@@ -244,7 +277,7 @@ public class McpProtocolClient implements AutoCloseable {
                 throw new RuntimeException("JSON-RPC response missing 'result' field: " + responseBody);
             }
 
-            return json.get("result");
+            return new JsonRpcResponse(json.get("result"), response.headers().map());
 
         } catch (RuntimeException e) {
             throw e;
@@ -300,7 +333,7 @@ public class McpProtocolClient implements AutoCloseable {
             }
 
             String jsonStr = om.writeValueAsString(request);
-            log.debug("[McpClient] Notification: method={}", method);
+            log.info("[McpClient] Notification: method={}, body={}", method, jsonStr);
 
             HttpRequest.Builder reqBuilder = HttpRequest.newBuilder()
                     .uri(URI.create(mcpUrl))
@@ -311,8 +344,13 @@ public class McpProtocolClient implements AutoCloseable {
 
             headers.forEach(reqBuilder::header);
 
-            // 通知不需要等待响应，发送即可
-            httpClient.sendAsync(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
+            // 通知也需要带 session ID
+            if (sessionId != null && !sessionId.isEmpty()) {
+                reqBuilder.header("mcp-session-id", sessionId);
+            }
+
+            // 同步发送，确保服务端处理完后再发后续请求
+            httpClient.send(reqBuilder.build(), HttpResponse.BodyHandlers.ofString());
 
         } catch (Exception e) {
             log.warn("[McpClient] Failed to send notification: method={}", method, e);

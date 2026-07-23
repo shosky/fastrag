@@ -14,7 +14,9 @@ import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.knowledge.mapper.KbQaPairMapper;
 import com.fastrag.module.knowledge.entity.KbQaPair;
 import com.fastrag.module.platform.entity.ModelRecord;
+import com.fastrag.module.platform.entity.SysConfig;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
+import com.fastrag.module.platform.service.ConfigManageService;
 import com.fastrag.module.publish.entity.KbLog;
 import com.fastrag.module.publish.mapper.KbLogMapper;
 import com.fastrag.module.retrieval.entity.KbRetrievalLog;
@@ -54,6 +56,7 @@ public class RetrievalServiceImpl implements RetrievalService {
     private final RerankService rerankService;
     private final QueryEnhanceService queryEnhanceService;
     private final ModelRecordMapper modelRecordMapper;
+    private final ConfigManageService configService;
 
     /** RRF 融合常数 k */
     private static final int RRF_K = 60;
@@ -125,14 +128,8 @@ public class RetrievalServiceImpl implements RetrievalService {
                                                                   RetrievalRequest.RetrievalConfig requestConfig) {
         RetrievalRequest.RetrievalConfig merged = new RetrievalRequest.RetrievalConfig();
 
-        // 默认值
-        merged.setMode("hybrid");
-        merged.setTopK(10);
-        merged.setSimilarityThreshold(0.2);
-        merged.setEnableGraphExpand(false);
-        merged.setGraphExpandDepth(1);
-        merged.setGraphMaxEntities(10);
-        merged.setEnableRerank(false);
+        // 默认值（先设置系统级默认值，KB 配置和请求参数可覆盖）
+        applySystemDefaults(merged);
 
         // 1. 从知识库加载已保存的配置
         try {
@@ -155,6 +152,50 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
 
         return merged;
+    }
+
+    /**
+     * 从系统配置读取默认检索参数，作为基础默认值。
+     * 优先级最低（会被 KB 配置和请求参数覆盖）。
+     */
+    private void applySystemDefaults(RetrievalRequest.RetrievalConfig config) {
+        try {
+            SysConfig c = configService.getConfig("general_search_top_k");
+            if (c != null && c.getConfigValue() != null) {
+                config.setTopK(Integer.parseInt(c.getConfigValue().trim()));
+            } else {
+                config.setTopK(10);
+            }
+        } catch (Exception e) {
+            config.setTopK(10);
+        }
+
+        try {
+            SysConfig c = configService.getConfig("general_retrieval_mode");
+            if (c != null && c.getConfigValue() != null) {
+                config.setMode(c.getConfigValue().trim());
+            } else {
+                config.setMode("hybrid");
+            }
+        } catch (Exception e) {
+            config.setMode("hybrid");
+        }
+
+        try {
+            SysConfig c = configService.getConfig("general_enable_rerank");
+            if (c != null && c.getConfigValue() != null) {
+                config.setEnableRerank("true".equals(c.getConfigValue().trim()));
+            } else {
+                config.setEnableRerank(false);
+            }
+        } catch (Exception e) {
+            config.setEnableRerank(false);
+        }
+
+        config.setSimilarityThreshold(0.2);
+        config.setEnableGraphExpand(false);
+        config.setGraphExpandDepth(1);
+        config.setGraphMaxEntities(10);
     }
 
     /** 将 source 中的非 null 字段复制到 target */

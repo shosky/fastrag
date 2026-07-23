@@ -95,9 +95,11 @@ public class ToolRegistry {
         if (service == null) return null;
 
         ToolDefinition def = new ToolDefinition();
-        def.setToolId(mcpTool.getToolId() != null ? mcpTool.getToolId() : "mcp_" + id);
-        def.setName(mcpTool.getName());
-        def.setDescription(mcpTool.getDescription());
+        String formattedName = mcpTool.getToolId() != null ? mcpTool.getToolId() : "mcp_" + id;
+        def.setToolId(formattedName);
+        def.setName(formattedName);
+        def.setDescription(mcpTool.getDescription() != null
+                ? mcpTool.getDescription() : "MCP tool from " + service.getName());
         def.setType("mcp");
         def.setInputSchema(mcpTool.getParams());  // MCP tools already have JSON Schema
 
@@ -113,6 +115,7 @@ public class ToolRegistry {
         config.put("authType", service.getAuthType());
         config.put("authValue", service.getAuthValue());
         config.put("enabled", service.getEnabled());
+        config.put("rawName", mcpTool.getName());
         def.setConfig(config);
         return def;
     }

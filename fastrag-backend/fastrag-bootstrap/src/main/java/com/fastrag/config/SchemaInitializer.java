@@ -44,30 +44,17 @@ public class SchemaInitializer {
 
         try {
             jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS sys_team (
-                    id VARCHAR(32) PRIMARY KEY,
-                    name VARCHAR(128) NOT NULL,
-                    description VARCHAR(256),
-                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
-            """);
-            log.info("Table sys_team OK");
-        } catch (Exception e) {
-            log.error("Failed to create sys_team: {}", e.getMessage());
-        }
-
-        try {
-            jdbc.execute("""
-                CREATE TABLE IF NOT EXISTS sys_team_member (
+                CREATE TABLE IF NOT EXISTS sys_user_role (
                     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-                    team_id VARCHAR(32) NOT NULL,
                     user_id VARCHAR(32) NOT NULL,
-                    INDEX idx_team_id (team_id)
+                    role_id VARCHAR(32) NOT NULL,
+                    INDEX idx_user_id (user_id),
+                    UNIQUE KEY uk_user_role (user_id, role_id)
                 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
             """);
-            log.info("Table sys_team_member OK");
+            log.info("Table sys_user_role OK");
         } catch (Exception e) {
-            log.error("Failed to create sys_team_member: {}", e.getMessage());
+            log.error("Failed to create sys_user_role: {}", e.getMessage());
         }
 
         try {

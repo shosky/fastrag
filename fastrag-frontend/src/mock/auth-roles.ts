@@ -109,7 +109,7 @@ export function setDefaultRole(id: string): void {
 }
 
 // ===========================================================================
-// 人员 mock 数据
+// 人员 mock 数据（多角色支持）
 // ===========================================================================
 
 export interface PersonnelRecord {
@@ -119,17 +119,17 @@ export interface PersonnelRecord {
   phone: string
   email: string
   orgName: string
-  roleId: string
-  roleName: string
+  roleIds: string[]
+  roleNames: string[]
   status: 'enabled' | 'disabled'
   createdAt: string
 }
 
 const personnelStore: PersonnelRecord[] = [
-  { id: '1', username: 'admin', realName: '超级管理员', phone: '13800000001', email: 'admin@example.com', orgName: '公司总部', roleId: '1', roleName: '超级管理员', status: 'enabled', createdAt: '2026-01-01' },
-  { id: '2', username: 'zhangsan', realName: '张三', phone: '13800000002', email: 'zhangsan@example.com', orgName: '技术部/前端组', roleId: '3', roleName: '知识库用户', status: 'enabled', createdAt: '2026-02-01' },
-  { id: '3', username: 'lisi', realName: '李四', phone: '13800000003', email: 'lisi@example.com', orgName: '产品部', roleId: '2', roleName: '知识库管理员', status: 'enabled', createdAt: '2026-02-15' },
-  { id: '4', username: 'wangwu', realName: '王五', phone: '13800000004', email: 'wangwu@example.com', orgName: '外部', roleId: '4', roleName: '只读用户', status: 'disabled', createdAt: '2026-03-01' },
+  { id: '1', username: 'admin', realName: '超级管理员', phone: '13800000001', email: 'admin@example.com', orgName: '公司总部', roleIds: ['1'], roleNames: ['超级管理员'], status: 'enabled', createdAt: '2026-01-01' },
+  { id: '2', username: 'zhangsan', realName: '张三', phone: '13800000002', email: 'zhangsan@example.com', orgName: '技术部/前端组', roleIds: ['3', '4'], roleNames: ['知识库用户', '只读用户'], status: 'enabled', createdAt: '2026-02-01' },
+  { id: '3', username: 'lisi', realName: '李四', phone: '13800000003', email: 'lisi@example.com', orgName: '产品部', roleIds: ['2'], roleNames: ['知识库管理员'], status: 'enabled', createdAt: '2026-02-15' },
+  { id: '4', username: 'wangwu', realName: '王五', phone: '13800000004', email: 'wangwu@example.com', orgName: '外部', roleIds: ['4'], roleNames: ['只读用户'], status: 'disabled', createdAt: '2026-03-01' },
 ]
 
 let personnelSeq = 100
@@ -151,11 +151,11 @@ export function updatePersonnel(id: string, patch: Partial<PersonnelRecord>): Pe
   return { ...personnelStore[idx] }
 }
 
-export function assignRole(personnelId: string, roleId: string, roleName: string): boolean {
+export function assignRoles(personnelId: string, roleIds: string[], roleNames: string[]): boolean {
   const idx = personnelStore.findIndex((p) => p.id === personnelId)
   if (idx === -1) return false
-  personnelStore[idx].roleId = roleId
-  personnelStore[idx].roleName = roleName
+  personnelStore[idx].roleIds = [...roleIds]
+  personnelStore[idx].roleNames = [...roleNames]
   return true
 }
 

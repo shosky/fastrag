@@ -130,7 +130,6 @@ const allModules: NavModule[] = [
         children: [
           { path: '/admin/account/roles', title: '角色管理', icon: 'User' },
           { path: '/admin/account/organization', title: '组织管理', icon: 'OfficeBuilding' },
-          { path: '/admin/account/team', title: '团队管理', icon: 'Users' },
           { path: '/admin/account/personnel', title: '人员管理', icon: 'UserFilled' },
           { path: '/admin/permissions', title: '权限管理', icon: 'Key' },
         ],
@@ -229,18 +228,15 @@ const currentSubMenus = computed(() => currentModule.value?.children || [])
 // 是否有二级菜单
 const hasSubMenu = computed(() => currentSubMenus.value.length > 0)
 
-// 展开的一级菜单
+// 展开所有二级菜单
 const expandedMenus = ref<string[]>([])
 
-// 根据当前路由初始化展开的菜单
+// 将所有有子菜单的路径加入展开列表
 function initExpandedMenus() {
-  const path = route.path
   expandedMenus.value = []
   currentSubMenus.value.forEach(menu => {
     if (menu.children && menu.children.length > 0) {
-      if (path.startsWith(menu.path) || menu.children.some(c => path.startsWith(c.path))) {
-        expandedMenus.value.push(menu.path)
-      }
+      expandedMenus.value.push(menu.path)
     }
   })
 }

@@ -25,14 +25,28 @@ import { InfoFilled } from '@element-plus/icons-vue'
 const props = withDefaults(defineProps<{
   content: string
   isThinking?: boolean
+  forceCollapsed?: boolean
 }>(), {
-  isThinking: false
+  isThinking: false,
+  forceCollapsed: false
 })
 
 const activeKey = ref<string[]>(['thinking'])
 
 watch(() => props.isThinking, (val) => {
-  if (val) activeKey.value = ['thinking']
+  if (val) {
+    activeKey.value = ['thinking']
+  } else {
+    // 思考完毕自动收起
+    activeKey.value = []
+  }
+})
+
+// 内容已开始生成时自动收起（即使 isThinking 仍为 true）
+watch(() => props.forceCollapsed, (val) => {
+  if (val) {
+    activeKey.value = []
+  }
 })
 
 const displayContent = computed(() => {

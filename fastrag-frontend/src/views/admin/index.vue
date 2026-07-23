@@ -21,11 +21,10 @@ const modules = [
     title: '账号权限',
     icon: 'User',
     color: '#67c23a',
-    description: '维护角色、组织、团队和人员，确保平台权限结构与组织关系保持一致。',
+    description: '维护角色、组织和人员，确保平台权限结构与组织关系保持一致。',
     children: [
       { name: '角色管理', path: '/admin/account/roles' },
       { name: '组织管理', path: '/admin/account/organization' },
-      { name: '团队管理', path: '/admin/account/team' },
       { name: '人员管理', path: '/admin/account/personnel' },
     ],
   },

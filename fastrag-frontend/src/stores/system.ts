@@ -8,6 +8,7 @@ export const useSystemStore = defineStore('system', () => {
   const slogan = ref('让知识触手可及')
   const copyright = ref('')
   const logoUrl = ref('')
+  const orgName = ref('')
   const loaded = ref(false)
 
   async function loadConfig() {
@@ -15,13 +16,20 @@ export const useSystemStore = defineStore('system', () => {
     // 未登录时跳过接口请求，使用默认值，避免 403 触发响应拦截器重定向
     if (!storage.get('token')) return
     try {
-      const res: any = await api.getDictionaries({ type: '系统信息' })
-      const settings = res?.['系统信息'] || []
+      // 从配置 API 加载品牌信息
+      const res: any = await api.getSysConfigs('brand')
+      const settings = res?.data || []
       settings.forEach((item: any) => {
-        if (item.key === 'system_name' && item.value) systemName.value = item.value
-        if (item.key === 'system_slogan' && item.value) slogan.value = item.value
-        if (item.key === 'copyright' && item.value) copyright.value = item.value
-        if (item.key === 'logo_url' && item.value) logoUrl.value = item.value
+        if (item.configKey === 'system_name' && item.configValue) systemName.value = item.configValue
+        if (item.configKey === 'system_slogan' && item.configValue) slogan.value = item.configValue
+        if (item.configKey === 'copyright' && item.configValue) copyright.value = item.configValue
+        if (item.configKey === 'logo_url' && item.configValue) logoUrl.value = item.configValue
+        if (item.configKey === 'org_name' && item.configValue) {
+          try {
+            const parsed = JSON.parse(item.configValue)
+            if (parsed.value) orgName.value = parsed.value
+          } catch { /* ignore */ }
+        }
       })
       loaded.value = true
     } catch {
@@ -34,6 +42,7 @@ export const useSystemStore = defineStore('system', () => {
     slogan,
     copyright,
     logoUrl,
+    orgName,
     loaded,
     loadConfig,
   }

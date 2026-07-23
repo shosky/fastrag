@@ -434,6 +434,8 @@ CREATE TABLE IF NOT EXISTS app_conversation_message (
     tokens INT DEFAULT 0,
     latency_ms INT,
     feedback VARCHAR(16) DEFAULT NULL,
+    thinking_content CLOB,
+    tool_calls CLOB,
     deleted_at TIMESTAMP DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -500,17 +502,21 @@ CREATE TABLE IF NOT EXISTS sys_config (
     config_type VARCHAR(32),
     description VARCHAR(256),
     is_default INT DEFAULT 0,
+    is_system INT DEFAULT 0,
+    updated_by VARCHAR(64),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 CREATE TABLE IF NOT EXISTS sys_config_history (
-    id VARCHAR(32) PRIMARY KEY,
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    config_id VARCHAR(32) NOT NULL,
     config_key VARCHAR(128),
     old_value TEXT,
     new_value TEXT,
+    change_type VARCHAR(16),
     operator VARCHAR(64),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    timestamp TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- 模型
@@ -672,4 +678,64 @@ CREATE TABLE IF NOT EXISTS db_table (
     row_count BIGINT,
     enabled INT DEFAULT 1,
     synced_at TIMESTAMP
+);
+
+-- ==================== IAM（用户、组织、角色）= 用于测试 ====================
+CREATE TABLE IF NOT EXISTS sys_user (
+    id VARCHAR(32) PRIMARY KEY,
+    username VARCHAR(64) NOT NULL UNIQUE,
+    real_name VARCHAR(64),
+    phone VARCHAR(32),
+    email VARCHAR(128),
+    password_hash VARCHAR(256) NOT NULL,
+    role_id VARCHAR(32),
+    status VARCHAR(16) DEFAULT 'enabled',
+    org_id VARCHAR(32),
+    storage_quota BIGINT DEFAULT 10737418240,
+    storage_used BIGINT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sys_role (
+    id VARCHAR(32) PRIMARY KEY,
+    role_key VARCHAR(32) NOT NULL UNIQUE,
+    name VARCHAR(64) NOT NULL,
+    description VARCHAR(256),
+    is_default INT DEFAULT 0,
+    is_system INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS sys_permission (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    perm_key VARCHAR(64) NOT NULL UNIQUE,
+    name VARCHAR(64) NOT NULL,
+    type VARCHAR(16) NOT NULL,
+    `group` VARCHAR(32),
+    parent_key VARCHAR(64),
+    category VARCHAR(16) DEFAULT 'page_action',
+    description VARCHAR(256)
+);
+
+CREATE TABLE IF NOT EXISTS sys_role_permission (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    role_id VARCHAR(32) NOT NULL,
+    permission_key VARCHAR(64) NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS sys_user_role (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(32) NOT NULL,
+    role_id VARCHAR(32) NOT NULL,
+    UNIQUE KEY uk_user_role (user_id, role_id)
+);
+
+CREATE TABLE IF NOT EXISTS sys_org (
+    id VARCHAR(32) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    alias VARCHAR(64),
+    parent_id VARCHAR(32) DEFAULT 'root',
+    level INT DEFAULT 1,
+    sort INT DEFAULT 0
 );

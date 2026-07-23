@@ -4,10 +4,10 @@ import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
 
 @Data
-@TableName("sys_team_member")
-public class SysTeamMember {
+@TableName("sys_user_role")
+public class SysUserRole {
     @TableId(type = IdType.AUTO)
     private Long id;
-    private String teamId;
     private String userId;
+    private String roleId;
 }

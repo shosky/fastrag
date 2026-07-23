@@ -1,0 +1,194 @@
+[INFO] Scanning for projects...
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Build Order:
+[INFO] 
+[INFO] FastRAG Backend                                                    [pom]
+[INFO] fastrag-common                                                     [jar]
+[INFO] fastrag-security                                                   [jar]
+[INFO] fastrag-infra                                                      [jar]
+[INFO] fastrag-ai                                                         [jar]
+[INFO] fastrag-tools                                                      [jar]
+[INFO] fastrag-agent                                                      [jar]
+[INFO] 
+[INFO] --------------------< com.fastrag:fastrag-backend >---------------------
+[INFO] Building FastRAG Backend 1.0.0-SNAPSHOT                            [1/7]
+[INFO]   from pom.xml
+[INFO] --------------------------------[ pom ]---------------------------------
+[INFO] 
+[INFO] ---------------------< com.fastrag:fastrag-common >---------------------
+[INFO] Building fastrag-common 1.0.0-SNAPSHOT                             [2/7]
+[INFO]   from fastrag-common\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-common ---
+[INFO] Copying 0 resource from src\main\resources to target\classes
+[INFO] Copying 0 resource from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-common ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] --------------------< com.fastrag:fastrag-security >--------------------
+[INFO] Building fastrag-security 1.0.0-SNAPSHOT                           [3/7]
+[INFO]   from fastrag-security\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-security ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-security\src\main\resources
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-security\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-security ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] ---------------------< com.fastrag:fastrag-infra >----------------------
+[INFO] Building fastrag-infra 1.0.0-SNAPSHOT                              [4/7]
+[INFO]   from fastrag-infra\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-infra ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-infra\src\main\resources
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-infra\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-infra ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] -----------------------< com.fastrag:fastrag-ai >-----------------------
+[INFO] Building fastrag-ai 1.0.0-SNAPSHOT                                 [5/7]
+[INFO]   from fastrag-ai\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-ai ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-ai\src\main\resources
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-ai\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-ai ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] ---------------------< com.fastrag:fastrag-tools >----------------------
+[INFO] Building fastrag-tools 1.0.0-SNAPSHOT                              [6/7]
+[INFO]   from fastrag-modules\fastrag-tools\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-tools ---
+[INFO] Copying 0 resource from src\main\resources to target\classes
+[INFO] Copying 10 resources from src\main\resources to target\classes
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-tools ---
+[INFO] Nothing to compile - all classes are up to date
+[INFO] 
+[INFO] ---------------------< com.fastrag:fastrag-agent >----------------------
+[INFO] Building fastrag-agent 1.0.0-SNAPSHOT                              [7/7]
+[INFO]   from fastrag-modules\fastrag-agent\pom.xml
+[INFO] --------------------------------[ jar ]---------------------------------
+[INFO] 
+[INFO] --- resources:3.3.1:resources (default-resources) @ fastrag-agent ---
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-agent\src\main\resources
+[INFO] skip non existing resourceDirectory D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-agent\src\main\resources
+[INFO] 
+[INFO] --- compiler:3.11.0:compile (default-compile) @ fastrag-agent ---
+[INFO] Changes detected - recompiling the module! :source
+[INFO] Compiling 67 source files with javac [debug release 17] to target\classes
+[INFO] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/main/java/com/fastrag/module/agent/service/impl/AgentRunServiceImpl.java: D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-agent\src\main\java\com\fastrag\module\agent\service\impl\AgentRunServiceImpl.java使用或覆盖了已过时的 API。
+[INFO] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/main/java/com/fastrag/module/agent/service/impl/AgentRunServiceImpl.java: 有关详细信息, 请使用 -Xlint:deprecation 重新编译。
+[INFO] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/main/java/com/fastrag/module/agent/executor/AgentExecutor.java: D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-modules\fastrag-agent\src\main\java\com\fastrag\module\agent\executor\AgentExecutor.java使用了未经检查或不安全的操作。
+[INFO] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/main/java/com/fastrag/module/agent/executor/AgentExecutor.java: 有关详细信息, 请使用 -Xlint:unchecked 重新编译。
+[INFO] -------------------------------------------------------------
+[ERROR] COMPILATION ERROR : 
+[INFO] -------------------------------------------------------------
+[ERROR] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/main/java/com/fastrag/module/agent/middleware/McpMiddleware.java:[115,36] 对于of(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Long,java.lang.String,service.ge[...]"sse",java.lang.String,service.ge[...] : "",java.lang.String,java.lang.String,java.lang.String,java.util.List<java.lang.String>,java.lang.String,java.util.Map<java.lang.String,java.lang.String>,java.lang.String,service.ge[...]none",java.lang.String,java.lang.String,java.lang.String,java.lang.String), 找不到合适的方法
+    方法 java.util.Map.<K,V>of()不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+    方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V)不适用
+      (无法推断类型变量 K,V
+        (实际参数列表和形式参数列表长度不同))
+[INFO] 1 error
+[INFO] -------------------------------------------------------------
+[INFO] ------------------------------------------------------------------------
+[INFO] Reactor Summary for FastRAG Backend 1.0.0-SNAPSHOT:
+[INFO] 
+[INFO] FastRAG Backend .................................... SUCCESS [  0.004 s]
+[INFO] fastrag-common ..................................... SUCCESS [  2.035 s]
+[INFO] fastrag-security ................................... SUCCESS [  0.899 s]
+[INFO] fastrag-infra ...................................... SUCCESS [  2.942 s]
+[INFO] fastrag-ai ......................................... SUCCESS [  0.374 s]
+[INFO] fastrag-tools ...................................... SUCCESS [  0.821 s]
+[INFO] fastrag-agent ...................................... FAILURE [ 11.486 s]
+[INFO] ------------------------------------------------------------------------
+[INFO] BUILD FAILURE
+[INFO] ------------------------------------------------------------------------
+[INFO] Total time:  19.297 s
+[INFO] Finished at: 2026-07-16T00:14:14+08:00
+[INFO] ------------------------------------------------------------------------
+[ERROR] Failed to execute goal org.apache.maven.plugins:maven-compiler-plugin:3.11.0:compile (default-compile) on project fastrag-agent: Compilation failure
+[ERROR] /D:/Workspace/java/github/rag/fastrag/fastrag-backend/fastrag-modules/fastrag-agent/src/main/java/com/fastrag/module/agent/middleware/McpMiddleware.java:[115,36] 对于of(java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.String,java.lang.Long,java.lang.String,service.ge[...]"sse",java.lang.String,service.ge[...] : "",java.lang.String,java.lang.String,java.lang.String,java.util.List<java.lang.String>,java.lang.String,java.util.Map<java.lang.String,java.lang.String>,java.lang.String,service.ge[...]none",java.lang.String,java.lang.String,java.lang.String,java.lang.String), 找不到合适的方法
+[ERROR]     方法 java.util.Map.<K,V>of()不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR]     方法 java.util.Map.<K,V>of(K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V,K,V)不适用
+[ERROR]       (无法推断类型变量 K,V
+[ERROR]         (实际参数列表和形式参数列表长度不同))
+[ERROR] 
+[ERROR] -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoFailureException
+[ERROR] 
+[ERROR] After correcting the problems, you can resume the build with the command
+[ERROR]   mvn <args> -rf :fastrag-agent

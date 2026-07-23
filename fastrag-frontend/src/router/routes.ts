@@ -312,16 +312,16 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '角色管理', roles: ['super_admin'] as const },
           },
           {
+            path: 'account/roles/:id/permissions',
+            name: 'RolePermissions',
+            component: () => import('@/views/admin/account/role-permissions.vue'),
+            meta: { title: '角色权限配置', hidden: true, roles: ['super_admin'] as const },
+          },
+          {
             path: 'account/organization',
             name: 'Organization',
             component: () => import('@/views/admin/account/organization.vue'),
             meta: { title: '组织管理', roles: ['super_admin', 'kb_admin'] as const },
-          },
-          {
-            path: 'account/team',
-            name: 'Team',
-            component: () => import('@/views/admin/account/team.vue'),
-            meta: { title: '团队管理', roles: ['super_admin', 'kb_admin'] as const },
           },
           {
             path: 'account/personnel',
@@ -346,6 +346,12 @@ const routes: RouteRecordRaw[] = [
             name: 'ApiKeys',
             component: () => import('@/views/admin/platform/api-keys.vue'),
             meta: { title: '开放密钥', roles: ['super_admin'] as const },
+          },
+          {
+            path: 'audit/system-log',
+            name: 'SystemLog',
+            component: () => import('@/views/admin/audit/system-log.vue'),
+            meta: { title: '系统日志', roles: ['super_admin'] as const },
           },
         ],
       },

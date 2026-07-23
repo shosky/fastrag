@@ -57,6 +57,12 @@ public class AgentEngine {
     /** 工具输出截断长度 */
     private static final int TOOL_OUTPUT_MAX = 5000;
 
+    // ==================== 流完成回调接口 ====================
+    @FunctionalInterface
+    public interface StreamCompleteCallback {
+        void accept(String answer, String thinkingContent, String toolCallsJson);
+    }
+
     // ==================== 流式执行（应用对话场景） ====================
 
     /**
@@ -66,16 +72,18 @@ public class AgentEngine {
      * @param emitter      SSE 发射器（已设置 timeout 和 callback）
      * @param modelConfig  模型配置（apiUrl, apiKey, enableThinking, temperature）
      * @param run          AgentRun 记录（可为 null，用于事件记录）
-     * @param onComplete   流完成回调（可选，用于保存消息到 DB 等）
+     * @param onComplete   流完成回调（可选，参数为 answer + thinkingContent + toolCallsJson）
      */
     public void executeStream(BaseContext context,
                               SseEmitter emitter,
                               ModelConfig modelConfig,
                               AgentRun run,
-                              java.util.function.Consumer<String> onComplete) {
+                              StreamCompleteCallback onComplete) {
         long totalStart = System.currentTimeMillis();
         StringBuilder fullAnswer = new StringBuilder();
         StringBuilder thinkingContent = new StringBuilder();
+        List<Map<String, Object>> toolCallRecords = new ArrayList<>();
+        Map<String, Integer> toolFailCount = new HashMap<>();
         int totalIterations = 0;
 
         try {
@@ -169,6 +177,17 @@ public class AgentEngine {
                                 "durationMs", 0,
                                 "intercepted", true
                         ));
+                        // 记录中间件拦截的工具调用
+                        toolCallRecords.add(Map.of(
+                                "id", tc.getId(),
+                                "name", tc.getFunction().getName(),
+                                "arguments", tc.getFunction().getArguments(),
+                                "result", Map.of(
+                                        "success", true,
+                                        "output", truncate(interceptor.getResultMessage().getContent(), TOOL_OUTPUT_MAX),
+                                        "durationMs", 0
+                                )
+                        ));
                         continue;
                     }
 
@@ -191,6 +210,19 @@ public class AgentEngine {
                         ChatMessage toolNotFoundMsg = new ChatMessage("tool", errOutput, tc.getId());
                         toolNotFoundMsg.setName(tc.getFunction().getName());
                         messages.add(toolNotFoundMsg);
+                        // 记录未找到的工具调用
+                        toolCallRecords.add(Map.of(
+                                "id", tc.getId(),
+                                "name", tc.getFunction().getName(),
+                                "arguments", tc.getFunction().getArguments(),
+                                "result", Map.of(
+                                        "success", false,
+                                        "output", errOutput,
+                                        "durationMs", 0
+                                )
+                        ));
+                        // 跟踪工具失败
+                        toolFailCount.merge(tc.getFunction().getName(), 1, Integer::sum);
                         continue;
                     }
 
@@ -214,40 +246,85 @@ public class AgentEngine {
                     // 加入消息历史（截断到大模型友好的长度，前端仍然可查看完整结果）
                     String resultContent = toolResult.isSuccess()
                             ? toolResult.getOutput() : "Error: " + toolResult.getError();
-                    // 工具返回数据给 LLM 时截断到 2000 字符
+                    // 工具返回数据给 LLM 时截断到 5000 字符
                     // 注意: tool 消息需要包含 name 字段（SiliconFlow/Qwen 等要求）
                     ChatMessage toolResultMsg = new ChatMessage("tool",
-                            truncate(resultContent, 2000), tc.getId());
+                            truncate(resultContent, 5000), tc.getId());
                     toolResultMsg.setName(tc.getFunction().getName());
                     messages.add(toolResultMsg);
                     log.debug("[AgentEngine] Added tool result message: role=tool, toolCallId={}, name={}, contentLen={}",
                             tc.getId(), tc.getFunction().getName(),
-                            truncate(resultContent, 2000).length());
+                            truncate(resultContent, 5000).length());
 
                     // 事件记录
                     if (run != null && run.getId() != null) {
                         publishToolCallEvent(run.getId(), tc, toolResult, toolDuration);
                     }
+                    // 记录工具调用
+                    toolCallRecords.add(Map.of(
+                            "id", tc.getId(),
+                            "name", tc.getFunction().getName(),
+                            "arguments", tc.getFunction().getArguments(),
+                            "result", Map.of(
+                                    "success", toolResult.isSuccess(),
+                                    "output", toolResult.isSuccess()
+                                            ? truncate(toolResult.getOutput(), TOOL_OUTPUT_MAX)
+                                            : (toolResult.getError() != null ? toolResult.getError() : "unknown error"),
+                                    "durationMs", toolDuration
+                            )
+                    ));
+                    // 跟踪工具失败次数
+                    if (!toolResult.isSuccess()) {
+                        String toolName = tc.getFunction().getName();
+                        toolFailCount.merge(toolName, 1, Integer::sum);
+                    }
                 }
 
-                // 5g. 推送 agent_state（todos 等）
+                // 5g. 如果某个工具连续失败次数过多，主动告诉 LLM 停止重试
+                if (!toolFailCount.isEmpty()) {
+                    int maxFail = toolFailCount.values().stream().mapToInt(Integer::intValue).max().orElse(0);
+                    if (maxFail >= 3) {
+                        String failMsg = "系统提示：以下工具已连续失败 " + maxFail + " 次，"
+                                + "请不要再重复调用这些工具，直接基于已有信息回答用户问题："
+                                + toolFailCount.entrySet().stream()
+                                    .map(e -> e.getKey() + "(" + e.getValue() + "次)")
+                                    .collect(java.util.stream.Collectors.joining(", "));
+                        messages.add(new ChatMessage("system", failMsg));
+                        log.warn("[AgentEngine] Tool failure threshold reached, injecting stop-retry message: {}", failMsg);
+                        // 重置计数器，避免重复注入
+                        toolFailCount.clear();
+                    }
+                }
+
+                // 5h. 推送 agent_state（todos 等）
                 pushAgentState(context, emitter);
             }
 
             // 6. 发送 end 事件
             long totalDuration = System.currentTimeMillis() - totalStart;
 
+            // 检查是否因达到最大迭代次数而导致无最终回答
+            String finalContent = fullAnswer.toString();
+            if (finalContent.isEmpty() && totalIterations >= maxIterations) {
+                finalContent = "抱歉，执行已达到最大步数限制（" + maxIterations + "步），未能完成回答。"
+                        + "可能原因是工具执行失败导致无法获取所需数据。"
+                        + "请尝试简化问题或检查数据源连接是否正常。";
+                // 将兜底内容推送给前端
+                sendSseEvent(emitter, "content", Map.of("content", finalContent));
+            }
+
             // 调用完成回调（AppServiceImpl 保存消息等）
             if (onComplete != null) {
                 try {
-                    onComplete.accept(fullAnswer.toString());
+                    String toolCallsJson = objectMapper.writeValueAsString(toolCallRecords);
+                    onComplete.accept(finalContent, thinkingContent.toString(), toolCallsJson);
                 } catch (Exception e) {
                     log.warn("[AgentEngine] onComplete callback error: {}", e.getMessage());
                 }
             }
 
             Map<String, Object> endData = new LinkedHashMap<>();
-            endData.put("content", fullAnswer.toString());
+            endData.put("content", finalContent);
             endData.put("durationMs", totalDuration);
             endData.put("iterations", totalIterations);
             endData.put("hasThinking", thinkingContent.length() > 0);
@@ -493,8 +570,23 @@ public class AgentEngine {
         try {
             args = objectMapper.readValue(argsJson, new TypeReference<Map<String, Object>>() {});
         } catch (Exception e) {
-            log.error("[AgentEngine] Failed to parse arguments for {}: {}", tc.getFunction().getName(), e.getMessage());
-            return ToolResult.error("Invalid arguments JSON: " + e.getMessage(), 0);
+            log.warn("[AgentEngine] Failed to parse arguments for {}: {}, attempting repair...",
+                    tc.getFunction().getName(), e.getMessage());
+            // 尝试修复常见 JSON 问题（如字符串值中的未转义双引号）
+            String repaired = tryRepairJsonArguments(argsJson);
+            if (repaired != null) {
+                try {
+                    args = objectMapper.readValue(repaired, new TypeReference<Map<String, Object>>() {});
+                    log.info("[AgentEngine] JSON repair succeeded for tool: {}", tc.getFunction().getName());
+                } catch (Exception e2) {
+                    log.error("[AgentEngine] JSON repair also failed for {}: {}", tc.getFunction().getName(), e2.getMessage());
+                    return ToolResult.error("Invalid arguments JSON: " + e.getMessage()
+                            + ". Please ensure all double quotes inside string values are escaped with backslash.", 0);
+                }
+            } else {
+                return ToolResult.error("Invalid arguments JSON: " + e.getMessage()
+                        + ". Please ensure all double quotes inside string values are escaped with backslash.", 0);
+            }
         }
 
         // JSON Schema 验证
@@ -530,6 +622,84 @@ public class AgentEngine {
     }
 
     // ==================== 辅助方法 ====================
+
+    /**
+     * 尝试修复 LLM 生成的无效 JSON arguments。
+     * <p>
+     * 常见问题：LLM 生成包含 Python 代码的 JSON 时，
+     * 字符串值中的双引号（如 {@code f"SELECT..."}）未被转义。
+     * 本方法使用状态机扫描字符串值中的未转义引号并加反斜杠转义。
+     *
+     * @param json 可能无效的 JSON 字符串
+     * @return 修复后的 JSON，或 null（无法修复）
+     */
+    private String tryRepairJsonArguments(String json) {
+        if (json == null || json.isBlank()) return null;
+
+        StringBuilder sb = new StringBuilder(json.length() + 64);
+        boolean inString = false;       // 当前是否在 JSON 字符串值内部
+        boolean escaped = false;        // 前一个字符是反斜杠
+
+        for (int i = 0; i < json.length(); i++) {
+            char c = json.charAt(i);
+
+            if (escaped) {
+                // 转义状态：原样输出
+                sb.append(c);
+                escaped = false;
+                continue;
+            }
+
+            if (c == '\\') {
+                sb.append(c);
+                escaped = true;
+                continue;
+            }
+
+            if (c == '"') {
+                if (inString) {
+                    // 在字符串内部遇到引号 → 判断是结束符还是内部引号
+                    // 规则：如果下一个字符是 JSON 结构字符（,:}[]\s），则是结束符
+                    boolean isStructuralEnd = false;
+                    if (i + 1 >= json.length()) {
+                        isStructuralEnd = true;
+                    } else {
+                        char next = json.charAt(i + 1);
+                        isStructuralEnd = next == ',' || next == ':' || next == '}'
+                                || next == ']' || next == '\n' || next == '\r'
+                                || next == ' ' || next == '\t';
+                    }
+                    if (isStructuralEnd) {
+                        inString = false;
+                        sb.append(c);
+                    } else {
+                        // 内部引号 → 转义
+                        sb.append('\\');
+                        sb.append(c);
+                    }
+                } else {
+                    // 进入字符串值
+                    inString = true;
+                    sb.append(c);
+                }
+                continue;
+            }
+
+            // 换行符在 JSON 字符串外部是非法的，替换为空格
+            if (!inString && (c == '\n' || c == '\r')) {
+                sb.append(' ');
+                continue;
+            }
+
+            sb.append(c);
+        }
+
+        // 如果修复后的字符串与原字符串相同，说明无法修复
+        String result = sb.toString();
+        if (result.equals(json)) return null;
+
+        return result;
+    }
 
     /**
      * 推送智能体状态（todos 等）到前端。

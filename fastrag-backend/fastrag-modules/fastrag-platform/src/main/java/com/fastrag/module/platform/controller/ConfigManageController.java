@@ -35,9 +35,9 @@ public class ConfigManageController {
     @GetMapping("/config/review-status") public ApiResponse<?> reviewStatus() { var c=svc.getConfig("review_switch"); return ApiResponse.success(c!=null?c.getConfigValue():"{}"); }
     @PutMapping("/config/publish-settings") public ApiResponse<?> publishSettings(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("publish_settings",toJson(body),"publish","发布设置","admin")); }
     @PutMapping("/config/review-settings") public ApiResponse<?> reviewSettings(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("review_settings",toJson(body),"review","审核设置","admin")); }
+    private static final com.fasterxml.jackson.databind.ObjectMapper MAPPER = new com.fasterxml.jackson.databind.ObjectMapper();
     private static String toJson(Object o) {
-        // 简易JSON序列化（避免引入额外依赖），复用Jackson
-        try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(o); } catch(Exception e) { return "{}"; }
+        try { return MAPPER.writeValueAsString(o); } catch(Exception e) { return "{}"; }
     }
     // ===== 安全策略 CRUD =====
     @GetMapping("/security-policies") public ApiResponse<?> listSecurityPolicies(@RequestParam(required=false) String policyType) { return ApiResponse.success(svc.listSecurityPolicies(policyType)); }

@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PersonnelRecord } from '@/mock/auth-roles'
 import type { RoleMeta } from '@/types/auth'
+import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
 
 // --- State ---
@@ -26,7 +27,7 @@ const formData = ref({
 // --- 从 API 加载数据 ---
 const personnelList = ref<PersonnelRecord[]>([])
 const roleOptions = ref<RoleMeta[]>([])
-const selectedRole = ref('')
+const selectedRoles = ref<string[]>([])
 
 async function loadData() {
   const [personnelRes, roleRes] = await Promise.all([
@@ -51,11 +52,19 @@ const filteredPersonnel = computed(() => {
     if (filterStatus.value && p.status !== filterStatus.value) {
       return false
     }
-    if (filterRole.value && p.roleName !== filterRole.value) {
+    if (filterRole.value && !(p.roleNames || []).includes(filterRole.value)) {
       return false
     }
     return true
   })
+})
+
+// --- 分页 ---
+const { currentPage, pageSize, handleCurrentChange, handleSizeChange } = usePagination(10)
+
+const paginatedPersonnel = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredPersonnel.value.slice(start, start + pageSize.value)
 })
 
 // --- 组织选项（从 API 加载） ---
@@ -89,30 +98,31 @@ function handleEdit(row: PersonnelRecord) {
 
 function handleRoleConfig(row: PersonnelRecord) {
   editingId.value = row.id
-  selectedRole.value = row.roleId
+  selectedRoles.value = [...(row.roleIds || [])]
   showRoleDialog.value = true
 }
 
-async function handleDisable(row: PersonnelRecord) {
+// --- Switch 状态切换 ---
+async function handleStatusChange(row: PersonnelRecord) {
   const action = row.status === 'enabled' ? '禁用' : '启用'
   try {
-    await ElMessageBox.confirm(`确定要${action}「${row.realName}」吗？`, `${action}确认`, { type: 'warning' })
-    await api.updatePersonnel(row.id, { status: row.status === 'enabled' ? 'disabled' : 'enabled' })
+    await api.updatePersonnelStatus(row.id, row.status === 'enabled' ? 'disabled' : 'enabled')
     await loadData()
     ElMessage.success(`${action}成功`)
-  } catch {}
-}
-
-async function handleResetPassword(row: PersonnelRecord) {
-  try {
-    await ElMessageBox.confirm(`重置后默认密码改为 123456，确认重置？`, '重置密码', { type: 'warning' })
-    ElMessage.success('密码已重置为 123456')
-  } catch {}
+  } catch {
+    // 失败时恢复状态（重新加载）
+    await loadData()
+  }
 }
 
 async function handleSave() {
   if (!formData.value.username.trim() || !formData.value.realName.trim()) {
     ElMessage.warning('请输入用户名和姓名')
+    return
+  }
+
+  if (!editingId.value && !formData.value.password.trim()) {
+    ElMessage.warning('请输入初始密码')
     return
   }
 
@@ -133,9 +143,9 @@ async function handleSave() {
       realName: formData.value.realName,
       phone: formData.value.phone,
       email: formData.value.email,
+      password: formData.value.password,
       orgName: formData.value.orgName,
-      roleId: roleOptions.value[2]?.id || '3',
-      roleName: roleOptions.value[2]?.name || '知识库用户',
+      roleIds: [roleOptions.value[2]?.id || '3'],
       status: 'enabled',
     })
     await loadData()
@@ -145,16 +155,13 @@ async function handleSave() {
 }
 
 async function handleSaveRole() {
-  if (!selectedRole.value) {
-    ElMessage.warning('请选择角色')
+  if (!selectedRoles.value || selectedRoles.value.length === 0) {
+    ElMessage.warning('请至少选择一个角色')
     return
   }
-  const role = roleOptions.value.find((r) => r.id === selectedRole.value)
-  if (role) {
-    await api.assignRole(editingId.value, role.id)
-    await loadData()
-    ElMessage.success('角色配置成功')
-  }
+  await api.assignRoles(editingId.value, selectedRoles.value)
+  await loadData()
+  ElMessage.success('角色配置成功')
   showRoleDialog.value = false
 }
 
@@ -192,43 +199,50 @@ function handleReset() {
         <el-button @click="handleReset">重置</el-button>
       </div>
 
-      <el-table :data="filteredPersonnel" stripe>
+      <el-table :data="paginatedPersonnel" stripe>
         <el-table-column prop="username" label="用户名" width="120" />
         <el-table-column prop="realName" label="姓名" width="100" />
         <el-table-column prop="phone" label="手机号码" width="130" />
-        <el-table-column label="角色" width="140">
+        <el-table-column label="角色" min-width="160">
           <template #default="{ row }">
-            <el-tag size="small">{{ row.roleName }}</el-tag>
+            <el-tag v-for="name in (row.roleNames || [])" :key="name" size="small" style="margin: 1px 2px">
+              {{ name }}
+            </el-tag>
+            <span v-if="!row.roleNames || row.roleNames.length === 0" style="color: #999">未分配</span>
           </template>
         </el-table-column>
         <el-table-column prop="orgName" label="组织/部门" />
         <el-table-column label="状态" width="80" align="center">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'enabled' ? 'success' : 'danger'" size="small">
-              {{ row.status === 'enabled' ? '启用' : '禁用' }}
-            </el-tag>
+            <el-switch
+              :model-value="row.status === 'enabled'"
+              @change="handleStatusChange(row as PersonnelRecord)"
+              inline-prompt
+              active-text="启"
+              inactive-text="禁"
+            />
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="handleEdit(row as PersonnelRecord)">编辑</el-button>
             <el-button link type="primary" size="small" @click="handleRoleConfig(row as PersonnelRecord)">角色配置</el-button>
-            <el-dropdown trigger="click">
-              <el-button link type="primary" size="small">更多</el-button>
-              <template #dropdown>
-                <el-dropdown-menu>
-                  <el-dropdown-item @click="handleDisable(row as PersonnelRecord)">
-                    {{ (row as PersonnelRecord).status === 'enabled' ? '禁用' : '启用' }}
-                  </el-dropdown-item>
-                  <el-dropdown-item @click="handleResetPassword(row as PersonnelRecord)">重置密码</el-dropdown-item>
-                </el-dropdown-menu>
-              </template>
-            </el-dropdown>
           </template>
         </el-table-column>
       </el-table>
 
-      <div class="table-footer">共 {{ filteredPersonnel.length }} 条</div>
+      <div class="personnel-page__pagination">
+        <el-pagination
+          v-if="filteredPersonnel.length > pageSize"
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="filteredPersonnel.length"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </div>
 
     <!-- 添加/编辑人员抽屉 -->
@@ -261,11 +275,11 @@ function handleReset() {
       </template>
     </el-drawer>
 
-    <!-- 角色配置对话框 -->
-    <el-dialog v-model="showRoleDialog" title="角色配置" width="400px">
+    <!-- 角色配置对话框（多选） -->
+    <el-dialog v-model="showRoleDialog" title="角色配置" width="420px">
       <el-form label-width="80px">
         <el-form-item label="角色选择">
-          <el-select v-model="selectedRole" placeholder="请选择角色" style="width: 100%">
+          <el-select v-model="selectedRoles" multiple placeholder="请选择角色" style="width: 100%">
             <el-option
               v-for="r in roleOptions"
               :key="r.id"
@@ -296,9 +310,9 @@ function handleReset() {
   margin-bottom: $spacing-base;
 }
 
-.table-footer {
-  margin-top: $spacing-base;
-  font-size: 13px;
-  color: $text-secondary;
+.personnel-page__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

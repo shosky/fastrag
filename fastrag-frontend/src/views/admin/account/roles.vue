@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { RoleMeta } from '@/types/auth'
 import { PERMISSION_TREE, ROLE_LABELS } from '@/types/auth'
+import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
 
 const router = useRouter()
@@ -38,6 +39,14 @@ const filteredRoles = computed(() => {
   return roleList.value.filter((r) =>
     r.name.includes(searchName.value) || r.description.includes(searchName.value),
   )
+})
+
+// --- 分页 ---
+const { currentPage, pageSize, handleCurrentChange, handleSizeChange } = usePagination(10)
+
+const paginatedRoles = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredRoles.value.slice(start, start + pageSize.value)
 })
 
 // --- 当前编辑的角色是否为默认角色（默认角色权限不可改） ---
@@ -97,8 +106,22 @@ async function handleSave() {
   // 从 el-tree 获取当前勾选的权限
   const checkedKeys = treeRef.value?.getCheckedKeys(false) || []
   const halfCheckedKeys = treeRef.value?.getHalfCheckedKeys() || []
+
+  // 递归收集树中所有非叶子节点的 key
+  function collectGroupKeys(nodes: any[]): string[] {
+    const result: string[] = []
+    for (const node of nodes) {
+      if (node.children && node.children.length > 0) {
+        result.push(node.key)
+        result.push(...collectGroupKeys(node.children))
+      }
+    }
+    return result
+  }
+  const groupKeys = collectGroupKeys(PERMISSION_TREE)
+
   const allPerms = [...checkedKeys, ...halfCheckedKeys].filter(
-    (key) => !PERMISSION_TREE.some((group) => group.key === key),
+    (key) => !groupKeys.includes(key),
   )
 
   if (editingId.value) {
@@ -146,7 +169,7 @@ function handleReset() {
         <el-button @click="handleReset">重置</el-button>
       </div>
 
-      <el-table :data="filteredRoles" stripe>
+      <el-table :data="paginatedRoles" stripe>
         <el-table-column prop="name" label="角色名称" min-width="120">
           <template #default="{ row }">
             <span>{{ row.name }}</span>
@@ -179,6 +202,19 @@ function handleReset() {
           </template>
         </el-table-column>
       </el-table>
+
+      <div class="roles-page__pagination">
+        <el-pagination
+          v-if="filteredRoles.length > pageSize"
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :page-sizes="[10, 20, 50, 100]"
+          :total="filteredRoles.length"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </div>
 
     <!-- 新增/编辑对话框 -->
@@ -235,6 +271,12 @@ function handleReset() {
     border-radius: $radius-sm;
     font-size: 13px;
     color: $text-secondary;
+  }
+
+  &__pagination {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
   }
 }
 </style>

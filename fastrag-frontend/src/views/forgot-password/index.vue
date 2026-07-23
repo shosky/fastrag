@@ -17,9 +17,7 @@ let countdownTimer: ReturnType<typeof setInterval> | null = null
 const step = ref(1)
 
 onMounted(async () => {
-  try {
-    await systemStore.loadConfig()
-  } catch { /* 静默失败 */ }
+  // 无需主动加载系统配置，App.vue 已统一加载
 })
 
 const form = reactive({
@@ -305,7 +303,7 @@ function goToLogin() {
 
         <!-- Copyright -->
         <div class="login-copyright">
-          <p>© {{ new Date().getFullYear() }} AIS. All rights reserved.</p>
+          <p>{{ systemStore.copyright || '© ' + new Date().getFullYear() + ' AIS. All rights reserved.' }}</p>
         </div>
       </div>
     </div>

@@ -4,6 +4,8 @@ import cn.hutool.json.JSONUtil;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
 import com.fastrag.module.knowledge.parser.ParseResult;
+import com.fastrag.module.platform.entity.SysConfig;
+import com.fastrag.module.platform.service.ConfigManageService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -16,13 +18,30 @@ import java.util.*;
 public class ChunkingServiceImpl implements ChunkingService {
 
     private final KbParseStrategyMapper strategyMapper;
+    private final ConfigManageService configService;
+
+    /**
+     * 从系统配置读取整数参数，若不存在或解析失败则返回默认值
+     */
+    private int getIntConfig(String configKey, int defaultValue) {
+        try {
+            SysConfig config = configService.getConfig(configKey);
+            if (config != null && config.getConfigValue() != null) {
+                return Integer.parseInt(config.getConfigValue().trim());
+            }
+        } catch (Exception e) {
+            log.debug("Failed to read config {}={}, using default {}", configKey, defaultValue);
+        }
+        return defaultValue;
+    }
 
     @Override
     public List<ChunkData> chunk(String text, String strategyId) {
         KbParseStrategy strategy = strategyId != null ? strategyMapper.selectById(strategyId) : null;
 
-        int chunkLength = 500;
-        int overlap = 50;
+        // 优先读取系统配置，策略配置可覆盖
+        int chunkLength = getIntConfig("general_chunk_size", 500);
+        int overlap = getIntConfig("general_chunk_overlap", 50);
         String delimiter = "\n\n";
 
         if (strategy != null && strategy.getAdvanced() != null) {
@@ -43,7 +62,7 @@ public class ChunkingServiceImpl implements ChunkingService {
     public List<ChunkData> chunkBySegments(List<ParseResult.ChunkTimeSegment> segments, String strategyId) {
         // 读取策略配置
         KbParseStrategy strategy = strategyId != null ? strategyMapper.selectById(strategyId) : null;
-        int chunkLength = 500;
+        int chunkLength = getIntConfig("general_chunk_size", 500);
         if (strategy != null && strategy.getAdvanced() != null) {
             try {
                 Map<String, Object> advanced = JSONUtil.toBean(strategy.getAdvanced(), Map.class);

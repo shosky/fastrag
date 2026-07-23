@@ -56,7 +56,7 @@ public class KnowledgeBaseMiddleware implements AgentMiddleware {
                             "type", "object",
                             "properties", Map.of(
                                     "query", Map.of("type", "string", "description", "查询问题"),
-                                    "topK", Map.of("type", "integer", "description", "返回结果数量", "default", 5),
+                                    "topK", Map.of("type", "integer", "description", "返回结果数量", "default", 10),
                                     "knowledgeId", Map.of("type", "string", "description", "指定知识库ID（可选）")
                             ),
                             "required", List.of("query")

@@ -257,7 +257,7 @@ async function handleLogin() {
 
         <!-- Copyright -->
         <div class="login-copyright">
-          <p>© {{ new Date().getFullYear() }} AIS. All rights reserved.</p>
+          <p>{{ systemStore.copyright || '© ' + new Date().getFullYear() + ' AIS. All rights reserved.' }}</p>
         </div>
       </div>
     </div>

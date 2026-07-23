@@ -67,7 +67,7 @@ public class KnowledgeToolExecutor implements ToolExecutor {
             return ToolResult.error("缺少参数：需要 kb_id 和 query", (int)(System.currentTimeMillis() - t0));
         }
 
-        int topK = 5;
+        int topK = 10;
         if (args.containsKey("top_k")) {
             topK = ((Number) args.get("top_k")).intValue();
         }

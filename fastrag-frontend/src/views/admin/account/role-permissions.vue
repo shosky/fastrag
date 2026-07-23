@@ -14,26 +14,59 @@ const roleId = route.params.id as string
 const role = ref<RoleMeta | null>(null)
 const checkedPerms = ref<string[]>([])
 const loading = ref(true)
+const activeTab = ref('menu')
 
-// 从 PERMISSION_TREE 构建按分组的权限列表
-interface PermGroup {
+interface FlatPerm {
   key: string
   label: string
-  children: { key: string; label: string }[]
+  category: string // 'menu' | 'page_action'
+  group?: string
+  children?: FlatPerm[]
 }
 
-const permGroups = computed<PermGroup[]>(() => {
-  return PERMISSION_TREE.map((group) => ({
-    key: group.key,
-    label: group.label,
-    children: (group.children || []).flatMap((child) => {
-      if (child.children) {
-        return child.children.map((leaf) => ({ key: leaf.key, label: leaf.label }))
-      }
-      return [{ key: child.key, label: child.label }]
-    }),
-  }))
+// 从 PERMISSION_TREE 构建每个Tab的数据
+const menuPerms = computed<FlatPerm[]>(() => {
+  const cat = PERMISSION_TREE.find((t) => t.key === 'cat_menu')
+  return cat?.children?.map(buildFlatPerm) || []
 })
+
+const actionPerms = computed<FlatPerm[]>(() => {
+  const cat = PERMISSION_TREE.find((t) => t.key === 'cat_page_action')
+  return cat?.children?.map(buildFlatPerm) || []
+})
+
+function buildFlatPerm(node: any): FlatPerm {
+  const f: FlatPerm = { key: node.key, label: node.label, category: 'page_action' }
+  if (node.children && node.children.length > 0) {
+    f.children = node.children.map(buildFlatPerm)
+  }
+  return f
+}
+
+// 提取所有叶子节点 key
+function getLeafKeys(nodes: FlatPerm[]): string[] {
+  const result: string[] = []
+  for (const n of nodes) {
+    if (n.children && n.children.length > 0) {
+      result.push(...getLeafKeys(n.children))
+    } else {
+      result.push(n.key)
+    }
+  }
+  return result
+}
+
+// 获取叶子节点标签
+function getLeafLabel(nodes: FlatPerm[], key: string): string {
+  for (const n of nodes) {
+    if (n.key === key) return n.label
+    if (n.children) {
+      const found = getLeafLabel(n.children, key)
+      if (found) return found
+    }
+  }
+  return key
+}
 
 onMounted(async () => {
   const data = (await api.getRoleDetail(roleId)) as any
@@ -49,51 +82,72 @@ onMounted(async () => {
 
 const isSuperAdmin = computed(() => role.value?.key === 'super_admin')
 
-// 判断某个分组是否全选
-function isGroupAllChecked(group: PermGroup): boolean {
-  return group.children.every((p) => checkedPerms.value.includes('*') || checkedPerms.value.includes(p.key))
+// ---- Tab: 菜单权限 ----
+function isItemChecked(key: string): boolean {
+  return checkedPerms.value.includes('*') || checkedPerms.value.includes(key)
 }
 
-// 判断某个分组是否部分选中
-function isGroupIndeterminate(group: PermGroup): boolean {
-  const checked = group.children.filter((p) => checkedPerms.value.includes(p.key) || checkedPerms.value.includes('*')).length
-  return checked > 0 && checked < group.children.length
-}
-
-// 全选/全不选某分组
-function toggleGroup(group: PermGroup) {
+function toggleItem(key: string) {
   if (isSuperAdmin.value) return
-  const allChecked = isGroupAllChecked(group)
-  for (const p of group.children) {
-    const idx = checkedPerms.value.indexOf(p.key)
-    if (allChecked) {
-      if (idx >= 0) checkedPerms.value.splice(idx, 1)
-    } else {
-      if (idx < 0) checkedPerms.value.push(p.key)
-    }
-  }
-}
-
-// 切换单个权限
-function togglePerm(permKey: string) {
-  if (isSuperAdmin.value) return
-  const idx = checkedPerms.value.indexOf(permKey)
+  const idx = checkedPerms.value.indexOf(key)
   if (idx >= 0) {
     checkedPerms.value.splice(idx, 1)
   } else {
-    checkedPerms.value.push(permKey)
+    checkedPerms.value.push(key)
   }
 }
 
-// 保存
+function isGroupAllChecked(children: FlatPerm[]): boolean {
+  if (!children || children.length === 0) return false
+  return children.every((c) => isItemChecked(c.key) || (c.children && isGroupAllChecked(c.children)))
+}
+
+function isGroupIndeterminate(group: FlatPerm): boolean {
+  if (!group.children || group.children.length === 0) return false
+  const checked = group.children.filter((c) => isItemChecked(c.key) || (c.children && isGroupAllChecked(c.children || []))).length
+  return checked > 0 && checked < group.children.length
+}
+
+function toggleGroup(group: FlatPerm) {
+  if (isSuperAdmin.value) return
+  const allChecked = isGroupAllChecked(group.children || [])
+  const toggleKeys = (nodes: FlatPerm[]) => {
+    for (const n of nodes) {
+      if (n.children && n.children.length > 0) {
+        toggleKeys(n.children)
+      } else {
+        const idx = checkedPerms.value.indexOf(n.key)
+        if (allChecked) {
+          if (idx >= 0) checkedPerms.value.splice(idx, 1)
+        } else {
+          if (idx < 0) checkedPerms.value.push(n.key)
+        }
+      }
+    }
+  }
+  toggleKeys(group.children || [])
+}
+
+// ---- Tab: API接口 ----
+const apiPerms = ref<string[]>([])
+
+async function loadApiPerms() {
+  try {
+    const perms = (await api.getPermissions()) as any[] || []
+    apiPerms.value = perms.filter((p: any) => p.category === 'api').map((p: any) => p.permKey)
+  } catch {
+    apiPerms.value = []
+  }
+}
+
+onMounted(() => {
+  loadApiPerms()
+})
+
+// ---- 保存 ----
 async function handleSave() {
   if (!role.value) return
-  // 过滤掉分组 key（只保留叶子节点权限）
-  const leafKeys = PERMISSION_TREE.flatMap((g) =>
-    (g.children || []).flatMap((c) => (c.children ? c.children.map((l) => l.key) : [c.key])),
-  )
-  const perms = checkedPerms.value.filter((k) => leafKeys.includes(k) || k === '*')
-
+  const perms = checkedPerms.value
   await api.updateRole(roleId, {
     name: role.value.name,
     description: role.value.description,
@@ -141,46 +195,145 @@ async function handleSave() {
         <span>超级管理员拥有系统全部权限，不可修改。</span>
       </div>
 
-      <!-- 权限分组列表 -->
-      <div class="perm-groups">
-        <div v-for="group in permGroups" :key="group.key" class="perm-group card-panel">
-          <div class="perm-group__header">
-            <el-checkbox
-              :model-value="isGroupAllChecked(group)"
-              :indeterminate="isGroupIndeterminate(group)"
-              :disabled="isSuperAdmin"
-              @change="toggleGroup(group)"
-            >
-              <strong>{{ group.label }}</strong>
-            </el-checkbox>
-            <span class="perm-group__count">
-              {{ group.children.filter(p => checkedPerms.includes(p.key) || checkedPerms.includes('*')).length }} / {{ group.children.length }}
-            </span>
-          </div>
-          <div class="perm-group__items">
-            <div
-              v-for="perm in group.children"
-              :key="perm.key"
-              class="perm-item"
-              :class="{ 'perm-item--checked': checkedPerms.includes(perm.key) || checkedPerms.includes('*') }"
-              @click="togglePerm(perm.key)"
-            >
-              <el-checkbox
-                :model-value="checkedPerms.includes(perm.key) || checkedPerms.includes('*')"
-                :disabled="isSuperAdmin"
-                size="small"
-              />
-              <span class="perm-item__name">{{ perm.label }}</span>
-              <span class="perm-item__key">{{ perm.key }}</span>
+      <!-- Tab 切换 -->
+      <el-tabs v-model="activeTab" class="perm-tabs">
+        <el-tab-pane label="菜单权限" name="menu">
+          <div class="perm-groups">
+            <div v-for="group in menuPerms" :key="group.key" class="perm-group card-panel">
+              <div class="perm-group__header">
+                <el-checkbox
+                  v-if="group.children && group.children.length > 0"
+                  :model-value="isGroupAllChecked(group.children)"
+                  :indeterminate="isGroupIndeterminate(group)"
+                  :disabled="isSuperAdmin"
+                  @change="toggleGroup(group)"
+                >
+                  <strong>{{ group.label }}</strong>
+                </el-checkbox>
+                <strong v-else>{{ group.label }}</strong>
+              </div>
+              <div class="perm-group__items perm-group__items--tree">
+                <template v-for="child in (group.children || [])" :key="child.key">
+                  <!-- 三级菜单（含有子节点） -->
+                  <div v-if="child.children && child.children.length > 0" class="perm-subgroup">
+                    <div class="perm-subgroup__title">
+                      <el-checkbox
+                        :model-value="isGroupAllChecked(child.children)"
+                        :indeterminate="isGroupIndeterminate(child)"
+                        :disabled="isSuperAdmin"
+                        size="small"
+                        @change="toggleGroup(child)"
+                      >
+                        {{ child.label }}
+                      </el-checkbox>
+                    </div>
+                    <div class="perm-subgroup__items">
+                      <div
+                        v-for="leaf in child.children"
+                        :key="leaf.key"
+                        class="perm-item"
+                        :class="{ 'perm-item--checked': isItemChecked(leaf.key) }"
+                        @click="toggleItem(leaf.key)"
+                      >
+                        <el-checkbox
+                          :model-value="isItemChecked(leaf.key)"
+                          :disabled="isSuperAdmin"
+                          size="small"
+                        />
+                        <span class="perm-item__name">{{ leaf.label }}</span>
+                      </div>
+                    </div>
+                  </div>
+                  <!-- 二级菜单（叶子节点） -->
+                  <div
+                    v-else
+                    class="perm-item"
+                    :class="{ 'perm-item--checked': isItemChecked(child.key) }"
+                    @click="toggleItem(child.key)"
+                  >
+                    <el-checkbox
+                      :model-value="isItemChecked(child.key)"
+                      :disabled="isSuperAdmin"
+                      size="small"
+                    />
+                    <span class="perm-item__name">{{ child.label }}</span>
+                  </div>
+                </template>
+              </div>
             </div>
           </div>
-        </div>
-      </div>
+        </el-tab-pane>
 
-      <!-- 保存按钮 -->
-      <div v-if="!isSuperAdmin" class="perm-actions">
-        <el-button @click="router.push('/admin/account/roles')">取消</el-button>
-        <el-button type="primary" @click="handleSave">保存权限配置</el-button>
+        <el-tab-pane label="页面操作" name="action">
+          <div class="perm-groups">
+            <div v-for="group in actionPerms" :key="group.key" class="perm-group card-panel">
+              <div class="perm-group__header">
+                <el-checkbox
+                  v-if="group.children && group.children.length > 0"
+                  :model-value="isGroupAllChecked(group.children)"
+                  :indeterminate="isGroupIndeterminate(group)"
+                  :disabled="isSuperAdmin"
+                  @change="toggleGroup(group)"
+                >
+                  <strong>{{ group.label }}</strong>
+                </el-checkbox>
+                <strong v-else>{{ group.label }}</strong>
+              </div>
+              <div class="perm-group__items">
+                <div
+                  v-for="child in (group.children || [])"
+                  :key="child.key"
+                  class="perm-item"
+                  :class="{ 'perm-item--checked': isItemChecked(child.key) }"
+                  @click="toggleItem(child.key)"
+                >
+                  <el-checkbox
+                    :model-value="isItemChecked(child.key)"
+                    :disabled="isSuperAdmin"
+                    size="small"
+                  />
+                  <span class="perm-item__name">{{ child.label }}</span>
+                  <span class="perm-item__key">{{ child.key }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+
+        <el-tab-pane label="API接口" name="api">
+          <div class="perm-groups">
+            <div class="perm-group card-panel">
+              <div class="perm-group__header">
+                <strong>API接口权限</strong>
+              </div>
+              <div class="perm-group__items">
+                <div
+                  v-for="permKey in apiPerms"
+                  :key="permKey"
+                  class="perm-item"
+                  :class="{ 'perm-item--checked': isItemChecked(permKey) }"
+                  @click="toggleItem(permKey)"
+                >
+                  <el-checkbox
+                    :model-value="isItemChecked(permKey)"
+                    :disabled="isSuperAdmin"
+                    size="small"
+                  />
+                  <span class="perm-item__name">{{ permKey }}</span>
+                  <span class="perm-item__key">{{ permKey }}</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </el-tab-pane>
+      </el-tabs>
+
+      <!-- 保存按钮（固定底部） -->
+      <div v-if="!isSuperAdmin" class="perm-actions-fixed">
+        <div class="perm-actions-fixed__inner">
+          <el-button size="large" @click="router.push('/admin/account/roles')">取消</el-button>
+          <el-button size="large" type="primary" @click="handleSave">保存权限配置</el-button>
+        </div>
       </div>
     </template>
   </div>
@@ -220,6 +373,10 @@ async function handleSave() {
   margin-bottom: $spacing-base;
 }
 
+.perm-tabs {
+  margin-bottom: 80px; /* 给固定底部留空间 */
+}
+
 .perm-groups {
   display: flex;
   flex-direction: column;
@@ -236,15 +393,35 @@ async function handleSave() {
     border-bottom: 1px solid $border-lighter;
   }
 
-  &__count {
-    font-size: 12px;
-    color: $text-secondary;
-  }
-
   &__items {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
     gap: $spacing-xs;
+  }
+
+  &__items--tree {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-sm;
+  }
+}
+
+.perm-subgroup {
+  padding: $spacing-sm;
+  background: $bg-white;
+  border-radius: $radius-sm;
+
+  &__title {
+    margin-bottom: $spacing-xs;
+    font-size: 13px;
+    font-weight: 500;
+  }
+
+  &__items {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 2px;
+    padding-left: $spacing-lg;
   }
 }
 
@@ -273,12 +450,24 @@ async function handleSave() {
   }
 }
 
-.perm-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: $spacing-sm;
-  padding-top: $spacing-lg;
-  margin-top: $spacing-base;
-  border-top: 1px solid $border-lighter;
+.perm-actions-fixed {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  z-index: 100;
+  background: $bg-white;
+  border-top: 1px solid $border-base;
+  padding: $spacing-sm 0;
+  box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.06);
+
+  &__inner {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    justify-content: flex-end;
+    gap: $spacing-sm;
+    padding: 0 $spacing-lg;
+  }
 }
 </style>

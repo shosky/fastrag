@@ -88,13 +88,6 @@ async function handleSave() {
   showDrawer.value = false
 }
 
-function handleImport() {
-  ElMessage.info('导入组织功能开发中')
-}
-
-function handleThirdPartyImport() {
-  ElMessage.info('第三方平台导入功能开发中')
-}
 </script>
 
 <template>
@@ -103,8 +96,6 @@ function handleThirdPartyImport() {
       <div class="section-header">
         <div class="section-title">组织管理</div>
         <div>
-          <el-button @click="handleImport">导入组织</el-button>
-          <el-button @click="handleThirdPartyImport">第三方平台导入</el-button>
           <el-button type="primary" @click="handleAdd">新增组织</el-button>
         </div>
       </div>

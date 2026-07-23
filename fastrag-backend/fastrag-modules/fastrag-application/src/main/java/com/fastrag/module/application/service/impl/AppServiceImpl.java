@@ -235,6 +235,8 @@ public class AppServiceImpl implements AppService {
             m.put("tokens", msg.getTokens());
             m.put("latencyMs", msg.getLatencyMs());
             m.put("feedback", msg.getFeedback());
+            m.put("thinkingContent", msg.getThinkingContent());
+            m.put("toolCalls", msg.getToolCalls());
             m.put("createdAt", msg.getCreatedAt());
             result.add(m);
         }
@@ -394,7 +396,7 @@ public class AppServiceImpl implements AppService {
                 emitter.complete();
 
                 // 保存问候语到消息记录
-                saveAssistantMessage(conv, greeting, 0);
+                saveAssistantMessage(conv, greeting, null, null, 0);
                 return emitter;
             } catch (Exception e) {
                 throw new RuntimeException("Failed to send greeting", e);
@@ -420,7 +422,7 @@ public class AppServiceImpl implements AppService {
         emitter.onTimeout(() -> {
             log.warn("[AppChat] SSE timeout: sessionId={}", finalSessionId);
             if (fullAnswer.length() > 0) {
-                saveAssistantMessage(finalConv, fullAnswer.toString(), (int)(System.currentTimeMillis() - startTime));
+                saveAssistantMessage(finalConv, fullAnswer.toString(), null, null, (int)(System.currentTimeMillis() - startTime));
             }
         });
         emitter.onError(e -> log.warn("[AppChat] SSE error: sessionId={}, error={}", finalSessionId, e.getMessage()));
@@ -550,11 +552,11 @@ public class AppServiceImpl implements AppService {
 
                 // 使用 AgentEngine 执行（处理所有 SSE 事件）
                 agentEngine.executeStream(context, emitter, modelConfig, fakeRun,
-                        finalAnswer -> {
+                        (finalAnswer, finalThinking, finalToolCalls) -> {
                             // 该回调在 end 事件发送前执行
                             try {
                                 long duration = System.currentTimeMillis() - startTime;
-                                saveAssistantMessage(finalConv, finalAnswer, (int) duration);
+                                saveAssistantMessage(finalConv, finalAnswer, finalThinking, finalToolCalls, (int) duration);
                             } catch (Exception e) {
                                 log.warn("[AppChat] Failed to save message after stream: {}", e.getMessage());
                             }
@@ -632,12 +634,14 @@ public class AppServiceImpl implements AppService {
     /**
      * 保存助手消息到数据库
      */
-    private void saveAssistantMessage(AppConversation conv, String content, int latencyMs) {
+    private void saveAssistantMessage(AppConversation conv, String content, String thinkingContent, String toolCalls, int latencyMs) {
         AppConversationMessage assistantMsg = new AppConversationMessage();
         assistantMsg.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 32));
         assistantMsg.setConversationId(conv.getId());
         assistantMsg.setRole("assistant");
         assistantMsg.setContent(content);
+        assistantMsg.setThinkingContent(thinkingContent);
+        assistantMsg.setToolCalls(toolCalls);
         assistantMsg.setLatencyMs(latencyMs);
         assistantMsg.setTokens(0);
         assistantMsg.setCreatedAt(LocalDateTime.now());

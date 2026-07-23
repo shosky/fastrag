@@ -1014,6 +1014,18 @@ export async function getPermissionTree() {
   return request.get('/permissions/tree')
 }
 
+export async function createPermission(data: Record<string, unknown>) {
+  return request.post('/permissions', data)
+}
+
+export async function updatePermission(id: number, data: Record<string, unknown>) {
+  return request.put(`/permissions/${id}`, data)
+}
+
+export async function deletePermission(id: number) {
+  return request.delete(`/permissions/${id}`)
+}
+
 // ===========================================================================
 // 人员 API
 // ===========================================================================
@@ -1030,8 +1042,12 @@ export async function updatePersonnel(id: string, data: Record<string, unknown>)
   return request.put(`/personnel/${id}`, data)
 }
 
-export async function assignRole(personnelId: string, roleId: string) {
-  return request.post(`/personnel/${personnelId}/assign-role`, { roleId })
+export async function assignRoles(personnelId: string, roleIds: string[]) {
+  return request.post(`/personnel/${personnelId}/assign-roles`, { roleIds })
+}
+
+export async function updatePersonnelStatus(id: string, status: string) {
+  return request.put(`/personnel/${id}/status`, { status })
 }
 
 export async function getPersonnelByUsername(username: string) {
@@ -1068,42 +1084,6 @@ export async function updateOrg(id: string, data: Record<string, unknown>) {
 
 export async function deleteOrg(id: string) {
   return request.delete(`/org/${id}`)
-}
-
-// ===========================================================================
-// 团队 API
-// ===========================================================================
-
-export async function getTeams() {
-  return request.get('/teams')
-}
-
-export async function getTeamDetail(id: string) {
-  return request.get(`/teams/${id}`)
-}
-
-export async function createTeam(data: Record<string, unknown>) {
-  return request.post('/teams', data)
-}
-
-export async function updateTeam(id: string, data: Record<string, unknown>) {
-  return request.put(`/teams/${id}`, data)
-}
-
-export async function deleteTeam(id: string) {
-  return request.delete(`/teams/${id}`)
-}
-
-export async function getTeamMembers(id: string) {
-  return request.get(`/teams/${id}/members`)
-}
-
-export async function addTeamMember(teamId: string, userId: string) {
-  return request.post(`/teams/${teamId}/members`, { userId })
-}
-
-export async function removeTeamMember(teamId: string, userId: string) {
-  return request.delete(`/teams/${teamId}/members/${userId}`)
 }
 
 // ===========================================================================
@@ -1319,12 +1299,6 @@ export async function getReviewFlowConfig() {
 }
 export async function updateReviewFlowConfig(data: Record<string, unknown>) {
   return request.put('/config/review-flow', data)
-}
-export async function getNotificationConfig() {
-  return request.get('/config/notification')
-}
-export async function saveNotificationConfig(data: Record<string, unknown>) {
-  return request.put('/config/notification', data)
 }
 export async function updatePublishSwitch(data: Record<string, unknown>) {
   return request.put('/config/publish-switch', data)

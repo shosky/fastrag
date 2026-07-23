@@ -47,7 +47,9 @@ public class McpToolExecutor implements ToolExecutor {
         List<String> args = (List<String>) config.get("args");
         Map<String, String> env = (Map<String, String>) config.get("env");
         String serviceId = getStr(config, "mcpServiceId");
-        String toolName = tool.getName();
+        // 优先使用原始工具名（rawName）调用 MCP Server，兼容 ToolDefinition.name 被改为格式化 ID 的情况
+        String rawName = getStr(config, "rawName");
+        String toolName = rawName != null ? rawName : tool.getName();
 
         if (transport == null) transport = "stdio";
         log.info("[McpTool] Executing: tool={}, transport={}, service={}", toolName, transport, serviceId);

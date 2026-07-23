@@ -49,7 +49,7 @@ services:
     volumes:
       - mysql-data:/var/lib/mysql
       - ./fastrag-backend/init-scripts/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql
-      - ./fastrag-backend/init-scripts/data.sql:/docker-entrypoint-initdb.d/02-data.sql
+      - ./fastrag-backend/init-scripts/data-hunan-telecom.sql:/docker-entrypoint-initdb.d/02-data.sql
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
       interval: 10s

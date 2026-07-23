@@ -38,6 +38,7 @@ CREATE TABLE IF NOT EXISTS sys_permission (
     type VARCHAR(16) NOT NULL,
     `group` VARCHAR(32),
     parent_key VARCHAR(64),
+    category VARCHAR(16) DEFAULT 'page_action' COMMENT '权限分类: menu=菜单权限, page_action=页面操作, api=API接口',
     description VARCHAR(256)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -48,6 +49,14 @@ CREATE TABLE IF NOT EXISTS sys_role_permission (
     INDEX idx_role_id (role_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+CREATE TABLE IF NOT EXISTS sys_user_role (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    user_id VARCHAR(32) NOT NULL,
+    role_id VARCHAR(32) NOT NULL,
+    INDEX idx_user_id (user_id),
+    UNIQUE KEY uk_user_role (user_id, role_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS sys_org (
     id VARCHAR(32) PRIMARY KEY,
     name VARCHAR(128) NOT NULL,
@@ -55,20 +64,6 @@ CREATE TABLE IF NOT EXISTS sys_org (
     parent_id VARCHAR(32) DEFAULT 'root',
     level INT DEFAULT 1,
     sort INT DEFAULT 0
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS sys_team (
-    id VARCHAR(32) PRIMARY KEY,
-    name VARCHAR(128) NOT NULL,
-    description VARCHAR(256),
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
-CREATE TABLE IF NOT EXISTS sys_team_member (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    team_id VARCHAR(32) NOT NULL,
-    user_id VARCHAR(32) NOT NULL,
-    INDEX idx_team_id (team_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_acl (
@@ -1152,6 +1147,8 @@ CREATE TABLE IF NOT EXISTS app_conversation_message (
     content TEXT,
     tokens INT DEFAULT 0,
     latency_ms INT,
+    thinking_content TEXT COMMENT '思考过程内容',
+    tool_calls TEXT COMMENT '工具调用记录（JSON数组）',
     feedback VARCHAR(16) DEFAULT NULL COMMENT 'like/dislike/null',
     deleted_at DATETIME DEFAULT NULL COMMENT '软删除时间',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1391,6 +1388,8 @@ CREATE TABLE IF NOT EXISTS sys_publish_strategy (
 -- 如已有 fastrag 数据库，执行以下语句补充新增字段和表
 
 -- app_conversation_message 表新增字段
+ALTER TABLE app_conversation_message ADD COLUMN IF NOT EXISTS thinking_content TEXT COMMENT '思考过程内容';
+ALTER TABLE app_conversation_message ADD COLUMN IF NOT EXISTS tool_calls TEXT COMMENT '工具调用记录（JSON数组）';
 ALTER TABLE app_conversation_message ADD COLUMN IF NOT EXISTS feedback VARCHAR(16) DEFAULT NULL COMMENT 'like/dislike/null';
 ALTER TABLE app_conversation_message ADD COLUMN IF NOT EXISTS deleted_at DATETIME DEFAULT NULL COMMENT '软删除时间';
 

@@ -33,7 +33,7 @@ const inputText = ref('')
 const messagesContainer = ref<HTMLElement | null>(null)
 const loading = ref(true)
 const attachments = ref<{ name: string; size: number }[]>([])
-const showSidePanel = ref(false)
+const showSidePanel = ref(true)
 const appGreeting = ref('')
 const editingMessageId = ref<string | null>(null)
 
@@ -65,6 +65,18 @@ async function loadModels() {
     models.value = Array.isArray(list) ? list.map((m: any) => ({ code: m.code, name: m.name, brand: m.brand })) : []
     if (models.value.length > 0 && !selectedModel.value) selectedModel.value = models.value[0].code
   } catch { console.error('load models failed') }
+}
+
+/** 标准化工具调用数据（兼容旧版扁平结构和新版嵌套 result 结构） */
+function normalizeToolCalls(tcs: any[]): any[] {
+  return (tcs || []).map(tc => {
+    if (tc.result === undefined && (tc.success !== undefined || tc.output !== undefined || tc.durationMs !== undefined)) {
+      // 旧版扁平结构：将顶层字段迁移到 result 下
+      const { success, output, durationMs, error, ...rest } = tc
+      return { ...rest, result: { success, output, durationMs, error } }
+    }
+    return tc
+  })
 }
 
 async function selectApp(appId: string) {
@@ -102,7 +114,7 @@ async function loadSessionMessages(sessionId: string) {
     const res: any = await api.getAppSessionMessages(selectedAppId.value, sessionId)
     if (Array.isArray(res)) {
       const s = sessions.value.find(s => s.sessionId === sessionId)
-      if (s) { s.messages = res.map((m: any) => ({ id: m.id, role: m.role, content: m.content, time: m.latencyMs ? `${(m.latencyMs/1000).toFixed(1)}s` : undefined, feedback: m.feedback || undefined })); nextTick(scrollToBottom) }
+      if (s) { s.messages = res.map((m: any) => ({ id: m.id, role: m.role, content: m.content, thinkingContent: m.thinkingContent || undefined, toolCalls: m.toolCalls ? normalizeToolCalls(typeof m.toolCalls === 'string' ? JSON.parse(m.toolCalls) : m.toolCalls) : undefined, time: m.latencyMs ? `${(m.latencyMs/1000).toFixed(1)}s` : undefined, feedback: m.feedback || undefined })); nextTick(scrollToBottom) }
     }
   } catch {}
 }
@@ -289,8 +301,8 @@ onMounted(async () => { loading.value = true; await Promise.all([loadApps(), loa
             <div v-for="(msg, idx) in activeSession.messages" :key="idx" class="message-row" :class="msg.role">
               <div v-if="msg.role === 'assistant'" class="msg-avatar"><el-icon :size="16"><ChatLineRound /></el-icon></div>
               <div class="msg-body">
-                <ThinkingBlock v-if="msg.role === 'assistant' && msg.thinkingContent" :content="msg.thinkingContent" :is-thinking="msg.isThinking" />
-                <ToolCallRenderer v-if="msg.role === 'assistant' && msg.toolCalls?.length" :tool-calls="msg.toolCalls" />
+                <ThinkingBlock v-if="msg.role === 'assistant' && msg.thinkingContent" :content="msg.thinkingContent" :is-thinking="msg.isThinking" :force-collapsed="msg.content.length > 0" />
+                <ToolCallRenderer v-if="msg.role === 'assistant' && msg.toolCalls?.length" :tool-calls="msg.toolCalls" :auto-collapse="msg.content.length > 0 && msg.thinkingContent !== undefined" />
                 <div v-if="msg.role === 'assistant'" class="msg-content markdown-body" v-html="renderMarkdown(msg.content)" />
                 <div v-else class="msg-content">{{ msg.content }}</div>
                 <!-- 时间 + 操作按钮 -->
@@ -876,12 +888,13 @@ $shadow-lg: 0 8px 24px rgba(0,0,0,0.06);
   .panel-item-title { font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: $text-primary; }
   .panel-item-meta { font-size: 11px; color: $text-muted; }
   .panel-item-del {
-    display: none; align-items: center; justify-content: center;
+    display: inline-flex; align-items: center; justify-content: center;
     width: 20px; height: 20px; border: none; border-radius: 4px;
     background: transparent; color: $text-muted; cursor: pointer; flex-shrink: 0;
-    &:hover { background: #ffe8e8; color: #e74c3c; }
+    opacity: 0.4; transition: opacity 0.15s;
+    &:hover { background: #ffe8e8; color: #e74c3c; opacity: 1; }
   }
-  &:hover .panel-item-del { display: inline-flex; }
+  &:hover .panel-item-del { opacity: 1; }
 }
 .panel-empty { text-align: center; color: $text-muted; font-size: 13px; padding: 24px 0; }
 
