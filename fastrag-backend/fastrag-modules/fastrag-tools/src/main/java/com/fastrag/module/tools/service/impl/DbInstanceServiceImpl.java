@@ -1,11 +1,15 @@
 package com.fastrag.module.tools.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fastrag.common.exception.BusinessException;
 import com.fastrag.module.tools.entity.DbInstance;
 import com.fastrag.module.tools.entity.DbTable;
 import com.fastrag.module.tools.mapper.DbInstanceMapper;
 import com.fastrag.module.tools.mapper.DbTableMapper;
 import com.fastrag.module.tools.service.DbInstanceService;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.util.DataScope;
+import com.fastrag.security.util.SecurityUtil;
 import cn.hutool.json.JSONUtil;
 import com.zaxxer.hikari.HikariConfig;
 import com.zaxxer.hikari.HikariDataSource;
@@ -30,22 +34,56 @@ public class DbInstanceServiceImpl implements DbInstanceService {
     /** 最大查询返回行数 */
     private static final int MAX_ROWS = 500;
 
+    /** 数据库实例可见性：系统级（存量） / 属主 / 同组织 / API Token */
+    private boolean visible(DbInstance db, LoginUser user) {
+        return DataScope.visible(user, db.getCreatedBy(), db.getOrgId(), null);
+    }
+
+    private void requireManage(DbInstance db) {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (db == null) throw BusinessException.notFound("数据库实例不存在");
+        if (!DataScope.manageable(user, db.getCreatedBy())) throw BusinessException.forbidden("无权管理该数据库实例");
+    }
+
+    /** 凭据字段（密码/连接串）仅属主可见 */
+    private void maskCredentials(DbInstance db, LoginUser user) {
+        if (db != null && !DataScope.manageable(user, db.getCreatedBy())) {
+            db.setPassword("******");
+            db.setJdbcUrl(null);
+        }
+    }
+
     @Override
     public List<DbInstance> list(String keyword, String dbType) {
         var w = new LambdaQueryWrapper<DbInstance>();
         if (keyword != null && !keyword.isEmpty()) w.like(DbInstance::getName, keyword);
         if (dbType != null && !dbType.isEmpty()) w.eq(DbInstance::getDbType, dbType);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user)) {
+            w.and(q -> q.eq(DbInstance::getCreatedBy, user.getUserId())
+                    .or(o -> o.eq(DbInstance::getOrgId, user.getOrgId())
+                            .or().eq(DbInstance::getCreatedBy, "system")));
+        }
         w.orderByDesc(DbInstance::getCreatedAt);
-        return mapper.selectList(w);
+        List<DbInstance> list = mapper.selectList(w);
+        list.forEach(db -> maskCredentials(db, user));
+        return list;
     }
 
     @Override
     public DbInstance get(String id) {
-        return mapper.selectById(id);
+        DbInstance db = mapper.selectById(id);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (db == null || !visible(db, user)) throw BusinessException.forbidden("无权访问该数据库实例");
+        maskCredentials(db, user);
+        return db;
     }
 
     @Override
     public DbInstance create(DbInstance db) {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        db.setCreatedBy(user.getUserId());
+        db.setOrgId(user.getOrgId());
         if (db.getStatus() == null) db.setStatus("disconnected");
         if (db.getReadOnly() == null) db.setReadOnly(1);
         // 自动拼接 JDBC URL
@@ -58,10 +96,11 @@ public class DbInstanceServiceImpl implements DbInstanceService {
 
     @Override
     public DbInstance update(String id, DbInstance db) {
+        DbInstance existing = mapper.selectById(id);
+        requireManage(existing);
         db.setId(id);
         if (db.getJdbcUrl() != null && !db.getJdbcUrl().isBlank()) {
             // 如果手动改了连接参数，重新拼接
-            DbInstance existing = mapper.selectById(id);
             if (existing != null && (differentHost(db, existing) || differentPort(db, existing) || differentDb(db, existing))) {
                 db.setJdbcUrl(buildJdbcUrl(db));
             }
@@ -85,6 +124,8 @@ public class DbInstanceServiceImpl implements DbInstanceService {
     @Override
     @Transactional
     public void delete(String id) {
+        DbInstance db = mapper.selectById(id);
+        requireManage(db);
         // 级联删除关联的 db_table 记录
         tableMapper.delete(new LambdaQueryWrapper<DbTable>().eq(DbTable::getDbId, id));
         mapper.deleteById(id);
@@ -92,6 +133,9 @@ public class DbInstanceServiceImpl implements DbInstanceService {
 
     @Override
     public List<DbTable> listTables(String dbId) {
+        DbInstance db = mapper.selectById(dbId);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (db == null || !visible(db, user)) throw BusinessException.forbidden("无权访问该数据库实例");
         return tableMapper.selectList(
                 new LambdaQueryWrapper<DbTable>().eq(DbTable::getDbId, dbId).orderByAsc(DbTable::getTableName));
     }
@@ -107,6 +151,8 @@ public class DbInstanceServiceImpl implements DbInstanceService {
     public Map<String, Object> testConnection(String dbId) {
         Map<String, Object> result = new LinkedHashMap<>();
         DbInstance db = mapper.selectById(dbId);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (db == null || !visible(db, user)) throw BusinessException.forbidden("无权访问该数据库实例");
         if (db == null) {
             result.put("connected", false);
             result.put("error", "数据库实例不存在");
@@ -144,6 +190,8 @@ public class DbInstanceServiceImpl implements DbInstanceService {
 
     @Override
     public Map<String, Object> query(String dbId, String sql) {
+        DbInstance db = mapper.selectById(dbId);
+        requireManage(db); // 执行 SQL 仅属主可用
         Map<String, Object> result = new LinkedHashMap<>();
 
         // SQL 安全校验
@@ -156,7 +204,6 @@ public class DbInstanceServiceImpl implements DbInstanceService {
             return result;
         }
 
-        DbInstance db = mapper.selectById(dbId);
         if (db == null) {
             result.put("error", "数据库实例不存在");
             result.put("columns", List.of());
@@ -164,7 +211,6 @@ public class DbInstanceServiceImpl implements DbInstanceService {
             result.put("rowCount", 0);
             return result;
         }
-
         long start = System.currentTimeMillis();
         try (HikariDataSource ds = createDataSource(db)) {
             JdbcTemplate jdbcTemplate = new JdbcTemplate(ds);
@@ -218,6 +264,7 @@ public class DbInstanceServiceImpl implements DbInstanceService {
     public Map<String, Object> syncTables(String dbId) {
         Map<String, Object> result = new LinkedHashMap<>();
         DbInstance db = mapper.selectById(dbId);
+        requireManage(db); // 同步表结构仅属主可用
         if (db == null) {
             result.put("error", "数据库实例不存在");
             result.put("syncedCount", 0);

@@ -4,6 +4,9 @@ import com.fastrag.module.iam.service.PermissionService;
 import jakarta.validation.Valid; import lombok.RequiredArgsConstructor;
 import org.springframework.security.access.prepost.PreAuthorize; import org.springframework.web.bind.annotation.*;
 import java.util.List;
+import com.fastrag.common.annotation.Loggable;
+import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.LogCategory;
 
 @RestController @RequestMapping("/api/permissions") @RequiredArgsConstructor
 public class PermissionController {

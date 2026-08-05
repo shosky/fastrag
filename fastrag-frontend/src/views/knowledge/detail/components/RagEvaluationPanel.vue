@@ -11,7 +11,7 @@ import * as api from '@/api'
 // --- Props & Emits ---
 const props = defineProps<{
   kbId?: string
-  /** 预选基准名（来自基准面板"发起评估"快捷入口） */
+  /** 预选基准 ID（来自基准面板"发起评估"快捷入口） */
   preselectBenchmark?: string
 }>()
 
@@ -170,13 +170,20 @@ watch(() => filteredResults.value.length, (n) => {
 })
 
 // 当列表中当前查看的评估状态变更时，同步更新详情弹窗
-watch(evaluations, (newEvals) => {
+watch(evaluations, async (newEvals) => {
   if (!currentEvaluation.value || !showDetailDialog.value) return
   const updated = newEvals.find((e: any) => e.id === currentEvaluation.value!.id)
   if (!updated) return
   const oldStatus = currentEvaluation.value.status
   const newStatus = updated.status
   if (oldStatus !== newStatus && (newStatus === 'completed' || newStatus === 'failed')) {
+    // 列表接口不含逐题 results：完成时拉取完整详情，弹框才能展示真实结果明细
+    const full = await api.fetchEvaluationDetail(kbId, updated.id).catch(() => null)
+    if (full) {
+      currentEvaluation.value = full
+      return
+    }
+    // 详情拉取失败时降级：用列表指标更新
     currentEvaluation.value = {
       ...currentEvaluation.value,
       status: newStatus,
@@ -298,7 +305,7 @@ onUnmounted(() => {
       <div v-if="latest" class="rag-evaluation__latest-content">
         <!-- Score circle -->
         <div class="rag-evaluation__score-circle">
-          <div class="rag-evaluation__score-value">{{ latest.overallScore != null ? latest.overallScore + '%' : '评估中' }}</div>
+          <div class="rag-evaluation__score-value">{{ latest.overallScore != null ? (latest.overallScore * 100).toFixed(1) + '%' : '评估中' }}</div>
         </div>
 
         <!-- Evaluation info -->
@@ -369,7 +376,7 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="综合评分" width="100" align="center">
           <template #default="{ row }">
-            {{ row.overallScore != null ? row.overallScore + '%' : '-' }}
+            {{ row.overallScore != null ? (row.overallScore * 100).toFixed(1) + '%' : '-' }}
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100" align="center">
@@ -522,7 +529,7 @@ onUnmounted(() => {
           <div class="rag-evaluation__detail-meta">
             <span>运行ID：{{ currentEvaluation.runId }}</span>
             <span>状态：<el-tag type="success" size="small">{{ currentEvaluation.status }}</el-tag></span>
-            <span>总体评分：<el-tag type="success" size="small">{{ (currentEvaluation.overallScore ?? 0).toFixed(1) }}%</el-tag></span>
+            <span>总体评分：<el-tag type="success" size="small">{{ ((currentEvaluation.overallScore ?? 0) * 100).toFixed(1) }}%</el-tag></span>
             <span>总问题数：{{ currentEvaluation.totalQuestions }}</span>
             <span>完成数：{{ currentEvaluation.completedCount }}</span>
             <span>总耗时：{{ currentEvaluation.duration }}</span>

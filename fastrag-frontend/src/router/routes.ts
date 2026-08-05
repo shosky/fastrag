@@ -119,13 +119,13 @@ const routes: RouteRecordRaw[] = [
         path: 'application',
         name: 'Application',
         component: () => import('@/views/application/index.vue'),
-        meta: { title: '应用中心', icon: 'Grid', roles: ['super_admin', 'kb_admin', 'kb_user', 'readonly'] as const },
+        meta: { title: '应用中心', icon: 'Grid', roles: ['super_admin', 'kb_admin', 'readonly'] as const },
       },
       {
         path: 'application/prompt-templates',
         name: 'PromptTemplates',
         component: () => import('@/views/answer-kb/templates.vue'),
-        meta: { title: 'Prompt模板', roles: ['super_admin', 'kb_admin', 'kb_user'] as const },
+        meta: { title: 'Prompt模板', roles: ['super_admin', 'kb_admin'] as const },
       },
       {
         path: 'application/my-tools',

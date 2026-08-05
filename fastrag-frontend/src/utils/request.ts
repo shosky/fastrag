@@ -38,8 +38,8 @@ service.interceptors.response.use(
         return res.data
       }
 
-      // 未授权 / 禁止访问 → 清除 token 跳转登录
-      if (res.code === 401 || res.code === 403) {
+      // 未授权 → 清除 token 跳转登录（403 为已登录但无权限，仅提示不跳转）
+      if (res.code === 401) {
         // 已在登录页则不重复跳转，避免循环
         if (window.location.pathname !== '/login') {
           storage.remove('token')
@@ -47,6 +47,10 @@ service.interceptors.response.use(
           window.location.href = '/login'
         }
         return Promise.reject(new Error(res.message || '未授权，请重新登录'))
+      }
+      if (res.code === 403) {
+        ElMessage.warning(res.message || '无权限执行该操作')
+        return Promise.reject(new Error(res.message || '无权限执行该操作'))
       }
 
       // 其他业务错误
@@ -62,12 +66,15 @@ service.interceptors.response.use(
     const message = error.response?.data?.message || error.message || '网络异常'
     const status = error.response?.status
 
-    if (status === 401 || status === 403) {
+    if (status === 401) {
       if (window.location.pathname !== '/login') {
         storage.remove('token')
         storage.remove('userInfo')
         window.location.href = '/login'
       }
+    } else if (status === 403) {
+      // 已登录但无权限：提示，不登出
+      ElMessage.warning(message || '无权限执行该操作')
     } else {
       ElMessage.error(message)
     }

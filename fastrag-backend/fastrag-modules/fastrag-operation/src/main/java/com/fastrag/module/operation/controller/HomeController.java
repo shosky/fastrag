@@ -12,6 +12,9 @@ import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.operation.model.HomeData;
 import com.fastrag.module.publish.entity.KbLog;
 import com.fastrag.module.publish.mapper.KbLogMapper;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.service.KbAccessChecker;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -32,16 +35,28 @@ public class HomeController {
     private final KbFileMapper fileMapper;
     private final AppMapper appMapper;
     private final KbLogMapper logMapper;
+    private final KbAccessChecker accessChecker;
 
     private static final DateTimeFormatter FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm");
 
     @GetMapping
     public ApiResponse<?> getHomeData() {
-        // 推荐知识库：最新 5 个
+        // 可访问的知识库列表：超管 / API Token 返回 null（不过滤），普通用户按 ACL
+        List<String> accessible = accessibleKbIds();
+        if (accessible != null && accessible.isEmpty()) {
+            return ApiResponse.success(HomeData.builder()
+                    .recommendKBs(Collections.emptyList())
+                    .hotDocs(Collections.emptyList())
+                    .hotApps(Collections.emptyList())
+                    .recentActivities(Collections.emptyList())
+                    .build());
+        }
+
+        // 推荐知识库：最新 5 个（仅限有访问权限的库）
+        var kbW = new LambdaQueryWrapper<KnowledgeBase>();
+        if (accessible != null) kbW.in(KnowledgeBase::getId, accessible);
         List<HomeData.KbItem> kbs = kbMapper.selectList(
-                new LambdaQueryWrapper<KnowledgeBase>()
-                        .orderByDesc(KnowledgeBase::getCreatedAt)
-                        .last("LIMIT 5")
+                kbW.orderByDesc(KnowledgeBase::getCreatedAt).last("LIMIT 5")
         ).stream().map(kb -> HomeData.KbItem.builder()
                 .id(kb.getId())
                 .name(kb.getName())
@@ -52,13 +67,13 @@ public class HomeController {
                 .build()
         ).collect(Collectors.toList());
 
-        // 热门文档：浏览量最高 10 个
+        // 热门文档：浏览量最高 10 个（仅限有访问权限的库）
+        var fW = new LambdaQueryWrapper<KbFile>()
+                .isNull(KbFile::getDeletedAt)
+                .eq(KbFile::getStatus, "completed");
+        if (accessible != null) fW.in(KbFile::getKbId, accessible);
         List<HomeData.HotDoc> docs = fileMapper.selectList(
-                new LambdaQueryWrapper<KbFile>()
-                        .isNull(KbFile::getDeletedAt)
-                        .eq(KbFile::getStatus, "completed")
-                        .orderByDesc(KbFile::getViewCount)
-                        .last("LIMIT 10")
+                fW.orderByDesc(KbFile::getViewCount).last("LIMIT 10")
         ).stream().map(f -> HomeData.HotDoc.builder()
                 .id(f.getId())
                 .name(f.getName())
@@ -68,8 +83,8 @@ public class HomeController {
                 .build()
         ).collect(Collectors.toList());
 
-        // 热门应用：最新 5 个
-        List<HomeData.HotApp> apps = appMapper.selectList(
+        // 热门应用：最新 5 个（无应用使用权限的用户不返回任何应用）
+        List<HomeData.HotApp> apps = canUseApp() ? appMapper.selectList(
                 new LambdaQueryWrapper<App>()
                         .orderByDesc(App::getCreatedAt)
                         .last("LIMIT 5")
@@ -79,13 +94,13 @@ public class HomeController {
                 .type(a.getType())
                 .description(a.getDescription())
                 .build()
-        ).collect(Collectors.toList());
+        ).collect(Collectors.toList()) : Collections.emptyList();
 
-        // 最近动态：最新 10 条日志
+        // 最近动态：最新 10 条日志（仅限有访问权限的库）
+        var lW = new LambdaQueryWrapper<KbLog>();
+        if (accessible != null) lW.in(KbLog::getKbId, accessible);
         List<HomeData.ActivityLog> logs = logMapper.selectList(
-                new LambdaQueryWrapper<KbLog>()
-                        .orderByDesc(KbLog::getTimestamp)
-                        .last("LIMIT 10")
+                lW.orderByDesc(KbLog::getTimestamp).last("LIMIT 10")
         ).stream().map(l -> HomeData.ActivityLog.builder()
                 .id(l.getId())
                 .operator(l.getOperator())
@@ -104,6 +119,24 @@ public class HomeController {
                 .build();
 
         return ApiResponse.success(data);
+    }
+
+    /**
+     * 当前用户可访问的知识库 ID。
+     * 仅平台级 API Token（程序化访问）返回 null（不过滤）；所有登录用户（含超管/kb_admin）按本组织 ∪ ACL 过滤。
+     */
+    private List<String> accessibleKbIds() {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (user == null) return Collections.emptyList();
+        if (user.getUserId().startsWith("api-token:")) return null;
+        return accessChecker.getAccessibleKbIds(user.getUserId(), user.getOrgId());
+    }
+
+    /** 当前用户是否可使用应用（超管 / API Token 放行） */
+    private boolean canUseApp() {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (user == null) return false;
+        return user.hasPermission("*") || user.getUserId().startsWith("api-token:") || user.hasPermission("app:use");
     }
 
     private List<String> parseTags(String tagsJson) {

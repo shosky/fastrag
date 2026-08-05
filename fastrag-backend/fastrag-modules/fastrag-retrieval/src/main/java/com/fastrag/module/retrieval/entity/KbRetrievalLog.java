@@ -5,6 +5,7 @@ import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.ti
     private String kbId,query,userId;
     private Integer hitCount,latencyMs;
     private Double topScore;
+    private Integer graphEntityCount;
     private Boolean hasResult;
     private LocalDateTime createdAt;
 }

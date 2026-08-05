@@ -21,9 +21,11 @@ interface Chunk {
   endTime?: number
   metadata: ChunkMetadata
   selected?: boolean
-  chunkType?: string        // "text" | "image"
+  chunkType?: string        // "text" | "image" | "table" | "code"
   imageKeys?: string[]      // PDF 提取的图片 key 列表
   pageNumber?: number       // 所属页码
+  title?: string            // 所属最近标题
+  headingPath?: string      // 层级路径，如 "第一章 > 1.1 背景"
 }
 
 interface ChunkMetadata {
@@ -46,8 +48,9 @@ const fileInfo = ref({
   size: 0,
   chunkCount: 0,
   strategy: 'General',
-  chunkSize: 500,
-  overlapSize: 50,
+  parseStrategyName: '',
+  chunkSize: 2000,
+  overlapSize: 100,
   embeddingModel: 'text-embedding-v4',
   url: '',
   createdAt: '',
@@ -67,6 +70,7 @@ async function loadFileInfo() {
       fileInfo.value.chunkCount = file.chunkCount || fileInfo.value.chunkCount
       fileInfo.value.url = file.url || ''
       fileInfo.value.processingMode = file.processingMode || 'chunk'
+      fileInfo.value.parseStrategyName = file.parseStrategyName || ''
       fileInfo.value.createdAt = file.createdAt || fileInfo.value.createdAt
       fileInfo.value.updatedAt = file.updatedAt || fileInfo.value.updatedAt
     }
@@ -217,16 +221,18 @@ async function loadChunks() {
     const res: any = await api.getChunks(kbId, { fileId, page: currentPage.value, pageSize: pageSize.value })
     const list = res?.list || res || []
     totalChunks.value = res?.total || 0
-    chunks.value = list.map((mc: any, i: number) => ({
-      id: mc.id || `chunk_${mc.chunkIndex || i}`,
-      index: mc.chunkIndex || i,
-      content: mc.content || '',
-      startTime: mc.startTime ?? undefined,
-      endTime: mc.endTime ?? undefined,
-      chunkType: mc.chunkType || 'text',
-      imageKeys: mc.imageKeys ? (typeof mc.imageKeys === 'string' ? JSON.parse(mc.imageKeys) : mc.imageKeys) : undefined,
-      pageNumber: mc.pageNumber ?? undefined,
-      metadata: {
+	    chunks.value = list.map((mc: any, i: number) => ({
+	      id: mc.id || `chunk_${mc.chunkIndex || i}`,
+	      index: mc.chunkIndex || i,
+	      content: mc.content || '',
+	      startTime: mc.startTime ?? undefined,
+	      endTime: mc.endTime ?? undefined,
+	      chunkType: mc.chunkType || 'text',
+	      imageKeys: mc.imageKeys ? (typeof mc.imageKeys === 'string' ? JSON.parse(mc.imageKeys) : mc.imageKeys) : undefined,
+	      pageNumber: mc.pageNumber ?? undefined,
+	      title: mc.title || undefined,
+	      headingPath: mc.headingPath || undefined,
+	      metadata: {
         fileId: mc.fileId || fileId,
         fileName: mc.fileName || '',
         chunkIndex: mc.chunkIndex || i,
@@ -235,9 +241,12 @@ async function loadChunks() {
         updatedAt: mc.updatedAt || '',
       },
     }))
-    // 生成 markdown 内容
+    // 生成 markdown 内容（如果 chunk 有 headingPath 则在内容前加层级路径注释）
     if (chunks.value.length > 0) {
-      markdownContent.value = chunks.value.map((c) => `## 切片 ${c.index}\n\n${c.content}`).join('\n\n---\n\n')
+      markdownContent.value = chunks.value.map((c) => {
+        const header = c.headingPath ? `> ${c.headingPath}\n\n` : ''
+        return header + c.content
+      }).join('\n\n---\n\n')
     }
   } catch {
     // ignore
@@ -897,6 +906,9 @@ onBeforeUnmount(() => {
                       />
                       <span class="chunks-page__chunk-index">#{{ chunk.index }}</span>
                       <el-tag v-if="chunk.chunkType === 'image'" size="small" type="warning">图片</el-tag>
+                      <el-tag v-else-if="chunk.chunkType === 'table'" size="small" type="success">表格</el-tag>
+                      <el-tag v-else-if="chunk.chunkType === 'code'" size="small" type="info">代码</el-tag>
+                      <span v-if="chunk.title" class="chunks-page__chunk-title" :title="chunk.headingPath || ''">{{ chunk.title }}</span>
                       <span class="chunks-page__chunk-id">ID: {{ chunk.id }}</span>
                       <el-button
                         :icon="Edit"
@@ -1032,7 +1044,7 @@ onBeforeUnmount(() => {
               <div class="chunks-page__metadata-section">
                 <div class="chunks-page__metadata-item">
                   <span class="chunks-page__metadata-label">分块策略</span>
-                  <span class="chunks-page__metadata-value">{{ fileInfo.strategy }}</span>
+                  <span class="chunks-page__metadata-value">{{ fileInfo.parseStrategyName || fileInfo.strategy }}</span>
                 </div>
                 <div class="chunks-page__metadata-item">
                   <span class="chunks-page__metadata-label">分块大小</span>
@@ -1732,13 +1744,26 @@ onBeforeUnmount(() => {
     margin-bottom: $spacing-sm;
   }
 
-  &__chunk-index {
-    font-weight: 600;
-    color: $color-primary;
-    font-size: 14px;
-  }
+	  &__chunk-index {
+	    font-weight: 600;
+	    color: $color-primary;
+	    font-size: 14px;
+	  }
 
-  &__chunk-id {
+	  &__chunk-title {
+	    font-size: 13px;
+	    color: $color-primary;
+	    font-weight: 500;
+	    max-width: 300px;
+	    overflow: hidden;
+	    text-overflow: ellipsis;
+	    white-space: nowrap;
+	    cursor: help;
+	    border-left: 2px solid $color-primary;
+	    padding-left: $spacing-sm;
+	  }
+
+	  &__chunk-id {
     font-size: 12px;
     color: $text-secondary;
     font-family: monospace;

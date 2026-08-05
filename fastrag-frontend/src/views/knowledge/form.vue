@@ -20,6 +20,12 @@ const router = useRouter()
 const userStore = useUserStore()
 const { hasRole, getMyKBRole } = useAuth()
 
+// 分类归属：所有用户（含 kb_admin）创建的分类自动归属自己组织；仅超管可指定任意组织
+const isCategoryManager = computed(() => {
+  const perms = userStore.permissions || []
+  return perms.includes('*')
+})
+
 // 嵌入模型选项从 API 加载
 const embeddingModelOptions = ref<{label:string;value:string}[]>([])
 // 分类选项从 API 加载
@@ -27,6 +33,8 @@ const categoryOptions = ref<{id:string;name:string;color?:string}[]>([])
 const showAddCategoryDialog = ref(false)
 const newCategoryName = ref('')
 const newCategoryColor = ref('#1890ff')
+const newCategoryOrg = ref('')
+const categoryOrgOptions = ref<any[]>([])
 const colorPresets = ['#1890ff', '#52c41a', '#faad14', '#f56c6c', '#722ed1', '#13c2c2', '#eb2f96', '#5cdbd3']
 
 // --------------- Types ---------------
@@ -145,7 +153,7 @@ onMounted(async () => {
       api.getKbCategories(),
       api.getModels({ purpose: 'Embedding' }),
       api.getOrgFlat(),
-      api.getPersonnel(),
+      api.getPersonnelSimple(),
     ])
     const cats: any[] = (catsRes as any)?.list || catsRes || []
     const models: any[] = (modelsRes as any)?.list || modelsRes || []
@@ -167,6 +175,7 @@ onMounted(async () => {
     }
     embeddingModelOptions.value = models.map((m: any) => ({ label: m.name || m.code, value: m.code || m.name }))
     departments.value = orgList.map((o: any) => ({ id: o.id, name: o.name, isDefault: o.id === '1' }))
+    categoryOrgOptions.value = orgList.map((o: any) => ({ id: o.id, name: o.name }))
     users.value = personnel
       .filter((p: any) => p.status === 'enabled')
       .map((p: any) => ({
@@ -229,7 +238,6 @@ function defaultRetrievalConfig(): RetrievalSettingConfig {
     bm25RecallCount: 50,
     vectorWeight: 0.7,
     bm25Weight: 0.3,
-    bm25SparseDropRate: 0,
   }
 }
 
@@ -270,7 +278,7 @@ watch(
       if (extended.permission) form.permission = extended.permission
       if (extended.parseMode) form.parseMode = extended.parseMode
       if (extended.splitMode) form.splitMode = extended.splitMode
-      if (extended.graphAutoBuild !== undefined) form.graphAutoBuild = extended.graphAutoBuild === 1
+      if (extended.graphAutoBuild !== undefined) form.graphAutoBuild = Boolean(extended.graphAutoBuild)
       if (extended.fileTypeConfig) Object.assign(fileTypeConfig, extended.fileTypeConfig)
       if (extended.retrievalConfig) Object.assign(form.retrievalConfig, extended.retrievalConfig)
 
@@ -302,7 +310,7 @@ async function hydrateShareFromAcl(kbId: string): Promise<void> {
     return
   }
   // 用人员 id 反查名称
-  const personnelRes: any = await api.getPersonnel()
+  const personnelRes: any = await api.getPersonnelSimple()
   const personnel: any[] = personnelRes?.list || personnelRes || []
   specifiedGrants.value = others.map((e: any) => {
     const p = personnel.find((x: any) => x.id === e.userId)
@@ -358,8 +366,11 @@ function handleRemoveTag(tag: string) {
 // --------------- Category helpers ---------------
 async function handleCreateCategory() {
   if (!newCategoryName.value.trim()) return
+  // 管理员手动选组织；普通用户自动归属自己的组织
+  const orgId = isCategoryManager.value ? newCategoryOrg.value : (userStore.userInfo?.orgId || '')
+  if (!orgId) { ElMessage.warning('请选择所属组织'); return }
   try {
-    await api.createKbCategory({ name: newCategoryName.value.trim(), color: newCategoryColor.value, sort: categoryOptions.value.length })
+    await api.createKbCategory({ name: newCategoryName.value.trim(), color: newCategoryColor.value, sort: categoryOptions.value.length, orgId })
     // 重新加载分类列表
     const catsRes: any = await api.getKbCategories()
     const cats: any[] = (catsRes as any)?.list || catsRes || []
@@ -370,6 +381,7 @@ async function handleCreateCategory() {
     showAddCategoryDialog.value = false
     newCategoryName.value = ''
     newCategoryColor.value = '#1890ff'
+    newCategoryOrg.value = ''
   } catch (e) {
     console.error('Failed to create category:', e)
   }
@@ -602,7 +614,7 @@ function goToParseStrategy() {
                     :value="cat.id"
                   />
                 </el-select>
-                <el-button @click="showAddCategoryDialog = true">
+                <el-button v-permission="'kb:category:create'" @click="showAddCategoryDialog = true">
                   <el-icon><Plus /></el-icon>
                 </el-button>
               </div>
@@ -1058,6 +1070,16 @@ function goToParseStrategy() {
       <el-form label-width="80px">
         <el-form-item label="名称" required>
           <el-input v-model="newCategoryName" placeholder="请输入分类名称" @keyup.enter="handleCreateCategory" />
+        </el-form-item>
+        <el-form-item v-if="isCategoryManager" label="所属组织" required>
+          <el-select v-model="newCategoryOrg" placeholder="请选择所属组织" style="width: 100%">
+            <el-option
+              v-for="org in categoryOrgOptions"
+              :key="org.id"
+              :label="org.name"
+              :value="org.id"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="颜色">
           <div style="display:flex;gap:8px;flex-wrap:wrap">

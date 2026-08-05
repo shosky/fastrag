@@ -2,6 +2,7 @@ package com.fastrag.infra.graph;
 
 import java.util.List;
 import java.util.Map;
+import java.util.Collections;
 
 /**
  * 知识图谱数据存储抽象接口（参考 Yuxi GraphStore 三存储架构）
@@ -80,6 +81,14 @@ public interface GraphStore {
      */
     List<String> getLabels(String kbId);
 
+    /**
+     * 获取实体类型分布统计（类型名 -> 数量），用于前端类型分布展示
+     *
+     * @param kbId 知识库 ID
+     * @return Map，key 为实体类型名，value 为该类型的实体数量
+     */
+    default Map<String, Long> countEntitiesByType(String kbId) { return Collections.emptyMap(); }
+
     // ==================== Mention 追踪 ====================
 
     /**
@@ -87,18 +96,20 @@ public interface GraphStore {
      *
      * @param kbId    知识库 ID
      * @param chunkId Chunk ID
+     * @param fileId  所属文件 ID（用于按文件删除时的匹配）
      * @param content Chunk 内容摘要
      */
-    void createChunk(String kbId, String chunkId, String content);
+    void createChunk(String kbId, String chunkId, String fileId, String content);
 
     /**
      * 创建实体-Chunk 关联（MENTIONS 边）
+     * 通过实体名称匹配（与 Entity 节点 MERGE 键一致）
      *
-     * @param kbId     知识库 ID
-     * @param entityId 实体 ID
-     * @param chunkId  Chunk ID
+     * @param kbId       知识库 ID
+     * @param entityName 实体原始名称（用于 MATCH Entity 节点）
+     * @param chunkId    Chunk ID
      */
-    void createEntityMention(String kbId, String entityId, String chunkId);
+    void createEntityMention(String kbId, String entityName, String chunkId);
 
     /**
      * 创建三元组-Chunk 关联
@@ -124,6 +135,23 @@ public interface GraphStore {
      */
     void deleteFileGraph(String kbId, String fileId);
 
+    /**
+     * 删除指定 chunk 关联的图谱数据（MENTIONS 关系），并回收因删除而变为孤立的实体/关系
+     *
+     * @param kbId    知识库 ID
+     * @param chunkId Chunk ID
+     */
+    void deleteChunkGraph(String kbId, String chunkId);
+
+    /**
+     * 重命名 Chunk 节点的 chunkId（用于索引平移后同步图谱引用）
+     *
+     * @param kbId       知识库 ID
+     * @param oldChunkId 旧 Chunk ID
+     * @param newChunkId 新 Chunk ID
+     */
+    void renameChunkId(String kbId, String oldChunkId, String newChunkId);
+
     // ==================== 统计查询 ====================
 
     /**
@@ -141,4 +169,46 @@ public interface GraphStore {
      * @return 关系总数
      */
     default long countRelations(String kbId) { return 0; }
+
+    // ==================== 实体向量检索（对标 LightRAG entities_vdb）====================
+
+    /**
+     * 更新实体 embedding（用于图谱向量检索；维度不符/存储不支持时静默跳过）
+     *
+     * @param kbId       知识库 ID
+     * @param entityName 实体名（MERGE 键）
+     * @param embedding  向量
+     */
+    default void updateEntityEmbedding(String kbId, String entityName, List<Float> embedding) {}
+
+    /**
+     * 按向量检索实体（语义匹配，对标 LightRAG entities_vdb.query）
+     *
+     * @param kbId      知识库 ID
+     * @param embedding 查询向量
+     * @param topK      返回数量
+     * @return 实体列表，每项含 name / entityType / score
+     */
+    default List<Map<String, Object>> searchEntitiesByVector(String kbId, List<Float> embedding, int topK) {
+        return Collections.emptyList();
+    }
+
+    /**
+     * 查询尚未生成 embedding 的实体名（用于存量回填）
+     *
+     * @param kbId  知识库 ID
+     * @param limit 最大返回数量
+     * @return 实体名列表
+     */
+    default List<String> listEntitiesWithoutEmbedding(String kbId, int limit) {
+        return Collections.emptyList();
+    }
+
+    /**
+     * 清理孤立节点：无任何 chunk 引用的 Entity、无任何 TripleMention 引用的 RELATION
+     * （构建完成后调用，避免删除文件/编辑 chunk 后残留孤立数据）
+     *
+     * @param kbId 知识库 ID
+     */
+    default void cleanupOrphanNodes(String kbId) {}
 }

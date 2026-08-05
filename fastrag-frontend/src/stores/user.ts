@@ -64,6 +64,23 @@ export const useUserStore = defineStore('user', () => {
   }
 
   /**
+   * 微信扫码登录成功后设置 token + userInfo
+   */
+  function setLoginData(res: any) {
+    if (res?.token) {
+      setToken(res.token)
+    }
+    if (res?.userInfo) {
+      setUserInfo(res.userInfo as UserInfo)
+    } else {
+      // 如果只返回 token，再请求 userinfo
+      api.getUserInfo().then((info: any) => {
+        if (info) setUserInfo(info as UserInfo)
+      }).catch(() => {})
+    }
+  }
+
+  /**
    * 刷新用户信息（页面刷新后调用）
    */
   async function fetchUserInfo(): Promise<void> {
@@ -93,6 +110,7 @@ export const useUserStore = defineStore('user', () => {
     setUserInfo,
     logout,
     login,
+    setLoginData,
     fetchUserInfo,
   }
 })

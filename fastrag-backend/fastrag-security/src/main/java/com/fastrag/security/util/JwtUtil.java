@@ -24,9 +24,16 @@ public class JwtUtil {
     }
 
     public String generateToken(String userId, String username, List<String> roles, List<String> permissions) {
+        return generateToken(userId, username, null, roles, permissions);
+    }
+
+    public String generateToken(String userId, String username, String orgId, List<String> roles, List<String> permissions) {
         return Jwts.builder()
                 .subject(userId)
-                .claims(Map.of("username", username, "roles", roles, "permissions", permissions))
+                .claim("username", username)
+                .claim("orgId", orgId == null ? "" : orgId)
+                .claim("roles", roles)
+                .claim("permissions", permissions)
                 .issuedAt(new Date())
                 .expiration(new Date(System.currentTimeMillis() + expiration))
                 .signWith(getKey())

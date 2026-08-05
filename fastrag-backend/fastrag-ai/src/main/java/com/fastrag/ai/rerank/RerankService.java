@@ -1,12 +1,17 @@
 package com.fastrag.ai.rerank;
 
+import com.fasterxml.jackson.core.json.JsonWriteFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.json.JsonMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.MediaType;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
+import reactor.netty.http.client.HttpClient;
 
 import java.time.Duration;
 import java.util.*;
@@ -25,6 +30,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class RerankService {
     private final WebClient aiWebClient;
+    private final HttpClient aiHttpClient;
     private final ObjectMapper objectMapper;
 
     /**
@@ -61,6 +67,7 @@ public class RerankService {
             if (apiUrl != null && !apiUrl.isBlank()) {
                 String fullUrl = apiUrl.endsWith("/") ? apiUrl + "v1/rerank" : apiUrl + "/v1/rerank";
                 WebClient dynamicClient = WebClient.builder()
+                        .clientConnector(new ReactorClientHttpConnector(aiHttpClient))
                         .exchangeStrategies(ExchangeStrategies.builder()
                                 .codecs(c -> c.defaultCodecs().maxInMemorySize(20 * 1024 * 1024))
                                 .build())
@@ -73,8 +80,15 @@ public class RerankService {
                 requestSpec = requestSpec.header("Authorization", "Bearer " + apiKey);
             }
 
-            String resp = requestSpec
-                    .bodyValue(req)
+            // 与 EmbeddingService 同理：SiliconFlow 对原始 UTF-8 中文返回 20015，
+            // 请求体需将非 ASCII 字符转义为 unicode 转义序列（\\uXXXX）形式发送
+            String body = JsonMapper.builder()
+                    .enable(JsonWriteFeature.ESCAPE_NON_ASCII)
+                    .build()
+                    .writeValueAsString(req);
+
+            String resp = requestSpec.contentType(MediaType.APPLICATION_JSON)
+                    .bodyValue(body)
                     .retrieve()
                     .bodyToMono(String.class)
                     .block(Duration.ofSeconds(60));

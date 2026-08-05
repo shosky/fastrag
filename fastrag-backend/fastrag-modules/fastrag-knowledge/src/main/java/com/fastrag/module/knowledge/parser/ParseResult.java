@@ -11,6 +11,7 @@ public class ParseResult {
     private String text;
     private int pages;
     private String metadata;
+    private List<DocNode> nodes;            // 结构化文档节点列表（新增）
     private List<ChunkTimeSegment> segments;
 
     @Data

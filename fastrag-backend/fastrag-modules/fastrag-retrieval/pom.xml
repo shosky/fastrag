@@ -20,5 +20,11 @@
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-publish</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-platform</artifactId></dependency>
             <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
+        <!-- 单元测试 -->
+        <dependency>
+            <groupId>org.springframework.boot</groupId>
+            <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
     </dependencies>
 </project>

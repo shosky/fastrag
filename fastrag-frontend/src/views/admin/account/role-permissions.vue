@@ -76,7 +76,7 @@ onMounted(async () => {
     return
   }
   role.value = data
-  checkedPerms.value = [...(data.permissions || [])]
+  checkedPerms.value = [...new Set(data.permissions || [])]
   loading.value = false
 })
 
@@ -91,7 +91,8 @@ function toggleItem(key: string) {
   if (isSuperAdmin.value) return
   const idx = checkedPerms.value.indexOf(key)
   if (idx >= 0) {
-    checkedPerms.value.splice(idx, 1)
+    // 删除所有匹配项（防止历史重复数据残留）
+    checkedPerms.value = checkedPerms.value.filter((p) => p !== key)
   } else {
     checkedPerms.value.push(key)
   }
@@ -128,26 +129,11 @@ function toggleGroup(group: FlatPerm) {
   toggleKeys(group.children || [])
 }
 
-// ---- Tab: API接口 ----
-const apiPerms = ref<string[]>([])
-
-async function loadApiPerms() {
-  try {
-    const perms = (await api.getPermissions()) as any[] || []
-    apiPerms.value = perms.filter((p: any) => p.category === 'api').map((p: any) => p.permKey)
-  } catch {
-    apiPerms.value = []
-  }
-}
-
-onMounted(() => {
-  loadApiPerms()
-})
-
 // ---- 保存 ----
 async function handleSave() {
   if (!role.value) return
-  const perms = checkedPerms.value
+  // 去重后提交（后端同样会去重，双保险）
+  const perms = [...new Set(checkedPerms.value)]
   await api.updateRole(roleId, {
     name: role.value.name,
     description: role.value.description,
@@ -294,33 +280,6 @@ async function handleSave() {
                   />
                   <span class="perm-item__name">{{ child.label }}</span>
                   <span class="perm-item__key">{{ child.key }}</span>
-                </div>
-              </div>
-            </div>
-          </div>
-        </el-tab-pane>
-
-        <el-tab-pane label="API接口" name="api">
-          <div class="perm-groups">
-            <div class="perm-group card-panel">
-              <div class="perm-group__header">
-                <strong>API接口权限</strong>
-              </div>
-              <div class="perm-group__items">
-                <div
-                  v-for="permKey in apiPerms"
-                  :key="permKey"
-                  class="perm-item"
-                  :class="{ 'perm-item--checked': isItemChecked(permKey) }"
-                  @click="toggleItem(permKey)"
-                >
-                  <el-checkbox
-                    :model-value="isItemChecked(permKey)"
-                    :disabled="isSuperAdmin"
-                    size="small"
-                  />
-                  <span class="perm-item__name">{{ permKey }}</span>
-                  <span class="perm-item__key">{{ permKey }}</span>
                 </div>
               </div>
             </div>

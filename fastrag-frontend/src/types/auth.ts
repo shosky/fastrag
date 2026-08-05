@@ -94,6 +94,7 @@ export const PERMISSIONS = {
   KB_SEARCH: 'kb:search',
   KB_ACL_MANAGE: 'kb:acl_manage',
   KB_EXPORT: 'kb:export',
+  KB_MANAGE: 'kb:manage', // API Token 管理（开放平台）
 
   // ===== 管理后台操作权限 =====
   ADMIN_ACCESS: 'admin:access',
@@ -225,11 +226,11 @@ export const PERMISSION_TREE: PermissionTreeNode[] = [
     label: '菜单权限',
     children: [
       { key: PERMISSIONS.MENU_HOME, label: '首页' },
-      { key: PERMISSIONS.MENU_WORKSPACE, label: '工作台' },
       {
         key: 'menu_knowledge',
         label: '知识库',
         children: [
+          { key: PERMISSIONS.MENU_KNOWLEDGE, label: '显示知识库菜单' },
           { key: PERMISSIONS.MENU_KNOWLEDGE_LIST, label: '知识库列表' },
           { key: PERMISSIONS.MENU_KNOWLEDGE_CATEGORIES, label: '知识库分类' },
         ],
@@ -238,6 +239,7 @@ export const PERMISSION_TREE: PermissionTreeNode[] = [
         key: 'menu_application',
         label: '应用中心',
         children: [
+          { key: PERMISSIONS.MENU_APPLICATION, label: '显示应用菜单' },
           { key: PERMISSIONS.MENU_APPLICATION_CENTER, label: '应用中心' },
           { key: PERMISSIONS.MENU_APPLICATION_RUNTIME, label: '应用运行' },
           { key: PERMISSIONS.MENU_APPLICATION_MY_TOOLS, label: '我的工具' },
@@ -246,11 +248,11 @@ export const PERMISSION_TREE: PermissionTreeNode[] = [
           { key: PERMISSIONS.MENU_APPLICATION_DATABASE, label: '数据库管理' },
         ],
       },
-      { key: PERMISSIONS.MENU_WORKFLOW, label: '业务流' },
       {
         key: 'menu_admin',
         label: '管理中心',
         children: [
+          { key: PERMISSIONS.MENU_ADMIN, label: '显示管理菜单' },
           { key: PERMISSIONS.MENU_ADMIN_INDEX, label: '管理中心概览' },
           {
             key: 'menu_admin_system',
@@ -291,18 +293,6 @@ export const PERMISSION_TREE: PermissionTreeNode[] = [
         ],
       },
       {
-        key: 'menu_knowledge_review',
-        label: '知识审核',
-        children: [
-          { key: PERMISSIONS.MENU_KNOWLEDGE_REVIEW_FLOWS, label: '审核流程管理' },
-          { key: PERMISSIONS.MENU_KNOWLEDGE_REVIEW_FLOW_DESIGN, label: '审核流程设计' },
-          { key: PERMISSIONS.MENU_KNOWLEDGE_REVIEW_LISTENERS, label: '监听管理' },
-          { key: PERMISSIONS.MENU_KNOWLEDGE_REVIEW_COMPLIANCE, label: '合规性检查' },
-          { key: PERMISSIONS.MENU_KNOWLEDGE_REVIEW_REPORTS, label: '审核报告' },
-          { key: PERMISSIONS.MENU_KNOWLEDGE_REVIEW_QUALITY, label: '质量评估' },
-        ],
-      },
-      {
         key: 'menu_operation',
         label: '运营中心',
         children: [
@@ -311,16 +301,6 @@ export const PERMISSION_TREE: PermissionTreeNode[] = [
           { key: PERMISSIONS.MENU_OPERATION_FEEDBACK, label: '用户反馈' },
           { key: PERMISSIONS.MENU_OPERATION_QA_DETAIL, label: '问答明细' },
           { key: PERMISSIONS.MENU_OPERATION_RETRIEVAL_ANALYSIS, label: '检索日志分析' },
-        ],
-      },
-      {
-        key: 'menu_robot_operation',
-        label: '机器人运营',
-        children: [
-          { key: PERMISSIONS.MENU_ROBOT_FAQ, label: 'FAQ知识分析' },
-          { key: PERMISSIONS.MENU_ROBOT_MULTI_TURN, label: '多轮对话分析' },
-          { key: PERMISSIONS.MENU_ROBOT_INTENT, label: '意图知识分析' },
-          { key: PERMISSIONS.MENU_ROBOT_DATA_MINING, label: '数据挖掘' },
         ],
       },
     ],
@@ -395,14 +375,17 @@ export const PERMISSION_TREE: PermissionTreeNode[] = [
         label: '管理后台操作',
         children: [
           { key: PERMISSIONS.ADMIN_ACCESS, label: '访问管理后台' },
+          { key: PERMISSIONS.ADMIN_USER, label: '人员管理' },
           { key: PERMISSIONS.ADMIN_USER_CREATE, label: '添加人员' },
           { key: PERMISSIONS.ADMIN_USER_EDIT, label: '编辑人员' },
           { key: PERMISSIONS.ADMIN_USER_ROLE_CONFIG, label: '人员角色配置' },
           { key: PERMISSIONS.ADMIN_USER_DISABLE, label: '启用/禁用人员' },
+          { key: PERMISSIONS.ADMIN_ROLE, label: '角色管理' },
           { key: PERMISSIONS.ADMIN_ROLE_CREATE, label: '新增角色' },
           { key: PERMISSIONS.ADMIN_ROLE_EDIT, label: '编辑角色' },
           { key: PERMISSIONS.ADMIN_ROLE_DELETE, label: '删除角色' },
           { key: PERMISSIONS.ADMIN_ROLE_SET_DEFAULT, label: '设为默认角色' },
+          { key: PERMISSIONS.ADMIN_ORG, label: '组织管理' },
           { key: PERMISSIONS.ADMIN_ORG_CREATE, label: '新增组织' },
           { key: PERMISSIONS.ADMIN_ORG_EDIT, label: '编辑组织' },
           { key: PERMISSIONS.ADMIN_ORG_DELETE, label: '删除组织' },
@@ -505,6 +488,10 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
     path: '/knowledge',
     title: '知识库',
     requiredPerms: [PERMISSIONS.MENU_KNOWLEDGE],
+    children: [
+      { path: '/knowledge', title: '知识库列表', requiredPerms: [PERMISSIONS.MENU_KNOWLEDGE_LIST] },
+      { path: '/knowledge/categories', title: '知识库分类', requiredPerms: [PERMISSIONS.MENU_KNOWLEDGE_CATEGORIES] },
+    ],
   },
   {
     path: '/application',
@@ -512,13 +499,18 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
     requiredPerms: [PERMISSIONS.MENU_APPLICATION],
     children: [
       { path: '/application', title: '应用中心', requiredPerms: [PERMISSIONS.APP_USE] },
+      { path: '/application/runtime', title: '应用运行', requiredPerms: [PERMISSIONS.APP_USE] },
+      { path: '/application/tools', title: '工具与服务', requiredPerms: [PERMISSIONS.APP_EDIT] },
       { path: '/application/my-tools', title: '我的工具', requiredPerms: [PERMISSIONS.APP_USE] },
       { path: '/application/mcp-management', title: 'MCP管理', requiredPerms: [PERMISSIONS.APP_EDIT] },
       { path: '/application/skill-management', title: '技能管理', requiredPerms: [PERMISSIONS.APP_EDIT] },
       { path: '/application/database-management', title: '数据库管理', requiredPerms: [PERMISSIONS.APP_EDIT] },
       { path: '/application/workflow', title: '业务流', requiredPerms: [PERMISSIONS.WORKFLOW_EDIT] },
       { path: '/application/test-cases', title: '测试案例', requiredPerms: [PERMISSIONS.TEST_CASE_MANAGE] },
-      { path: '/operation/kb-analytics', title: '运营中心', requiredPerms: [PERMISSIONS.ADMIN_ACCESS] },
+      { path: '/operation/kb-analytics', title: '运营中心', requiredPerms: [PERMISSIONS.MENU_OPERATION_KB_ANALYTICS] },
+      { path: '/operation/retrieval-analysis', title: '检索日志分析', requiredPerms: [PERMISSIONS.MENU_OPERATION_RETRIEVAL_ANALYSIS] },
+      { path: '/operation/feedback', title: '反馈管理', requiredPerms: [PERMISSIONS.MENU_OPERATION_FEEDBACK] },
+      { path: '/operation/model-monitor', title: '模型监控', requiredPerms: [PERMISSIONS.MENU_OPERATION_MODEL_MONITOR] },
     ],
   },
   {
@@ -594,13 +586,16 @@ export const ROLE_PERMISSIONS: Record<SystemRole, string[]> = {
   kb_admin: [
     // 菜单权限
     PERMISSIONS.MENU_HOME, PERMISSIONS.MENU_KNOWLEDGE, PERMISSIONS.MENU_KNOWLEDGE_LIST,
+    PERMISSIONS.MENU_KNOWLEDGE_CATEGORIES,
     PERMISSIONS.MENU_APPLICATION, PERMISSIONS.MENU_APPLICATION_CENTER,
     PERMISSIONS.MENU_ADMIN, PERMISSIONS.MENU_ADMIN_INDEX,
     PERMISSIONS.MENU_ADMIN_SYSTEM, PERMISSIONS.MENU_ADMIN_SYSTEM_KB_CONFIG,
     PERMISSIONS.MENU_ADMIN_SYSTEM_TERMINOLOGY,
     PERMISSIONS.MENU_ADMIN_ACCOUNT, PERMISSIONS.MENU_ADMIN_ACCOUNT_ORG,
     PERMISSIONS.MENU_ADMIN_ACCOUNT_PERSONNEL, PERMISSIONS.MENU_ADMIN_ACCOUNT_PERMISSIONS,
-    PERMISSIONS.MENU_KNOWLEDGE_REVIEW, PERMISSIONS.MENU_OPERATION,
+    PERMISSIONS.MENU_OPERATION, PERMISSIONS.MENU_OPERATION_KB_ANALYTICS,
+    PERMISSIONS.MENU_OPERATION_RETRIEVAL_ANALYSIS, PERMISSIONS.MENU_OPERATION_FEEDBACK,
+    PERMISSIONS.MENU_OPERATION_MODEL_MONITOR,
     // 知识库权限
     PERMISSIONS.KB_CREATE, PERMISSIONS.KB_EDIT, PERMISSIONS.KB_DELETE,
     PERMISSIONS.KB_UPLOAD, PERMISSIONS.KB_MANAGE_CHUNKS, PERMISSIONS.KB_MANAGE_GRAPH,
@@ -611,6 +606,8 @@ export const ROLE_PERMISSIONS: Record<SystemRole, string[]> = {
     PERMISSIONS.ADMIN_USER_EDIT, PERMISSIONS.ADMIN_USER_DISABLE,
     PERMISSIONS.ADMIN_ORG, PERMISSIONS.ADMIN_ORG_CREATE, PERMISSIONS.ADMIN_ORG_EDIT,
     PERMISSIONS.ADMIN_SYSTEM,
+    // API Token 管理
+    PERMISSIONS.KB_MANAGE,
     // 应用权限
     PERMISSIONS.APP_CREATE, PERMISSIONS.APP_EDIT, PERMISSIONS.APP_USE,
     // 业务流权限
@@ -623,16 +620,14 @@ export const ROLE_PERMISSIONS: Record<SystemRole, string[]> = {
     PERMISSIONS.QA_MANAGE, PERMISSIONS.TEST_CASE_MANAGE,
   ],
   kb_user: [
-    // 菜单权限
+    // 菜单权限（普通用户无应用功能，仅知识库）
     PERMISSIONS.MENU_HOME, PERMISSIONS.MENU_KNOWLEDGE, PERMISSIONS.MENU_KNOWLEDGE_LIST,
-    PERMISSIONS.MENU_APPLICATION, PERMISSIONS.MENU_APPLICATION_CENTER,
+    PERMISSIONS.MENU_KNOWLEDGE_CATEGORIES,
     // 知识库权限
     PERMISSIONS.KB_VIEW, PERMISSIONS.KB_SEARCH, PERMISSIONS.KB_UPLOAD,
     PERMISSIONS.KB_MANAGE_CHUNKS, PERMISSIONS.KB_MANAGE_GRAPH,
     PERMISSIONS.KB_MANAGE_EVAL, PERMISSIONS.KB_MANAGE_STRATEGY,
     PERMISSIONS.KB_CREATE, PERMISSIONS.KB_EDIT,
-    // 应用权限
-    PERMISSIONS.APP_USE, PERMISSIONS.APP_CREATE, PERMISSIONS.APP_EDIT,
     // 其他
     PERMISSIONS.QA_MANAGE, PERMISSIONS.TEST_CASE_MANAGE,
   ],

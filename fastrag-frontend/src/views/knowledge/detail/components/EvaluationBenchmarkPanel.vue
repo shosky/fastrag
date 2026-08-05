@@ -186,9 +186,9 @@ async function deleteBenchmark(benchmark: Benchmark) {
   }
 }
 
-/** 用此基准发起评估（快捷入口） */
+/** 用此基准发起评估（快捷入口）—— 传基准 id，后端契约是"基准测试 ID" */
 function startEvaluation(benchmark: Benchmark) {
-  emit('start-evaluation', benchmark.name)
+  emit('start-evaluation', benchmark.id)
 }
 
 function handleFileChange(file: File) {

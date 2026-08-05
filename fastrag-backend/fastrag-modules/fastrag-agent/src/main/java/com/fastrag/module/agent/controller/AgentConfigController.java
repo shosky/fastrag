@@ -12,6 +12,9 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.HashMap;
 import java.util.Map;
+import com.fastrag.common.annotation.Loggable;
+import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.LogCategory;
 
 /**
  * REST controller for agent configuration operations.

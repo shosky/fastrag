@@ -24,8 +24,8 @@ public class RoleServiceImpl implements RoleService {
         roleMapper.update(new SysRole(){{setIsDefault(0);}},new LambdaQueryWrapper<SysRole>().eq(SysRole::getIsDefault,1));
         var r=roleMapper.selectById(id); if(r!=null){r.setIsDefault(1);roleMapper.updateById(r);}
     }
-    private void savePerms(String roleId,List<String> perms){ if(perms==null)return; perms.forEach(p->{var rp=new SysRolePermission();rp.setRoleId(roleId);rp.setPermissionKey(p);rpMapper.insert(rp);}); }
+    private void savePerms(String roleId,List<String> perms){ if(perms==null)return; perms.stream().distinct().forEach(p->{var rp=new SysRolePermission();rp.setRoleId(roleId);rp.setPermissionKey(p);rpMapper.insert(rp);}); }
     private RoleDto toDto(SysRole r){ var d=new RoleDto();d.setId(r.getId());d.setRoleKey(r.getRoleKey());d.setName(r.getName());d.setDescription(r.getDescription());
         d.setDefault(r.getIsDefault()==1);d.setSystem(r.getIsSystem()==1);d.setCreatedAt(r.getCreatedAt());d.setUpdatedAt(r.getUpdatedAt());
-        d.setPermissions(rpMapper.selectList(new LambdaQueryWrapper<SysRolePermission>().eq(SysRolePermission::getRoleId,r.getId())).stream().map(SysRolePermission::getPermissionKey).collect(Collectors.toList())); return d; }
+        d.setPermissions(rpMapper.selectList(new LambdaQueryWrapper<SysRolePermission>().eq(SysRolePermission::getRoleId,r.getId())).stream().map(SysRolePermission::getPermissionKey).distinct().collect(Collectors.toList())); return d; }
 }

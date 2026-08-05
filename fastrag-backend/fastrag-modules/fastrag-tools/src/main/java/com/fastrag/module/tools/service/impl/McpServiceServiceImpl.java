@@ -2,10 +2,14 @@ package com.fastrag.module.tools.service.impl;
 
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fastrag.common.exception.BusinessException;
 import com.fastrag.module.tools.entity.*;
 import com.fastrag.module.tools.mapper.*;
 import com.fastrag.module.tools.mcp.McpProtocolClient;
 import com.fastrag.module.tools.service.McpServiceService;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.util.DataScope;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -23,21 +27,45 @@ public class McpServiceServiceImpl implements McpServiceService {
     private final McpToolMapper toolMapper;
     private final McpCallLogMapper callLogMapper;
 
+    /** MCP 可见性：系统级（内置/存量） / 属主 / 同组织 / API Token */
+    private boolean visible(McpService s, LoginUser user) {
+        return DataScope.visible(user, s.getCreator(), s.getOrgId(), s.getIsBuiltin());
+    }
+
+    private void requireManage(McpService s) {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (s == null) throw BusinessException.notFound("MCP 服务不存在");
+        if (!DataScope.manageable(user, s.getCreator())) throw BusinessException.forbidden("无权管理该 MCP 服务");
+    }
+
     @Override
     public List<Map<String, Object>> list(String keyword) {
         LambdaQueryWrapper<McpService> w = new LambdaQueryWrapper<>();
         if (StrUtil.isNotBlank(keyword)) w.like(McpService::getName, keyword);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user)) {
+            w.and(q -> q.eq(McpService::getCreator, user.getUserId())
+                    .or(o -> o.eq(McpService::getOrgId, user.getOrgId())
+                            .or().eq(McpService::getCreator, "system")
+                            .or().eq(McpService::getIsBuiltin, 1)));
+        }
         w.orderByDesc(McpService::getCreatedAt);
         return attachToolCounts(mapper.selectList(w));
     }
 
     @Override
     public List<Map<String, Object>> listEnabled() {
-        return attachToolCounts(mapper.selectList(
-                new LambdaQueryWrapper<McpService>()
-                        .eq(McpService::getEnabled, 1)
-                        .orderByDesc(McpService::getCreatedAt)
-        ));
+        LambdaQueryWrapper<McpService> w = new LambdaQueryWrapper<McpService>()
+                .eq(McpService::getEnabled, 1)
+                .orderByDesc(McpService::getCreatedAt);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user)) {
+            w.and(q -> q.eq(McpService::getCreator, user.getUserId())
+                    .or(o -> o.eq(McpService::getOrgId, user.getOrgId())
+                            .or().eq(McpService::getCreator, "system")
+                            .or().eq(McpService::getIsBuiltin, 1)));
+        }
+        return attachToolCounts(mapper.selectList(w));
     }
 
     @Override
@@ -48,14 +76,22 @@ public class McpServiceServiceImpl implements McpServiceService {
     @Override
     public McpService get(String id) {
         McpService svc = mapper.selectById(id);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (svc == null || !visible(svc, user)) throw BusinessException.forbidden("无权访问该 MCP 服务");
         return svc;
     }
 
     @Override
     public Map<String, Object> getWithTools(String id) {
         McpService svc = mapper.selectById(id);
-        if (svc == null) return null;
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (svc == null || !visible(svc, user)) throw BusinessException.forbidden("无权访问该 MCP 服务");
         Map<String, Object> result = serviceToMap(svc);
+        // 凭据（authValue/env）仅属主可见
+        if (!DataScope.manageable(user, svc.getCreator())) {
+            result.remove("authValue");
+            result.remove("env");
+        }
         List<McpTool> tools = listTools(id);
         result.put("toolsList", tools);
         return result;
@@ -63,12 +99,19 @@ public class McpServiceServiceImpl implements McpServiceService {
 
     @Override
     public McpService getBySlug(String slug) {
-        return mapper.selectBySlug(slug);
+        McpService svc = mapper.selectBySlug(slug);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (svc == null || !visible(svc, user)) throw BusinessException.forbidden("无权访问该 MCP 服务");
+        return svc;
     }
 
     @Override
     public McpService create(Map<String, Object> form) {
+        LoginUser user = SecurityUtil.getCurrentUser();
         McpService s = new McpService();
+        s.setCreator(user.getUserId());
+        s.setOrgId(user.getOrgId());
+        s.setIsBuiltin(0);
         s.setName((String) form.get("name"));
         s.setSlug((String) form.get("slug"));
         s.setTransport((String) form.getOrDefault("transport", "sse"));
@@ -171,6 +214,7 @@ public class McpServiceServiceImpl implements McpServiceService {
     @Override
     public McpService update(String id, Map<String, Object> form) {
         McpService s = mapper.selectById(id);
+        requireManage(s);
         if (s != null) {
             if (form.containsKey("name")) s.setName((String) form.get("name"));
             if (form.containsKey("slug")) s.setSlug((String) form.get("slug"));
@@ -217,6 +261,7 @@ public class McpServiceServiceImpl implements McpServiceService {
     @Override
     public void delete(String id) {
         McpService s = mapper.selectById(id);
+        requireManage(s);
         if (s != null && Integer.valueOf(1).equals(s.getIsBuiltin())) {
             throw new RuntimeException("内置 MCP 服务不允许删除");
         }
@@ -226,6 +271,7 @@ public class McpServiceServiceImpl implements McpServiceService {
     @Override
     public void toggleEnabled(String id) {
         McpService s = mapper.selectById(id);
+        requireManage(s);
         if (s != null) {
             s.setEnabled(s.getEnabled() == 1 ? 0 : 1);
             mapper.updateById(s);
@@ -467,6 +513,12 @@ public class McpServiceServiceImpl implements McpServiceService {
                     new LambdaQueryWrapper<McpTool>().eq(McpTool::getServiceId, s.getId()));
             map.put("toolCount", count != null ? count.intValue() : 0);
             map.put("toolsList", List.of()); // 列表不返回完整工具，前端用 toolCount
+            // 列表凭据脱敏：authValue/env 仅属主可见
+            LoginUser user = SecurityUtil.getCurrentUser();
+            if (!DataScope.manageable(user, s.getCreator())) {
+                map.remove("authValue");
+                map.remove("env");
+            }
             result.add(map);
         }
         return result;

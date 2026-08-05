@@ -6,6 +6,7 @@ export interface UserInfo {
   avatar?: string
   phone?: string
   email?: string
+  orgId?: string
   roles: string[]
   permissions: string[]
 }

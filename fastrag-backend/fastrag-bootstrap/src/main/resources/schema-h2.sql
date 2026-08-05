@@ -74,6 +74,7 @@ CREATE TABLE IF NOT EXISTS kb (
     category VARCHAR(64),
     permission VARCHAR(16) DEFAULT 'public',
     creator VARCHAR(32),
+    org_id VARCHAR(32),
     embedding_model VARCHAR(64),
     dimension INT DEFAULT 1024,
     type VARCHAR(16) DEFAULT 'team',
@@ -96,6 +97,7 @@ CREATE TABLE IF NOT EXISTS kb_category (
     color VARCHAR(16),
     icon VARCHAR(32),
     sort INT DEFAULT 0,
+    org_id VARCHAR(32),
     created_by VARCHAR(32),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -221,6 +223,17 @@ CREATE TABLE IF NOT EXISTS kb_tag_relation (
     target_id VARCHAR(32) NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     UNIQUE (tag_id, target_type, target_id)
+);
+
+-- ==================== 文件夹 ====================
+CREATE TABLE IF NOT EXISTS kb_folder (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    parent_id VARCHAR(32) DEFAULT 'root',
+    sort INT DEFAULT 0,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
 -- ==================== M16 应用配置 ====================
@@ -739,3 +752,18 @@ CREATE TABLE IF NOT EXISTS sys_org (
     level INT DEFAULT 1,
     sort INT DEFAULT 0
 );
+
+-- API Token（平台级程序化访问）
+CREATE TABLE IF NOT EXISTS sys_api_token (
+    id VARCHAR(32) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    token VARCHAR(256) NOT NULL,
+    permission VARCHAR(16) DEFAULT 'read',
+    expires_at TIMESTAMP DEFAULT NULL,
+    revoked INT DEFAULT 0,
+    created_by VARCHAR(32),
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_api_token_value ON sys_api_token(token);

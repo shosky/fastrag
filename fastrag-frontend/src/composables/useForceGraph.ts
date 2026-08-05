@@ -8,12 +8,14 @@ export function useForceGraph(
   containerRef: Ref<HTMLElement | undefined>,
   kbId: Ref<string>,
   onNodeClick?: (node: GraphNode) => void,
+  onEdgeClick?: (edge: GraphEdge) => void,
 ) {
   const nodes = ref<GraphNode[]>([])
   const edges = ref<GraphEdge[]>([])
   const stats = ref<GraphStats>({ entityCount: 0, relationCount: 0, entityTypes: [] })
   const loading = ref(false)
   const selectedNode = ref<GraphNode | null>(null)
+  const selectedEdge = ref<GraphEdge | null>(null)
 
   let graph: G6.Graph | null = null
 
@@ -106,13 +108,27 @@ export function useForceGraph(
       if (model) {
         const nodeData = nodes.value.find((n) => n.id === model.id)
         selectedNode.value = nodeData || null
+        selectedEdge.value = null
         if (nodeData && onNodeClick) onNodeClick(nodeData)
+      }
+    })
+
+    // 关系点击事件
+    graph.on('edge:click', (evt: any) => {
+      const model = evt.item?.getModel()
+      if (model) {
+        const edgeData = edges.value.find((e) => (e.id || `edge_${edges.value.indexOf(e)}`) === model.id)
+          || edges.value.find((e) => e.source === model.source && e.target === model.target)
+        selectedEdge.value = edgeData || null
+        selectedNode.value = null
+        if (edgeData && onEdgeClick) onEdgeClick(edgeData)
       }
     })
 
     // 画布点击取消选中
     graph.on('canvas:click', () => {
       selectedNode.value = null
+      selectedEdge.value = null
     })
 
     // 窗口尺寸变化时 resize
@@ -228,6 +244,7 @@ export function useForceGraph(
 
   function clearSelection() {
     selectedNode.value = null
+    selectedEdge.value = null
     if (graph) {
       graph.getNodes().forEach((n) => {
         graph.clearItemStates(n, 'selected')
@@ -279,6 +296,7 @@ export function useForceGraph(
     stats,
     loading,
     selectedNode,
+    selectedEdge,
     entityCount,
     relationCount,
     visibleEntityCount,

@@ -94,6 +94,7 @@ public class PersonnelServiceImpl implements PersonnelService {
         d.setPhone(u.getPhone()); d.setEmail(u.getEmail());
         d.setStatus(u.getStatus()); d.setCreatedAt(u.getCreatedAt());
         if (u.getOrgId() != null) {
+            d.setOrgId(u.getOrgId());
             var o = orgMapper.selectById(u.getOrgId());
             d.setOrgName(o != null ? o.getName() : null);
         }

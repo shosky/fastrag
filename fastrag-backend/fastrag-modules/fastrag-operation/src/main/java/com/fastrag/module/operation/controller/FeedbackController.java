@@ -12,6 +12,7 @@ public class FeedbackController {
     }
     @GetMapping("/all") public ApiResponse<?> all(@RequestParam(required=false) String kbId) { return ApiResponse.success(svc.list(kbId)); }
     @GetMapping("/statistics") public ApiResponse<?> statistics(@RequestParam(required=false) String kbId) { return ApiResponse.success(svc.statistics(kbId)); }
+    @GetMapping("/overview") public ApiResponse<?> overview(@RequestParam(required=false) String kbId) { return ApiResponse.success(svc.getOverview(kbId)); }
     @PostMapping public ApiResponse<?> create(@RequestBody UserFeedback fb) { svc.create(fb); return ApiResponse.success(); }
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable Long id,@RequestBody UserFeedback fb) { return ApiResponse.success(svc.update(id,fb)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable Long id) { svc.delete(id); return ApiResponse.success(); }

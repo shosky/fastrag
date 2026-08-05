@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.llm.LlmService;
 import com.fastrag.ai.model.ChatMessage;
+import com.fastrag.common.exception.BusinessException;
 import com.fastrag.module.agent.context.BaseContext;
 import com.fastrag.module.agent.entity.AgentRun;
 import com.fastrag.module.agent.executor.AgentEngine;
@@ -17,6 +18,9 @@ import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import com.fastrag.module.retrieval.model.RetrievalRequest;
 import com.fastrag.module.retrieval.model.SearchResultItem;
 import com.fastrag.module.retrieval.service.RetrievalService;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.util.DataScope;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -53,26 +57,80 @@ public class AppServiceImpl implements AppService {
 
     // ==================== 原有 CRUD 方法 ====================
 
+    /** 应用可见性：属主 / 同组织 / 系统级(owner=system) / API Token（与知识库组织模型一致） */
+    private boolean visible(App app, LoginUser user) {
+        return DataScope.visible(user, app.getOwner(), app.getOrgId(), null);
+    }
+
+    private void requireVisible(App app) {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (app == null) throw BusinessException.notFound("应用不存在");
+        if (!visible(app, user)) throw BusinessException.forbidden("无权访问该应用");
+    }
+
+    private void requireManage(App app) {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (app == null) throw BusinessException.notFound("应用不存在");
+        if (!DataScope.manageable(user, app.getOwner())) throw BusinessException.forbidden("无权管理该应用");
+    }
+
+    /** 会话归属校验：仅会话属主可访问（API Token 除外） */
+    private AppConversation requireOwnConversation(String appId, String sessionId) {
+        AppConversation conv = convMapper.selectOne(
+                new LambdaQueryWrapper<AppConversation>()
+                        .eq(AppConversation::getAppId, appId)
+                        .eq(AppConversation::getSessionId, sessionId));
+        if (conv == null) throw BusinessException.notFound("会话不存在");
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user) && !user.getUserId().equals(conv.getUserId())) {
+            throw BusinessException.forbidden("无权访问该会话");
+        }
+        return conv;
+    }
+
+    /** 消息归属校验：消息所属会话必须属于当前用户 */
+    private void requireOwnMessage(String messageId) {
+        AppConversationMessage msg = convMsgMapper.selectById(messageId);
+        if (msg == null) throw BusinessException.notFound("消息不存在");
+        AppConversation conv = convMapper.selectById(msg.getConversationId());
+        if (conv == null) throw BusinessException.notFound("会话不存在");
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user) && !user.getUserId().equals(conv.getUserId())) {
+            throw BusinessException.forbidden("无权访问该消息");
+        }
+    }
+
     @Override
     public List<App> list(String kw, String tag) {
         var w = new LambdaQueryWrapper<App>();
         if (StrUtil.isNotBlank(kw)) w.like(App::getName, kw);
         if (StrUtil.isNotBlank(tag)) w.like(App::getTags, tag);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user)) {
+            // 属主 / 同组织 / 系统级（owner=system）
+            w.and(q -> q.eq(App::getOwner, user.getUserId())
+                    .or(o -> o.eq(App::getOrgId, user.getOrgId()).or().eq(App::getOwner, "system")));
+        }
         return appMapper.selectList(w.orderByDesc(App::getCreatedAt));
     }
 
     @Override
     public App get(String id) {
-        return appMapper.selectById(id);
+        App app = appMapper.selectById(id);
+        requireVisible(app);
+        return app;
     }
 
     @Override
     public App create(Map<String, Object> f) {
+        LoginUser user = SecurityUtil.getCurrentUser();
         var a = new App();
         a.setName((String) f.get("name"));
         a.setDescription((String) f.get("description"));
         a.setType((String) f.getOrDefault("type", "ChatBot"));
         a.setStatus("draft");
+        a.setOwner(user.getUserId());
+        a.setOrgId(user.getOrgId());
         appMapper.insert(a);
         return a;
     }
@@ -80,6 +138,7 @@ public class AppServiceImpl implements AppService {
     @Override
     public App update(String id, Map<String, Object> f) {
         var a = appMapper.selectById(id);
+        requireManage(a);
         if (a != null) {
             if (f.containsKey("name")) a.setName((String) f.get("name"));
             if (f.containsKey("description")) a.setDescription((String) f.get("description"));
@@ -90,6 +149,8 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public void delete(String id) {
+        var a = appMapper.selectById(id);
+        requireManage(a);
         appMapper.deleteById(id);
     }
 
@@ -100,11 +161,15 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public AppConfig getConfig(String id) {
+        App app = appMapper.selectById(id);
+        requireVisible(app);
         return configMapper.selectOne(new LambdaQueryWrapper<AppConfig>().eq(AppConfig::getAppId, id));
     }
 
     @Override
     public AppConfig saveConfig(String id, AppConfig config) {
+        App app = appMapper.selectById(id);
+        requireManage(app);
         config.setAppId(id);
         var existing = configMapper.selectOne(new LambdaQueryWrapper<AppConfig>().eq(AppConfig::getAppId, id));
         if (existing != null) {
@@ -121,6 +186,8 @@ public class AppServiceImpl implements AppService {
     @Override
     @Deprecated
     public Map<String, Object> run(String id, String query) {
+        App app = appMapper.selectById(id);
+        requireVisible(app);
         var r = new HashMap<String, Object>();
         r.put("sessionId", UUID.randomUUID().toString());
         r.put("answer", matchAnswer(query));
@@ -160,6 +227,8 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public Map<String, Object> createSession(String appId, String userId, String userName) {
+        App app = appMapper.selectById(appId);
+        requireVisible(app);
         String sessionId = UUID.randomUUID().toString().replace("-", "").substring(0, 16);
 
         AppConversation conv = new AppConversation();
@@ -185,6 +254,8 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public List<AppSessionDTO> listSessions(String appId, String userId) {
+        App app = appMapper.selectById(appId);
+        requireVisible(app);
         LambdaQueryWrapper<AppConversation> w = new LambdaQueryWrapper<AppConversation>()
                 .eq(AppConversation::getAppId, appId);
         // 如果指定了 userId，则只查看自己的会话
@@ -213,11 +284,8 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public List<Map<String, Object>> getSessionMessages(String appId, String sessionId) {
-        // 根据 sessionId 查找 conversation
-        AppConversation conv = convMapper.selectOne(
-                new LambdaQueryWrapper<AppConversation>()
-                        .eq(AppConversation::getAppId, appId)
-                        .eq(AppConversation::getSessionId, sessionId));
+        // 根据 sessionId 查找 conversation（含归属校验）
+        AppConversation conv = requireOwnConversation(appId, sessionId);
         if (conv == null) return Collections.emptyList();
 
         List<AppConversationMessage> messages = convMsgMapper.selectList(
@@ -245,10 +313,7 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public void deleteSession(String appId, String sessionId) {
-        AppConversation conv = convMapper.selectOne(
-                new LambdaQueryWrapper<AppConversation>()
-                        .eq(AppConversation::getAppId, appId)
-                        .eq(AppConversation::getSessionId, sessionId));
+        AppConversation conv = requireOwnConversation(appId, sessionId);
         if (conv == null) return;
         // 删除消息
         convMsgMapper.delete(
@@ -260,6 +325,7 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public void deleteMessage(String appId, String messageId) {
+        requireOwnMessage(messageId);
         AppConversationMessage msg = convMsgMapper.selectById(messageId);
         if (msg == null) return;
         msg.setDeletedAt(java.time.LocalDateTime.now());
@@ -268,6 +334,7 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public void feedbackMessage(String appId, String messageId, String feedback) {
+        requireOwnMessage(messageId);
         AppConversationMessage msg = convMsgMapper.selectById(messageId);
         if (msg == null) return;
         msg.setFeedback(feedback);
@@ -276,6 +343,7 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public void updateMessage(String appId, String messageId, String content) {
+        requireOwnMessage(messageId);
         AppConversationMessage msg = convMsgMapper.selectById(messageId);
         if (msg == null) return;
         msg.setContent(content);
@@ -286,19 +354,14 @@ public class AppServiceImpl implements AppService {
 
     @Override
     public SseEmitter runStream(String appId, String query, String sessionId, String userId, String userName) {
-        // 1. 验证应用存在
+        // 1. 验证应用存在且当前用户可见
         App app = appMapper.selectById(appId);
-        if (app == null) {
-            throw new RuntimeException("应用不存在: " + appId);
-        }
+        requireVisible(app);
 
-        // 2. 获取或创建会话
+        // 2. 获取或创建会话（带 sessionId 时校验会话归属）
         AppConversation conv = null;
         if (StrUtil.isNotBlank(sessionId)) {
-            conv = convMapper.selectOne(
-                    new LambdaQueryWrapper<AppConversation>()
-                            .eq(AppConversation::getAppId, appId)
-                            .eq(AppConversation::getSessionId, sessionId));
+            conv = requireOwnConversation(appId, sessionId);
         }
         if (conv == null) {
             // 创建新会话

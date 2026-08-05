@@ -4,6 +4,8 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.embedding.EmbeddingService;
 import com.fastrag.ai.rerank.RerankService;
+import com.fastrag.common.exception.BusinessException;
+import com.fastrag.infra.graph.GraphStore;
 import com.fastrag.infra.milvus.MilvusService;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -25,13 +27,17 @@ import com.fastrag.module.retrieval.model.SearchResultItem;
 import com.fastrag.module.retrieval.service.QueryEnhanceService;
 import com.fastrag.module.retrieval.service.RetrievalLogService;
 import com.fastrag.module.retrieval.service.RetrievalService;
+import com.fastrag.security.filter.LoginUser;
 import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
@@ -57,6 +63,25 @@ public class RetrievalServiceImpl implements RetrievalService {
     private final QueryEnhanceService queryEnhanceService;
     private final ModelRecordMapper modelRecordMapper;
     private final ConfigManageService configService;
+    private final GraphStore graphStore;
+    private final StringRedisTemplate redisTemplate;
+
+    /**
+     * 校验当前用户对知识库的访问权限（body 传 kbId 的接口，KbAuthAspect 的 URI 提取不适用）
+     * 与 KbAuthAspect 同构：Redis kb:acl:{kbId}:{userId}，无记录即无权限
+     */
+    private void checkKbAccess(String kbId) {
+        if (kbId == null || kbId.isBlank()) return;
+        LoginUser user = SecurityUtil.getCurrentUser();
+        // 超管或平台级 API Token 直接放行
+        if (user.hasPermission("*") || user.getUserId().startsWith("api-token:")) return;
+        String cacheKey = "kb:acl:" + kbId + ":" + user.getUserId();
+        String roleStr = redisTemplate.opsForValue().get(cacheKey);
+        if (roleStr == null) {
+            log.warn("[Retrieval] Access denied: user={} has no permission on kb={}", user.getUserId(), kbId);
+            throw BusinessException.forbidden("无知识库访问权限");
+        }
+    }
 
     /** RRF 融合常数 k */
     private static final int RRF_K = 60;
@@ -71,18 +96,47 @@ public class RetrievalServiceImpl implements RetrievalService {
         String kbId = req.getKnowledgeId();
         String originalQuery = req.getQuery();
 
+        // 知识库访问权限校验（body 传 kbId，KbAuthAspect 无法拦截）
+        checkKbAccess(kbId);
+
+        log.info("[Retrieval] ====== Search start kb={}, query='{}'", kbId, originalQuery);
+
         if (originalQuery == null || originalQuery.isBlank()) {
+            log.info("[Retrieval] Empty query, return empty");
             return Collections.emptyList();
         }
 
         // ---- Phase 7: 加载知识库配置并合并 ----
         RetrievalRequest.RetrievalConfig config = loadAndMergeConfig(kbId, req.getConfig());
+        log.info("[Retrieval] Effective config: mode={}, topK={}, threshold={}, keywordMatch={}, "
+                        + "multiRetrieval={}, rerank={}, fusionStrategy={}, contextStrategy={}",
+                config.getMode(), config.getTopK(), config.getSimilarityThreshold(),
+                config.getEnableKeywordMatch(), config.getEnableMultiRetrieval(),
+                config.getEnableRerank(), config.getFusionStrategy(), config.getContextAssemblyStrategy());
 
         // ---- Phase 3: 查询预处理 ----
         String query = preprocessQuery(kbId, originalQuery, config);
+        if (!query.equals(originalQuery)) {
+            log.info("[Retrieval] Query after preprocess: '{}'", query);
+        }
 
         // ---- Phase 2 + Phase 5: 核心检索 ----
         List<SearchResultItem> results = executeSearch(kbId, query, config);
+
+        // ---- 图谱通道（方案 A）：固定参与一路图谱召回，与主检索结果 RRF 融合 ----
+        // 不再把实体名/关系标签拼入 query 再向量化（避免稀释 embedding），
+        // 而是作为独立召回通道（对标 LightRAG kg_query）
+        if (Boolean.TRUE.equals(config.getEnableGraphExpand())) {
+            int graphCount = config.getGraphRecallCount() != null ? config.getGraphRecallCount() : 5;
+            List<SearchResultItem> graphHits = safeSearch(() -> graphChannelRecall(kbId, query, config, graphCount));
+            if (!graphHits.isEmpty()) {
+                log.info("[Retrieval] Graph channel: {} graph results fused via RRF for kb={}, query='{}'",
+                        graphHits.size(), kbId, query);
+                results = rrfFusionMulti(List.of(results, graphHits), config.getTopK());
+            } else {
+                log.info("[Retrieval] Graph channel: no graph hits for kb={}, query='{}'", kbId, query);
+            }
+        }
 
         // ---- Phase 4: 后处理（重排序 / MMR）----
         results = postProcess(results, query, config, kbId);
@@ -93,10 +147,37 @@ public class RetrievalServiceImpl implements RetrievalService {
         // ---- Phase 6: 上下文组装 ----
         results = assembleContext(results, config);
 
+        // ---- 关键词匹配：命中问答对时 QA 结果优先返回 ----
+        if (Boolean.TRUE.equals(config.getEnableKeywordMatch())) {
+            int qaCount = config.getQaRecallCount() != null ? config.getQaRecallCount() : 5;
+            List<SearchResultItem> qaHits = safeSearch(() -> qaChannelRecall(kbId, query, qaCount));
+            if (!qaHits.isEmpty()) {
+                // 去掉与普通结果重复的 QA 项（按 fileId+chunkIndex 去重，QA 项 chunkIndex 恒为 0）
+                Set<String> existingKeys = results.stream()
+                        .map(r -> r.getFileId() + "_" + r.getChunkIndex())
+                        .collect(Collectors.toSet());
+                List<SearchResultItem> combined = new ArrayList<>();
+                for (SearchResultItem qa : qaHits) {
+                    if (existingKeys.add(qa.getFileId() + "_" + qa.getChunkIndex())) {
+                        combined.add(qa);
+                    }
+                }
+                combined.addAll(results);
+                results = combined;
+                log.info("[Retrieval] QA keyword match: {} QA results prepended for kb={}, query='{}'",
+                        qaHits.size(), kbId, query);
+            } else {
+                log.info("[Retrieval] QA keyword match: no QA matched for kb={}, query='{}'", kbId, query);
+            }
+        }
+
         // ---- 统一设置结果序号 ----
         for (int i = 0; i < results.size(); i++) {
             results.get(i).setIndex(i);
         }
+
+        log.info("[Retrieval] ====== Search done kb={}, query='{}', results={}, elapsed={}ms ======",
+                kbId, originalQuery, results.size(), System.currentTimeMillis() - startMs);
 
         // ---- 日志记录 ----
         recordLog(kbId, originalQuery, config, results, startMs);
@@ -193,28 +274,33 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
 
         config.setSimilarityThreshold(0.2);
-        config.setEnableGraphExpand(false);
+        // 图谱通道默认开启（方案 A，对标 LightRAG 一等检索通道）：与 vector/fulltext 路 RRF 融合
+        config.setEnableGraphExpand(true);
         config.setGraphExpandDepth(1);
         config.setGraphMaxEntities(10);
+        config.setGraphRecallCount(5);
+        // 关键词匹配默认开启：命中问答对时优先返回（请求/KB 配置可显式关闭）
+        config.setEnableKeywordMatch(true);
     }
 
     /** 将 source 中的非 null 字段复制到 target */
     private void mergeConfig(RetrievalRequest.RetrievalConfig target,
                               RetrievalRequest.RetrievalConfig source) {
         if (source.getMode() != null) target.setMode(source.getMode());
-        if (source.getTopK() > 0) target.setTopK(source.getTopK());
-        if (source.getSimilarityThreshold() > 0) target.setSimilarityThreshold(source.getSimilarityThreshold());
-        if (source.isEnableGraphExpand()) target.setEnableGraphExpand(true);
+        if (source.getTopK() != null && source.getTopK() > 0) target.setTopK(source.getTopK());
+        if (source.getSimilarityThreshold() != null) target.setSimilarityThreshold(source.getSimilarityThreshold());
+        if (source.getEnableGraphExpand() != null) target.setEnableGraphExpand(source.getEnableGraphExpand());
         if (source.getGraphExpandDepth() > 0) target.setGraphExpandDepth(source.getGraphExpandDepth());
         if (source.getGraphMaxEntities() > 0) target.setGraphMaxEntities(source.getGraphMaxEntities());
         if (source.getNerModel() != null) target.setNerModel(source.getNerModel());
-        if (source.isEnableRerank()) target.setEnableRerank(true);
+        if (source.getEnableRerank() != null) target.setEnableRerank(source.getEnableRerank());
         if (source.getRerankModel() != null) target.setRerankModel(source.getRerankModel());
 
         // 预处理
         if (source.getEnableAutoCorrection() != null) target.setEnableAutoCorrection(source.getEnableAutoCorrection());
         if (source.getEnableQueryRewrite() != null) target.setEnableQueryRewrite(source.getEnableQueryRewrite());
         if (source.getEnableSynonymExpansion() != null) target.setEnableSynonymExpansion(source.getEnableSynonymExpansion());
+        if (source.getEnableKeywordMatch() != null) target.setEnableKeywordMatch(source.getEnableKeywordMatch());
 
         // 多路召回
         if (source.getEnableMultiRetrieval() != null) target.setEnableMultiRetrieval(source.getEnableMultiRetrieval());
@@ -277,21 +363,8 @@ public class RetrievalServiceImpl implements RetrievalService {
             }
         }
 
-        // 图谱扩展
-        if (config.isEnableGraphExpand()) {
-            try {
-                Map<String, Object> graphResult = queryEnhanceService.expandGraph(
-                        kbId, processed, config.getGraphExpandDepth(),
-                        config.getGraphMaxEntities(), config.getNerModel());
-                String expanded = (String) graphResult.get("expandedQuery");
-                if (expanded != null && !expanded.isBlank() && !expanded.equals(processed)) {
-                    log.info("[Preprocess] Graph expansion: '{}' -> '{}'", processed, expanded);
-                    processed = expanded;
-                }
-            } catch (Exception e) {
-                log.warn("[Preprocess] Graph expansion failed", e);
-            }
-        }
+        // 注意：图谱扩展不在预处理中拼词（方案 A）——实体名/关系标签拼入 query 会稀释 embedding，
+        // 图谱召回由 search() 主流程的 graphChannelRecall 作为独立通道参与 RRF 融合
 
         // 同义词扩展
         if (Boolean.TRUE.equals(config.getEnableSynonymExpansion())) {
@@ -399,9 +472,11 @@ public class RetrievalServiceImpl implements RetrievalService {
     private List<SearchResultItem> fulltextSearch(String kbId, String query,
                                                     RetrievalRequest.RetrievalConfig config) {
         int topK = config.getTopK();
+        // BM25 候选数量：优先取 bm25RecallCount（前端「BM25 召回数量」），至少 topK 条
+        int limit = Math.max(topK, config.getBm25RecallCount() != null ? config.getBm25RecallCount() : 0);
         try {
             // 尝试用 FULLTEXT 索引搜索
-            List<KbChunk> chunks = chunkMapper.fulltextSearch(kbId, query, topK);
+            List<KbChunk> chunks = chunkMapper.fulltextSearch(kbId, query, limit);
             if (!chunks.isEmpty()) {
                 List<SearchResultItem> results = new ArrayList<>();
                 for (int i = 0; i < chunks.size(); i++) {
@@ -444,8 +519,8 @@ public class RetrievalServiceImpl implements RetrievalService {
         RetrievalRequest.RetrievalConfig fulltextCfg = copyWithMode(config, "fulltext", recallCount);
         List<SearchResultItem> fulltextResults = safeSearch(() -> fulltextSearch(kbId, query, fulltextCfg));
 
-        // 3. RRF 融合
-        List<SearchResultItem> fused = rrfFusion(vectorResults, fulltextResults, topK);
+        // 3. 加权融合（使用前端可调的 vectorWeight / bm25Weight）
+        List<SearchResultItem> fused = weightedFusion(List.of(vectorResults, fulltextResults), config, topK);
 
         log.info("[HybridSearch] kbId={}, query={}, vector={}, fulltext={}, fused={}",
                 kbId, query, vectorResults.size(), fulltextResults.size(), fused.size());
@@ -460,11 +535,10 @@ public class RetrievalServiceImpl implements RetrievalService {
                                                        RetrievalRequest.RetrievalConfig config) {
         int vCount = config.getVectorRecallCount() != null ? config.getVectorRecallCount() : config.getTopK();
         int fCount = config.getFulltextRecallCount() != null ? config.getFulltextRecallCount() : config.getTopK();
-        int gCount = config.getGraphRecallCount() != null ? config.getGraphRecallCount() : 0;
         int qCount = config.getQaRecallCount() != null ? config.getQaRecallCount() : 0;
         String strategy = config.getFusionStrategy() != null ? config.getFusionStrategy() : "rrf";
 
-        // 各路并行召回
+        // 各路并行召回（图谱通道统一在 search() 主流程参与融合，不在此处重复）
         List<List<SearchResultItem>> channels = new ArrayList<>();
 
         // 向量通道
@@ -474,11 +548,6 @@ public class RetrievalServiceImpl implements RetrievalService {
         // 全文通道
         RetrievalRequest.RetrievalConfig fCfg = copyWithMode(config, "fulltext", fCount);
         channels.add(safeSearch(() -> fulltextSearch(kbId, query, fCfg)));
-
-        // 图谱子图通道
-        if (gCount > 0) {
-            channels.add(safeSearch(() -> graphChannelRecall(kbId, query, config, gCount)));
-        }
 
         // QA 对通道
         if (qCount > 0) {
@@ -494,11 +563,12 @@ public class RetrievalServiceImpl implements RetrievalService {
     }
 
     /**
-     * 图谱子图召回：在知识图谱中展开实体，找到关联的 chunk
+     * 图谱子图召回：实体匹配（文本 CONTAINS + 向量语义双路）→ 邻居实体 LIKE 召回关联 chunk
      */
     private List<SearchResultItem> graphChannelRecall(String kbId, String query,
                                                        RetrievalRequest.RetrievalConfig config, int count) {
         try {
+            // 1. 文本实体匹配（NER/降级分词 + CONTAINS）
             Map<String, Object> graphResult = queryEnhanceService.expandGraph(
                     kbId, query, config.getGraphExpandDepth(),
                     config.getGraphMaxEntities(), config.getNerModel());
@@ -507,22 +577,47 @@ public class RetrievalServiceImpl implements RetrievalService {
             List<Map<String, Object>> entities = (List<Map<String, Object>>)
                     graphResult.getOrDefault("entities", List.of());
 
-            if (entities.isEmpty()) return Collections.emptyList();
+            // 实体名集合（文本 + 向量去重合并）
+            Set<String> entityNames = new LinkedHashSet<>();
+            for (Map<String, Object> e : entities) {
+                String name = (String) e.get("name");
+                // 过滤过短实体名（如 n-gram 切出的 "流程/包含/什么" 等 2 字泛词，LIKE 命中全库噪音大）
+                if (name != null && name.length() >= 3) entityNames.add(name);
+            }
 
-            // 用实体名去搜索 chunk
-            List<String> entityNames = entities.stream()
-                    .map(e -> (String) e.get("name"))
-                    .filter(Objects::nonNull)
-                    .collect(Collectors.toList());
+            // 2. 向量实体匹配（语义增强，对标 LightRAG entities_vdb；失败降级文本）
+            EmbeddingModelConfig embCfg = getEmbeddingModelConfig(kbId);
+            if (embCfg != null && embCfg.model() != null) {
+                try {
+                    List<Float> queryVector = embeddingService.embed(
+                            embCfg.model(), List.of(query), embCfg.apiUrl(), embCfg.apiKey()).get(0);
+                    List<Map<String, Object>> vecEntities = graphStore.searchEntitiesByVector(kbId, queryVector, 5);
+                    for (Map<String, Object> e : vecEntities) {
+                        String name = (String) e.get("name");
+                        if (name != null && !name.isBlank()) entityNames.add(name);
+                    }
+                    if (!vecEntities.isEmpty()) {
+                        log.info("[GraphChannel] Vector entity match: {} entities for kb={}, query='{}'",
+                                vecEntities.size(), kbId, query);
+                    }
+                } catch (Exception e) {
+                    log.warn("[GraphChannel] Vector entity match failed for kb={}, fallback to text: {}",
+                            kbId, e.getMessage());
+                }
+            }
 
+            if (entityNames.isEmpty()) return Collections.emptyList();
+
+            // 3. 用实体名去搜索 chunk
+            List<String> nameList = new ArrayList<>(entityNames);
             List<SearchResultItem> results = new ArrayList<>();
-            for (String name : entityNames) {
+            for (String name : nameList) {
                 if (results.size() >= count) break;
                 List<KbChunk> chunks = chunkMapper.selectList(
                         new LambdaQueryWrapper<KbChunk>()
                                 .eq(KbChunk::getKbId, kbId)
                                 .like(KbChunk::getContent, name)
-                                .last("LIMIT " + (count / Math.max(entityNames.size(), 1))));
+                                .last("LIMIT " + Math.max(count / Math.max(nameList.size(), 1), 1)));
                 for (KbChunk chunk : chunks) {
                     if (results.size() >= count) break;
                     // 跳过已删除文件的 chunk
@@ -541,17 +636,36 @@ public class RetrievalServiceImpl implements RetrievalService {
 
     /**
      * QA 对召回：从 kb_qa_pair 表匹配问题
+     *
+     * <p>分词模糊匹配：query 切成 token（英文/数字按词、中文按连续汉字块），
+     * 任一 token 命中即为候选，再按命中 token 数降序取前 count。
+     * 例如 "DeepSeek V4参数" 可命中 "DeepSeek V4 Pro 参数"（字面 LIKE 做不到）。</p>
      */
     private List<SearchResultItem> qaChannelRecall(String kbId, String query, int count) {
         try {
+            List<String> tokens = tokenizeQuery(query);
+            if (tokens.isEmpty()) return Collections.emptyList();
+
             List<KbQaPair> qaPairs = qaPairMapper.selectList(
                     new LambdaQueryWrapper<KbQaPair>()
                             .eq(KbQaPair::getKbId, kbId)
-                            .like(KbQaPair::getQuestion, query)
-                            .last("LIMIT " + count));
+                            .and(w -> {
+                                for (int i = 0; i < tokens.size(); i++) {
+                                    if (i > 0) w.or();
+                                    w.like(KbQaPair::getQuestion, tokens.get(i));
+                                }
+                            })
+                            .last("LIMIT " + Math.max(count * 3, 30)));
+            if (qaPairs.isEmpty()) return Collections.emptyList();
+
+            // 按命中 token 数降序（命中越多越相关）；先拷贝为可变列表（兼容不可变 List 入参）
+            qaPairs = new ArrayList<>(qaPairs);
+            qaPairs.sort(Comparator.comparingInt(
+                    (KbQaPair q) -> tokenHitCount(q.getQuestion(), tokens)).reversed());
 
             List<SearchResultItem> results = new ArrayList<>();
-            for (int i = 0; i < qaPairs.size(); i++) {
+            int size = Math.min(count, qaPairs.size());
+            for (int i = 0; i < size; i++) {
                 KbQaPair qa = qaPairs.get(i);
                 SearchResultItem item = new SearchResultItem();
                 item.setIndex(i);
@@ -559,8 +673,8 @@ public class RetrievalServiceImpl implements RetrievalService {
                 item.setSource("qa");
                 item.setChannel("qa");
                 item.setFileId(qa.getFileId());
-                item.setSimilarity(0.8 - (double) i / qaPairs.size());
-                item.setDistance(0.2 + (double) i / qaPairs.size());
+                item.setSimilarity(0.8 - (double) i / size);
+                item.setDistance(0.2 + (double) i / size);
                 results.add(item);
             }
             return results;
@@ -568,6 +682,28 @@ public class RetrievalServiceImpl implements RetrievalService {
             log.warn("[QAChannel] Failed for kbId={}", kbId, e);
             return Collections.emptyList();
         }
+    }
+
+    /** 问答对关键词切分：英文/数字按词（≥2 字符）、中文按连续汉字块 */
+    private static final Pattern QA_TOKEN_PATTERN = Pattern.compile("[A-Za-z0-9]{2,}|[\\u4e00-\\u9fa5]+");
+
+    private List<String> tokenizeQuery(String query) {
+        if (query == null || query.isBlank()) return Collections.emptyList();
+        List<String> tokens = new ArrayList<>();
+        Matcher m = QA_TOKEN_PATTERN.matcher(query);
+        while (m.find()) {
+            tokens.add(m.group());
+        }
+        return tokens;
+    }
+
+    private int tokenHitCount(String question, List<String> tokens) {
+        if (question == null) return 0;
+        int hits = 0;
+        for (String t : tokens) {
+            if (question.contains(t)) hits++;
+        }
+        return hits;
     }
 
     // ========================================================================
@@ -604,12 +740,8 @@ public class RetrievalServiceImpl implements RetrievalService {
         return scoreMap.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
                 .limit(topK)
-                .map(e -> {
-                    SearchResultItem item = itemMap.get(e.getKey());
-                    item.setSimilarity(e.getValue());
-                    item.setDistance(1.0 / (1.0 + e.getValue()));
-                    return item;
-                })
+                // 只按 RRF 分排序，保留各路的原始 similarity/distance（RRF 排名分不是相似度语义）
+                .map(e -> itemMap.get(e.getKey()))
                 .collect(Collectors.toList());
     }
 
@@ -640,11 +772,8 @@ public class RetrievalServiceImpl implements RetrievalService {
         return scoreMap.entrySet().stream()
                 .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
                 .limit(topK)
-                .map(e -> {
-                    SearchResultItem item = itemMap.get(e.getKey());
-                    item.setSimilarity(e.getValue());
-                    return item;
-                })
+                // 只按加权分排序，保留各路原始 similarity（加权排名分不是相似度语义）
+                .map(e -> itemMap.get(e.getKey()))
                 .collect(Collectors.toList());
     }
 
@@ -680,7 +809,7 @@ public class RetrievalServiceImpl implements RetrievalService {
         if (results.isEmpty()) return results;
 
         // Rerank 模型重排
-        if (config.isEnableRerank() && config.getRerankModel() != null) {
+        if (Boolean.TRUE.equals(config.getEnableRerank()) && config.getRerankModel() != null) {
             results = rerankResults(results, query, config, kbId);
         }
 
@@ -1096,12 +1225,18 @@ public class RetrievalServiceImpl implements RetrievalService {
                             List<SearchResultItem> results, long startMs) {
         long elapsed = System.currentTimeMillis() - startMs;
         try {
+            // 图谱通道命中数（可观测性：日志面板可看图谱贡献）
+            long graphHits = results.stream()
+                    .filter(r -> "graph".equals(r.getSource()))
+                    .count();
+
             KbRetrievalLog logEntry = new KbRetrievalLog();
             logEntry.setKbId(kbId);
             logEntry.setQuery(originalQuery);
             logEntry.setHitCount(results.size());
             logEntry.setHasResult(!results.isEmpty());
             logEntry.setLatencyMs((int) elapsed);
+            logEntry.setGraphEntityCount((int) graphHits);
             logEntry.setUserId(SecurityUtil.getCurrentUserId());
             logEntry.setCreatedAt(LocalDateTime.now());
             logService.log(logEntry);
@@ -1120,6 +1255,8 @@ public class RetrievalServiceImpl implements RetrievalService {
             extra.put("topK", config.getTopK());
             extra.put("hits", results.size());
             extra.put("duration", elapsed);
+            extra.put("graphExpanded", config.getEnableGraphExpand());
+            extra.put("graphHits", graphHits);
             kbLog.setExtra(JSONUtil.toJsonStr(extra));
             kbLog.setTimestamp(LocalDateTime.now());
             kbLogMapper.insert(kbLog);

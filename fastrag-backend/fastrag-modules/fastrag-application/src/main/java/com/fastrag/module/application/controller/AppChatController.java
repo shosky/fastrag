@@ -8,6 +8,7 @@ import com.fastrag.security.util.SecurityUtil;
 import com.fastrag.security.filter.LoginUser;
 import lombok.RequiredArgsConstructor;
 import org.springframework.http.MediaType;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
@@ -27,6 +28,7 @@ public class AppChatController {
     /**
      * SSE 流式对话
      */
+    @PreAuthorize("@perm.has('app:use')")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chatStream(@PathVariable String appId, @RequestBody AppChatRequest request) {
         LoginUser user = SecurityUtil.getCurrentUser();
@@ -37,6 +39,7 @@ public class AppChatController {
     /**
      * 创建新会话
      */
+    @PreAuthorize("@perm.has('app:use')")
     @PostMapping("/sessions")
     public ApiResponse<?> createSession(@PathVariable String appId) {
         LoginUser user = SecurityUtil.getCurrentUser();
@@ -47,6 +50,7 @@ public class AppChatController {
     /**
      * 获取会话列表
      */
+    @PreAuthorize("@perm.has('app:use')")
     @GetMapping("/sessions")
     public ApiResponse<?> listSessions(@PathVariable String appId) {
         LoginUser user = SecurityUtil.getCurrentUser();
@@ -57,6 +61,7 @@ public class AppChatController {
     /**
      * 获取会话消息历史
      */
+    @PreAuthorize("@perm.has('app:use')")
     @GetMapping("/sessions/{sessionId}/messages")
     public ApiResponse<?> getMessages(@PathVariable String appId, @PathVariable String sessionId) {
         List<Map<String, Object>> messages = appService.getSessionMessages(appId, sessionId);
@@ -66,6 +71,7 @@ public class AppChatController {
     /**
      * 删除会话
      */
+    @PreAuthorize("@perm.has('app:use')")
     @DeleteMapping("/sessions/{sessionId}")
     public ApiResponse<?> deleteSession(@PathVariable String appId, @PathVariable String sessionId) {
         appService.deleteSession(appId, sessionId);
@@ -75,6 +81,7 @@ public class AppChatController {
     /**
      * 软删除单条消息
      */
+    @PreAuthorize("@perm.has('app:use')")
     @DeleteMapping("/messages/{messageId}")
     public ApiResponse<?> deleteMessage(@PathVariable String appId, @PathVariable String messageId) {
         appService.deleteMessage(appId, messageId);
@@ -84,6 +91,7 @@ public class AppChatController {
     /**
      * 消息反馈（like/dislike/null）
      */
+    @PreAuthorize("@perm.has('app:use')")
     @PostMapping("/messages/{messageId}/feedback")
     public ApiResponse<?> feedbackMessage(@PathVariable String appId, @PathVariable String messageId, @RequestBody Map<String, String> body) {
         appService.feedbackMessage(appId, messageId, body.getOrDefault("feedback", ""));
@@ -93,6 +101,7 @@ public class AppChatController {
     /**
      * 编辑消息内容
      */
+    @PreAuthorize("@perm.has('app:use')")
     @PutMapping("/messages/{messageId}")
     public ApiResponse<?> updateMessage(@PathVariable String appId, @PathVariable String messageId, @RequestBody Map<String, String> body) {
         appService.updateMessage(appId, messageId, body.get("content"));

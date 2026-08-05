@@ -147,7 +147,6 @@ const defaultConfig: RetrievalConfig = {
   bm25RecallCount: 50,
   vectorWeight: 0.7,
   bm25Weight: 0.3,
-  bm25SparseDropRate: 0.0,
 }
 
 /**

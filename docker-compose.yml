@@ -21,13 +21,13 @@ services:
       - MINIO_HOST=minio
       - AI_GATEWAY_URL=http://host.docker.internal:11434
       - JWT_SECRET=FastRAGSecretKeyForJWT2024PleaseChangeInProd!
-	    depends_on:
-	      mysql:
-	        condition: service_healthy
-	      redis:
-	        condition: service_healthy
-	      rabbitmq:
-	        condition: service_healthy
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     networks:
@@ -76,7 +76,7 @@ services:
       - fastrag-net
     restart: unless-stopped
 
-	  # ==================== RabbitMQ ====================
+  # ==================== RabbitMQ ====================
   rabbitmq:
     image: rabbitmq:3-management-alpine
     container_name: fastrag-rabbitmq
@@ -164,9 +164,9 @@ services:
     restart: unless-stopped
 
 volumes:
-	  mysql-data:
-	  redis-data:
-	  rabbitmq-data:
+  mysql-data:
+  redis-data:
+  rabbitmq-data:
   milvus-data:
   neo4j-data:
   minio-data:

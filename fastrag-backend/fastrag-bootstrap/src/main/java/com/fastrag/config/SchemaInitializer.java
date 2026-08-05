@@ -100,6 +100,10 @@ public class SchemaInitializer {
         addColumnIfNotExists("kb_parse_strategy", "llm_model", "VARCHAR(128)");
         addColumnIfNotExists("kb_parse_strategy", "vlm_model", "VARCHAR(128)");
 
+        // kb_folder 表新增时间戳字段
+        addColumnIfNotExists("kb_folder", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+        addColumnIfNotExists("kb_folder", "updated_at", "DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP");
+
         // --- Agent 模块表 ---
         try {
             jdbc.execute("""
@@ -199,6 +203,23 @@ public class SchemaInitializer {
             }
         }
 
+        // --- 组织数据隔离：kb / kb_category 增加 org_id 列（存量按创建者组织回填） ---
+        addColumnIfNotExists("kb", "org_id", "VARCHAR(32) COMMENT '归属组织（同组织成员默认可见）'");
+        try {
+            jdbc.execute("UPDATE kb k LEFT JOIN sys_user u ON u.id = k.creator SET k.org_id = u.org_id WHERE k.org_id IS NULL");
+            log.info("Backfilled kb.org_id from creator's org");
+        } catch (Exception e) {
+            log.warn("Failed to backfill kb.org_id: {}", e.getMessage());
+        }
+        addColumnIfNotExists("kb_category", "org_id", "VARCHAR(32) COMMENT '归属组织（NULL=未分配，仅管理员可见）'");
+        // 存量分类按创建者所属组织回填（消灭"未分配"状态，保证所有用户分类可见性完全一致）
+        try {
+            jdbc.execute("UPDATE kb_category c LEFT JOIN sys_user u ON u.id = c.created_by SET c.org_id = u.org_id WHERE c.org_id IS NULL");
+            log.info("Backfilled kb_category.org_id from creator's org");
+        } catch (Exception e) {
+            log.warn("Failed to backfill kb_category.org_id: {}", e.getMessage());
+        }
+
         // 兼容：retrieval_metrics 早期定义为 JSON，但实际存的是普通字符串
         try {
             jdbc.execute("ALTER TABLE kb_evaluation_result MODIFY COLUMN retrieval_metrics TEXT COMMENT '检索指标字符串'");
@@ -212,6 +233,9 @@ public class SchemaInitializer {
         addColumnIfNotExists("kb_evaluation_result", "recall_at_3", "DECIMAL(5,4) DEFAULT NULL COMMENT 'Recall@3'");
         addColumnIfNotExists("kb_evaluation_result", "recall_at_5", "DECIMAL(5,4) DEFAULT NULL COMMENT 'Recall@5'");
         addColumnIfNotExists("kb_evaluation_result", "recall_at_10", "DECIMAL(5,4) DEFAULT NULL COMMENT 'Recall@10'");
+
+        // 检索日志图谱维度列（兼容已有表；D1 可观测性）
+        addColumnIfNotExists("kb_retrieval_log", "graph_entity_count", "INT DEFAULT 0 COMMENT '图谱通道命中结果数'");
 
         // 添加 model 表缺失列（兼容已有表）
         addColumnIfNotExists("model", "context_window", "INT DEFAULT 4096 COMMENT '上下文窗口大小'");
@@ -239,7 +263,50 @@ public class SchemaInitializer {
         // kb_graph_index 表新增字段
         addColumnIfNotExists("kb_graph_index", "failed_chunks", "INT DEFAULT 0 COMMENT '构建失败的切片数'");
 
+        // ==================== 应用/工具/运营数据归属列（组织隔离） ====================
+        // 存量数据回填为系统级（creator='system' / is_builtin=1），保持全员可见现状；
+        // 新数据由创建服务写入真实 creator + org_id
+        addColumnIfNotExists("app", "org_id", "VARCHAR(32) COMMENT '归属组织（同组织可见）'");
+        try { jdbc.execute("UPDATE app SET owner='system' WHERE owner IS NULL OR owner=''"); } catch (Exception e) { log.warn("backfill app.owner: {}", e.getMessage()); }
+        addColumnIfNotExists("tool", "creator", "VARCHAR(32)");
+        addColumnIfNotExists("tool", "org_id", "VARCHAR(32)");
+        addColumnIfNotExists("tool", "is_builtin", "TINYINT DEFAULT 1");
+        try { jdbc.execute("UPDATE tool SET creator='system', is_builtin=1 WHERE creator IS NULL OR creator=''"); } catch (Exception e) { log.warn("backfill tool.creator: {}", e.getMessage()); }
+        addColumnIfNotExists("mcp_service", "creator", "VARCHAR(32)");
+        addColumnIfNotExists("mcp_service", "org_id", "VARCHAR(32)");
+        try { jdbc.execute("UPDATE mcp_service SET creator='system', is_builtin=1 WHERE creator IS NULL OR creator=''"); } catch (Exception e) { log.warn("backfill mcp_service.creator: {}", e.getMessage()); }
+        addColumnIfNotExists("skill", "creator", "VARCHAR(32)");
+        addColumnIfNotExists("skill", "org_id", "VARCHAR(32)");
+        try { jdbc.execute("UPDATE skill SET creator='system', is_builtin=1 WHERE creator IS NULL OR creator=''"); } catch (Exception e) { log.warn("backfill skill.creator: {}", e.getMessage()); }
+        addColumnIfNotExists("db_instance", "org_id", "VARCHAR(32)");
+        try { jdbc.execute("UPDATE db_instance SET created_by='system' WHERE created_by IS NULL OR created_by=''"); } catch (Exception e) { log.warn("backfill db_instance.created_by: {}", e.getMessage()); }
+        addColumnIfNotExists("user_feedback", "org_id", "VARCHAR(32)");
+        try { jdbc.execute("UPDATE user_feedback f LEFT JOIN sys_user u ON u.id=f.user_id SET f.org_id=u.org_id"); } catch (Exception e) { log.warn("backfill user_feedback.org_id: {}", e.getMessage()); }
+        addColumnIfNotExists("model_call_log", "org_id", "VARCHAR(32)");
+        try { jdbc.execute("UPDATE model_call_log m LEFT JOIN sys_user u ON u.username=m.caller SET m.org_id=u.org_id"); } catch (Exception e) { log.warn("backfill model_call_log.org_id: {}", e.getMessage()); }
+
+        // --- 角色存量权限补授（幂等）：分类菜单、运营中心菜单改为细分权限键控制 ---
+        grantRolePerms("role_kb_admin",
+                "menu:knowledge:categories",
+                "menu:operation:kb-analytics", "menu:operation:retrieval-analysis",
+                "menu:operation:feedback", "menu:operation:model-monitor",
+                "kb:manage");
+        grantRolePerms("role_kb_user", "menu:knowledge:categories");
+
         log.info("Schema initialization completed.");
+    }
+
+    /** 为角色补授权限（INSERT IGNORE，重复执行安全） */
+    private void grantRolePerms(String roleId, String... permKeys) {
+        try {
+            for (String key : permKeys) {
+                jdbc.update("INSERT IGNORE INTO sys_role_permission (role_id, permission_key) VALUES (?, ?)",
+                        roleId, key);
+            }
+            log.info("Granted {} permission(s) to role {}", permKeys.length, roleId);
+        } catch (Exception e) {
+            log.warn("Failed to grant permissions to role {}: {}", roleId, e.getMessage());
+        }
     }
 
     private void addColumnIfNotExists(String table, String column, String type) {

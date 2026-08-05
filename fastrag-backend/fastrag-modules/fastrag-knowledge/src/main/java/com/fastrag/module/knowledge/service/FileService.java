@@ -9,7 +9,7 @@ import java.util.Map;
 public interface FileService {
     List<FileDto> list(String kbId);
     List<FileDto> listDeleted(String kbId);
-    FileDto upload(String kbId, MultipartFile file);
+    FileDto upload(String kbId, MultipartFile file, String folderId);
     void process(String kbId, String fileId, String processingMode, java.util.Map<String, Object> qaConfig);
     FileDto update(String kbId, String fileId, Map<String, Object> patch);
     void delete(String kbId, String fileId);

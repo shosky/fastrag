@@ -15,6 +15,9 @@ import org.springframework.web.bind.annotation.*;
 import java.util.List;
 import java.util.Map;
 import java.util.stream.Collectors;
+import com.fastrag.common.annotation.Loggable;
+import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.LogCategory;
 
 /**
  * REST controller for agent CRUD operations.

@@ -2,6 +2,7 @@ package com.fastrag.common.exception;
 import com.fastrag.common.response.ApiResponse;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.HttpStatus;
+import org.springframework.security.access.AccessDeniedException;
 import org.springframework.validation.BindException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.*;
@@ -13,6 +14,12 @@ public class GlobalExceptionHandler {
     public ApiResponse<?> handleBusiness(BusinessException e) {
         log.warn("Business exception: code={}, msg={}", e.getCode(), e.getMessage());
         return ApiResponse.error(e.getCode(), e.getMessage());
+    }
+    @ExceptionHandler(AccessDeniedException.class)
+    @ResponseStatus(HttpStatus.FORBIDDEN)
+    public ApiResponse<?> handleAccessDenied(AccessDeniedException e) {
+        log.warn("Access denied: {}", e.getMessage());
+        return ApiResponse.forbidden("无权限执行该操作");
     }
     @ExceptionHandler(MethodArgumentNotValidException.class)
     @ResponseStatus(HttpStatus.OK)

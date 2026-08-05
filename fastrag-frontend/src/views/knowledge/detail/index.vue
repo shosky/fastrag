@@ -31,6 +31,7 @@ import EvaluationBenchmarkPanel from './components/EvaluationBenchmarkPanel.vue'
 import LogPanel from './components/LogPanel.vue'
 import PublishPanel from './components/PublishPanel.vue'
 import QaPanel from './components/QaPanel.vue'
+import ApiDocPanel from './components/ApiDocPanel.vue'
 import * as api from '@/api'
 
 const route = useRoute()
@@ -69,6 +70,15 @@ async function loadKbInfo() {
         dimension: data.dimension || 1024,
         usedSize: usedSizeStr,
       }
+      // 回填知识库已保存的检索配置（覆盖默认值；null 字段跳过，避免清空已有默认）
+      const savedCfg = data.retrievalConfig
+      if (savedCfg && typeof savedCfg === 'object') {
+        const merged: Record<string, unknown> = { ...searchRetrievalConfig.value }
+        for (const [key, value] of Object.entries(savedCfg)) {
+          if (value !== null && value !== undefined) merged[key] = value
+        }
+        searchRetrievalConfig.value = merged as unknown as RetrievalConfig
+      }
     }
   } catch {
     // 后端不可用时使用 mock
@@ -97,7 +107,8 @@ const searchRetrievalConfig = ref<RetrievalConfig>({
   bm25RecallCount: 50,
   vectorWeight: 0.7,
   bm25Weight: 0.3,
-  bm25SparseDropRate: 0.0,
+  enableKeywordMatch: true,
+  enableGraphExpand: true,
 })
 
 // --- Actions ---
@@ -129,9 +140,18 @@ function handleSearchConfigUpdate(config: RetrievalConfig) {
   searchRetrievalConfig.value = config
 }
 
-function handleSearchConfigSave() {
-  ElMessage.success('检索配置已保存')
-  console.log('Saved search config:', searchRetrievalConfig.value)
+async function handleSearchConfigSave() {
+  try {
+    // 持久化检索配置到知识库（retrievalConfig 字段），name 为 KbCreateRequest 必填
+    await api.updateKnowledgeBase(kbId, {
+      name: kbInfo.value.name,
+      retrievalConfig: searchRetrievalConfig.value,
+    })
+    ElMessage.success('检索配置已保存')
+  } catch (e) {
+    ElMessage.error('检索配置保存失败')
+    console.error('Failed to save search config:', e)
+  }
 }
 
 // --- Knowledge Graph state ---
@@ -151,7 +171,8 @@ let buildPollTimer: number | null = null
 
 async function fetchBuildStatus() {
   try {
-    const res = await api.getGraphBuildStatus(kbId || '')
+    // request 拦截器已解包 {code,data,message}，类型上仍是 AxiosResponse，这里断言为数据
+    const res = (await api.getGraphBuildStatus(kbId || '')) as unknown as GraphBuildStatus
     if (res) graphBuildStatusData.value = res
   } catch (e) {
     console.warn('[GraphBuild] Failed to fetch build status:', e)
@@ -192,11 +213,11 @@ function handleOpenIndexManagement() {
   graphSettingsVisible.value = false
 }
 
-// --- 评估面板：基准面板"发起评估"快捷入口的跨 tab 联动 ---
+// --- 评估面板：基准面板"发起评估"快捷入口的跨 tab 联动（传基准 id）---
 const preselectBenchmark = ref('')
 
-function handleStartEvaluationFromBenchmark(benchmarkName: string) {
-  preselectBenchmark.value = benchmarkName
+function handleStartEvaluationFromBenchmark(benchmarkId: string) {
+  preselectBenchmark.value = benchmarkId
   activeTab.value = 'evaluation'
 }
 </script>
@@ -324,7 +345,7 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
         <QaPanel :kb-id="kbId" />
       </el-tab-pane>
 
-      <el-tab-pane name="publish">
+      <el-tab-pane v-if="false" name="publish">
         <template #label>
           <span class="kb-detail__tab-label">
             <el-icon><Promotion /></el-icon>
@@ -342,6 +363,16 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
           </span>
         </template>
         <LogPanel :kb-id="kbId" />
+      </el-tab-pane>
+
+      <el-tab-pane name="api-doc">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><PriceTag /></el-icon>
+            API 文档
+          </span>
+        </template>
+        <ApiDocPanel :kb-id="kbId" />
       </el-tab-pane>
 
     </el-tabs>

@@ -20,7 +20,6 @@ const retrievalConfig = ref<RetrievalConfig>({
   bm25RecallCount: 50,
   vectorWeight: 0.7,
   bm25Weight: 0.3,
-  bm25SparseDropRate: 0.0,
 })
 
 const retrievalQuery = ref('')
@@ -78,7 +77,6 @@ const qaConfig = ref<RetrievalConfig>({
   bm25RecallCount: 50,
   vectorWeight: 0.7,
   bm25Weight: 0.3,
-  bm25SparseDropRate: 0.0,
 })
 
 const selectedModel = ref('qwen3-32b')

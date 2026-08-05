@@ -2,8 +2,10 @@ package com.fastrag.module.knowledge.controller;
 
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.KBRole;
 import com.fastrag.common.enums.LogCategory;
 import com.fastrag.common.response.ApiResponse;
+import com.fastrag.security.annotation.KbAuth;
 import com.fastrag.module.knowledge.service.FolderService;
 import com.fastrag.module.publish.service.LogService;
 import lombok.RequiredArgsConstructor;
@@ -20,11 +22,13 @@ public class FolderController {
     private final FolderService svc;
     private final LogService logService;
 
+    @KbAuth(KBRole.viewer)
     @GetMapping
     public ApiResponse<?> list(@PathVariable String kbId) {
         return ApiResponse.success(svc.list(kbId));
     }
 
+    @KbAuth(KBRole.editor)
     @PostMapping
     public ApiResponse<?> create(@PathVariable String kbId, @RequestBody Map<String, String> b) {
         var result = svc.create(kbId, b.get("name"), b.get("parentId"));
@@ -39,11 +43,13 @@ public class FolderController {
         return ApiResponse.success(result);
     }
 
+    @KbAuth(KBRole.viewer)
     @GetMapping("/{id}/name")
     public ApiResponse<?> name(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.getName(kbId, id));
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.folder_updated, detail = "重命名文件夹")
     @PutMapping("/{id}")
     public ApiResponse<?> rename(@PathVariable String kbId, @PathVariable String id,
@@ -56,6 +62,7 @@ public class FolderController {
         return ApiResponse.success();
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.folder_deleted, detail = "删除文件夹")
     @DeleteMapping("/{id}")
     public ApiResponse<?> delete(@PathVariable String kbId, @PathVariable String id) {

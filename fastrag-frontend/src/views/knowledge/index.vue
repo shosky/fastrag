@@ -161,7 +161,10 @@ function goToCreate() {
           >
             <div class="kb-card-header">
               <el-icon :size="32" class="kb-card__icon"><Collection /></el-icon>
-              <el-tag size="small" :type="kb.type === '团队' ? 'info' : 'warning'">{{ kb.type }}</el-tag>
+              <!-- 类型标签跟随共享设置：指定人共享(permission=private)→个人，全局/部门→团队 -->
+              <el-tag size="small" :type="kb.permission === 'private' ? 'warning' : 'info'">
+                {{ kb.permission === 'private' ? '个人' : '团队' }}
+              </el-tag>
             </div>
             <div class="kb-card-body">
               <h4>{{ kb.name }}</h4>

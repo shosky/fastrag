@@ -8,4 +8,6 @@ public interface FeedbackService {
     void delete(Long id);
     UserFeedback reply(Long id,String reply,String operator);
     Map<String,Object> statistics(String kbId);
+    /** 获取反馈总览面板数据（指标卡、分类分析、词云、应用满意度排行） */
+    Map<String,Object> getOverview(String kbId);
 }

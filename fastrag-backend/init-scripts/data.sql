@@ -491,8 +491,8 @@ INSERT INTO sys_config (config_key, config_value, config_type, description, is_d
 ('org_name', '{"value":"中国电信湖南分公司"}', 'brand', '组织名称', 1, 1),
 -- general：通用参数
 ('general_settings', '{"defaultLanguage":"zh-CN","timezone":"Asia/Shanghai"}', 'general', '通用设置', 1, 1),
-('general_chunk_size', '512', 'general', '默认分片大小', 1, 1),
-('general_chunk_overlap', '50', 'general', '默认分片重叠', 1, 1),
+('general_chunk_size', '2000', 'general', '默认分片大小', 1, 1),
+('general_chunk_overlap', '100', 'general', '默认分片重叠', 1, 1),
 ('general_search_top_k', '10', 'general', '默认搜索返回条数', 1, 1),
 ('general_retrieval_mode', 'hybrid', 'general', '默认检索模式', 1, 1),
 ('general_enable_rerank', 'false', 'general', '是否启用重排序', 1, 1),

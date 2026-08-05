@@ -7,9 +7,11 @@ import com.fastrag.module.graph.entity.KbBenchmarkQuestion;
 import com.fastrag.module.graph.mapper.KbBenchmarkMapper;
 import com.fastrag.module.graph.mapper.KbBenchmarkQuestionMapper;
 import com.fastrag.module.graph.model.BenchmarkConfig;
+import com.fastrag.module.graph.util.BenchmarkResponseParser;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Component;
@@ -30,6 +32,17 @@ import java.util.Map;
 public class BenchmarkGenerationHelper {
 
     private static final Logger log = LoggerFactory.getLogger(BenchmarkGenerationHelper.class);
+
+    /**
+     * 基准生成 LLM 总超时（秒），默认 300s。
+     * 生成 10 个问答对输出长（3K+ tokens），且外网 API（SiliconFlow）存在网络抖动，
+     * 必须走流式收集 + 长超时。
+     */
+    @Value("${benchmark.llm-timeout:300}")
+    private int benchmarkLlmTimeoutSeconds;
+
+    /** 基准生成输出上限：10 个中文问答对约需 3K+ tokens，默认 2048 会截断 JSON */
+    private static final int BENCHMARK_MAX_TOKENS = 8192;
 
     private final KbBenchmarkMapper mapper;
     private final KbBenchmarkQuestionMapper questionMapper;
@@ -52,13 +65,12 @@ public class BenchmarkGenerationHelper {
             }
 
             String response = callLlm(model, prompt);
-            String json = response.trim();
-            if (json.startsWith("```")) {
-                json = json.replaceAll("```json?", "").replaceAll("```", "").trim();
-            }
+            List<Map<String, Object>> questions = parseResponse(benchmarkId, response);
 
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> questions = (List<Map<String, Object>>) (List<?>) JSONUtil.toList(json, Map.class);
+            if (questions.isEmpty()) {
+                resetQuestionCount(benchmarkId);
+                return;
+            }
 
             List<KbBenchmarkQuestion> entities = new ArrayList<>();
             for (int i = 0; i < questions.size(); i++) {
@@ -93,15 +105,61 @@ public class BenchmarkGenerationHelper {
 
         } catch (Exception e) {
             log.error("[Benchmark] Failed to generate questions for benchmark: {}", benchmarkId, e);
+            // 失败时清零计数：记录创建时写入了请求题数，若实际 0 道题则 UI 会误导
+            resetQuestionCount(benchmarkId);
         }
     }
 
     /**
-     * 调用 LLM：从 model 表解析模型的 API URL，支持自定义路由
+     * 解析 LLM 响应。空响应/错误串/无 JSON 数组 → 记警告并返回空列表；
+     * JSON 损坏 → 记录响应预览，避免再次踩 "A JSONArray text must start with '['"。
+     */
+    private List<Map<String, Object>> parseResponse(String benchmarkId, String response) {
+        if (response == null || response.isBlank()) {
+            log.warn("[Benchmark] LLM returned empty response for benchmark: {}", benchmarkId);
+            return List.of();
+        }
+        try {
+            List<Map<String, Object>> questions = BenchmarkResponseParser.parseQuestions(response);
+            if (questions.isEmpty()) {
+                log.warn("[Benchmark] No JSON array found in LLM response for benchmark: {}, preview: {}",
+                        benchmarkId, preview(response));
+            }
+            return questions;
+        } catch (Exception e) {
+            log.warn("[Benchmark] Failed to parse LLM response for benchmark: {}, preview: {}, error: {}",
+                    benchmarkId, preview(response), e.getMessage());
+            return List.of();
+        }
+    }
+
+    /** 生成失败时把基准计数清零，避免 UI 显示"10 道题"但实际为 0 */
+    private void resetQuestionCount(String benchmarkId) {
+        try {
+            transactionTemplate.executeWithoutResult(status -> {
+                KbBenchmark benchmark = mapper.selectById(benchmarkId);
+                if (benchmark != null && benchmark.getQuestionCount() != 0) {
+                    benchmark.setQuestionCount(0);
+                    mapper.updateById(benchmark);
+                }
+            });
+        } catch (Exception e) {
+            log.warn("[Benchmark] Failed to reset question count for benchmark: {}", benchmarkId, e.getMessage());
+        }
+    }
+
+    private static String preview(String response) {
+        return response.length() > 300 ? response.substring(0, 300) + "..." : response;
+    }
+
+    /**
+     * 调用 LLM：从 model 表解析模型的 API URL，支持自定义路由。
+     * 使用流式收集 + 长超时（chatWithTimeout），避免非流式 30s 阻塞超时。
      */
     private String callLlm(String model, String prompt) {
         if (model == null || model.isBlank() || "default".equals(model)) {
-            return llmService.chat(model != null ? model : "default", prompt);
+            return llmService.chatWithTimeout(model != null ? model : "default", prompt,
+                    null, null, false, benchmarkLlmTimeoutSeconds, BENCHMARK_MAX_TOKENS);
         }
 
         // 从 model 表查询模型的 API URL 和 Key
@@ -112,16 +170,18 @@ public class BenchmarkGenerationHelper {
                 Map<String, Object> record = records.get(0);
                 String apiUrl = (String) record.get("api_url");
                 String apiKeyRef = (String) record.get("api_key_ref");
-                return llmService.chat(model, prompt,
+                return llmService.chatWithTimeout(model, prompt,
                         apiUrl != null && !apiUrl.isBlank() ? apiUrl : null,
-                        apiKeyRef != null && !apiKeyRef.isBlank() ? apiKeyRef : null);
+                        apiKeyRef != null && !apiKeyRef.isBlank() ? apiKeyRef : null,
+                        false, benchmarkLlmTimeoutSeconds, BENCHMARK_MAX_TOKENS);
             }
         } catch (Exception e) {
             log.warn("[Benchmark] Failed to resolve model '{}' from DB, fallback to default gateway: {}", model, e.getMessage());
         }
 
         // 降级：使用默认 AI gateway
-        return llmService.chat(model, prompt);
+        return llmService.chatWithTimeout(model, prompt,
+                null, null, false, benchmarkLlmTimeoutSeconds, BENCHMARK_MAX_TOKENS);
     }
 
     private String buildVectorPrompt(String kbId, int questionCount, BenchmarkConfig config) {

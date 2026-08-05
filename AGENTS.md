@@ -7,7 +7,7 @@
 所有带服务端分页的列表页面必须使用以下统一模板：
 
 ```vue
-<div class="[block]__pagination">
+<div class="[block]__pagination">   
   <el-pagination
     v-model:current-page="currentPage"
     v-model:page-size="pageSize"

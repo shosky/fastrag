@@ -118,6 +118,7 @@ export interface PersonnelRecord {
   realName: string
   phone: string
   email: string
+  orgId: string
   orgName: string
   roleIds: string[]
   roleNames: string[]

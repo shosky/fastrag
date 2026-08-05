@@ -1,7 +1,6 @@
 <script setup lang="ts">
 import type { KnowledgeFile } from '@/types/knowledge'
-import { getFileCategory } from '@/types/knowledge'
-import { Document, CircleCheck, TrendCharts, Upload, FolderAdd, Delete, Rank, FolderOpened, Folder, MoreFilled, Edit } from '@element-plus/icons-vue'
+import { Upload, FolderAdd, Delete, Rank, FolderOpened } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import * as api from '@/api'
@@ -85,16 +84,6 @@ const {
 // 解析策略（用于上传时把 strategyId 解析成 name）
 const { strategies, resolveByExtension } = useParseStrategy(kbId)
 
-// --- Stat cards ---
-const totalFiles = computed(() => files.value.length)
-const completedFiles = computed(() =>
-  files.value.filter((f) => f.status === 'completed').length,
-)
-const completionRate = computed(() => {
-  if (files.value.length === 0) return 0
-  return Math.round((completedFiles.value / files.value.length) * 100)
-})
-
 // --- Upload dialog ---
 const uploaderVisible = ref(false)
 
@@ -137,7 +126,7 @@ const newFolderParentId = ref('root')
 
 function handleNewFolder() {
   newFolderName.value = ''
-  newFolderParentId.value = 'root'
+  newFolderParentId.value = selectedFolderId.value || 'root'
   newFolderDialogVisible.value = true
 }
 
@@ -160,25 +149,85 @@ const selectedFolderId = ref<string | null>(null)
 
 const filteredFilesByFolder = computed(() => {
   if (!selectedFolderId.value || selectedFolderId.value === 'root') {
-    return files.value
+    // 根目录：只显示不属于任何文件夹的文件
+    return files.value.filter(f => !f.folderId)
   }
   return files.value.filter(f => f.folderId === selectedFolderId.value)
 })
-
-const folderFileCount = (folderId: string): number => {
-  if (!folderId || folderId === 'root') return files.value.length
-  return files.value.filter(f => f.folderId === folderId).length
-}
 
 function selectFolder(folderId: string | null) {
   selectedFolderId.value = folderId
 }
 
-// --- Folder context menu ---
-const contextFolderId = ref<string | null>(null)
-const contextFolderName = ref('')
+// --- Breadcrumb navigation ---
+interface BreadcrumbItem {
+  id: string | null
+  label: string
+}
 
-// Rename dialog
+const breadcrumbs = computed<BreadcrumbItem[]>(() => {
+  const crumbs: BreadcrumbItem[] = []
+  const targetId = selectedFolderId.value
+
+  if (!targetId || targetId === 'root') {
+    return crumbs // At root — no crumbs needed
+  }
+
+  // Walk the tree to build path from root to targetId
+  function findPath(nodes: any[], path: BreadcrumbItem[]): BreadcrumbItem[] | null {
+    for (const node of nodes) {
+      const current: BreadcrumbItem = { id: node.id, label: node.label }
+      if (node.id === targetId) {
+        return [...path, current]
+      }
+      if (node.children) {
+        const result = findPath(node.children, [...path, current])
+        if (result) return result
+      }
+    }
+    return null
+  }
+
+  return findPath(folders.value, crumbs) || []
+})
+
+function navigateToFolder(folderId: string | null) {
+  selectedFolderId.value = folderId
+}
+
+// Current sub-folders for the selected directory
+const currentSubFolders = computed<Array<{ id: string; label: string; createdAt?: string; updatedAt?: string }>>(() => {
+  const targetId = selectedFolderId.value
+
+  // At root level — return top-level folders (children of root node)
+  if (!targetId || targetId === 'root') {
+    // folders.value is the tree array, top-level nodes are root's children
+    return folders.value.map(f => ({ id: f.id, label: f.label, createdAt: f.createdAt, updatedAt: f.updatedAt }))
+  }
+
+  // Find the node and return its children
+  function findNode(nodes: any[]): any[] | null {
+    for (const node of nodes) {
+      if (node.id === targetId) {
+        return node.children || []
+      }
+      if (node.children) {
+        const result = findNode(node.children)
+        if (result) return result
+      }
+    }
+    return null
+  }
+
+  const children = findNode(folders.value)
+  return children ? children.map((f: any) => ({ id: f.id, label: f.label, createdAt: f.createdAt, updatedAt: f.updatedAt })) : []
+})
+
+function enterFolder(folderId: string) {
+  selectedFolderId.value = folderId
+}
+
+// --- Folder context menu ---
 const folderRenameDialogVisible = ref(false)
 const folderRenameId = ref<string>('')
 const folderRenameName = ref('')
@@ -208,32 +257,13 @@ async function handleDeleteFolder(folderId: string) {
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
     await deleteFolder(folderId)
-    // 如果删的是当前选中的文件夹，重置筛选
     if (selectedFolderId.value === folderId) {
       selectedFolderId.value = null
     }
     ElMessage.success('文件夹已删除')
   } catch (e: any) {
-    if (e !== 'cancel' && e?.message) {
-      ElMessage.error(e?.message || '删除失败')
-    }
-  }
-}
-
-function handleCreateSubFolder(folderId: string) {
-  contextFolderId.value = folderId
-  newFolderParentId.value = folderId
-  newFolderName.value = ''
-  newFolderDialogVisible.value = true
-}
-
-function handleFolderCommand(cmd: string, data: { id: string; label: string }) {
-  if (cmd === 'createSub') {
-    handleCreateSubFolder(data.id)
-  } else if (cmd === 'rename') {
-    handleFolderRename(data.id, data.label)
-  } else if (cmd === 'delete') {
-    handleDeleteFolder(data.id)
+    // cancel → 用户取消，静默；其他错误由 request 拦截器统一提示
+    if (e === 'cancel') return
   }
 }
 
@@ -488,89 +518,9 @@ onBeforeUnmount(() => {
 <template>
   <div class="file-manager">
     <div class="file-manager__body">
-      <!-- Folder tree sidebar -->
-      <div class="file-manager__sidebar">
-        <div class="file-manager__sidebar-header">
-          <span class="file-manager__sidebar-title">文件目录</span>
-          <el-button :icon="FolderAdd" link size="small" @click="handleNewFolder" />
-        </div>
-        <div class="file-manager__tree-wrapper">
-          <div
-            class="file-manager__tree-node"
-            :class="{ 'is-active': selectedFolderId === null || selectedFolderId === 'root' }"
-            @click="selectFolder(null)"
-          >
-            <el-icon class="file-manager__tree-icon"><FolderOpened /></el-icon>
-            <span class="file-manager__tree-label">全部文件</span>
-            <span class="file-manager__tree-count">{{ files.length }}</span>
-          </div>
-          <el-tree
-            :data="folders"
-            :props="{ label: 'label', children: 'children' }"
-            node-key="id"
-            default-expand-all
-            highlight-current
-            :current-node-key="selectedFolderId"
-            @node-click="(data: any) => selectFolder(data.id)"
-            class="file-manager__tree"
-          >
-            <template #default="{ node, data }">
-              <div class="file-manager__tree-node-inner">
-                <el-icon class="file-manager__tree-icon"><Folder /></el-icon>
-                <span class="file-manager__tree-label">{{ node.label }}</span>
-                <span class="file-manager__tree-count">{{ folderFileCount(data.id) }}</span>
-                <el-dropdown trigger="click" @command="(cmd: string) => handleFolderCommand(cmd, data)">
-                  <el-button class="file-manager__tree-menu-btn" :icon="MoreFilled" link size="small" @click.stop />
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="createSub">新建子文件夹</el-dropdown-item>
-                      <el-dropdown-item command="rename">重命名</el-dropdown-item>
-                      <el-dropdown-item command="delete" divided>删除</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-              </div>
-            </template>
-          </el-tree>
-        </div>
-      </div>
-
-      <!-- Main content (right side) -->
+      <!-- Main content -->
       <div class="file-manager__main">
-        <!-- Stat cards -->
-        <div class="file-manager__stats">
-          <div class="file-manager__stat-card">
-            <div class="file-manager__stat-icon file-manager__stat-icon--blue">
-              <el-icon :size="24"><Document /></el-icon>
-            </div>
-            <div class="file-manager__stat-info">
-              <span class="file-manager__stat-value">{{ totalFiles }}</span>
-              <span class="file-manager__stat-label">文件总数</span>
-            </div>
-          </div>
-
-          <div class="file-manager__stat-card">
-            <div class="file-manager__stat-icon file-manager__stat-icon--green">
-              <el-icon :size="24"><CircleCheck /></el-icon>
-            </div>
-            <div class="file-manager__stat-info">
-              <span class="file-manager__stat-value">{{ completedFiles }}</span>
-              <span class="file-manager__stat-label">已处理</span>
-            </div>
-          </div>
-
-          <div class="file-manager__stat-card">
-            <div class="file-manager__stat-icon file-manager__stat-icon--orange">
-              <el-icon :size="24"><TrendCharts /></el-icon>
-            </div>
-            <div class="file-manager__stat-info">
-              <span class="file-manager__stat-value">{{ completionRate }}%</span>
-              <span class="file-manager__stat-label">完成进度</span>
-            </div>
-          </div>
-        </div>
-
-        <!-- Action bar -->
+        <!-- Action bar (merged with breadcrumb) -->
         <div class="file-manager__actions">
           <div class="file-manager__actions-left">
             <el-button v-permission="'kb:upload'" type="primary" :icon="Upload" @click="openUploader">
@@ -579,6 +529,22 @@ onBeforeUnmount(() => {
             <el-button :icon="Delete" @click="openRecycleBin">
               回收站
             </el-button>
+          </div>
+          <!-- Breadcrumb + 新建文件夹 -->
+          <div class="file-manager__actions-right">
+            <el-breadcrumb separator="/">
+              <el-breadcrumb-item @click="navigateToFolder(null)">
+                <el-icon><FolderOpened /></el-icon> 全部文件
+              </el-breadcrumb-item>
+              <el-breadcrumb-item
+                v-for="crumb in breadcrumbs"
+                :key="crumb.id"
+                @click="navigateToFolder(crumb.id)"
+              >
+                {{ crumb.label }}
+              </el-breadcrumb-item>
+            </el-breadcrumb>
+            <el-button :icon="FolderAdd" size="small" @click="handleNewFolder">新建文件夹</el-button>
           </div>
           <!-- 批量操作栏：仅当有选中文件时显示 -->
           <div v-if="selectedFiles.length > 0" class="file-manager__bulk-actions">
@@ -592,6 +558,7 @@ onBeforeUnmount(() => {
         <!-- File table -->
         <FileTable
           :files="filteredFilesByFolder"
+          :folders="currentSubFolders"
           :loading="loading"
           :kb-id="kbId"
           :strategies="strategies"
@@ -607,6 +574,9 @@ onBeforeUnmount(() => {
           @selection-change="handleSelectionChange"
           @change-strategy="handleChangeStrategy"
           @toggle-graph-build="handleToggleGraphBuild"
+          @enter-folder="enterFolder"
+          @rename-folder="handleFolderRename"
+          @delete-folder="handleDeleteFolder"
         />
 
       </div> <!-- /.file-manager__main -->
@@ -617,6 +587,7 @@ onBeforeUnmount(() => {
       v-model:visible="uploaderVisible"
       :kb-id="kbId"
       :existing-file-names="files.map((f) => f.name)"
+      :folder-id="selectedFolderId"
       @upload="handleUpload"
     />
 
@@ -709,124 +680,8 @@ onBeforeUnmount(() => {
 
   &__body {
     display: flex;
-    gap: $spacing-base;
     flex: 1;
     min-height: 0;
-  }
-
-  // --- Folder tree sidebar ---
-  &__sidebar {
-    width: 220px;
-    min-width: 220px;
-    background: $bg-white;
-    border-radius: $radius-base;
-    box-shadow: $shadow-sm;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
-  }
-
-  &__sidebar-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: $spacing-base $spacing-base $spacing-sm;
-    border-bottom: 1px solid $border-lighter;
-  }
-
-  &__sidebar-title {
-    font-size: 14px;
-    font-weight: 600;
-    color: $text-primary;
-  }
-
-  &__tree-wrapper {
-    flex: 1;
-    overflow-y: auto;
-    padding: $spacing-xs;
-  }
-
-  &__tree-node {
-    display: flex;
-    align-items: center;
-    gap: $spacing-xs;
-    padding: 8px 10px;
-    border-radius: $radius-base;
-    cursor: pointer;
-    transition: background 0.15s;
-    margin-bottom: 2px;
-
-    &:hover {
-      background: $bg-hover;
-    }
-
-    &.is-active {
-      background: $bg-active;
-      color: $color-primary;
-      font-weight: 500;
-    }
-  }
-
-  &__tree-node-inner {
-    display: flex;
-    align-items: center;
-    gap: $spacing-xs;
-    flex: 1;
-    min-width: 0;
-  }
-
-  &__tree-icon {
-    color: $color-warning;
-    flex-shrink: 0;
-  }
-
-  &__tree-label {
-    font-size: 13px;
-    color: $text-primary;
-    flex: 1;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-
-  &__tree-count {
-    font-size: 12px;
-    color: $text-secondary;
-    background: $bg-hover;
-    padding: 0 6px;
-    border-radius: 10px;
-    line-height: 18px;
-    flex-shrink: 0;
-  }
-
-  &__tree-menu-btn {
-    visibility: hidden;
-    margin-left: 2px;
-    flex-shrink: 0;
-  }
-
-  &__tree-node-inner:hover &__tree-menu-btn {
-    visibility: visible;
-  }
-
-  // --- Tree overrides ---
-  :deep(.file-manager__tree) {
-    background: transparent;
-    border: none;
-
-    .el-tree-node__content {
-      height: auto;
-      padding: 2px 0;
-      border-radius: $radius-base;
-
-      &:hover {
-        background: $bg-hover;
-      }
-    }
-
-    .el-tree-node.is-current > .el-tree-node__content {
-      background: $bg-active;
-    }
   }
 
   // --- Main content area ---
@@ -838,64 +693,31 @@ onBeforeUnmount(() => {
     gap: $spacing-base;
   }
 
-  // --- Stat cards ---
-  &__stats {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: $spacing-base;
-  }
-
-  &__stat-card {
+  // --- Breadcrumb navigation (inline in action bar) ---
+  &__actions-right {
     display: flex;
     align-items: center;
-    gap: $spacing-md;
-    padding: $spacing-base $spacing-lg;
-    background: $bg-white;
-    border-radius: $radius-base;
-    box-shadow: $shadow-sm;
-  }
+    gap: 12px;
+    flex: 1;
+    justify-content: flex-end;
+    margin-left: 24px;
 
-  &__stat-icon {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 48px;
-    height: 48px;
-    border-radius: $radius-lg;
-    flex-shrink: 0;
+    :deep(.el-breadcrumb) {
+      font-size: 14px;
 
-    &--blue {
-      background: #e3f2fd;
-      color: #1e88e5;
+      .el-breadcrumb__item {
+        .el-breadcrumb__inner {
+          cursor: pointer;
+          display: flex;
+          align-items: center;
+          gap: 4px;
+
+          &:hover {
+            color: $color-primary;
+          }
+        }
+      }
     }
-
-    &--green {
-      background: #e8f5e9;
-      color: #43a047;
-    }
-
-    &--orange {
-      background: #fff3e0;
-      color: #fb8c00;
-    }
-  }
-
-  &__stat-info {
-    display: flex;
-    flex-direction: column;
-    gap: 2px;
-  }
-
-  &__stat-value {
-    font-size: 24px;
-    font-weight: 600;
-    color: $text-primary;
-    line-height: 1.2;
-  }
-
-  &__stat-label {
-    font-size: 13px;
-    color: $text-secondary;
   }
 
   // --- Action bar ---

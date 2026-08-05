@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { Search, Refresh, Setting, Document, Loading } from '@element-plus/icons-vue'
 import { useForceGraph } from '@/composables/useForceGraph'
-import type { GraphNode, GraphBuildStatus } from '@/types/evaluation'
+import type { GraphNode, GraphEdge, GraphBuildStatus } from '@/types/evaluation'
 import { ElMessage } from 'element-plus'
 import { retryGraphBuild } from '@/api'
 
@@ -13,6 +13,7 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   (e: 'select-node', node: GraphNode | null): void
+  (e: 'select-edge', edge: GraphEdge | null): void
   (e: 'open-settings'): void
   (e: 'open-index'): void
 }>()
@@ -30,6 +31,7 @@ const {
   stats,
   loading,
   selectedNode,
+  selectedEdge,
   entityCount,
   relationCount,
   visibleEntityCount,
@@ -46,6 +48,8 @@ const {
 } = useForceGraph(graphContainer, kbIdRef, (node) => {
   selectNode(node)
   emit('select-node', node)
+}, (edge) => {
+  emit('select-edge', edge)
 })
 
 // 构建状态从 props 获取
@@ -55,17 +59,21 @@ const isBuilding = computed(() => props.buildStatus.status === 'building')
 const normalizedEntityTypes = computed(() => {
   const raw = entityTypes.value
   if (!raw || raw.length === 0) return []
-  // 如果是字符串数组（后端返回的 entity_type 列表）
+  const colors = ['#409EFF','#67C23A','#E6A23C','#F56C6C','#909399','#B37FEB','#36CFC9','#F2A8B8']
+  // 如果是字符串数组（旧版后端返回的 entity_type 列表）
   if (typeof raw[0] === 'string') {
-    const colors = ['#409EFF','#67C23A','#E6A23C','#F56C6C','#909399','#B37FEB','#36CFC9','#F2A8B8']
     return (raw as unknown as string[]).map((name, i) => ({
       name,
       count: 0,
       color: colors[i % colors.length],
     }))
   }
-  // 已经是 EntityType[] 格式
-  return raw as { name: string; count: number; color: string }[]
+  // 已是 {name, count} 对象数组（新版后端）：补齐 color
+  return (raw as unknown as { name: string; count: number }[]).map((t, i) => ({
+    name: t.name,
+    count: t.count,
+    color: colors[i % colors.length],
+  }))
 })
 
 // --- Search ---
@@ -123,6 +131,10 @@ function handleEntityTypeClick() {
 
 function closeEntityTypePopup() {
   showEntityTypePopup.value = false
+}
+
+function closeEdgePopup() {
+  emit('select-edge', null)
 }
 
 // --- 构建状态条 ---
@@ -286,6 +298,36 @@ onBeforeUnmount(() => {
           </div>
         </div>
       </Transition>
+
+      <!-- Relation detail popup -->
+      <Transition name="popup-fade">
+        <div v-if="selectedEdge" class="knowledge-graph__edge-popup">
+          <div class="knowledge-graph__edge-popup-header">
+            <h4>关系详情</h4>
+            <el-button link @click="closeEdgePopup">×</el-button>
+          </div>
+          <div class="knowledge-graph__edge-popup-body">
+            <div class="knowledge-graph__edge-row">
+              <span class="knowledge-graph__edge-label">关系类型</span>
+              <el-tag size="small" type="warning">{{ selectedEdge.label || 'RELATED' }}</el-tag>
+            </div>
+            <div class="knowledge-graph__edge-row">
+              <span class="knowledge-graph__edge-label">源实体</span>
+              <span class="knowledge-graph__edge-value">{{ selectedEdge.source }}</span>
+            </div>
+            <div class="knowledge-graph__edge-row">
+              <span class="knowledge-graph__edge-label">目标实体</span>
+              <span class="knowledge-graph__edge-value">{{ selectedEdge.target }}</span>
+            </div>
+            <div class="knowledge-graph__edge-row">
+              <span class="knowledge-graph__edge-label">关系描述</span>
+              <span class="knowledge-graph__edge-value">
+                {{ selectedEdge.source }} → {{ selectedEdge.label || 'RELATED' }} → {{ selectedEdge.target }}
+              </span>
+            </div>
+          </div>
+        </div>
+      </Transition>
     </div>
   </div>
 </template>
@@ -428,6 +470,61 @@ onBeforeUnmount(() => {
   &__entity-count {
     color: $text-secondary;
     font-size: 13px;
+  }
+
+  // --- Relation detail popup ---
+  &__edge-popup {
+    position: absolute;
+    bottom: 60px;
+    left: $spacing-base;
+    z-index: 200;
+    width: 280px;
+    background: $bg-white;
+    border-radius: $radius-base;
+    box-shadow: $shadow-lg;
+    overflow: hidden;
+  }
+
+  &__edge-popup-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: $spacing-sm $spacing-base;
+    border-bottom: 1px solid $border-lighter;
+    background: $bg-hover;
+
+    h4 {
+      margin: 0;
+      font-size: 14px;
+      font-weight: 600;
+      color: $text-primary;
+    }
+  }
+
+  &__edge-popup-body {
+    padding: $spacing-sm;
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+  }
+
+  &__edge-row {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+    padding: $spacing-xs $spacing-sm;
+  }
+
+  &__edge-label {
+    font-size: 12px;
+    color: $text-secondary;
+    font-family: monospace;
+  }
+
+  &__edge-value {
+    font-size: 13px;
+    color: $text-primary;
+    word-break: break-all;
   }
 
   &__stat-sep {

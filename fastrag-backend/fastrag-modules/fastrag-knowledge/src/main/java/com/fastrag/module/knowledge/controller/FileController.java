@@ -2,8 +2,10 @@ package com.fastrag.module.knowledge.controller;
 
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.KBRole;
 import com.fastrag.common.enums.LogCategory;
 import com.fastrag.common.response.ApiResponse;
+import com.fastrag.security.annotation.KbAuth;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
@@ -36,19 +38,23 @@ public class FileController {
     private final KbFileMapper fileMapper;
     private final LogService logService;
 
+    @KbAuth(KBRole.viewer)
     @GetMapping
     public ApiResponse<?> list(@PathVariable String kbId) {
         return ApiResponse.success(svc.list(kbId));
     }
 
+    @KbAuth(KBRole.viewer)
     @GetMapping("/deleted")
     public ApiResponse<?> deleted(@PathVariable String kbId) {
         return ApiResponse.success(svc.listDeleted(kbId));
     }
 
+    @KbAuth(KBRole.editor)
     @PostMapping
-    public ApiResponse<?> upload(@PathVariable String kbId, @RequestParam("file") MultipartFile file) {
-        FileDto result = svc.upload(kbId, file);
+    public ApiResponse<?> upload(@PathVariable String kbId, @RequestParam("file") MultipartFile file,
+                                 @RequestParam(value = "folderId", required = false) String folderId) {
+        FileDto result = svc.upload(kbId, file, folderId);
         // 记录文件上传日志（文件名在 Service 层生成，此处补充记录）
         try {
             String username = SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getUsername() : "system";
@@ -62,6 +68,7 @@ public class FileController {
         return ApiResponse.success(result);
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.file_processed, detail = "处理文件")
     @PostMapping("/{id}/process")
     public ApiResponse<?> process(@PathVariable String kbId, @PathVariable String id,
@@ -73,12 +80,14 @@ public class FileController {
         return ApiResponse.success();
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.file_retried, detail = "重新处理文件")
     @PostMapping("/{id}/retry")
     public ApiResponse<?> retry(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.retryFile(kbId, id));
     }
 
+    @KbAuth(KBRole.editor)
     @PutMapping("/{id}")
     public ApiResponse<?> update(@PathVariable String kbId, @PathVariable String id, @RequestBody Map<String, Object> p) {
         // update 前先取原始文件信息，用于对比日志
@@ -99,6 +108,7 @@ public class FileController {
         return ApiResponse.success(result);
     }
 
+    @KbAuth(KBRole.editor)
     @DeleteMapping("/{id}")
     public ApiResponse<?> delete(@PathVariable String kbId, @PathVariable String id) {
         try {
@@ -115,6 +125,7 @@ public class FileController {
         return ApiResponse.success();
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.file_restored, detail = "恢复文件")
     @PostMapping("/{id}/restore")
     public ApiResponse<?> restore(@PathVariable String kbId, @PathVariable String id) {
@@ -122,6 +133,7 @@ public class FileController {
         return ApiResponse.success();
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.file_permanent_deleted, detail = "永久删除文件")
     @DeleteMapping("/{id}/permanent")
     public ApiResponse<?> permDelete(@PathVariable String kbId, @PathVariable String id) {
@@ -129,6 +141,7 @@ public class FileController {
         return ApiResponse.success();
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.file_permanent_deleted, detail = "清空回收站")
     @DeleteMapping("/recycle-bin")
     public ApiResponse<?> emptyBin(@PathVariable String kbId) {
@@ -136,12 +149,14 @@ public class FileController {
         return ApiResponse.success();
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.file_copied, detail = "复制文件")
     @PostMapping("/{id}/copy")
     public ApiResponse<?> copy(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.copy(kbId, id));
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.file_moved, detail = "跨知识库移动文件")
     @PostMapping("/{id}/move")
     public ApiResponse<?> moveToKb(@PathVariable String kbId, @PathVariable String id,
@@ -154,17 +169,20 @@ public class FileController {
         return ApiResponse.success(svc.moveToKb(kbId, id, targetKbId, targetFolderId));
     }
 
+    @KbAuth(KBRole.viewer)
     @GetMapping("/{id}/processing-status")
     public ApiResponse<?> status(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.getProcessingStatus(kbId, id));
     }
 
+    @KbAuth(KBRole.viewer)
     @GetMapping("/{id}/preview")
     public ApiResponse<?> preview(@PathVariable String kbId, @PathVariable String id,
                                   @RequestParam(required = false) String strategyId) {
         return ApiResponse.success(svc.previewChunks(kbId, id, strategyId));
     }
 
+    @KbAuth(KBRole.viewer)
     @Loggable(category = LogCategory.operation, action = ActionType.file_downloaded, detail = "下载文件")
     @GetMapping("/{id}/download")
     public ResponseEntity<InputStreamResource> download(@PathVariable String kbId, @PathVariable String id) {
@@ -203,6 +221,7 @@ public class FileController {
      * 下载音频切片文件
      * 切片文件存储在: {kbId}/{fileId}/segments/{chunkIndex}.{ext}
      */
+    @KbAuth(KBRole.viewer)
     @GetMapping("/{id}/segments/{chunkIndex}")
     public ResponseEntity<InputStreamResource> downloadSegment(
             @PathVariable String kbId, @PathVariable String id, @PathVariable int chunkIndex) {
@@ -233,6 +252,7 @@ public class FileController {
      * 下载 PDF 提取的页面图片
      * 图片存储在: {kbId}/{fileId}/images/{imageKey}
      */
+    @KbAuth(KBRole.viewer)
     @GetMapping("/{id}/images/{imageKey}")
     public ResponseEntity<InputStreamResource> downloadPageImage(
             @PathVariable String kbId, @PathVariable String id, @PathVariable String imageKey) {

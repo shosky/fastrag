@@ -58,6 +58,8 @@ public class McpService {
 
     /** 是否为内置 MCP 服务 */
     private Integer isBuiltin;
+    private String creator; // 创建者 userId（system=系统预置）
+    private String orgId; // 归属组织
 
     /** 内置服务的配置哈希，用于同步检测 */
     private String configHash;

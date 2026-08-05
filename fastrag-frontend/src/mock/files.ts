@@ -12,6 +12,8 @@ export interface FolderNode {
   id: string
   label: string
   children?: FolderNode[]
+  createdAt?: string
+  updatedAt?: string
 }
 
 /** 文件夹树（迁移自 MoveFileDialog 硬编码） */

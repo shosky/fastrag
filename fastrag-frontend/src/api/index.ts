@@ -59,6 +59,14 @@ export async function resetPassword(data: { email: string; code: string; newPass
   return request.post('/auth/reset-password', data)
 }
 
+export async function getWechatQrScene() {
+  return request.get('/auth/wechat/qr-scene')
+}
+
+export async function pollWechatQrStatus(scene: string) {
+  return request.get('/auth/wechat/qr-status', { params: { scene } })
+}
+
 // ===========================================================================
 // 知识库 API
 // ===========================================================================
@@ -892,6 +900,18 @@ export async function deleteSensitiveWord(id: string) {
   return request.delete(`/sensitive-words/${id}`)
 }
 
+export async function downloadSensitiveWordTemplate() {
+  return request.get('/sensitive-words/template', { responseType: 'blob' })
+}
+
+export async function importSensitiveWords(file: File) {
+  const formData = new FormData()
+  formData.append('file', file)
+  return request.post('/sensitive-words/import', formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
+}
+
 // ===========================================================================
 // 字典 API
 // ===========================================================================
@@ -1034,6 +1054,11 @@ export async function getPersonnel(params?: { keyword?: string; page?: number; p
   return request.get('/personnel', { params })
 }
 
+/** 轻量人员选项（共享设置/成员选择用）：登录即可访问，返回启用人员精简信息 */
+export async function getPersonnelSimple() {
+  return request.get('/personnel/simple')
+}
+
 export async function createPersonnel(data: Record<string, unknown>) {
   return request.post('/personnel', data)
 }
@@ -1122,6 +1147,28 @@ export async function getAuditLogs(params?: { module?: string; limit?: number })
   return request.get('/audit/system-log', { params })
 }
 
+/**
+ * 统一日志查询（支持多日志类型分页）
+ */
+export async function getLogs(params?: {
+  category?: 'audit' | 'login' | 'operation'
+  keyword?: string
+  module?: string
+  operator?: string
+  kbId?: string
+  page?: number
+  pageSize?: number
+}) {
+  return request.get('/logs', { params })
+}
+
+/**
+ * 查询登录日志
+ */
+export async function getLoginLogs(params?: { userId?: string; status?: string; limit?: number }) {
+  return request.get('/audit/login-log', { params })
+}
+
 // ===========================================================================
 // 反馈 API
 // ===========================================================================
@@ -1156,6 +1203,14 @@ export async function deleteFeedback(id: number | string) {
 
 export async function replyFeedback(id: number | string, data: { reply: string; operator?: string }) {
   return request.post(`/feedback/${id}/reply`, data)
+}
+
+export async function getFeedbackOverview(kbId?: string) {
+  return request.get('/feedback/overview', { params: { kbId } })
+}
+
+export async function getChatSessions(params?: { keyword?: string; userId?: string; page?: number; pageSize?: number }) {
+  return request.get('/chat-sessions', { params })
 }
 
 // ===========================================================================
@@ -1703,6 +1758,14 @@ export async function deleteModelPreset(id: string) {
   return request.delete(`/models/presets/${id}`)
 }
 
+// ===========================================================================
+// 模型监控 API
+// ===========================================================================
+
+export async function getModelMonitorOverview(params?: { timeRange?: number; keyword?: string; page?: number; pageSize?: number }) {
+  return request.get('/monitor/model/overview', { params })
+}
+
 export async function getKnowledgeUpdateLogs(kbId: string, page?: number, pageSize?: number) {
   return request.get(`/kb/${kbId}/knowledge-update-logs`, { params: { page, pageSize } })
 }
@@ -1758,3 +1821,21 @@ export async function deleteNotification(id: string) {
 // 默认导出（兼容旧代码）
 // ===========================================================================
 export default request
+
+// ===========================================================================
+// API Token 管理（平台级全局 Token）
+// ===========================================================================
+/** 创建 API Token */
+export async function createApiToken(data: Record<string, any>) {
+  return request.post('/api-tokens', data)
+}
+
+/** 获取 API Token 列表 */
+export async function getApiTokens() {
+  return request.get('/api-tokens')
+}
+
+/** 撤销（删除）API Token */
+export async function deleteApiToken(tokenId: string) {
+  return request.delete(`/api-tokens/${tokenId}`)
+}

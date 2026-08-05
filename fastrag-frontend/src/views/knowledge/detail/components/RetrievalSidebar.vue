@@ -159,31 +159,26 @@ function handleSave() {
           />
           <span class="retrieval-sidebar__hint">混合检索中 BM25 召回结果的融合权重</span>
         </div>
-
-        <!-- BM25 稀疏项丢弃比例 -->
-        <div class="retrieval-sidebar__field">
-          <label class="retrieval-sidebar__label">BM25 稀疏项丢弃比例</label>
-          <el-input-number
-            :model-value="localConfig.bm25SparseDropRate"
-            :min="0"
-            :max="1"
-            :step="0.1"
-            :precision="2"
-            controls-position="right"
-            style="width: 100%"
-            @update:model-value="(v: number | undefined) => { if (v !== undefined) updateField('bm25SparseDropRate', v) }"
-          />
-          <span class="retrieval-sidebar__hint">BM25 检索时丢弃低分稀疏项的比例，数值越大检索越快但可能降低召回</span>
-        </div>
       </template>
+
+      <!-- 图谱检索 -->
+      <el-divider style="margin: 12px 0" />
+      <div class="retrieval-sidebar__field">
+        <label class="retrieval-sidebar__label">图谱检索</label>
+        <el-switch
+          :model-value="localConfig.enableGraphExpand ?? true"
+          @update:model-value="(v: string | number | boolean) => updateField('enableGraphExpand', !!v)"
+        />
+        <span class="retrieval-sidebar__hint">启用知识图谱召回通道，结果与向量/全文检索融合</span>
+      </div>
 
       <!-- 关键词匹配 -->
       <el-divider style="margin: 12px 0" />
       <div class="retrieval-sidebar__field">
         <label class="retrieval-sidebar__label">关键词匹配</label>
         <el-switch
-          :model-value="(localConfig as any).enableKeywordMatch ?? false"
-          @update:model-value="(v: boolean) => { (localConfig as any).enableKeywordMatch = v; emit('update:config', { ...localConfig }) }"
+          :model-value="localConfig.enableKeywordMatch ?? true"
+          @update:model-value="(v: string | number | boolean) => updateField('enableKeywordMatch', !!v)"
         />
         <span class="retrieval-sidebar__hint">启用后，用户输入命中问答对的触发关键词时优先返回匹配结果</span>
       </div>

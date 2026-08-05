@@ -4,34 +4,85 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.fastrag.common.enums.KBRole;
+import com.fastrag.infra.graph.GraphStore;
+import com.fastrag.infra.milvus.MilvusService;
+import com.fastrag.infra.minio.MinioService;
+import com.fastrag.module.knowledge.entity.KbChunk;
+import com.fastrag.module.knowledge.entity.KbFile;
+import com.fastrag.module.knowledge.entity.KbQaPair;
 import com.fastrag.module.knowledge.entity.KbTag;
 import com.fastrag.module.knowledge.entity.KbTagRelation;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
+import com.fastrag.module.knowledge.mapper.KbChunkMapper;
+import com.fastrag.module.knowledge.mapper.KbFileMapper;
+import com.fastrag.module.knowledge.mapper.KbQaPairMapper;
 import com.fastrag.module.knowledge.mapper.KbTagMapper;
 import com.fastrag.module.knowledge.mapper.KbTagRelationMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.knowledge.model.KbCreateRequest;
 import com.fastrag.module.knowledge.model.KbDto;
 import com.fastrag.module.knowledge.service.KbService;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.service.KbAccessChecker;
+import com.fastrag.security.service.KbAclService;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.util.*;
 import java.util.stream.Collectors;
 
+@Slf4j
 @Service
 @RequiredArgsConstructor
 public class KbServiceImpl implements KbService {
     private final KnowledgeBaseMapper mapper;
     private final KbTagMapper kbTagMapper;
     private final KbTagRelationMapper kbTagRelationMapper;
+    private final KbFileMapper fileMapper;
+    private final KbChunkMapper chunkMapper;
+    private final MilvusService milvusService;
+    private final GraphStore graphStore;
+    private final MinioService minioService;
+    private final KbQaPairMapper qaPairMapper;
+    private final KbAclService aclService;
+    private final KbAccessChecker accessChecker;
+
+    /** 仅平台级 API Token（程序化访问）全局可见；所有登录用户（含超管/kb_admin）按本组织 ∪ ACL 过滤 */
+    private boolean isPlatformAdmin(LoginUser user) {
+        return user.getUserId().startsWith("api-token:");
+    }
 
     @Override
     public Map<String, Object> list(String kw, String cat, int page, int pageSize) {
         var w = new LambdaQueryWrapper<KnowledgeBase>();
-        if (StrUtil.isNotBlank(kw)) w.like(KnowledgeBase::getName, kw).or().like(KnowledgeBase::getDescription, kw);
-        if (StrUtil.isNotBlank(cat)) w.eq(KnowledgeBase::getCategory, cat);
+        // 平台管理员（超管/kb_admin/API Token）：可见全部知识库；普通用户仅本组织库 ∪ ACL 授权库
+        LoginUser user = SecurityUtil.getCurrentUser();
+        boolean admin = user != null && isPlatformAdmin(user);
+        if (!admin) {
+            List<String> accessible = user != null
+                    ? accessChecker.getAccessibleKbIds(user.getUserId(), user.getOrgId())
+                    : Collections.emptyList();
+            if (accessible.isEmpty()) {
+                var empty = new HashMap<String, Object>();
+                empty.put("list", Collections.emptyList());
+                empty.put("total", 0);
+                empty.put("page", page);
+                empty.put("pageSize", pageSize);
+                return empty;
+            }
+            w.in(KnowledgeBase::getId, accessible);
+        }
+        // 关键词/分类筛选（两者都为空时不拼条件，避免生成 WHERE () 导致 SQL 语法错误）
+        if (StrUtil.isNotBlank(kw) || StrUtil.isNotBlank(cat)) {
+            w.and(q -> {
+                if (StrUtil.isNotBlank(kw)) q.like(KnowledgeBase::getName, kw).or().like(KnowledgeBase::getDescription, kw);
+                if (StrUtil.isNotBlank(cat)) q.eq(KnowledgeBase::getCategory, cat);
+            });
+        }
         w.orderByDesc(KnowledgeBase::getCreatedAt);
         var r = mapper.selectPage(new Page<>(page, pageSize), w);
         var result = new HashMap<String, Object>();
@@ -65,10 +116,15 @@ public class KbServiceImpl implements KbService {
         e.setFileTypeConfig(req.getFileTypeConfig() != null ? JSONUtil.toJsonStr(req.getFileTypeConfig()) : null);
         e.setRetrievalConfig(req.getRetrievalConfig() != null ? JSONUtil.toJsonStr(req.getRetrievalConfig()) : null);
         e.setCreator(creator);
+        e.setOrgId(SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getOrgId() : null);
         e.setUsedSize(0L);
         e.setTotalSize(0L);
-        e.setType("personal");
+        // 类型跟随共享设置：指定人共享(private)→personal，全局/部门→team
+        e.setType("private".equals(e.getPermission()) ? "personal" : "team");
         mapper.insert(e);
+
+        // 创建者自动成为知识库 owner
+        aclService.addAclEntry(e.getId(), creator, KBRole.owner, creator);
 
         // 处理标签实体
         if (req.getTags() != null && !req.getTags().isEmpty()) {
@@ -108,13 +164,69 @@ public class KbServiceImpl implements KbService {
     }
 
     @Override
+    @Transactional
     public void delete(String id) {
+        // 1. 查询该 KB 下所有文件（含已软删除的），逐个清理关联数据
+        List<KbFile> files = fileMapper.selectList(
+                new LambdaQueryWrapper<KbFile>().eq(KbFile::getKbId, id));
+        String collection = "kb_" + id;
+        for (KbFile f : files) {
+            String fileId = f.getId();
+            // 清理 chunks
+            chunkMapper.delete(new LambdaQueryWrapper<KbChunk>()
+                    .eq(KbChunk::getKbId, id).eq(KbChunk::getFileId, fileId));
+            // 清理 Milvus 向量
+            try {
+                milvusService.deleteByFileId(collection, fileId);
+            } catch (Exception e) {
+                log.warn("[KB Delete] Milvus cleanup failed for file {}: {}", fileId, e.getMessage());
+            }
+            // 清理知识图谱
+            try {
+                graphStore.deleteFileGraph(id, fileId);
+            } catch (Exception e) {
+                log.warn("[KB Delete] Graph cleanup failed for file {}: {}", fileId, e.getMessage());
+            }
+            // 清理 MinIO 存储文件
+            try {
+                if (f.getObjectKey() != null) {
+                    minioService.delete(f.getObjectKey());
+                }
+                minioService.deleteByPrefix(id + "/" + fileId);
+            } catch (Exception e) {
+                log.warn("[KB Delete] MinIO cleanup failed for file {}: {}", fileId, e.getMessage());
+            }
+            // 清理 QA 对
+            try {
+                qaPairMapper.delete(new LambdaQueryWrapper<KbQaPair>()
+                        .eq(KbQaPair::getKbId, id)
+                        .eq(KbQaPair::getFileId, fileId));
+            } catch (Exception e) {
+                log.warn("[KB Delete] QA pair cleanup failed for file {}: {}", fileId, e.getMessage());
+            }
+        }
+        // 2. 删除该 KB 下所有文件记录（含已软删除的）
+        fileMapper.delete(new LambdaQueryWrapper<KbFile>().eq(KbFile::getKbId, id));
+        // 3. 删除 KB 本身
         mapper.deleteById(id);
+        log.info("[KB Delete] Knowledge base {} deleted, {} files cleaned up", id, files.size());
     }
 
     @Override
     public List<Map<String, Object>> getCategories() {
-        var all = mapper.selectList(null);
+        // 仅统计当前用户可访问的知识库（平台管理员统计全部；普通用户为本组织库 ∪ ACL 授权库）
+        LoginUser user = SecurityUtil.getCurrentUser();
+        boolean admin = user != null && isPlatformAdmin(user);
+        List<KnowledgeBase> all = Collections.emptyList();
+        if (admin) {
+            all = mapper.selectList(null);
+        } else if (user != null) {
+            List<String> accessible = accessChecker.getAccessibleKbIds(user.getUserId(), user.getOrgId());
+            if (!accessible.isEmpty()) {
+                all = mapper.selectList(new LambdaQueryWrapper<KnowledgeBase>()
+                        .in(KnowledgeBase::getId, accessible));
+            }
+        }
         var grouped = all.stream().filter(e -> StrUtil.isNotBlank(e.getCategory()))
                 .collect(Collectors.groupingBy(KnowledgeBase::getCategory, Collectors.counting()));
         var result = new ArrayList<Map<String, Object>>();
@@ -190,6 +302,7 @@ public class KbServiceImpl implements KbService {
         d.setEmbeddingModel(e.getEmbeddingModel());
         d.setDimension(e.getDimension());
         d.setCreator(e.getCreator());
+        d.setOrgId(e.getOrgId());
         d.setCreatedAt(e.getCreatedAt());
         d.setUsedSize(e.getUsedSize());
         d.setTotalSize(e.getTotalSize());

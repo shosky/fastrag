@@ -2,8 +2,10 @@ package com.fastrag.module.graph.service.impl;
 
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
+import com.fastrag.module.graph.entity.KbBenchmarkQuestion;
 import com.fastrag.module.graph.entity.KbEvaluation;
 import com.fastrag.module.graph.entity.KbEvaluationResult;
+import com.fastrag.module.graph.mapper.KbBenchmarkQuestionMapper;
 import com.fastrag.module.graph.mapper.KbEvaluationMapper;
 import com.fastrag.module.graph.mapper.KbEvaluationResultMapper;
 import com.fastrag.module.graph.model.EvaluationConfig;
@@ -27,6 +29,7 @@ public class EvaluationServiceImpl implements EvaluationService {
 
     private final KbEvaluationMapper mapper;
     private final KbEvaluationResultMapper resultMapper;
+    private final KbBenchmarkQuestionMapper questionMapper;
     private final EvaluationExecutionHelper executionHelper;
     private final LogService logService;
 
@@ -63,18 +66,16 @@ public class EvaluationServiceImpl implements EvaluationService {
         // 校验 benchmark 参数
         if (benchmark == null || benchmark.isBlank()) {
             log.warn("[Evaluation] Rejected: benchmark is null/blank");
-            KbEvaluation evaluation = new KbEvaluation();
-            evaluation.setKbId(kbId);
-            evaluation.setName(config.getName());
-            evaluation.setBenchmark(benchmark);
-            evaluation.setAnswerModel(config.getAnswerModel());
-            evaluation.setJudgeModel(config.getJudgeModel());
-            evaluation.setStatus("failed");
-            evaluation.setCompletedCount(0);
-            evaluation.setDataCount(0);
-            evaluation.setBenchmarkCount(0);
-            mapper.insert(evaluation);
-            return evaluation;
+            return createFailedEvaluation(kbId, config, benchmark);
+        }
+
+        // 校验基准存在且有题目，避免空基准跑出"completed 0 分"的误导结果
+        long questionCount = questionMapper.selectCount(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<KbBenchmarkQuestion>()
+                        .eq(KbBenchmarkQuestion::getBenchmarkId, benchmark));
+        if (questionCount == 0) {
+            log.warn("[Evaluation] Rejected: benchmark '{}' has no questions", benchmark);
+            return createFailedEvaluation(kbId, config, benchmark);
         }
 
         KbEvaluation evaluation = new KbEvaluation();
@@ -100,6 +101,22 @@ public class EvaluationServiceImpl implements EvaluationService {
         // 通过独立 Bean 调用，确保 @Async 代理生效
         executionHelper.execute(evaluation.getId(), kbId, config);
 
+        return evaluation;
+    }
+
+    /** 参数/基准校验失败：创建一条 failed 评估记录，避免前端误以为评估已启动 */
+    private KbEvaluation createFailedEvaluation(String kbId, EvaluationConfig config, String benchmark) {
+        KbEvaluation evaluation = new KbEvaluation();
+        evaluation.setKbId(kbId);
+        evaluation.setName(config.getName());
+        evaluation.setBenchmark(benchmark);
+        evaluation.setAnswerModel(config.getAnswerModel());
+        evaluation.setJudgeModel(config.getJudgeModel());
+        evaluation.setStatus("failed");
+        evaluation.setCompletedCount(0);
+        evaluation.setDataCount(0);
+        evaluation.setBenchmarkCount(0);
+        mapper.insert(evaluation);
         return evaluation;
     }
 

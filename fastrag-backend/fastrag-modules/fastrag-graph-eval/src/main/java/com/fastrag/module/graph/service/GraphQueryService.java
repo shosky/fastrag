@@ -21,7 +21,11 @@ import java.util.stream.Collectors;
  * <p>基于 JGraphT 的 PageRank 算法，以查询实体作为种子节点，
  * 对图谱中所有 Chunk 节点进行排序，返回关联度最高的 Chunks。
  * 用于检索增强（RAG），提升召回质量。</p>
+ *
+ * @deprecated 当前实现从 MySQL mention 表构建图，Neo4j 存储模式下 mention 数据不在 MySQL 中，
+ *             此方法永远返回空列表。如需启用 PPR 排序，需改为从 Neo4j 读取 MENTIONS 关系。
  */
+@Deprecated
 @Service
 @RequiredArgsConstructor
 public class GraphQueryService {
@@ -34,6 +38,9 @@ public class GraphQueryService {
 
     /**
      * Personalized PageRank 排序
+     *
+     * @deprecated Neo4j 模式下 MySQL mention 表为空，此方法永远返回空列表。
+     *             需改为从 Neo4j 读取 (:Entity)-[:MENTIONS]->(:Chunk) 关系。
      *
      * <p>1. 从 MySQL mention 表构建 Entity-Chunk 无向图
      * 2. 设置种子权重（查询中的实体权重更高）

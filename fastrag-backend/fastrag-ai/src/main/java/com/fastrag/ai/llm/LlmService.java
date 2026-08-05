@@ -10,9 +10,11 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Flux;
+import reactor.netty.http.client.HttpClient;
 
 import reactor.core.publisher.Flux;
 import reactor.core.publisher.Mono;
@@ -30,6 +32,7 @@ import java.util.regex.Pattern;
 @RequiredArgsConstructor
 public class LlmService {
     private final WebClient aiWebClient;
+    private final HttpClient aiHttpClient;
     private final ObjectMapper objectMapper;
 
     @Value("${ai.gateway.url:http://localhost:11434}")
@@ -62,6 +65,32 @@ public class LlmService {
 
     public String chat(String model, String prompt, String apiUrl, String apiKey, Boolean enableThinking) {
         return chat(model, List.of(new ChatMessage("user", prompt)), 0.7, apiUrl, apiKey, enableThinking);
+    }
+
+    /**
+     * 图谱抽取专用：支持自定义超时和 thinking 控制。
+     * 使用流式 SSE 收集（per-chunk 超时 + 总超时），避免 LLM 响应慢时直接断连。
+     *
+     * @param model           模型标识
+     * @param prompt          用户提示
+     * @param apiUrl          API 基础 URL
+     * @param apiKey          API 密钥
+     * @param enableThinking  是否启用思考模式（图谱抽取建议 false）
+     * @param timeoutSeconds  总超时秒数（per-chunk 超时 = timeoutSeconds / 2）
+     */
+    public String chatWithTimeout(String model, String prompt, String apiUrl, String apiKey,
+                                   Boolean enableThinking, int timeoutSeconds) {
+        return chatWithTimeout(model, prompt, apiUrl, apiKey, enableThinking, timeoutSeconds, 2048);
+    }
+
+    /**
+     * 流式 + 自定义超时 + 自定义 max_tokens（基准生成等长输出场景使用，
+     * 默认 2048 不足以容纳 10 个中文问答对，输出截断会导致 JSON 解析失败）。
+     */
+    public String chatWithTimeout(String model, String prompt, String apiUrl, String apiKey,
+                                   Boolean enableThinking, int timeoutSeconds, int maxTokens) {
+        return doChatWithTimeout(model, List.of(new ChatMessage("user", prompt)), 0.7,
+                apiUrl, apiKey, enableThinking, timeoutSeconds, maxTokens);
     }
 
     // ==================== 带 Tool Calling 的调用 ====================
@@ -110,7 +139,10 @@ public class LlmService {
         WebClient webClient = aiWebClient;
         String uri = "/v1/chat/completions";
         if (apiUrl != null && !apiUrl.isEmpty()) {
-            webClient = WebClient.builder().baseUrl(apiUrl).build();
+            webClient = WebClient.builder()
+                    .baseUrl(apiUrl)
+                    .clientConnector(new ReactorClientHttpConnector(aiHttpClient))
+                    .build();
         }
 
         log.info("[LLM] streamChat start: model={}, messages={}", model, messages != null ? messages.size() : 0);
@@ -229,7 +261,10 @@ public class LlmService {
         WebClient webClient = aiWebClient;
         String uri = "/v1/chat/completions";
         if (apiUrl != null && !apiUrl.isEmpty()) {
-            webClient = WebClient.builder().baseUrl(apiUrl).build();
+            webClient = WebClient.builder()
+                    .baseUrl(apiUrl)
+                    .clientConnector(new ReactorClientHttpConnector(aiHttpClient))
+                    .build();
         }
 
         WebClient.RequestBodySpec requestSpec = webClient.post().uri(uri);
@@ -435,7 +470,10 @@ public class LlmService {
         String uri = "/v1/chat/completions";
 
         if (apiUrl != null && !apiUrl.isEmpty()) {
-            webClient = WebClient.builder().baseUrl(apiUrl).build();
+            webClient = WebClient.builder()
+                    .baseUrl(apiUrl)
+                    .clientConnector(new ReactorClientHttpConnector(aiHttpClient))
+                    .build();
             log.info("[LLM] Using custom API URL: {}", apiUrl);
         }
 
@@ -610,5 +648,75 @@ public class LlmService {
                     tc.getFunction() != null ? tc.getFunction().getArguments() : "null");
         }
         return chatResponse;
+    }
+
+    /**
+     * 带自定义超时的流式调用（图谱抽取专用）。
+     * 与 handleStreamResponse 逻辑相同，但超时由调用方传入，而非固定使用 gatewayTimeoutSeconds。
+     */
+    private String doChatWithTimeout(String model, List<ChatMessage> messages, double temperature,
+                                     String apiUrl, String apiKey, Boolean enableThinking,
+                                     int timeoutSeconds, int maxTokens) {
+        ChatRequest req = new ChatRequest();
+        req.setModel(model);
+        req.setMessages(messages);
+        req.setTemperature(temperature);
+        req.setStream(true);
+        req.setEnableThinking(enableThinking != null ? enableThinking : false);
+        req.setMaxTokens(maxTokens);
+
+        WebClient webClient = aiWebClient;
+        String uri = "/v1/chat/completions";
+        if (apiUrl != null && !apiUrl.isEmpty()) {
+            webClient = WebClient.builder()
+                    .baseUrl(apiUrl)
+                    .clientConnector(new ReactorClientHttpConnector(aiHttpClient))
+                    .build();
+        }
+
+        WebClient.RequestBodySpec requestSpec = webClient.post().uri(uri);
+        if (apiKey != null && !apiKey.isEmpty()) {
+            requestSpec = requestSpec.header("Authorization", "Bearer " + apiKey);
+        }
+
+        long t0 = System.currentTimeMillis();
+        int perItemTimeout = Math.max(10, timeoutSeconds / 2);
+
+        log.info("[LLM] chatWithTimeout start: model={}, enableThinking={}, perItem={}s, total={}s",
+                model, enableThinking, perItemTimeout, timeoutSeconds);
+
+        try {
+            java.util.List<String> chunks = requestSpec.bodyValue(req)
+                    .retrieve().bodyToFlux(String.class)
+                    .timeout(Duration.ofSeconds(perItemTimeout))
+                    .collectList()
+                    .block(Duration.ofSeconds(timeoutSeconds));
+
+            if (chunks == null || chunks.isEmpty()) {
+                log.warn("[LLM] chatWithTimeout: empty response after {}ms", System.currentTimeMillis() - t0);
+                return null;
+            }
+
+            StringBuilder contentSb = new StringBuilder();
+            for (String chunk : chunks) {
+                String trimmed = chunk.trim();
+                if (trimmed.isEmpty() || "[DONE]".equals(trimmed)) continue;
+                try {
+                    JsonNode root = objectMapper.readTree(trimmed);
+                    JsonNode delta = root.path("choices").path(0).path("delta");
+                    contentSb.append(delta.path("content").asText(""));
+                } catch (Exception e) {
+                    log.warn("[LLM] chatWithTimeout: failed to parse SSE chunk: {}", e.getMessage());
+                }
+            }
+
+            long elapsed = System.currentTimeMillis() - t0;
+            log.info("[LLM] chatWithTimeout done: elapsed={}ms, contentLen={}", elapsed, contentSb.length());
+            return contentSb.toString();
+        } catch (Exception e) {
+            long elapsed = System.currentTimeMillis() - t0;
+            log.error("[LLM] chatWithTimeout failed after {}ms: model={}, error={}", elapsed, model, e.getMessage());
+            throw new RuntimeException("LLM call timeout (" + timeoutSeconds + "s) or error: " + e.getMessage(), e);
+        }
     }
 }

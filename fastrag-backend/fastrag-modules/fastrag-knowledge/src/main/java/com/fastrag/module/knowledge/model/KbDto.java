@@ -13,6 +13,7 @@ public class KbDto {
     private String category;
     private String embeddingModel;
     private String creator;
+    private String orgId;
     private String type;
     private String parseMode;
     private String splitMode;

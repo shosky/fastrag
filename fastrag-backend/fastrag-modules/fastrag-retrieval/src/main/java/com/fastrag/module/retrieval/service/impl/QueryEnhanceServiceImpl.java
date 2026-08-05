@@ -2,15 +2,22 @@ package com.fastrag.module.retrieval.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.llm.LlmService;
+import com.fastrag.common.exception.BusinessException;
 import com.fastrag.infra.graph.GraphStore;
 import com.fastrag.module.platform.entity.ModelRecord;
+import com.fastrag.module.platform.service.TermService;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import com.fastrag.module.retrieval.service.QueryEnhanceService;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /**
  * 查询增强服务实现
@@ -32,6 +39,22 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
     private final GraphStore graphStore;
     private final LlmService llmService;
     private final ModelRecordMapper modelRecordMapper;
+    private final TermService termService;
+    private final StringRedisTemplate redisTemplate;
+
+    /**
+     * 校验当前用户对知识库的访问权限（body 传 kbId 的接口，KbAuthAspect 的 URI 提取不适用）
+     */
+    private void checkKbAccess(String kbId) {
+        if (kbId == null || kbId.isBlank()) return;
+        LoginUser user = SecurityUtil.getCurrentUser();
+        // 超管或平台级 API Token 直接放行
+        if (user.hasPermission("*") || user.getUserId().startsWith("api-token:")) return;
+        String roleStr = redisTemplate.opsForValue().get("kb:acl:" + kbId + ":" + user.getUserId());
+        if (roleStr == null) {
+            throw BusinessException.forbidden("无知识库访问权限");
+        }
+    }
 
     @Override
     public Map<String, Object> suggest(String query) {
@@ -43,10 +66,15 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
 
     @Override
     public Map<String, Object> expandSynonyms(String query) {
+        List<String> addedTerms = termService.expandSynonyms(query);
+        String expandedQuery = query;
+        if (!addedTerms.isEmpty()) {
+            expandedQuery = query + " " + String.join(" ", addedTerms);
+        }
         var r = new HashMap<String, Object>();
-        r.put("expandedQuery", query);
+        r.put("expandedQuery", expandedQuery);
         r.put("matchedTerms", List.of());
-        r.put("addedTerms", List.of());
+        r.put("addedTerms", addedTerms);
         return r;
     }
 
@@ -142,12 +170,40 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
         return fallbackSplit(query);
     }
 
-    /** 简单分词降级 */
+    /**
+     * 简单分词降级：英文/数字按词（≥2 字符）；中文连续块保留原始块 + 2~4 字 n-gram 切分，
+     * 配合图谱模糊匹配（CONTAINS）可命中 "故障根因分析" -> "故障根因分析（RCA）" 这类实体。
+     */
+    private static final Pattern FALLBACK_TOKEN_PATTERN = Pattern.compile("[A-Za-z0-9]{2,}|[\\u4e00-\\u9fa5]+");
+
     private List<String> fallbackSplit(String query) {
-        return Arrays.stream(query.split("\\s+"))
-                .filter(s -> s.length() >= 2)
-                .limit(3)
-                .toList();
+        Set<String> tokens = new LinkedHashSet<>();
+        Matcher m = FALLBACK_TOKEN_PATTERN.matcher(query == null ? "" : query);
+        while (m.find()) {
+            String tok = m.group();
+            if (tok.matches("[\\u4e00-\\u9fa5]+")) {
+                int len = tok.length();
+                if (len <= 4) {
+                    tokens.add(tok);
+                } else {
+                    // 保留原始块，再补充 n-gram（每块最多 8 个，优先 2-gram 短词召回）
+                    tokens.add(tok);
+                    int added = 0;
+                    outer:
+                    for (int win = 2; win <= 4; win++) {
+                        for (int i = 0; i + win <= len; i++) {
+                            tokens.add(tok.substring(i, i + win));
+                            if (++added >= 8) break outer;
+                        }
+                    }
+                }
+            } else {
+                tokens.add(tok);
+            }
+        }
+        // 限制总 token 数，避免噪音过多
+        List<String> result = new ArrayList<>(tokens);
+        return result.size() <= 20 ? result : result.subList(0, 20);
     }
 
     /**
@@ -174,20 +230,33 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
                     "entities", List.of(), "relations", List.of());
         }
 
+        // 知识库访问权限校验（/api/graph/expand 直达接口）
+        checkKbAccess(kbId);
+
         // 1. NER 提取实体
         List<String> entities = extractEntities(query, nerModel, kbId);
-        log.info("[GraphExpand] kb={}, query={}, extracted entities: {}", kbId, query, entities);
+        log.info("[GraphExpand] kb={}, query='{}', extracted entities: {}", kbId, query, entities);
 
         if (entities.isEmpty()) {
+            log.info("[GraphExpand] kb={}, query='{}', no entities extracted (NER model={}, skipped)", kbId, query, nerModel);
             return Map.of("originalQuery", query, "expandedQuery", query,
                     "entities", List.of(), "relations", List.of());
         }
 
         // 2. 图谱展开
         Map<String, Object> graphResult = graphStore.expandGraph(kbId, entities, depth, maxEntities);
+        int matchedEntities = ((List<?>) graphResult.getOrDefault("entities", List.of())).size();
+        int matchedRelations = ((List<?>) graphResult.getOrDefault("relations", List.of())).size();
+        log.info("[GraphExpand] kb={}, graph matched: {} entities, {} relations (depth={}, maxEntities={})",
+                kbId, matchedEntities, matchedRelations, depth, maxEntities);
 
         // 3. 拼入 expandedQuery
         String expandedQuery = buildExpandedQuery(query, graphResult);
+        if (expandedQuery.equals(query.trim())) {
+            log.info("[GraphExpand] kb={}, query='{}', graph expansion empty (no matched entity names/labels appended)", kbId, query);
+        } else {
+            log.info("[GraphExpand] kb={}, expandedQuery='{}'", kbId, expandedQuery);
+        }
 
         return Map.of(
                 "originalQuery", query,

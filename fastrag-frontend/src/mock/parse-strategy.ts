@@ -53,7 +53,7 @@ function seedStrategies(): ParseStrategy[] {
       isDefault: false,
       createdAt: now,
       updatedAt: now,
-      advanced: { ...DEFAULT_ADVANCED, splitMethod: 'delimiter', delimiters: ['。', '\n\n'] },
+      advanced: { ...DEFAULT_ADVANCED, chunk: { ...DEFAULT_ADVANCED.chunk, delimiters: ['。', '\n\n'] } },
     },
     {
       id: '5',

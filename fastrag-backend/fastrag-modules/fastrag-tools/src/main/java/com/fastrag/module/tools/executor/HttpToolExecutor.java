@@ -2,11 +2,14 @@ package com.fastrag.module.tools.executor;
 
 import com.fastrag.common.util.TemplateEngine;
 import com.fastrag.module.tools.registry.ToolDefinition;
+import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.*;
+import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.core.publisher.Mono;
+import reactor.netty.http.client.HttpClient;
 
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
@@ -15,7 +18,9 @@ import java.util.*;
 
 @Slf4j
 @Component
+@RequiredArgsConstructor
 public class HttpToolExecutor implements ToolExecutor {
+    private final HttpClient aiHttpClient;
     @Override
     public String getType() { return "http"; }
 
@@ -73,6 +78,7 @@ public class HttpToolExecutor implements ToolExecutor {
             log.info("[HttpTool] Executing: {} {}", method, fullUrl);
 
             WebClient client = WebClient.builder()
+                .clientConnector(new ReactorClientHttpConnector(aiHttpClient))
                 .exchangeStrategies(org.springframework.web.reactive.function.client.ExchangeStrategies.builder()
                     .codecs(c -> c.defaultCodecs().maxInMemorySize(10 * 1024 * 1024))
                     .build())

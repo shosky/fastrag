@@ -53,6 +53,9 @@ public class Tool {
     @JsonIgnore
     private String tags;
     private Integer enabled;
+    private String creator; // 创建者 userId（system=系统预置）
+    private String orgId; // 归属组织
+    private Integer isBuiltin; // 内置工具（全员可见）
     private LocalDateTime createdAt;
 
     /** HTTP 配置（非 DB 字段，仅用于 API 返回） */

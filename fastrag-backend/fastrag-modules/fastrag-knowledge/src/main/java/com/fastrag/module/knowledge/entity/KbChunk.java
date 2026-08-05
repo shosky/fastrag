@@ -24,6 +24,10 @@ public class KbChunk {
     private String imageKeys;         // JSON 数组 ["page_1_img_0.png"]
     private String chunkType;         // "text" | "image"，默认 "text"
 
+    // 结构感知分片（新增）
+    private String title;               // 所属最近标题
+    private String headingPath;         // 层级路径 "第一章 > 1.1 背景"
+
     // 知识图谱相关
     /** 是否已完成知识图谱提取（0=未提取，1=已提取） */
     private Integer graphIndexed;

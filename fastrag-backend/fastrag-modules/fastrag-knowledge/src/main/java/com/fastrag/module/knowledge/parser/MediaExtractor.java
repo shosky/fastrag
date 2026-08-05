@@ -274,15 +274,35 @@ public class MediaExtractor {
      * @param minioService MinioService 用于上传图片
      * @return 图片信息列表 {pageNum, imageKey}
      */
+    /**
+     * 从 PDF 中提取内嵌图片（过滤小图标/装饰图），
+     * 上传到 MinIO 并返回图片信息列表。
+     *
+     * 过滤规则：
+     * - 短边 < 100px → 跳过（图标、装饰线，CSS像素 @96dpi，约1英寸）
+     * - 面积 < 页面面积 1% → 跳过（页眉页脚装饰、背景纹理）
+     * - 宽度或高度 > 2000 → 跳过（全页扫描图由 OCR 路径处理）
+     * - PNG 编码后 < 1KB → 跳过（空白/极小图）
+     */
     public List<PdfImage> extractPdfImages(
             org.apache.pdfbox.pdmodel.PDDocument pdfDocument,
             String kbId, String fileId,
             com.fastrag.infra.minio.MinioService minioService) {
         List<PdfImage> result = new ArrayList<>();
+        int skippedSmall = 0;
+        int skippedLarge = 0;
+        int skippedAreaPct = 0;
+        int skippedTinyBytes = 0;
         try {
             int pageCount = pdfDocument.getNumberOfPages();
             for (int pageNum = 0; pageNum < pageCount; pageNum++) {
                 org.apache.pdfbox.pdmodel.PDPage page = pdfDocument.getPage(pageNum);
+                // 获取页面尺寸（CSS像素 @96dpi）
+                org.apache.pdfbox.pdmodel.common.PDRectangle pageBox = page.getMediaBox();
+                float pageW = pageBox.getWidth();
+                float pageH = pageBox.getHeight();
+                double pageArea = pageW * pageH;
+
                 org.apache.pdfbox.pdmodel.PDResources resources = page.getResources();
                 int imgIndex = 0;
                 for (var name : resources.getXObjectNames()) {
@@ -290,11 +310,41 @@ public class MediaExtractor {
                     if (xobject instanceof org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject) {
                         org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject image =
                                 (org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject) xobject;
+
+                        int w = image.getWidth();
+                        int h = image.getHeight();
+                        int minSide = Math.min(w, h);
+
+                        // 过滤小图片（短边 < 100px，约1英寸以下的图标/装饰）
+                        if (minSide < 100) {
+                            skippedSmall++;
+                            continue;
+                        }
+
+                        // 过滤超大图片（全页背景/扫描图 — 由 OCR/VLM 路径处理）
+                        if (w > 2000 || h > 2000) {
+                            skippedLarge++;
+                            continue;
+                        }
+
+                        // 过滤面积 < 页面面积 1% 的图片（大概率是装饰元素）
+                        double imgArea = (double) w * h;
+                        if (imgArea / pageArea < 0.01) {
+                            skippedAreaPct++;
+                            continue;
+                        }
+
                         // 重编码为统一 PNG
                         BufferedImage bi = image.getImage();
                         ByteArrayOutputStream baos = new ByteArrayOutputStream();
                         ImageIO.write(bi, "png", baos);
                         byte[] pngBytes = baos.toByteArray();
+
+                        // 过滤编码后极小的图片（空白或噪点图）
+                        if (pngBytes.length < 1024) {
+                            skippedTinyBytes++;
+                            continue;
+                        }
 
                         // 上传到 MinIO
                         String imageKey = "page_" + (pageNum + 1) + "_img_" + imgIndex + ".png";
@@ -306,14 +356,16 @@ public class MediaExtractor {
                         result.add(PdfImage.builder()
                                 .pageNum(pageNum + 1)
                                 .imageKey(imageKey)
-                                .width(image.getWidth())   // PDF 页面显示尺寸(CSS像素)
-                                .height(image.getHeight()) // 非图片存储像素
+                                .width(w)
+                                .height(h)
                                 .build());
                         imgIndex++;
                     }
                 }
             }
-            log.info("Extracted {} images from PDF ({} pages)", result.size(), pageCount);
+            int skippedTotal = skippedSmall + skippedLarge + skippedAreaPct + skippedTinyBytes;
+            log.info("Extracted {} images from PDF ({} pages), skipped {} (small={}, oversize={}, areaPct={}, tinyBytes={})",
+                    result.size(), pageCount, skippedTotal, skippedSmall, skippedLarge, skippedAreaPct, skippedTinyBytes);
         } catch (Exception e) {
             log.error("Failed to extract images from PDF", e);
         }

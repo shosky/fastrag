@@ -44,9 +44,13 @@ CREATE TABLE IF NOT EXISTS kb_retrieval_log (
     top_score DECIMAL(5,2),
     latency_ms INT,
     has_result TINYINT DEFAULT 1,
+    graph_entity_count INT DEFAULT 0 COMMENT '图谱通道命中结果数',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_kb_time (kb_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 已有库补充图谱维度列（MySQL 不支持 ADD COLUMN IF NOT EXISTS，重复执行会报错可忽略）
+-- ALTER TABLE kb_retrieval_log ADD COLUMN graph_entity_count INT DEFAULT 0 COMMENT '图谱通道命中结果数';
 
 CREATE TABLE IF NOT EXISTS kb_update_remind (
     id VARCHAR(32) PRIMARY KEY,
@@ -567,6 +571,11 @@ CREATE TABLE IF NOT EXISTS sys_notification (
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- ========== 废弃表：sys_operation_log ==========
+-- 该表与 kb_log 功能重叠，从未被使用（无对应 Entity/Service/Controller）。
+-- 保留建表 SQL 供历史参考，实际执行时直接删除。
+-- 替代方案：使用 kb_log（核心操作日志）+ sys_audit_log（系统审计日志）。
+-- 清理日期：2026-07-23
 CREATE TABLE IF NOT EXISTS sys_operation_log (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     module VARCHAR(32) NOT NULL COMMENT 'knowledge|retrieval|publish|app|workflow|system',
@@ -580,7 +589,18 @@ CREATE TABLE IF NOT EXISTS sys_operation_log (
     INDEX idx_module_op (module, operation),
     INDEX idx_created_at (created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 确认无数据后执行以下 DROP
+-- DROP TABLE IF EXISTS sys_operation_log;
 
 -- ==================== 初始化示范数据（幂等） ====================
 -- 标签类型
 ('dg1','kb_sample','产品用户手册','本手册涵盖产品安装、配置、使用和故障排除','completed');
+
+-- ==================== 2026-07-30 审计日志补充 status 列 ====================
+-- schema.sql 中已有 status 列，但存量数据库中缺少该列
+ALTER TABLE sys_audit_log ADD COLUMN status VARCHAR(16) DEFAULT 'success' COMMENT 'success|failed' AFTER ip;
+
+-- ==================== 2026-07-30 kb_chunk 补充 title / heading_path 列 ====================
+-- 对应 KbChunk.java 新增的 title / headingPath 字段
+ALTER TABLE kb_chunk ADD COLUMN title VARCHAR(255) DEFAULT NULL COMMENT '所属最近标题' AFTER chunk_type;
+ALTER TABLE kb_chunk ADD COLUMN heading_path VARCHAR(1024) DEFAULT NULL COMMENT '层级路径，如 "第一章 > 1.1 背景"' AFTER title;

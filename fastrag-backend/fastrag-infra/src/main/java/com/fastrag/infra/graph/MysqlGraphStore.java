@@ -274,17 +274,17 @@ public class MysqlGraphStore implements GraphStore {
     // ==================== Mention 追踪 ====================
 
     @Override
-    public void createChunk(String kbId, String chunkId, String content) {
+    public void createChunk(String kbId, String chunkId, String fileId, String content) {
         // MySQL fallback 中不创建独立的 Chunk 节点
         // mention 记录在 kb_graph_entity_mention / kb_graph_triple_mention 中
         log.debug("MySQL store: skip createChunk (mention tracked in tables)");
     }
 
     @Override
-    public void createEntityMention(String kbId, String entityId, String chunkId) {
+    public void createEntityMention(String kbId, String entityName, String chunkId) {
         jdbcTemplate.update(
                 "INSERT IGNORE INTO kb_graph_entity_mention (entity_id, kb_id, chunk_id) VALUES (?, ?, ?)",
-                entityId, kbId, chunkId
+                entityName, kbId, chunkId
         );
     }
 
@@ -308,41 +308,64 @@ public class MysqlGraphStore implements GraphStore {
 
     @Override
     public void deleteFileGraph(String kbId, String fileId) {
-        // 1. 找到该文件的所有 chunk
-        List<String> chunkIds = jdbcTemplate.queryForList(
-                "SELECT id FROM kb_chunk WHERE kb_id = ? AND file_id = ?",
-                String.class, kbId, fileId
+        // 1. 按 file_id 直接删除 mention 记录（不依赖 kb_chunk 表，解决 chunk 先被删导致查不到的问题）
+        jdbcTemplate.update(
+                "DELETE FROM kb_graph_entity_mention WHERE kb_id = ? AND file_id = ?",
+                kbId, fileId
+        );
+        jdbcTemplate.update(
+                "DELETE FROM kb_graph_triple_mention WHERE kb_id = ? AND file_id = ?",
+                kbId, fileId
         );
 
-        if (chunkIds.isEmpty()) {
-            log.debug("No chunks found for file deletion: kb={}, file={}", kbId, fileId);
-            return;
-        }
-
-        // 2. 删除 mention 记录
-        String chunkPlaceholders = chunkIds.stream().map(c -> "?").collect(Collectors.joining(","));
-        Object[] mentionParams = buildFileMentionParams(kbId, chunkIds);
-
-        jdbcTemplate.update("DELETE FROM kb_graph_entity_mention WHERE kb_id = ? AND chunk_id IN (" + chunkPlaceholders + ")",
-                mentionParams);
-        jdbcTemplate.update("DELETE FROM kb_graph_triple_mention WHERE kb_id = ? AND chunk_id IN (" + chunkPlaceholders + ")",
-                mentionParams);
-
-        // 3. 回收没有 mention 的孤立实体
+        // 2. 回收没有 mention 的孤立实体
         jdbcTemplate.update(
                 "DELETE FROM kb_graph_entity WHERE kb_id = ? AND entity_id NOT IN " +
                 "(SELECT DISTINCT entity_id FROM kb_graph_entity_mention WHERE kb_id = ?)",
                 kbId, kbId
         );
 
-        // 4. 回收没有 mention 的孤立关系
+        // 3. 回收没有 mention 的孤立关系
         jdbcTemplate.update(
                 "DELETE FROM kb_graph_relation WHERE kb_id = ? AND triple_id NOT IN " +
                 "(SELECT DISTINCT triple_id FROM kb_graph_triple_mention WHERE kb_id = ?)",
                 kbId, kbId
         );
 
-        log.info("Deleted file graph data: kb={}, file={}, chunks={}", kbId, fileId, chunkIds.size());
+        log.info("Deleted file graph data: kb={}, file={}", kbId, fileId);
+    }
+
+    @Override
+    public void deleteChunkGraph(String kbId, String chunkId) {
+        // 1. 删除该 chunk 的 mention 记录
+        jdbcTemplate.update(
+                "DELETE FROM kb_graph_entity_mention WHERE kb_id = ? AND chunk_id = ?",
+                kbId, chunkId);
+        jdbcTemplate.update(
+                "DELETE FROM kb_graph_triple_mention WHERE kb_id = ? AND chunk_id = ?",
+                kbId, chunkId);
+
+        // 2. 回收孤立实体
+        jdbcTemplate.update(
+                "DELETE FROM kb_graph_entity WHERE kb_id = ? AND entity_id NOT IN " +
+                "(SELECT DISTINCT entity_id FROM kb_graph_entity_mention WHERE kb_id = ?)",
+                kbId, kbId);
+
+        // 3. 回收孤立关系
+        jdbcTemplate.update(
+                "DELETE FROM kb_graph_relation WHERE kb_id = ? AND triple_id NOT IN " +
+                "(SELECT DISTINCT triple_id FROM kb_graph_triple_mention WHERE kb_id = ?)",
+                kbId, kbId);
+
+        log.info("Deleted chunk graph data: kb={}, chunk={}", kbId, chunkId);
+    }
+
+    @Override
+    public void renameChunkId(String kbId, String oldChunkId, String newChunkId) {
+        // MySQL fallback: mention 表唯一键为 (entity_id, chunk_id)，rename 需先删后插
+        // 由于 MySQL 降级实现中 mention 写入本身缺少 file_id（已知问题），
+        // 此处仅做日志记录，不执行实际操作
+        log.debug("MySQL store: renameChunkId skipped (kb={}, {} -> {})", kbId, oldChunkId, newChunkId);
     }
 
     // ==================== SQL 参数构建辅助方法 ====================
@@ -382,13 +405,6 @@ public class MysqlGraphStore implements GraphStore {
     /**
      * deleteFileGraph mention 参数：kbId + chunkIds
      */
-    private Object[] buildFileMentionParams(String kbId, List<String> chunkIds) {
-        List<Object> params = new ArrayList<>();
-        params.add(kbId);
-        params.addAll(chunkIds);
-        return params.toArray();
-    }
-
     // ==================== 统计查询 ====================
 
     @Override

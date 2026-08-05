@@ -5,22 +5,26 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
 import com.fastrag.module.publish.service.LogService;
+import com.fastrag.ai.embedding.EmbeddingService;
 import com.fastrag.ai.llm.LlmService;
 import com.fastrag.common.handler.GraphBuildHandler;
 import com.fastrag.infra.graph.GraphStore;
+import com.fastrag.module.graph.util.EntityTypeNormalizer;
 import com.fastrag.module.graph.util.ExtractionNormalizer;
 import com.fastrag.module.graph.util.GraphIdHashing;
 import com.fastrag.module.graph.util.NameNormalizer;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
+import com.fastrag.module.knowledge.entity.KnowledgeBase;
+import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
+import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.graph.entity.KbGraphIndex;
 import com.fastrag.module.graph.mapper.KbGraphIndexMapper;
 import com.fastrag.module.platform.entity.ModelRecord;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
-import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,16 +62,36 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     private final KbParseStrategyMapper parseStrategyMapper;
     private final ModelRecordMapper modelRecordMapper;
     private final LogService logService;
+    private final EmbeddingService embeddingService;
+    private final KnowledgeBaseMapper kbMapper;
 
     /** 图谱构建最大并发数（可通过配置文件调整） */
     @Value("${graph.build.concurrency:15}")
     private int maxGraphBuildConcurrency;
 
+    /** 图谱抽取 LLM 总超时（秒），默认 180s，适配 Qwen3 等慢响应模型 */
+    @Value("${graph.build.llm-timeout:180}")
+    private int graphBuildLlmTimeoutSeconds;
+
     /** 跳过内容过短的 chunk（不调 LLM），单位字符数 */
     private static final int MIN_CHUNK_LENGTH_FOR_EXTRACTION = 50;
 
+    /** 实体类型白名单（逗号分隔，可覆盖默认集合；未命中归 UNKNOWN） */
+    @Value("${graph.entity-type-whitelist:}")
+    private String entityTypeWhitelistCfg;
+
+    /** 白名单缓存（懒加载） */
+    private volatile Set<String> entityTypeWhitelistCache;
+
+    /**
+     * 图谱构建消费者。
+     * RabbitMQ concurrency=5：5 个消费者线程并行消费队列消息，每个文件处理完后取下一条。
+     * 若需调整并发数，在 application.yml 中配置：
+     *   spring.rabbitmq.listener.simple.concurrency=5
+     *   spring.rabbitmq.listener.simple.max-concurrency=10
+     */
     @Override
-    @RabbitListener(queues = "fastrag.graph-build.queue", concurrency = "2")
+    @RabbitListener(queues = "fastrag.graph-build.queue", concurrency = "5")
     public void handleGraphBuild(Map<String, Object> message) {
         String kbId = (String) message.get("kbId");
         // 兼容新旧消息格式：支持单 fileId 和多 fileIds
@@ -105,18 +129,49 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                 llmConfig.getApiUrl() != null ? "***provided***" : "null",
                 llmConfig.getApiKey() != null ? "***provided***" : "null");
 
+        // LLM 不可用时标记构建失败（而非静默跳过所有 chunk）
+        if (llmConfig.getApiUrl() == null || llmConfig.getApiUrl().isBlank()) {
+            log.error("[GraphBuild] LLM not configured (apiUrl is null/blank). Graph build cannot proceed. " +
+                    "Ensure the file's parse strategy has a valid LLM model that is 'online' in model_config.");
+            try {
+                updateGraphStatus(kbId, "failed", 0, 0, 0, 0, 0, 0);
+                // 记录具体错误原因
+                var idx = graphIndexMapper.selectById(kbId);
+                if (idx != null) {
+                    idx.setBuildError("LLM not configured: no valid apiUrl found. " +
+                            "Check parse strategy LLM model and ensure it is 'online'.");
+                    graphIndexMapper.updateById(idx);
+                }
+                logService.addLog(kbId, LogCategory.operation, ActionType.graph_build_failed,
+                        "", "LLM 未配置或模型不在线，无法进行实体抽取", "system", "failed", null);
+            } catch (Exception le) {
+                log.warn("[GraphBuild] Failed to record LLM-not-configured error for kb={}", kbId);
+            }
+            return;
+        }
+
         try {
             // 查询需要处理的 chunks（仅处理未提取的）
             List<KbChunk> chunks = queryChunks(kbId, fileIds, mode);
             int total = chunks.size();
 
+            // 全库 chunk 统计（索引管理的 totalChunks 应为整个知识库的值，
+            // 而非本次构建范围——单文件增量构建不应覆盖全库统计）
+            long kbTotalChunks = chunkMapper.selectCount(
+                    new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getKbId, kbId));
+            long kbBuiltChunks = chunkMapper.selectCount(
+                    new LambdaQueryWrapper<KbChunk>()
+                            .eq(KbChunk::getKbId, kbId)
+                            .eq(KbChunk::getGraphIndexed, 1));
+
             if (total == 0) {
                 log.info("No chunks found for graph build, kb: {}, fileIds: {}", kbId, fileIds);
-                updateGraphStatus(kbId, "completed", 100, 0, 0, total, total, 0);
+                updateGraphStatus(kbId, "completed", 100, 0, 0,
+                        (int) kbTotalChunks, (int) kbBuiltChunks, 0);
                 return;
             }
 
-            updateGraphStatus(kbId, "building", 0, 0, 0, 0, total, 0);
+            updateGraphStatus(kbId, "building", 0, 0, 0, (int) kbTotalChunks, (int) kbBuiltChunks, 0);
 
             // 并行处理 chunks（并发数可配，默认 max=15，按 total/3 自动调整）
             int concurrency = Math.min(maxGraphBuildConcurrency, Math.max(1, total / 3));
@@ -146,7 +201,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                     skippedChunks.incrementAndGet();
                     int done = processed.incrementAndGet();
                     if (done % 10 == 0 || done == total) {
-                        updateGraphProgress(kbId, done, total,
+                        updateGraphProgress(kbId, done, total, kbTotalChunks, kbBuiltChunks,
                                 entityCount.get(), relationCount.get(), failedChunks.get());
                     }
                     continue;
@@ -158,14 +213,17 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                         ExtractionNormalizer.ExtractionResult result = extractWithNormalization(
                                 content, llmConfig.getModel(), llmConfig.getApiUrl(), llmConfig.getApiKey());
 
-                        // 写入实体（使用确定性 ID）
+                        // 写入实体（使用确定性 ID；实体类型经白名单归一，收敛类型爆炸）
                         List<ExtractionNormalizer.Entity> entities = result.getEntities();
+                        List<String> entityNamesForEmbed = new ArrayList<>();
                         if (entities != null) {
                             for (ExtractionNormalizer.Entity entity : entities) {
                                 String normalizedName = NameNormalizer.normalize(entity.getText());
-                                String entityId = GraphIdHashing.entityId(kbId, normalizedName, entity.getLabel());
-                                graphStore.createEntity(kbId, entityId, entity.getText(), normalizedName, entity.getLabel());
-                                graphStore.createEntityMention(kbId, entityId, chunkId);
+                                String type = EntityTypeNormalizer.normalize(entity.getLabel(), resolveEntityTypeWhitelist());
+                                String entityId = GraphIdHashing.entityId(kbId, normalizedName, type);
+                                graphStore.createEntity(kbId, entityId, entity.getText(), normalizedName, type);
+                                graphStore.createEntityMention(kbId, entity.getText(), chunkId);
+                                entityNamesForEmbed.add(entity.getText());
                                 entityCount.incrementAndGet();
                             }
                         }
@@ -187,8 +245,8 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                             }
                         }
 
-                        // 在 Neo4j 中创建 Chunk 节点
-                        graphStore.createChunk(kbId, chunkId, content);
+                        // 在 Neo4j 中创建 Chunk 节点（携带 fileId 用于按文件删除）
+                        graphStore.createChunk(kbId, chunkId, chunk.getFileId(), content);
 
                         // 标记 chunk 已完成图谱提取
                         KbChunk toUpdate = new KbChunk();
@@ -197,13 +255,16 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                         toUpdate.setExtractionResult(JSONUtil.toJsonStr(result));
                         chunkMapper.updateById(toUpdate);
 
+                        // 为实体生成 embedding（向量检索用；失败仅告警，不影响构建）
+                        updateEntityEmbeddings(kbId, entityNamesForEmbed);
+
                     } catch (Exception e) {
                         failedChunks.incrementAndGet();
                         log.warn("Failed to process chunk {}: {}", chunkId, e.getMessage());
                     } finally {
                         int done = processed.incrementAndGet();
                         if (done % 10 == 0 || done == total) {
-                            updateGraphProgress(kbId, done, total,
+                            updateGraphProgress(kbId, done, total, kbTotalChunks, kbBuiltChunks,
                                     entityCount.get(), relationCount.get(), failedChunks.get());
                         }
                     }
@@ -218,16 +279,51 @@ public class GraphBuildConsumer implements GraphBuildHandler {
             int finalRelationCount = relationCount.get();
             int finalFailed = failedChunks.get();
             int finalSkipped = skippedChunks.get();
-            updateGraphStatus(kbId, "completed", 100, finalEntityCount, finalRelationCount,
+
+            // 使用实时查询获取全库统计（而非本次构建的局部计数，避免多文件分批构建后数字被覆盖）
+            long liveEntityCount = 0;
+            long liveRelationCount = 0;
+            try {
+                liveEntityCount = graphStore.countEntities(kbId);
+                liveRelationCount = graphStore.countRelations(kbId);
+            } catch (Exception e) {
+                log.warn("[GraphBuild] Failed to get live counts, falling back to local counters: {}", e.getMessage());
+                liveEntityCount = entityCount.get();
+                liveRelationCount = relationCount.get();
+            }
+            // 完成后重新统计全库已构建 chunk 数（包含此前其他文件已构建的部分）
+            long finalBuiltChunks = chunkMapper.selectCount(
+                    new LambdaQueryWrapper<KbChunk>()
+                            .eq(KbChunk::getKbId, kbId)
+                            .eq(KbChunk::getGraphIndexed, 1));
+            updateGraphStatus(kbId, "completed", 100, (int) liveEntityCount, (int) liveRelationCount,
                     total, total - finalFailed - finalSkipped, finalFailed);
             log.info("Graph build completed for kb: {}, entities: {}, relations: {}, " +
                             "failed: {}/{}, skipped: {}",
-                    kbId, finalEntityCount, finalRelationCount, finalFailed, total, finalSkipped);
+                    kbId, liveEntityCount, liveRelationCount, finalFailed, total, finalSkipped);
+
+            // 回填存量实体 embedding（新增实体已在构建时生成，这里只补历史缺失）
+            backfillEntityEmbeddings(kbId);
+
+            // 清理孤立实体/关系（删除文件或编辑 chunk 后残留的无引用数据）
+            graphStore.cleanupOrphanNodes(kbId);
+
+            // 观测实体类型分布（UNKNOWN 占比反映类型归一效果）
+            try {
+                Map<String, Long> typeCounts = graphStore.countEntitiesByType(kbId);
+                long unknown = typeCounts.getOrDefault("UNKNOWN", 0L);
+                long entityTotal = typeCounts.values().stream().mapToLong(Long::longValue).sum();
+                String pct = String.format("%.1f%%", entityTotal > 0 ? 100.0 * unknown / entityTotal : 0.0);
+                log.info("[GraphBuild] Entity types for kb={}: {} types, UNKNOWN={} ({} of {})",
+                        kbId, typeCounts.size(), unknown, pct, entityTotal);
+            } catch (Exception e) {
+                log.warn("[GraphBuild] Failed to collect entity type distribution for kb={}", kbId);
+            }
 
             // 记录图谱构建完成日志
             try {
                 logService.addLog(kbId, LogCategory.operation, ActionType.graph_build_completed,
-                        "", "实体: " + finalEntityCount + ", 关系: " + finalRelationCount +
+                        "", "实体: " + liveEntityCount + ", 关系: " + liveRelationCount +
                                 ", 失败: " + finalFailed + "/" + total + ", 跳过: " + finalSkipped,
                         "system", "success", null);
             } catch (Exception e) {
@@ -309,16 +405,27 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         if (fileIds != null && !fileIds.isEmpty()) {
             List<KbChunk> allChunks = new ArrayList<>();
             for (String fid : fileIds) {
-                allChunks.addAll(chunkMapper.selectList(
-                        new LambdaQueryWrapper<KbChunk>()
-                                .eq(KbChunk::getKbId, kbId)
-                                .eq(KbChunk::getFileId, fid)
-                                .and(w -> w.isNull(KbChunk::getGraphIndexed).or().eq(KbChunk::getGraphIndexed, 0))));
+                LambdaQueryWrapper<KbChunk> wrapper = new LambdaQueryWrapper<KbChunk>()
+                        .eq(KbChunk::getKbId, kbId)
+                        .eq(KbChunk::getFileId, fid);
+                // full 模式不过滤 graphIndexed，处理所有 chunk
+                if (!"full".equals(mode)) {
+                    wrapper.and(w -> w.isNull(KbChunk::getGraphIndexed).or().eq(KbChunk::getGraphIndexed, 0));
+                }
+                allChunks.addAll(chunkMapper.selectList(wrapper));
             }
             return allChunks;
         }
 
-        // 全库模式：只查未提取的 chunks
+        // 全库模式
+        if ("full".equals(mode)) {
+            // full 模式：处理所有 chunk（用于重建场景）
+            return chunkMapper.selectList(
+                    new LambdaQueryWrapper<KbChunk>()
+                            .eq(KbChunk::getKbId, kbId));
+        }
+
+        // 默认增量模式：只查未提取的 chunks
         return chunkMapper.selectList(
                 new LambdaQueryWrapper<KbChunk>()
                         .eq(KbChunk::getKbId, kbId)
@@ -342,13 +449,16 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         log.info("[GraphBuild-Extract] Calling LLM model={} for entity extraction, text length={}", model, text.length());
 
         try {
-            // 图谱抽取优先使用流式（非流式 Qwen3-8B 响应过慢），超时 60 秒
+            // 图谱抽取使用流式 + 关闭 thinking + 自定义超时（默认 180s）
+            // 关闭 thinking 避免 Qwen3 等模型输出大量 <think...> 推理文本导致超时
             String response;
             try {
-                response = llmService.chat(model, prompt, apiUrl, apiKey, null);
+                response = llmService.chatWithTimeout(model, prompt, apiUrl, apiKey,
+                        false, graphBuildLlmTimeoutSeconds);
             } catch (Exception e) {
-                log.warn("[GraphBuild-Extract] Stream LLM call failed, retrying non-stream: {}", e.getMessage());
-                response = llmService.chat(model, prompt, apiUrl, apiKey);
+                log.warn("[GraphBuild-Extract] LLM call failed (timeout={}s), skipping chunk: {}",
+                        graphBuildLlmTimeoutSeconds, e.getMessage());
+                return new ExtractionNormalizer.ExtractionResult();
             }
             log.info("[GraphBuild-Extract] LLM responded, response length={}", response != null ? response.length() : 0);
 
@@ -476,6 +586,9 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     private String buildExtractionPrompt(String text) {
         // 保留更多文本上下文以利于关系提取
         String truncated = text.substring(0, Math.min(text.length(), 3000));
+        // 类型白名单提示（限制 LLM 输出类型集合，收敛类型爆炸；取前 60 个控制 token）
+        String typeHint = EntityTypeNormalizer.DEFAULT_WHITELIST.stream().limit(60)
+                .collect(Collectors.joining("、"));
         return """
                 从文本中提取实体和实体间的关系，返回JSON。
 
@@ -486,12 +599,33 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                 要求：
                 - 每个关系必须连接两个文本中出现的不同实体
                 - 关系类型要具体（如：属于、位于、使用、创建、包含、配置、管理、依赖、部署）
+                - 实体类型（label）必须从以下集合中选择（选择最贴切的一个，不要自造类型）：
+                """ + typeHint + """
+
                 - 同一条关系不要重复，source/target交换视为不同
                 - 只返回JSON，无其他文字
                 - 无关系则返回 {"entities":[],"relations":[]}
 
                 文本：
                 """ + truncated;
+    }
+
+    /**
+     * 解析实体类型白名单（yml 配置优先，空则用默认集合；懒加载缓存）
+     */
+    private Set<String> resolveEntityTypeWhitelist() {
+        Set<String> cached = entityTypeWhitelistCache;
+        if (cached != null) return cached;
+        if (entityTypeWhitelistCfg == null || entityTypeWhitelistCfg.isBlank()) {
+            cached = EntityTypeNormalizer.DEFAULT_WHITELIST;
+        } else {
+            cached = Arrays.stream(entityTypeWhitelistCfg.split(","))
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .collect(Collectors.toSet());
+        }
+        entityTypeWhitelistCache = cached;
+        return cached;
     }
 
     /**
@@ -528,13 +662,104 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         }
     }
 
+    /**
+     * 更新构建进度。
+     *
+     * @param kbId            知识库 ID
+     * @param processed       本次构建已处理 chunk 数（用于进度百分比）
+     * @param total           本次构建范围 chunk 总数（用于进度百分比）
+     * @param kbTotalChunks   全库 chunk 总数（索引管理展示用）
+     * @param kbBuiltChunks   构建开始前全库已构建 chunk 数（基准）
+     * @param entityCount     本次新增实体数
+     * @param relationCount   本次新增关系数
+     * @param failedChunks    本次失败 chunk 数
+     */
     private void updateGraphProgress(String kbId, int processed, int total,
+                                     long kbTotalChunks, long kbBuiltChunks,
                                      int entityCount, int relationCount, int failedChunks) {
         int progress = total > 0 ? (int) ((double) processed / total * 100) : 0;
+        // builtChunks = 全库已构建基准 + 本次已处理（progress 使用全库口径，避免覆盖）
+        long built = kbBuiltChunks + processed;
         updateGraphStatus(kbId, "building", progress, entityCount, relationCount,
-                total, processed - failedChunks, failedChunks);
+                (int) kbTotalChunks, (int) built, failedChunks);
         log.info("[GraphBuild-Progress] kb={}, progress={}% ({}/{}) entities={} relations={} failed={}",
                 kbId, progress, processed, total, entityCount, relationCount, failedChunks);
+    }
+
+    /**
+     * 为实体批量生成 embedding 并写入图谱（向量检索用）
+     * 失败仅告警，不影响构建；未配置 embedding 模型时跳过（向量检索降级文本匹配）
+     */
+    private void updateEntityEmbeddings(String kbId, List<String> entityNames) {
+        if (entityNames == null || entityNames.isEmpty()) return;
+        LlmConfig embCfg = resolveEmbeddingModelConfig(kbId);
+        if (embCfg == null) return;
+        try {
+            List<List<Float>> vectors = embeddingService.embed(
+                    embCfg.getModel(), entityNames, embCfg.getApiUrl(), embCfg.getApiKey());
+            for (int i = 0; i < entityNames.size() && i < vectors.size(); i++) {
+                graphStore.updateEntityEmbedding(kbId, entityNames.get(i), vectors.get(i));
+            }
+            log.info("[GraphBuild-Embed] Embedded {} entities for kb={}", entityNames.size(), kbId);
+        } catch (Exception e) {
+            log.warn("[GraphBuild-Embed] Failed to embed {} entities for kb={}: {}",
+                    entityNames.size(), kbId, e.getMessage());
+        }
+    }
+
+    /**
+     * 回填缺失 embedding 的存量实体（构建完成后自动执行；分批，可断点续跑）
+     */
+    private void backfillEntityEmbeddings(String kbId) {
+        try {
+            LlmConfig embCfg = resolveEmbeddingModelConfig(kbId);
+            if (embCfg == null) return;
+            List<String> missing = graphStore.listEntitiesWithoutEmbedding(kbId, 1000);
+            if (missing.isEmpty()) return;
+            log.info("[GraphBuild-Embed] Backfilling {} entities without embedding for kb={}", missing.size(), kbId);
+            for (int i = 0; i < missing.size(); i += 20) {
+                List<String> batch = missing.subList(i, Math.min(i + 20, missing.size()));
+                try {
+                    List<List<Float>> vectors = embeddingService.embed(
+                            embCfg.getModel(), batch, embCfg.getApiUrl(), embCfg.getApiKey());
+                    for (int j = 0; j < batch.size() && j < vectors.size(); j++) {
+                        graphStore.updateEntityEmbedding(kbId, batch.get(j), vectors.get(j));
+                    }
+                } catch (Exception e) {
+                    log.warn("[GraphBuild-Embed] Backfill batch failed for kb={}: {}", kbId, e.getMessage());
+                }
+            }
+            log.info("[GraphBuild-Embed] Backfill done for kb={}", kbId);
+        } catch (Exception e) {
+            log.warn("[GraphBuild-Embed] Backfill failed for kb={}: {}", kbId, e.getMessage());
+        }
+    }
+
+    /**
+     * 解析知识库的 embedding 模型配置（kb.embeddingModel → ModelRecord online）
+     */
+    private LlmConfig resolveEmbeddingModelConfig(String kbId) {
+        try {
+            KnowledgeBase kb = kbMapper.selectById(kbId);
+            if (kb == null || kb.getEmbeddingModel() == null || kb.getEmbeddingModel().isBlank()) {
+                log.info("[GraphBuild-Embed] No embedding model configured for kb={}, skip", kbId);
+                return null;
+            }
+            String modelCode = kb.getEmbeddingModel();
+            ModelRecord modelRecord = modelRecordMapper.selectOne(
+                    new LambdaQueryWrapper<ModelRecord>()
+                            .eq(ModelRecord::getCode, modelCode)
+                            .eq(ModelRecord::getStatus, "online")
+                            .last("LIMIT 1"));
+            if (modelRecord == null) {
+                log.warn("[GraphBuild-Embed] Embedding model '{}' not found/offline for kb={}, skip", modelCode, kbId);
+                return null;
+            }
+            return new LlmConfig(modelCode, modelRecord.getApiUrl(), modelRecord.getApiKeyRef());
+        } catch (Exception e) {
+            log.warn("[GraphBuild-Embed] Failed to resolve embedding model for kb={}", kbId);
+            return null;
+        }
     }
 
     /**

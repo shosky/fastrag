@@ -22,6 +22,8 @@ public class ChunkDto {
     private String pageRange;
     private String imageKeys;
     private String chunkType;
+    private String title;            // 所属最近标题
+    private String headingPath;      // 层级路径
     private Integer graphIndexed;
     private String extractionResult;
 
@@ -45,6 +47,8 @@ public class ChunkDto {
         d.setPageRange(e.getPageRange());
         d.setImageKeys(e.getImageKeys());
         d.setChunkType(e.getChunkType());
+        d.setTitle(e.getTitle());
+        d.setHeadingPath(e.getHeadingPath());
         d.setGraphIndexed(e.getGraphIndexed());
         d.setExtractionResult(e.getExtractionResult());
         return d;

@@ -7,6 +7,7 @@ import ProcessStatusBar from './ProcessStatusBar.vue'
 
 const props = defineProps<{
   files: KnowledgeFile[]
+  folders?: Array<{ id: string; label: string; createdAt?: string; updatedAt?: string }>
   loading?: boolean
   kbId?: string
   strategies?: ParseStrategy[]
@@ -25,6 +26,9 @@ const emit = defineEmits<{
   (e: 'copy', file: KnowledgeFile): void
   (e: 'changeStrategy', file: KnowledgeFile, strategyId: string, strategyName: string): void
   (e: 'toggleGraphBuild', file: KnowledgeFile, enabled: boolean): void
+  (e: 'enterFolder', folderId: string): void
+  (e: 'renameFolder', folderId: string, label: string): void
+  (e: 'deleteFolder', folderId: string): void
 }>()
 
 // Filter state
@@ -48,6 +52,15 @@ const statusOptions = [
   { label: '处理中', value: 'processing' as ProcessStatus },
   { label: '已完成', value: 'completed' as ProcessStatus },
   { label: '失败', value: 'failed' as ProcessStatus },
+]
+
+// Type filter (all / folder / file)
+type TypeFilter = 'all' | 'folder' | 'file'
+const typeFilter = ref<TypeFilter>('all')
+const typeOptions = [
+  { label: '全部', value: 'all' as TypeFilter },
+  { label: '文件夹', value: 'folder' as TypeFilter },
+  { label: '文件', value: 'file' as TypeFilter },
 ]
 
 // Filtered files based on search and filters
@@ -80,6 +93,35 @@ watch(() => filteredFiles.value.length, (n) => {
 const pagedFiles = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return filteredFiles.value.slice(start, start + pageSize.value)
+})
+
+// Folder rows: convert folders prop to row objects, always shown before file rows
+interface FolderRow {
+  isFolder: true
+  id: string
+  label: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+const folderRows = computed<FolderRow[]>(() => {
+  return (props.folders || []).map((f) => ({
+    isFolder: true as const,
+    id: f.id,
+    label: f.label,
+    createdAt: f.createdAt,
+    updatedAt: f.updatedAt,
+  }))
+})
+
+// Display rows: folders first, then paged files (respecting type filter)
+const displayRows = computed(() => {
+  const showFolders = typeFilter.value !== 'file'
+  const showFiles = typeFilter.value !== 'folder'
+  return [
+    ...(showFolders ? folderRows.value : []),
+    ...(showFiles ? pagedFiles.value : []),
+  ]
 })
 
 // Get category icon for a file
@@ -154,6 +196,12 @@ function handleChangeStrategy(file: KnowledgeFile, strategyId: string) {
 function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
   emit('toggleGraphBuild', file, enabled)
 }
+
+// Handle folder dropdown command
+function handleFolderCommand(cmd: string, folder: FolderRow) {
+  if (cmd === 'rename') emit('renameFolder', folder.id, folder.label)
+  else if (cmd === 'delete') emit('deleteFolder', folder.id)
+}
 </script>
 
 <template>
@@ -199,6 +247,19 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
             :value="option.value"
           />
         </el-select>
+
+        <el-select
+          v-model="typeFilter"
+          placeholder="全部"
+          class="file-table__type-select"
+        >
+          <el-option
+            v-for="option in typeOptions"
+            :key="option.value"
+            :label="option.label"
+            :value="option.value"
+          />
+        </el-select>
       </div>
 
       <el-button :icon="Refresh" circle @click="handleRefresh" />
@@ -207,7 +268,7 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
     <!-- File table -->
     <el-table
       v-loading="loading"
-      :data="pagedFiles"
+      :data="displayRows"
       stripe
       row-key="id"
       :row-style="{ height: '60px' }"
@@ -216,12 +277,20 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
       class="file-table__table"
     >
       <!-- Selection column -->
-      <el-table-column type="selection" width="50" align="center" />
+      <el-table-column type="selection" width="50" align="center" :selectable="(row: any) => !row.isFolder" />
 
       <!-- File name column with category icon -->
       <el-table-column prop="name" label="文件名" min-width="260" show-overflow-tooltip>
         <template #default="{ row }">
-          <div class="file-table__name-cell">
+          <!-- Folder row -->
+          <div v-if="row.isFolder" class="file-table__name-cell">
+            <span class="file-table__icon">📁</span>
+            <span class="file-table__name file-table__name--folder" @click="emit('enterFolder', row.id)">
+              {{ row.label }}
+            </span>
+          </div>
+          <!-- File row -->
+          <div v-else class="file-table__name-cell">
             <span class="file-table__icon">{{ getCategoryIcon(row.category) }}</span>
             <span
               class="file-table__name"
@@ -236,7 +305,9 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
       <!-- Status column using ProcessStatusBar -->
       <el-table-column label="状态" width="220">
         <template #default="{ row }">
+          <span v-if="row.isFolder" class="file-table__no-data">-</span>
           <ProcessStatusBar
+            v-else
             :status="row.status"
             :progress="row.progress"
             :stage="row.stage"
@@ -248,13 +319,16 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
       <!-- Duration / Pages column -->
       <el-table-column label="时长/页数" width="100" align="center">
         <template #default="{ row }">
-          {{ getDurationOrPages(row as KnowledgeFile) }}
+          <span v-if="row.isFolder" class="file-table__no-data">-</span>
+          <span v-else>{{ getDurationOrPages(row as KnowledgeFile) }}</span>
         </template>
       </el-table-column>
 
       <!-- Parse strategy column -->
       <el-table-column label="处理策略" width="160" align="center">
         <template #default="{ row }">
+          <span v-if="row.isFolder" class="file-table__no-data">-</span>
+          <template v-else>
           <el-dropdown
             v-if="row.parseStrategyName"
             trigger="click"
@@ -282,13 +356,15 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
             </template>
           </el-dropdown>
           <span v-else class="file-table__no-strategy">未设置</span>
+          </template>
         </template>
       </el-table-column>
 
       <!-- Chunk count column -->
       <el-table-column label="切片数" width="80" align="center" sortable :sort-method="(a: any, b: any) => ((a as KnowledgeFile).chunkCount || 0) - ((b as KnowledgeFile).chunkCount || 0)">
         <template #default="{ row }">
-          <span v-if="row.chunkCount !== undefined">{{ row.chunkCount }}</span>
+          <span v-if="row.isFolder" class="file-table__no-data">-</span>
+          <span v-else-if="row.chunkCount !== undefined">{{ row.chunkCount }}</span>
           <span v-else class="file-table__no-data">-</span>
         </template>
       </el-table-column>
@@ -296,14 +372,17 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
       <!-- File size column -->
       <el-table-column label="大小" width="100" align="center" sortable :sort-method="(a: any, b: any) => (a as KnowledgeFile).size - (b as KnowledgeFile).size">
         <template #default="{ row }">
-          {{ formatFileSize(row.size) }}
+          <span v-if="row.isFolder" class="file-table__no-data">-</span>
+          <span v-else>{{ formatFileSize(row.size) }}</span>
         </template>
       </el-table-column>
 
       <!-- 知识图谱开关列 -->
       <el-table-column label="知识图谱" width="100" align="center">
         <template #default="{ row }">
+          <span v-if="row.isFolder" class="file-table__no-data">-</span>
           <el-switch
+            v-else
             :model-value="(row as any).enableGraphBuild"
             :active-value="1"
             :inactive-value="0"
@@ -314,22 +393,42 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
       </el-table-column>
 
       <!-- Upload time column -->
-      <el-table-column label="上传时间" width="160" align="center" sortable :sort-method="(a: any, b: any) => (a as KnowledgeFile).createdAt.localeCompare((b as KnowledgeFile).createdAt)">
+      <el-table-column label="上传时间" width="160" align="center" sortable :sort-method="(a: any, b: any) => ((a.isFolder ? (a.createdAt || '') : a.createdAt) || '').localeCompare((b.isFolder ? (b.createdAt || '') : b.createdAt) || '')">
         <template #default="{ row }">
-          {{ row.createdAt }}
+          <span v-if="row.isFolder">{{ (row as FolderRow).createdAt || '-' }}</span>
+          <span v-else>{{ row.createdAt }}</span>
         </template>
       </el-table-column>
 
       <!-- Update time column -->
-      <el-table-column label="更新时间" width="160" align="center" sortable :sort-method="(a: any, b: any) => (a as KnowledgeFile).updatedAt.localeCompare((b as KnowledgeFile).updatedAt)">
+      <el-table-column label="更新时间" width="160" align="center" sortable :sort-method="(a: any, b: any) => ((a.isFolder ? (a.updatedAt || '') : a.updatedAt) || '').localeCompare((b.isFolder ? (b.updatedAt || '') : b.updatedAt) || '')">
         <template #default="{ row }">
-          {{ row.updatedAt }}
+          <span v-if="row.isFolder">{{ (row as FolderRow).updatedAt || '-' }}</span>
+          <span v-else>{{ row.updatedAt }}</span>
         </template>
       </el-table-column>
 
       <!-- Actions column -->
       <el-table-column label="操作" width="80" align="center" fixed="right">
         <template #default="{ row }">
+          <!-- Folder row actions -->
+          <template v-if="row.isFolder">
+            <el-dropdown trigger="hover" @command="(cmd: string) => handleFolderCommand(cmd, row as FolderRow)">
+              <el-button :icon="MoreFilled" link class="file-table__more-btn" />
+              <template #dropdown>
+                <el-dropdown-menu>
+                  <el-dropdown-item command="rename" :icon="Edit">
+                    重命名
+                  </el-dropdown-item>
+                  <el-dropdown-item command="delete" :icon="Delete" divided>
+                    <span class="file-table__delete-text">删除</span>
+                  </el-dropdown-item>
+                </el-dropdown-menu>
+              </template>
+            </el-dropdown>
+          </template>
+          <!-- File row actions -->
+          <template v-else>
           <el-dropdown trigger="hover" @command="(cmd: Command) => handleCommand(cmd, row as KnowledgeFile)">
             <el-button :icon="MoreFilled" link class="file-table__more-btn" />
             <template #dropdown>
@@ -371,6 +470,7 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
               </el-dropdown-menu>
             </template>
           </el-dropdown>
+          </template>
         </template>
       </el-table-column>
     </el-table>
@@ -424,6 +524,10 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
     width: 120px;
   }
 
+  &__type-select {
+    width: 100px;
+  }
+
   &__table {
     width: 100%;
 
@@ -454,6 +558,16 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
 
       &:hover {
         text-decoration: underline;
+      }
+    }
+
+    &--folder {
+      cursor: pointer;
+      font-weight: 500;
+      color: $text-primary;
+
+      &:hover {
+        color: $color-primary;
       }
     }
   }
@@ -503,6 +617,7 @@ function handleGraphToggle(file: KnowledgeFile, enabled: boolean) {
   &__pagination {
     display: flex;
     justify-content: flex-end;
+    margin-top: 16px;
   }
 }
 </style>

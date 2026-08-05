@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PersonnelRecord } from '@/mock/auth-roles'
 import type { RoleMeta } from '@/types/auth'
+import type { OrgNode } from '@/mock/org'
 import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
 
@@ -19,7 +20,7 @@ const formData = ref({
   username: '',
   realName: '',
   phone: '',
-  orgName: '',
+  orgId: '',
   password: '',
   email: '',
 })
@@ -31,7 +32,7 @@ const selectedRoles = ref<string[]>([])
 
 async function loadData() {
   const [personnelRes, roleRes] = await Promise.all([
-    api.getPersonnel(),
+    api.getPersonnel({ page: 1, pageSize: 1000 }),
     api.getRoles(),
   ])
   personnelList.value = (personnelRes as any)?.list || (personnelRes as any) || []
@@ -67,18 +68,18 @@ const paginatedPersonnel = computed(() => {
   return filteredPersonnel.value.slice(start, start + pageSize.value)
 })
 
-// --- 组织选项（从 API 加载） ---
-const orgOptions = ref<string[]>([])
+// --- 组织选项（树形结构） ---
+const orgTreeData = ref<OrgNode[]>([])
 
 async function loadOrgOptions() {
-  orgOptions.value = (await api.getDepartments()) as any || []
+  orgTreeData.value = (await api.getOrgTree()) as any || []
 }
 
 // --- CRUD ---
 function handleAdd() {
   drawerTitle.value = '添加人员'
   editingId.value = ''
-  formData.value = { username: '', realName: '', phone: '', orgName: '', password: '', email: '' }
+  formData.value = { username: '', realName: '', phone: '', orgId: '', password: '', email: '' }
   showDrawer.value = true
 }
 
@@ -89,7 +90,7 @@ function handleEdit(row: PersonnelRecord) {
     username: row.username,
     realName: row.realName,
     phone: row.phone,
-    orgName: row.orgName,
+    orgId: row.orgId || '',
     password: '',
     email: row.email,
   }
@@ -131,7 +132,7 @@ async function handleSave() {
     await api.updatePersonnel(editingId.value, {
       realName: formData.value.realName,
       phone: formData.value.phone,
-      orgName: formData.value.orgName,
+      orgId: formData.value.orgId,
       email: formData.value.email,
     })
     await loadData()
@@ -144,7 +145,7 @@ async function handleSave() {
       phone: formData.value.phone,
       email: formData.value.email,
       password: formData.value.password,
-      orgName: formData.value.orgName,
+      orgId: formData.value.orgId,
       roleIds: [roleOptions.value[2]?.id || '3'],
       status: 'enabled',
     })
@@ -261,9 +262,14 @@ function handleReset() {
           <el-input v-model="formData.password" type="password" placeholder="请输入初始密码" show-password />
         </el-form-item>
         <el-form-item label="组织/部门">
-          <el-select v-model="formData.orgName" placeholder="请选择" style="width: 100%">
-            <el-option v-for="org in orgOptions" :key="org" :label="org" :value="org" />
-          </el-select>
+          <el-tree-select
+            v-model="formData.orgId"
+            :data="orgTreeData"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            placeholder="请选择组织"
+            check-strictly
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="联系邮箱">
           <el-input v-model="formData.email" placeholder="请输入邮箱" />

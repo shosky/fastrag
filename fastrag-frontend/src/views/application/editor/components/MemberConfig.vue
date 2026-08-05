@@ -34,7 +34,7 @@ const filteredMembers = computed(() => {
 
 async function loadMembers() {
   try {
-    const res: any = await api.getPersonnel()
+    const res: any = await api.getPersonnelSimple()
     const personnelList = Array.isArray(res) ? res : (res?.list || res?.records || [])
     const appRes: any = await api.getAppBasicConfig(appId())
     const advanced = appRes?.advancedOptions || appRes?.advanced || {}

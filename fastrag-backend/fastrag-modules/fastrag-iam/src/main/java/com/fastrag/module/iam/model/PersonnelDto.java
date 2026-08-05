@@ -3,7 +3,7 @@ import lombok.Data; import java.time.LocalDateTime; import java.util.List;
 
 @Data
 public class PersonnelDto {
-    private String id, username, realName, phone, email, orgName, status;
+    private String id, username, realName, phone, email, orgId, orgName, status;
     private List<String> roleIds;
     private List<String> roleNames;
     private LocalDateTime createdAt;

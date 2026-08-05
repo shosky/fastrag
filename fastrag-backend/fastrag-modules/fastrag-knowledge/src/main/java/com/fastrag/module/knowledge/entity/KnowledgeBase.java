@@ -19,6 +19,7 @@ public class KnowledgeBase {
     private String embeddingModel;
     private Integer dimension;
     private String creator;
+    private String orgId; // 归属组织（同组织成员默认可见）
     private String type; // team / personal
     private String permission; // private / team / public
     private Long usedSize;

@@ -47,13 +47,19 @@ public class JwtAuthFilter extends OncePerRequestFilter {
                 Claims claims = jwtUtil.parseToken(token);
                 String userId = claims.getSubject();
                 String username = claims.get("username", String.class);
+                String orgId = claims.get("orgId", String.class);
                 @SuppressWarnings("unchecked")
                 List<String> roles = claims.get("roles", List.class);
                 @SuppressWarnings("unchecked")
                 List<String> permissions = claims.get("permissions", List.class);
 
-                LoginUser loginUser = new LoginUser(userId, username, roles,
-                        permissions != null ? permissions : List.of());
+                LoginUser loginUser = LoginUser.builder()
+                        .userId(userId)
+                        .username(username)
+                        .orgId(orgId)
+                        .roles(roles != null ? roles : List.of())
+                        .permissions(permissions != null ? permissions : List.of())
+                        .build();
                 List<SimpleGrantedAuthority> authorities = (permissions != null ? permissions : List.<String>of())
                         .stream().map(SimpleGrantedAuthority::new).collect(Collectors.toList());
                 UsernamePasswordAuthenticationToken auth =

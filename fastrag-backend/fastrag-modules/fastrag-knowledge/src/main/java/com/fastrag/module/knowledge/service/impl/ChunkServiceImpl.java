@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fastrag.ai.embedding.EmbeddingService;
+import com.fastrag.infra.graph.GraphStore;
 import com.fastrag.infra.milvus.MilvusService;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -35,6 +36,7 @@ public class ChunkServiceImpl implements ChunkService {
     private final ModelRecordMapper modelRecordMapper;
     private final MilvusService milvusService;
     private final EmbeddingService embeddingService;
+    private final GraphStore graphStore;
 
     @Override
     public Map<String, Object> list(String kbId, String fileId, int page, int pageSize) {
@@ -183,6 +185,26 @@ public class ChunkServiceImpl implements ChunkService {
 
         mapper.updateById(chunk);
 
+        // 图谱联动：内容变化时清理旧图谱数据并标记待重新提取
+        if (contentChanged) {
+            try {
+                graphStore.deleteChunkGraph(kbId, id);
+                log.info("[Chunk Update] Graph data cleaned for chunk: {}", id);
+            } catch (Exception e) {
+                log.warn("[Chunk Update] Graph cleanup failed for chunk {}: {}", id, e.getMessage());
+            }
+            try {
+                // 重置 graphIndexed 使增量构建能重新处理此 chunk
+                mapper.update(null, new LambdaUpdateWrapper<KbChunk>()
+                        .eq(KbChunk::getId, id)
+                        .set(KbChunk::getGraphIndexed, 0)
+                        .set(KbChunk::getExtractionResult, null));
+                log.info("[Chunk Update] graphIndexed reset for chunk: {}", id);
+            } catch (Exception e) {
+                log.warn("[Chunk Update] Failed to reset graphIndexed for chunk {}: {}", id, e.getMessage());
+            }
+        }
+
         log.info("[Chunk Update] Updated chunk: {}", id);
         return ChunkDto.toDto(chunk);
     }
@@ -211,6 +233,14 @@ public class ChunkServiceImpl implements ChunkService {
             log.info("[Chunk Delete] Milvus vector deleted for chunk: {}", id);
         } catch (Exception e) {
             log.warn("[Chunk Delete] Milvus delete failed for chunk {}: {}", id, e.getMessage());
+        }
+
+        // 清理知识图谱数据（MENTIONS + 回收孤立实体/关系）
+        try {
+            graphStore.deleteChunkGraph(kbId, id);
+            log.info("[Chunk Delete] Graph data cleaned for chunk: {}", id);
+        } catch (Exception e) {
+            log.warn("[Chunk Delete] Graph cleanup failed for chunk {}: {}", id, e.getMessage());
         }
 
         // 将大于 deletedIndex 的分片索引 -1（保持连续性）
@@ -255,6 +285,15 @@ public class ChunkServiceImpl implements ChunkService {
             log.warn("[Chunk BatchDelete] Milvus batch delete failed: {}", e.getMessage());
         }
 
+        // 批量清理知识图谱数据
+        for (String chunkId : validIds) {
+            try {
+                graphStore.deleteChunkGraph(kbId, chunkId);
+            } catch (Exception e) {
+                log.warn("[Chunk BatchDelete] Graph cleanup failed for chunk {}: {}", chunkId, e.getMessage());
+            }
+        }
+
         // 更新涉及文件的 chunkCount
         for (String fileId : fileIds) {
             updateFileChunkCount(fileId);
@@ -289,10 +328,19 @@ public class ChunkServiceImpl implements ChunkService {
                 }
             }
             mapper.deleteById(c.getId());
+            String oldId = c.getId();
             c.setId(newId);
             c.setChunkIndex(newIndex);
             c.setEmbeddingId(newId);
             mapper.insert(c);
+
+            // 同步更新 Neo4j 中 Chunk 节点的 chunkId（避免 MENTIONS 引用悬空）
+            try {
+                graphStore.renameChunkId(c.getKbId(), oldId, newId);
+            } catch (Exception e) {
+                log.warn("[ShiftIndex] Failed to rename chunk in graph: {} -> {}: {}", oldId, newId, e.getMessage());
+            }
+
             if (c.getVectorStored() != null && c.getVectorStored() == 1) {
                 try {
                     // 重新生成向量（因为 ID 变了，Milvus 中需要用新 ID 存储）

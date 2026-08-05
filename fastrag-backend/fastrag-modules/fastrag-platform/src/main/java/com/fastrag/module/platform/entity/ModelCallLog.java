@@ -3,6 +3,7 @@ import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.ti
 @Data @TableName("model_call_log") public class ModelCallLog {
     @TableId(type=IdType.AUTO) private Long id;
     private String modelId,caller,status;
+    private String orgId; // 归属组织（调用者组织）
     private Integer duration,tokens;
     private LocalDateTime timestamp;
 }

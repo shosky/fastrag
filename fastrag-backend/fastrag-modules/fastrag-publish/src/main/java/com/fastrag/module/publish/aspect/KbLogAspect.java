@@ -1,8 +1,9 @@
 package com.fastrag.module.publish.aspect;
-
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
+import com.fastrag.common.event.SysAuditLogEvent;
+import com.fastrag.common.util.IpUtil;
 import com.fastrag.module.publish.service.LogService;
 import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
@@ -11,23 +12,16 @@ import org.aspectj.lang.ProceedingJoinPoint;
 import org.aspectj.lang.annotation.Around;
 import org.aspectj.lang.annotation.Aspect;
 import org.aspectj.lang.reflect.MethodSignature;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.expression.EvaluationContext;
 import org.springframework.expression.Expression;
 import org.springframework.expression.spel.standard.SpelExpressionParser;
 import org.springframework.expression.spel.support.StandardEvaluationContext;
 import org.springframework.stereotype.Component;
-
 import java.lang.reflect.Method;
 import java.lang.reflect.Parameter;
-import java.util.HashMap;
 import java.util.Map;
 
-/**
- * 知识库操作日志 AOP 切面
- * <p>拦截标记了 {@link Loggable} 注解的方法，自动记录操作日志。
- *
- * <p>日志写入失败不影响主业务流程（异常被吞掉）。
- */
 @Slf4j
 @Aspect
 @Component
@@ -35,19 +29,59 @@ import java.util.Map;
 public class KbLogAspect {
 
     private final LogService logService;
+    private final ApplicationEventPublisher eventPublisher;
     private final SpelExpressionParser spelParser = new SpelExpressionParser();
+
+    private static final Map<String, String> MODULE_BY_PREFIX = Map.ofEntries(
+        Map.entry("kb_", "知识库"),
+        Map.entry("file_", "知识库"),
+        Map.entry("folder_", "知识库"),
+        Map.entry("qa_pair_", "知识库"),
+        Map.entry("chunk_", "知识库"),
+        Map.entry("strategy_", "知识库"),
+        Map.entry("graph_", "知识图谱"),
+        Map.entry("evaluation_", "评测中心"),
+        Map.entry("benchmark_", "评测中心"),
+        Map.entry("publish_", "知识发布"),
+        Map.entry("app_", "应用中心"),
+        Map.entry("workflow_", "工作流"),
+        Map.entry("agent_", "智能体"),
+        Map.entry("user_", "系统管理"),
+        Map.entry("role_", "系统管理"),
+        Map.entry("permission_", "系统管理"),
+        Map.entry("config_", "系统管理"),
+        Map.entry("security_policy_", "系统管理"),
+        Map.entry("publish_strategy_", "系统管理"),
+        Map.entry("model_", "模型管理"),
+        Map.entry("tool_", "工具管理"),
+        Map.entry("skill_", "技能管理"),
+        Map.entry("mcp_service_", "MCP管理"),
+        Map.entry("db_instance_", "数据库管理"),
+        Map.entry("conversation_", "应用中心"),
+        Map.entry("reset_config_", "知识发布")
+    );
+
+    private static final Map<LogCategory, String> MODULE_BY_CATEGORY = Map.of(
+        LogCategory.operation, "知识库",
+        LogCategory.retrieval, "知识检索",
+        LogCategory.publish, "知识发布"
+    );
 
     @Around("@annotation(loggable)")
     public Object around(ProceedingJoinPoint pjp, Loggable loggable) throws Throwable {
         String operator = resolveOperator();
+        String userId = resolveUserId();
         String kbId = resolveKbId(pjp);
         String target = resolveSpelOrFallback(pjp, loggable.target(), this::resolveTargetFallback);
         String detail = resolveSpelOrFallback(pjp, loggable.detail(), ctx -> loggable.detail());
+        String ip = IpUtil.getClientIp();
+        String module = resolveModule(loggable);
 
         try {
             Object result = pjp.proceed();
             logService.addLog(kbId, loggable.category(), loggable.action(), target,
                     detail, operator, "success", null);
+            publishAuditEvent(userId, operator, module, loggable.action(), target, detail, "success", ip);
             return result;
         } catch (Exception e) {
             String errorDetail = detail;
@@ -57,20 +91,40 @@ public class KbLogAspect {
             log.warn("[LogAspect] Action {} failed on kbId={}: {}", loggable.action(), kbId, e.getMessage());
             logService.addLog(kbId, loggable.category(), loggable.action(), target,
                     errorDetail, operator, "failed", null);
+            publishAuditEvent(userId, operator, module, loggable.action(), target, errorDetail, "failed", ip);
             throw e;
         }
     }
 
-    /**
-     * 如果表达式以 '#' 开头，尝试用 SpEL 求值；否则当作普通字符串直接使用。
-     * 求值失败时回退到 fallback 策略。
-     */
+    private String resolveModule(Loggable loggable) {
+        if (loggable.action() != null) {
+            String name = loggable.action().name();
+            for (Map.Entry<String, String> entry : MODULE_BY_PREFIX.entrySet()) {
+                if (name.startsWith(entry.getKey())) {
+                    return entry.getValue();
+                }
+            }
+        }
+        return MODULE_BY_CATEGORY.getOrDefault(loggable.category(), "其他");
+    }
+
+    private void publishAuditEvent(String userId, String username, String module,
+                                   ActionType action, String target, String detail,
+                                   String status, String ip) {
+        try {
+            eventPublisher.publishEvent(new SysAuditLogEvent(
+                    this, userId, username, module, action, target, detail, status, ip));
+        } catch (Exception e) {
+            log.warn("[LogAspect] Failed to publish audit event: {}", e.getMessage());
+        }
+    }
+
+
     private String resolveSpelOrFallback(ProceedingJoinPoint pjp, String expr,
                                          java.util.function.Function<ProceedingJoinPoint, String> fallback) {
         if (expr == null || expr.isEmpty()) {
             return fallback.apply(pjp);
         }
-        // 非 SpEL 表达式直接返回
         if (!expr.startsWith("#")) {
             return expr;
         }
@@ -79,17 +133,13 @@ public class KbLogAspect {
             Method method = signature.getMethod();
             Parameter[] parameters = method.getParameters();
             Object[] args = pjp.getArgs();
-
             EvaluationContext context = new StandardEvaluationContext();
-            // 按 #p0, #p1 ... 注册位置参数
             for (int i = 0; i < args.length; i++) {
                 context.setVariable("p" + i, args[i]);
             }
-            // 按参数名注册（需要编译时 -parameters 选项）
             for (int i = 0; i < parameters.length; i++) {
                 context.setVariable(parameters[i].getName(), args[i]);
             }
-
             Expression spelExpr = spelParser.parseExpression(expr);
             Object value = spelExpr.getValue(context);
             if (value != null) {
@@ -102,42 +152,29 @@ public class KbLogAspect {
         }
     }
 
-    /**
-     * 从方法参数中提取 kbId
-     * <p>优先查找参数名为 "kbId" 的参数值。
-     */
     private String resolveKbId(ProceedingJoinPoint pjp) {
         Object[] args = pjp.getArgs();
         MethodSignature signature = (MethodSignature) pjp.getSignature();
         Method method = signature.getMethod();
         Parameter[] parameters = method.getParameters();
-
         for (int i = 0; i < parameters.length; i++) {
             if ("kbId".equals(parameters[i].getName())) {
                 if (args[i] instanceof String s) return s;
             }
         }
-        // fallback: 第一个 String 参数
         for (int i = 0; i < args.length; i++) {
             if (args[i] instanceof String s && !s.isEmpty()) return s;
         }
         return "unknown";
     }
 
-    /**
-     * 解析 target：
-     * <p>1. 如果注解指定了非空 target，直接使用；
-     * <p>2. 否则自动查找参数名为 fileId/folderId/benchmarkId/evaluationId/strategyId 的值。
-     */
     private String resolveTargetFallback(ProceedingJoinPoint pjp) {
-        // 自动检测常见 id 参数
         String[] idParamNames = {"fileId", "folderId", "benchmarkId", "evaluationId",
                 "strategyId", "knowledgeId", "planId", "id"};
         Object[] args = pjp.getArgs();
         MethodSignature signature = (MethodSignature) pjp.getSignature();
         Method method = signature.getMethod();
         Parameter[] parameters = method.getParameters();
-
         for (int i = 0; i < parameters.length; i++) {
             for (String name : idParamNames) {
                 if (name.equals(parameters[i].getName()) && args[i] instanceof String s && !s.isEmpty()) {
@@ -148,13 +185,19 @@ public class KbLogAspect {
         return "";
     }
 
-    /**
-     * 获取当前操作者用户名，失败时返回 "system"
-     */
     private String resolveOperator() {
         try {
             return SecurityUtil.getCurrentUser() != null
                     ? SecurityUtil.getCurrentUser().getUsername() : "system";
+        } catch (Exception e) {
+            return "system";
+        }
+    }
+
+    private String resolveUserId() {
+        try {
+            return SecurityUtil.getCurrentUser() != null
+                    ? SecurityUtil.getCurrentUserId() : "system";
         } catch (Exception e) {
             return "system";
         }

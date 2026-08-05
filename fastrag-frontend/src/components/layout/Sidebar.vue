@@ -4,8 +4,9 @@ import { useRoute, useRouter } from 'vue-router'
 import { useUserStore } from '@/stores/user'
 import { useAuth } from '@/composables/useAuth'
 import { useConfirm } from '@/composables/useConfirm'
-import { MENU_PERMISSION_MAP } from '@/types/auth'
+import { MENU_PERMISSION_MAP, ROLE_LABELS } from '@/types/auth'
 import type { MenuPermission } from '@/types/auth'
+import * as api from '@/api'
 import Logo from './Logo.vue'
 
 const route = useRoute()
@@ -13,6 +14,52 @@ const router = useRouter()
 const userStore = useUserStore()
 const { hasPermission, hasRole } = useAuth()
 const { confirm } = useConfirm()
+
+// ============ 用户信息（头像 + 弹出菜单） ============
+const userInfoDialog = ref(false)
+const orgNameMap = ref<Record<string, string>>({})
+
+/** 头像显示文本：优先真实姓名首字，其次用户名首字 */
+const avatarText = computed(() => {
+  const name = userStore.userInfo?.realName || userStore.userInfo?.username || 'U'
+  return name.charAt(0).toUpperCase()
+})
+
+/** 头像背景色：按用户名哈希取稳定颜色（无头像资源时用首字占位） */
+const avatarColor = computed(() => {
+  const name = userStore.userInfo?.username || 'u'
+  const colors = ['#1890ff', '#722ed1', '#13c2c2', '#52c41a', '#fa8c16', '#eb2f96', '#2f54eb']
+  let h = 0
+  for (const c of name) h = (h * 31 + c.charCodeAt(0)) % 997
+  return colors[h % colors.length]
+})
+
+/** 角色中文名（多角色取第一个有映射的） */
+const roleLabel = computed(() => {
+  const roles = userStore.roles || []
+  if (roles.length === 0) return '-'
+  return roles.map((r) => ROLE_LABELS[r as keyof typeof ROLE_LABELS] || r).join('、')
+})
+
+/** 组织显示名：orgId → 组织名（懒加载一次映射表） */
+const myOrgName = computed(() => {
+  const orgId = userStore.userInfo?.orgId
+  if (!orgId) return '未分配'
+  return orgNameMap.value[orgId] || orgId
+})
+
+function handleShowUserInfo() {
+  userInfoDialog.value = true
+  // 懒加载组织名映射（仅一次）
+  if (Object.keys(orgNameMap.value).length === 0) {
+    api.getOrgFlat().then((res: any) => {
+      const list = Array.isArray(res) ? res : []
+      const map: Record<string, string> = {}
+      list.forEach((o: any) => { if (o.id) map[o.id] = o.name })
+      orgNameMap.value = map
+    }).catch(() => {})
+  }
+}
 
 // 系统级模块（窄条）
 interface NavModule {
@@ -41,6 +88,7 @@ const allModules: NavModule[] = [
     key: 'knowledge',
     title: '知识库',
     icon: 'Collection',
+    path: '/knowledge',
     children: [
       {
         path: '/knowledge',
@@ -68,6 +116,7 @@ const allModules: NavModule[] = [
     key: 'application',
     title: '应用',
     icon: 'Grid',
+    path: '/application',
     children: [
       {
         path: '/application',
@@ -331,15 +380,69 @@ async function handleLogout() {
       </div>
 
       <div class="strip-footer">
-        <el-tooltip content="退出登录" placement="right">
-          <div class="strip-item logout" @click="handleLogout">
-            <div class="strip-item-inner">
-              <el-icon :size="20"><SwitchButton /></el-icon>
+        <el-popover placement="right-end" :width="150" trigger="click" popper-class="user-menu-popover">
+          <template #reference>
+            <div class="strip-item user-avatar">
+              <div class="strip-item-inner">
+                <div class="avatar-circle" :style="{ background: avatarColor }">
+                  <img v-if="userStore.userInfo?.avatar" :src="userStore.userInfo.avatar" alt="avatar" />
+                  <span v-else>{{ avatarText }}</span>
+                </div>
+              </div>
+            </div>
+          </template>
+          <div class="user-menu">
+            <div class="user-menu__item" @click="handleShowUserInfo">
+              <el-icon :size="15"><User /></el-icon>
+              <span>用户信息</span>
+            </div>
+            <div class="user-menu__item user-menu__item--danger" @click="handleLogout">
+              <el-icon :size="15"><SwitchButton /></el-icon>
+              <span>退出系统</span>
             </div>
           </div>
-        </el-tooltip>
+        </el-popover>
       </div>
     </div>
+
+    <!-- 用户信息弹窗 -->
+    <el-dialog v-model="userInfoDialog" title="用户信息" width="400px" :close-on-click-modal="false">
+      <div class="user-info-dialog">
+        <div class="user-info-dialog__avatar" :style="{ background: avatarColor }">
+          <img v-if="userStore.userInfo?.avatar" :src="userStore.userInfo.avatar" alt="avatar" />
+          <span v-else>{{ avatarText }}</span>
+        </div>
+        <div class="user-info-dialog__fields">
+          <div class="user-info-dialog__field">
+            <span class="user-info-dialog__label">用户名</span>
+            <span>{{ userStore.userInfo?.username || '-' }}</span>
+          </div>
+          <div class="user-info-dialog__field">
+            <span class="user-info-dialog__label">姓名</span>
+            <span>{{ userStore.userInfo?.realName || '-' }}</span>
+          </div>
+          <div class="user-info-dialog__field">
+            <span class="user-info-dialog__label">角色</span>
+            <span>{{ roleLabel }}</span>
+          </div>
+          <div class="user-info-dialog__field">
+            <span class="user-info-dialog__label">所属组织</span>
+            <span>{{ myOrgName }}</span>
+          </div>
+          <div class="user-info-dialog__field">
+            <span class="user-info-dialog__label">邮箱</span>
+            <span>{{ userStore.userInfo?.email || '-' }}</span>
+          </div>
+          <div class="user-info-dialog__field">
+            <span class="user-info-dialog__label">手机</span>
+            <span>{{ userStore.userInfo?.phone || '-' }}</span>
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="userInfoDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 右侧二级菜单 -->
     <div v-if="hasSubMenu" class="sub-menu-panel">
@@ -491,6 +594,79 @@ async function handleLogout() {
   justify-content: center;
 }
 
+// 头像（替代原退出按钮）
+.avatar-circle {
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #fff;
+  font-size: 15px;
+  font-weight: 600;
+  overflow: hidden;
+  user-select: none;
+
+  img {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+  }
+}
+
+.user-avatar {
+  &.strip-item:hover .strip-item-inner {
+    color: $text-regular;
+  }
+}
+
+// 用户信息弹窗
+.user-info-dialog {
+  display: flex;
+  gap: $spacing-lg;
+  padding: $spacing-sm $spacing-xs;
+
+  &__avatar {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-size: 26px;
+    font-weight: 600;
+    overflow: hidden;
+
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+  }
+
+  &__fields {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+
+  &__field {
+    display: flex;
+    align-items: center;
+    font-size: 13px;
+  }
+
+  &__label {
+    width: 64px;
+    color: $text-secondary;
+    flex-shrink: 0;
+  }
+}
+
 // ============ 右侧二级菜单 ============
 .sub-menu-panel {
   width: $sub-menu-width;
@@ -618,5 +794,42 @@ async function handleLogout() {
 
 .menu-text {
   line-height: 1.4;
+}
+</style>
+
+<!-- 弹出菜单样式：popover teleport 到 body，须用全局样式 -->
+<style lang="scss">
+@use '@/assets/styles/variables' as *;
+
+.user-menu-popover {
+  padding: 6px !important;
+
+  .user-menu {
+    &__item {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 8px 10px;
+      border-radius: $radius-sm;
+      font-size: 13px;
+      color: $text-regular;
+      cursor: pointer;
+      transition: background 0.15s;
+
+      &:hover {
+        background: $bg-hover;
+        color: $text-primary;
+      }
+
+      &--danger {
+        color: $color-danger;
+
+        &:hover {
+          background: rgba(245, 108, 108, 0.08);
+          color: $color-danger;
+        }
+      }
+    }
+  }
 }
 </style>

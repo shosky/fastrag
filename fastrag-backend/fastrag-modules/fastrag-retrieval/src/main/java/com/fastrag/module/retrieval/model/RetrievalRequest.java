@@ -11,18 +11,20 @@ public class RetrievalRequest {
     @Data
     public static class RetrievalConfig {
         // ===== 检索模式 =====
-        private String mode = "hybrid"; // fulltext / vector / hybrid
-        private int topK = 10;
-        private double similarityThreshold = 0.0;
+        // 注意：以下字段均使用包装类型（可空），未传时不覆盖 KB 已保存配置 / 系统默认值
+        private String mode; // fulltext / vector / hybrid
+        private Integer topK;
+        private Double similarityThreshold;
 
         // ===== 检索预处理（可选，默认开启）=====
         private Boolean enableAutoCorrection;    // 自动纠错（错别字 + 拼音）
         private Boolean enableQueryRewrite;      // 查询重写规则（术语归一）
-        private boolean enableGraphExpand = false; // 图谱扩展
+        private Boolean enableGraphExpand;       // 图谱扩展（可空：null 不覆盖，true/false 可开可关）
         private int graphExpandDepth = 1;         // 图谱展开深度
         private int graphMaxEntities = 10;        // 图谱最大展开实体数
         private String nerModel;                  // NER 提取模型
         private Boolean enableSynonymExpansion;   // 同义词联想
+        private Boolean enableKeywordMatch;       // 关键词匹配：命中问答对时优先返回
 
         // ===== 多路召回（可选，默认关闭）=====
         private Boolean enableMultiRetrieval;      // 是否启用多路召回
@@ -39,7 +41,7 @@ public class RetrievalRequest {
         private Double bm25SparseDropRate;         // BM25 稀疏项丢弃比例
 
         // ===== 重排序 =====
-        private boolean enableRerank = false;
+        private Boolean enableRerank;             // 可空：null 不覆盖，true/false 可开可关
         private String rerankModel;                // Rerank 模型选择
         private Boolean enableLLMRerank;           // LLM 重排序
         private Boolean enableMMR;                 // MMR 多样性控制

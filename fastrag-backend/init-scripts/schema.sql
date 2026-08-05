@@ -87,6 +87,7 @@ CREATE TABLE IF NOT EXISTS kb (
     embedding_model VARCHAR(128),
     dimension INT,
     creator VARCHAR(32),
+    org_id VARCHAR(32) COMMENT '归属组织（同组织成员默认可见）',
     type VARCHAR(16) DEFAULT 'personal',
     permission VARCHAR(16) DEFAULT 'private',
     used_size BIGINT DEFAULT 0,
@@ -133,6 +134,8 @@ CREATE TABLE IF NOT EXISTS kb_folder (
     name VARCHAR(128) NOT NULL,
     parent_id VARCHAR(32) DEFAULT 'root',
     sort INT DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_kb_id (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -585,6 +588,7 @@ CREATE TABLE IF NOT EXISTS model_call_log (
     status VARCHAR(16),
     duration INT,
     tokens INT,
+    status VARCHAR(16) DEFAULT 'success' COMMENT 'success|failed',
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -690,6 +694,7 @@ CREATE TABLE IF NOT EXISTS sys_audit_log (
     target VARCHAR(256),
     detail TEXT,
     ip VARCHAR(64),
+    status VARCHAR(16) DEFAULT 'success' COMMENT 'success|failed',
     timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
@@ -746,6 +751,10 @@ ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS processed_by VARCHAR(32);
 ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS processed_at DATETIME;
 ALTER TABLE user_feedback ADD COLUMN IF NOT EXISTS category VARCHAR(32);
 
+-- ==================== M1b kb_folder 时间戳字段 ====================
+ALTER TABLE kb_folder ADD COLUMN IF NOT EXISTS created_at DATETIME DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE kb_folder ADD COLUMN IF NOT EXISTS updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP;
+
 -- ==================== M2 知识检索增强 ====================
 CREATE TABLE IF NOT EXISTS kb_retrieval_log (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -756,6 +765,7 @@ CREATE TABLE IF NOT EXISTS kb_retrieval_log (
     top_score DECIMAL(5,2),
     latency_ms INT,
     has_result TINYINT DEFAULT 1,
+    graph_entity_count INT DEFAULT 0 COMMENT '图谱通道命中结果数',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_kb_time (kb_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -1338,6 +1348,7 @@ CREATE TABLE IF NOT EXISTS kb_category (
     color VARCHAR(16),
     icon VARCHAR(64),
     sort INT DEFAULT 0,
+    org_id VARCHAR(32) COMMENT '归属组织（NULL=未分配，仅管理员可见；非空=该组织私有分类）',
     created_by VARCHAR(32),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

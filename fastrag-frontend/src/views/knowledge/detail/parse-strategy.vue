@@ -2,10 +2,10 @@
 import type { ParseStrategy, ParseStrategyForm, ParseStrategyAdvanced } from '@/types/knowledge'
 import {
   PARSE_METHOD_OPTIONS, EXTENSION_OPTIONS, DEFAULT_ADVANCED,
-  CHUNK_LENGTH_OPTIONS, INDEX_FIELD_OPTIONS, DELIMITER_OPTIONS,
+  CHUNK_LENGTH_OPTIONS, DELIMITER_OPTIONS,
   TABLE_MODE_OPTIONS,
 } from '@/types/knowledge'
-import { Plus, Edit, Delete, Search, Refresh, ArrowLeft, Star } from '@element-plus/icons-vue'
+import { Plus, Edit, Delete, Search, Refresh, ArrowLeft, Star, QuestionFilled } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter, useRoute } from 'vue-router'
 import { useParseStrategy } from '@/composables/useParseStrategy'
@@ -49,7 +49,7 @@ const form = ref<ParseStrategyForm>({
   description: '',
   extensions: [],
   parseMethod: 'default',
-  advanced: { ...DEFAULT_ADVANCED },
+  advanced: normalizeAdvanced(null),
   llmModel: '',
   vlmModel: '',
   enableGraphBuild: false,
@@ -97,6 +97,40 @@ const formRef = ref()
 // 快捷访问高级参数（避免重复写 form.value.advanced!）
 const adv = computed(() => form.value.advanced!)
 
+/**
+ * 兼容归一化：旧平铺 advanced（chunkLength / delimiter / tableMode 等）
+ * 映射进新分组结构；新分组结构优先。
+ */
+function normalizeAdvanced(advanced: any): ParseStrategyAdvanced {
+  const base = JSON.parse(JSON.stringify(DEFAULT_ADVANCED)) as ParseStrategyAdvanced
+  if (!advanced) return base
+  if (advanced.parse) base.parse = { ...base.parse, ...advanced.parse }
+  if (advanced.chunk) base.chunk = { ...base.chunk, ...advanced.chunk }
+  if (advanced.index) base.index = { ...base.index, ...advanced.index }
+  // 兼容旧平铺字段（仅当新分组未提供时）
+  if (!advanced.chunk) {
+    if (advanced.chunkLength != null) base.chunk.chunkLength = Number(advanced.chunkLength)
+    if (advanced.overlap != null) base.chunk.overlap = Number(advanced.overlap)
+    if (advanced.delimiter != null) base.chunk.delimiters = [String(advanced.delimiter)]
+  }
+  if (!advanced.parse) {
+    if (advanced.tableMode != null) base.parse.tableMode = advanced.tableMode
+    if (advanced.enablePptWholePage != null) base.parse.enablePptWholePage = !!advanced.enablePptWholePage
+    if (advanced.enableDocSummary != null) base.parse.enableDocSummary = !!advanced.enableDocSummary
+    if (advanced.keyframeIntervalSeconds != null) base.parse.keyframeIntervalSeconds = Number(advanced.keyframeIntervalSeconds)
+    if (advanced.keyframeHashThreshold != null) base.parse.keyframeHashThreshold = Number(advanced.keyframeHashThreshold)
+  }
+  return base
+}
+
+/** 列表展示用：提取策略生效的分片参数（无 advanced 时回退系统默认） */
+function chunkParams(s: ParseStrategy) {
+  const adv: any = s.advanced
+  if (!adv) return { chunkLength: 2000, overlap: 100 }
+  if (adv.chunk) return { chunkLength: adv.chunk.chunkLength, overlap: adv.chunk.overlap }
+  return { chunkLength: adv.chunkLength ?? 2000, overlap: adv.overlap ?? 100 }
+}
+
 function goBack() {
   router.push(`/knowledge/${kbId}`)
 }
@@ -106,7 +140,7 @@ function handleCreate() {
   isEdit.value = false
   editingId.value = ''
   dialogTitle.value = '创建解析策略'
-  form.value = { name: '', description: '', extensions: [], parseMethod: 'default', advanced: { ...DEFAULT_ADVANCED } }
+  form.value = { name: '', description: '', extensions: [], parseMethod: 'default', advanced: normalizeAdvanced(null) }
   customChunkLength.value = ''
   advancedCollapsed.value = []
   dialogVisible.value = true
@@ -115,7 +149,16 @@ function handleCreate() {
 // 切片长度选择（0 = 自定义）
 function selectChunkLength(value: number) {
   if (form.value.advanced) {
-    form.value.advanced.chunkLength = value
+    form.value.advanced.chunk.chunkLength = value
+  }
+}
+
+// 恢复默认高级参数
+function resetAdvanced() {
+  if (form.value.advanced) {
+    form.value.advanced = normalizeAdvanced(null)
+    customChunkLength.value = ''
+    ElMessage.success('已恢复默认高级参数')
   }
 }
 
@@ -129,7 +172,7 @@ function handleEdit(strategy: ParseStrategy) {
     description: strategy.description,
     extensions: [...strategy.extensions],
     parseMethod: strategy.parseMethod,
-    advanced: strategy.advanced ? { ...strategy.advanced } : { ...DEFAULT_ADVANCED },
+    advanced: normalizeAdvanced(strategy.advanced),
     llmModel: strategy.llmModel || '',
     vlmModel: strategy.vlmModel || '',
     enableGraphBuild: strategy.enableGraphBuild === 1,
@@ -268,6 +311,17 @@ onMounted(() => {
       class="parse-strategy-page__table"
     >
       <el-table-column prop="name" label="策略名称" min-width="180" show-overflow-tooltip>
+        <template #header>
+          <span>策略名称</span>
+          <el-tooltip
+            content="覆盖链：上传请求参数 > 选中的策略 > KB 默认策略 > 系统默认值"
+            placement="top"
+          >
+            <el-icon style="margin-left: 4px; vertical-align: middle; cursor: pointer">
+              <QuestionFilled />
+            </el-icon>
+          </el-tooltip>
+        </template>
         <template #default="{ row }">
           <div class="parse-strategy-page__name-cell">
             <span class="parse-strategy-page__name">{{ row.name }}</span>
@@ -297,6 +351,14 @@ onMounted(() => {
         <template #default="{ row }">
           <el-tag :type="row.parseMethod === 'default' ? 'info' : 'primary'" size="small">
             {{ PARSE_METHOD_OPTIONS.find(opt => opt.value === row.parseMethod)?.label || row.parseMethod }}
+          </el-tag>
+        </template>
+      </el-table-column>
+
+      <el-table-column label="分片参数" width="140" align="center">
+        <template #default="{ row }">
+          <el-tag size="small" type="info">
+            {{ chunkParams(row as ParseStrategy).chunkLength }} / {{ chunkParams(row as ParseStrategy).overlap }}
           </el-tag>
         </template>
       </el-table-column>
@@ -442,47 +504,83 @@ onMounted(() => {
           <span>构建知识图谱（使用 LLM 从文档内容提取实体和关系）</span>
         </div>
 
-        <!-- 高级参数（可折叠） -->
+        <!-- 高级参数（可折叠，按分组组织） -->
         <el-collapse v-model="advancedCollapsed" class="parse-strategy-page__advanced-collapse">
-          <el-collapse-item title="高级参数（切片/索引/增强）" name="advanced">
-            <!-- 切片策略 -->
+          <el-collapse-item title="高级参数（解析/分片/索引）" name="advanced">
+            <!-- ========== 解析配置 ========== -->
             <div class="parse-strategy-page__field-group">
-              <label class="parse-strategy-page__field-label">切片方式</label>
-              <el-radio-group v-model="adv.splitMethod">
-                <el-radio-button value="fixed">按固定长度</el-radio-button>
-                <el-radio-button value="delimiter">按分隔符</el-radio-button>
+              <label class="parse-strategy-page__field-label">表格处理模式</label>
+              <el-radio-group v-model="adv.parse.tableMode">
+                <el-radio-button
+                  v-for="opt in TABLE_MODE_OPTIONS"
+                  :key="opt.value"
+                  :value="opt.value"
+                >
+                  {{ opt.label }}
+                </el-radio-button>
               </el-radio-group>
+              <span class="parse-strategy-page__field-hint">
+                {{ TABLE_MODE_OPTIONS.find(o => o.value === adv.parse.tableMode)?.desc }}
+              </span>
             </div>
 
-            <!-- 固定长度切片 -->
-            <div v-if="adv.splitMethod === 'fixed'" class="parse-strategy-page__field-group">
-              <label class="parse-strategy-page__field-label">切片最长字符数</label>
+            <div v-if="form.parseMethod === 'pptx'" class="parse-strategy-page__switch-row">
+              <el-switch v-model="adv.parse.enablePptWholePage" />
+              <span>PPT 整页解析（每页作为完整单元）</span>
+            </div>
+
+            <div v-if="form.parseMethod === 'video' || form.parseMethod === 'audio'" class="parse-strategy-page__field-group">
+              <label class="parse-strategy-page__field-label">关键帧采样间隔（秒）</label>
+              <el-input-number v-model="adv.parse.keyframeIntervalSeconds" :min="1" :max="600" :step="5" />
+              <label class="parse-strategy-page__field-label">关键帧哈希阈值</label>
+              <el-input-number v-model="adv.parse.keyframeHashThreshold" :min="0" :max="64" />
+              <span class="parse-strategy-page__field-hint">视频/音频解析专用：关键帧 OCR + ASR 联合分块</span>
+            </div>
+
+            <!-- ========== 分片配置 ========== -->
+            <div class="parse-strategy-page__field-group">
+              <label class="parse-strategy-page__field-label">目标分片长度（字符数）</label>
               <div class="parse-strategy-page__chunk-lengths">
                 <el-button
                   v-for="opt in CHUNK_LENGTH_OPTIONS"
                   :key="opt.value"
-                  :type="adv.chunkLength === opt.value ? 'primary' : 'default'"
+                  :type="adv.chunk.chunkLength === opt.value ? 'primary' : 'default'"
                   size="small"
                   @click="selectChunkLength(opt.value)"
                 >
                   {{ opt.label }}
                 </el-button>
                 <el-input
-                  v-if="adv.chunkLength === 0"
+                  v-if="adv.chunk.chunkLength === 0"
                   v-model="customChunkLength"
                   placeholder="自定义"
                   size="small"
                   style="width: 100px"
-                  @change="(v: string) => { if (adv) adv.chunkLength = Number(v) || 2000 }"
+                  @change="(v: string) => { if (adv) adv.chunk.chunkLength = Number(v) || 2000 }"
                 />
               </div>
+              <span class="parse-strategy-page__field-hint">段落将累积至接近该长度再分片，超过才按句号切分</span>
             </div>
 
-            <!-- 分隔符切片 -->
-            <div v-if="adv.splitMethod === 'delimiter'" class="parse-strategy-page__field-group">
-              <label class="parse-strategy-page__field-label">分隔符</label>
+            <div class="parse-strategy-page__field-group">
+              <label class="parse-strategy-page__field-label">分片重叠（字符数）</label>
+              <el-input-number v-model="adv.chunk.overlap" :min="0" :max="500" :step="10" />
+              <span class="parse-strategy-page__field-hint">相邻 chunk 的重叠内容，避免跨块语义断裂</span>
+            </div>
+
+            <div class="parse-strategy-page__switch-row">
+              <el-switch v-model="adv.chunk.titlePrefix" />
+              <span>正文内嵌标题前缀（chunk 自包含章节上下文）</span>
+            </div>
+            <div class="parse-strategy-page__switch-row">
+              <el-switch v-model="adv.chunk.headingPath" />
+              <span>生成层级路径元数据（如 第一章 &gt; 1.1 背景）</span>
+            </div>
+
+            <div class="parse-strategy-page__field-group">
+              <label class="parse-strategy-page__field-label">兜底分隔符（无结构文档按分隔符切分）</label>
               <el-select
-                v-model="adv.delimiters"
+                v-model="adv.chunk.delimiters"
                 multiple
                 filterable
                 allow-create
@@ -498,46 +596,25 @@ onMounted(() => {
               </el-select>
             </div>
 
-            <!-- 索引字段 -->
+            <!-- ========== 索引配置 ========== -->
             <div class="parse-strategy-page__field-group">
-              <label class="parse-strategy-page__field-label">索引字段</label>
-              <el-checkbox-group v-model="adv.indexFields">
-                <el-checkbox
-                  v-for="opt in INDEX_FIELD_OPTIONS"
-                  :key="opt.value"
-                  :value="opt.value"
-                  :label="opt.value"
+              <label class="parse-strategy-page__field-label">索引字段（一期固定）</label>
+              <div>
+                <el-tag
+                  v-for="f in adv.index.embedFields"
+                  :key="f"
+                  size="small"
+                  class="parse-strategy-page__extension-tag"
                 >
-                  {{ opt.label }}
-                </el-checkbox>
-              </el-checkbox-group>
+                  {{ f }}
+                </el-tag>
+              </div>
+              <span class="parse-strategy-page__field-hint">embedding 输入 = content + headingPath + fileName，二期开放配置</span>
             </div>
 
-            <!-- 文档摘要 + PPT 整页解析 -->
-            <div class="parse-strategy-page__switch-row">
-              <el-switch v-model="adv.enableDocSummary" />
-              <span>文档摘要（AI 自动生成摘要）</span>
-            </div>
-            <div v-if="form.parseMethod === 'pptx'" class="parse-strategy-page__switch-row">
-              <el-switch v-model="adv.enablePptWholePage" />
-              <span>PPT 整页解析（每页作为完整单元）</span>
-            </div>
-
-            <!-- 表格处理模式 -->
-            <div class="parse-strategy-page__field-group">
-              <label class="parse-strategy-page__field-label">表格处理模式</label>
-              <el-radio-group v-model="adv.tableMode">
-                <el-radio-button
-                  v-for="opt in TABLE_MODE_OPTIONS"
-                  :key="opt.value"
-                  :value="opt.value"
-                >
-                  {{ opt.label }}
-                </el-radio-button>
-              </el-radio-group>
-              <span class="parse-strategy-page__field-hint">
-                {{ TABLE_MODE_OPTIONS.find(o => o.value === adv.tableMode)?.desc }}
-              </span>
+            <!-- 恢复默认 -->
+            <div class="parse-strategy-page__switch-row" style="margin-top: 12px">
+              <el-button size="small" @click="resetAdvanced">恢复默认值</el-button>
             </div>
           </el-collapse-item>
         </el-collapse>

@@ -75,6 +75,17 @@ jwt:
 ai:
   gateway:
     url: http://127.0.0.1:11434
+    timeout: 30
+  # 外部 API 代理配置（访问 OpenAI 等被墙服务时需要）
+  proxy:
+    enabled: true
+    host: 127.0.0.1
+    port: 10808
+    # 不走代理的域名（正则表达式，逗号分隔不行、用 | 分隔多个）。
+    # reactor-netty 的 nonProxyHosts 参数是正则而非 *.host 通配；
+    # 实测本地 xray 代理对 api.siliconflow.cn 不通（请求挂起），必须直连；
+    # 其他需要代理才能访问的服务（OpenAI 等）不受影响。
+    non-proxy-hosts: '.*\.siliconflow\.cn'
   asr:
     url: https://api.siliconflow.cn
     key: ${ASR_API_KEY:}
@@ -103,6 +114,23 @@ neo4j:
   uri: ${NEO4J_URI:bolt://localhost:7687}
   user: ${NEO4J_USER:neo4j}
   password: ${NEO4J_PASSWORD:}
+
+# 图谱构建配置
+graph:
+  build:
+    # 每个文件内部 chunk 处理的线程池大小
+    concurrency: 15
+    # LLM 抽取超时（秒），Qwen3 等模型 thinking 关闭后通常 30-60s 内完成
+    # 若仍频繁超时可适当调大（如 300），但会增加单文件处理时间
+    llm-timeout: 180
+  # 实体 embedding 维度（须与 KB 使用的 embedding 模型维度一致，bge-m3/text-embedding-v4 均为 1024）
+  entity-embedding-dimension: 1024
+
+# 微信小程序
+wechat:
+  miniapp:
+    app-id: ${WECHAT_APP_ID:}
+    app-secret: ${WECHAT_APP_SECRET:}
 
 # Actuator 配置
 management:

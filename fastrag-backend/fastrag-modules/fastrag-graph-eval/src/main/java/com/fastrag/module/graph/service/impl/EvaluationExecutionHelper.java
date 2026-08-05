@@ -24,8 +24,6 @@ import java.util.*;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executors;
 import java.util.concurrent.Semaphore;
-import java.util.concurrent.TimeUnit;
-import java.util.concurrent.TimeoutException;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -112,7 +110,16 @@ public class EvaluationExecutionHelper {
 
             if (questions.isEmpty()) {
                 log.warn("[Evaluation] No questions found for benchmark: {}", benchmarkId);
-                finishEvaluation(evaluationId, 0, 0, 0, 0, 0, 0, 0, 0);
+                // 无题不算"完成"：标记 failed，避免 UI 显示"completed 0 分"误导
+                transactionTemplate.executeWithoutResult(status -> {
+                    KbEvaluation ev = evaluationMapper.selectById(evaluationId);
+                    if (ev != null) {
+                        ev.setStatus("failed");
+                        ev.setCompletedCount(0);
+                        ev.setDataCount(0);
+                        evaluationMapper.updateById(ev);
+                    }
+                });
                 return;
             }
 
@@ -290,7 +297,7 @@ public class EvaluationExecutionHelper {
         } catch (Exception e) {
             log.warn("[Evaluation] Q{} Failed: {}", index + 1, e.getMessage(), e);
             KbEvaluationResult fallback = new KbEvaluationResult();
-            fallback.setEvaluationId(question.getBenchmarkId());
+            fallback.setEvaluationId(evaluationId);
             fallback.setQuestion(question.getQuestion());
             fallback.setGeneratedAnswer("评估失败: " + e.getMessage());
             fallback.setRetrievalMetrics("R@1 0.000  R@3 0.000  R@5 0.000  R@10 0.000");
@@ -555,52 +562,45 @@ public class EvaluationExecutionHelper {
      *
      * <p>只传入最相关的2个chunk，答案要求极短，LLM 输出 token 大幅减少。
      *
-     * <p>内置 30 秒超时：超时后直接用规则评判，不等待慢模型。
+     * <p>直接同步调用：chat() 内部自带 30s 非流式阻塞超时保护（超时返回错误串，
+     * 由解析逻辑降级为规则评判）。此前用 evalExecutor 二次包装导致线程池自占用
+     * （4 个线程被外层题目占满，内部 LLM 任务饿死排队，30s 后全部超时判错）。
      */
     private String generateAnswerWithJudgment(int index, String model, String query, String context, String goldAnswer) {
         if (context == null || context.isBlank()) {
-            return "{\"a\":\"\",\"c\":false}";
+            return "{\"a\":\"\",\"c\":false,\"reason\":\"检索内容为空\"}";
         }
 
         String prompt = String.format("""
-                检索内容能否回答问题？答案越短越好。
+                根据检索内容回答问题，并对照标准答案判断回答是否正确。
                 内容：%s
                 问题：%s
+                标准答案：%s
                 严格JSON：{"a":"1-3字答案","c":true/false}
-                """, context, query);
+                """, context, query, goldAnswer != null ? goldAnswer : "");
 
         ModelApi modelApi = resolveModelApi(model);
 
-        // 用 CompletableFuture 包装 LLM 调用，30 秒超时
-        CompletableFuture<String> llmFuture = CompletableFuture.supplyAsync(() -> {
-            try {
-                if (modelApi != null) {
-                    return llmService.chat(model, prompt, modelApi.apiUrl, modelApi.apiKey);
-                } else {
-                    return llmService.chat(model, prompt);
-                }
-            } catch (Exception e) {
-                throw new RuntimeException(e);
-            }
-        }, evalExecutor);
-
         try {
-            String llmResponse = llmFuture.get(30, TimeUnit.SECONDS);
-            return parseJudgmentResponse(llmResponse, model, prompt, modelApi, goldAnswer);
-        } catch (TimeoutException e) {
-            log.warn("[Evaluation] Q{} LLM call timed out after 30s, using rule-based judgment", index + 1);
-            return buildRuleJudgmentResponse(goldAnswer);
+            String llmResponse = (modelApi != null)
+                    ? llmService.chat(model, prompt, modelApi.apiUrl, modelApi.apiKey)
+                    : llmService.chat(model, prompt);
+            return parseJudgmentResponse(llmResponse, goldAnswer);
         } catch (Exception e) {
             log.warn("[Evaluation] Q{} LLM call failed: {}", index + 1, "模型调用失败: " + e.getMessage());
-            return buildRuleJudgmentResponse(goldAnswer);
+            return buildRuleJudgmentResponse(goldAnswer, "LLM 调用失败，规则评判降级");
         }
     }
 
-    /** 解析 LLM 的合并响应，兼容长短字段名 */
-    private String parseJudgmentResponse(String llmResponse, String model, String prompt,
-                                         ModelApi modelApi, String goldAnswer) {
+    /** 解析 LLM 的合并响应，兼容长短字段名；错误串/损坏响应降级为规则评判 */
+    private String parseJudgmentResponse(String llmResponse, String goldAnswer) {
         try {
             String json = llmResponse.trim();
+            // chat() 超时/异常时返回"模型调用失败: ..."错误串（不抛异常）
+            if (json.startsWith("模型调用失败")) {
+                String reason = json.contains("Timeout") ? "LLM 调用超时，规则评判降级" : "LLM 调用失败，规则评判降级";
+                return buildRuleJudgmentResponse(goldAnswer, reason);
+            }
             if (json.startsWith("```")) {
                 json = json.replaceAll("```json?", "").replaceAll("```", "").trim();
             }
@@ -614,13 +614,13 @@ public class EvaluationExecutionHelper {
             return String.format("{\"a\":\"\",\"c\":%s}", isCorrect);
         } catch (Exception e) {
             // 降级：规则评判
-            return buildRuleJudgmentResponse(goldAnswer);
+            return buildRuleJudgmentResponse(goldAnswer, "响应解析失败，规则评判降级");
         }
     }
 
-    /** 规则评判兜底：LLM 超时/失败时直接标记为不正确 */
-    private String buildRuleJudgmentResponse(String goldAnswer) {
-        return "{\"a\":\"\",\"c\":false}";
+    /** 规则评判兜底：LLM 超时/失败时标记为不正确，并附 reason 便于追溯 */
+    private String buildRuleJudgmentResponse(String goldAnswer, String reason) {
+        return String.format("{\"a\":\"\",\"c\":false,\"reason\":\"%s\"}", reason);
     }
 
     private String buildContext(List<Map<String, Object>> chunks) {

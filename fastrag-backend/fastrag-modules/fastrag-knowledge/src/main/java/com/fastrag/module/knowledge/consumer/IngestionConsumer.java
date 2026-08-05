@@ -63,6 +63,22 @@ public class IngestionConsumer implements IngestionHandler {
         long tStart = System.currentTimeMillis();
         log.info("Start processing file: {}, kbId: {}", fileId, kbId);
 
+        // === 幂等性检查：文件是否已被删除或已完成 ===
+        KbFile existingFile = fileMapper.selectById(fileId);
+        if (existingFile == null) {
+            log.warn("File {} not found (deleted before processing), skipping message", fileId);
+            return;  // 消息已 ack，不回队，避免死循环
+        }
+        if (existingFile.getDeletedAt() != null) {
+            log.warn("File {} is soft-deleted (deleted_at={}), skipping message", fileId, existingFile.getDeletedAt());
+            return;
+        }
+        if ("completed".equals(existingFile.getStatus())) {
+            log.info("File {} already processed (status=completed), skipping duplicate message", fileId);
+            return;
+        }
+        // ================================
+
         // 记录处理开始日志
         try {
             logService.addLog(kbId, LogCategory.operation, ActionType.file_processing_started,
@@ -98,11 +114,15 @@ public class IngestionConsumer implements IngestionHandler {
 
             List<ChunkData> chunks = new ArrayList<>();
 
-            // 文本切片
+            // 文本切片 — 优先使用结构感知分片
             long t2 = System.currentTimeMillis();
             updateStatus(fileId, "processing", 60, "chunking");
+            boolean hasNodes = parseResult.getNodes() != null && !parseResult.getNodes().isEmpty();
             boolean hasSegments = parseResult.getSegments() != null && !parseResult.getSegments().isEmpty();
-            if (hasSegments) {
+            if (hasNodes) {
+                chunks = chunkingService.structuralChunk(parseResult.getNodes(), strategyId);
+                log.info("File {} structural chunked into {} pieces with heading context", fileId, chunks.size());
+            } else if (hasSegments) {
                 chunks = chunkingService.chunkBySegments(parseResult.getSegments(), strategyId);
                 log.info("File {} chunked into {} time-based pieces", fileId, chunks.size());
             } else {
@@ -137,7 +157,7 @@ public class IngestionConsumer implements IngestionHandler {
                     }
                 }
 
-                // 4.6 PDF 图片提取 → 独立分片
+                // 4.6 PDF 图片提取 → 独立分片（并行 OCR，Semaphore 限流 5 并发）
                 long tPdf = System.currentTimeMillis();
                 if ("pdf".equals(extension) && fileBytes != null) {
                     try {
@@ -147,34 +167,66 @@ public class IngestionConsumer implements IngestionHandler {
                             List<MediaExtractor.PdfImage> pdfImages = mediaExtractor.extractPdfImages(doc, kbId, fileId, minioService);
                             if (!pdfImages.isEmpty()) {
                                 log.info("Extracted {} images from PDF", pdfImages.size());
+
+                                // 并行 OCR，最多 5 并发
+                                // 用 final 副本供 lambda 捕获（chunks 变量本身不是 effectively final）
+                                final List<ChunkData> chunksRef = chunks;
+                                java.util.concurrent.Semaphore ocpSemaphore = new java.util.concurrent.Semaphore(5);
+                                java.util.concurrent.ExecutorService ocrExecutor = java.util.concurrent.Executors.newFixedThreadPool(5);
+                                List<java.util.concurrent.Future<Void>> ocrFutures = new ArrayList<>();
+
                                 for (MediaExtractor.PdfImage img : pdfImages) {
-                                    if (img.getWidth() < 48 || img.getHeight() < 48) {
-                                        int idx = chunks.size();
-                                        chunks.add(com.fastrag.module.knowledge.chunking.ChunkData.builder()
-                                                .id("chunk_" + idx).index(idx)
-                                                .content("[图片: 第" + img.getPageNum() + "页, " + img.getWidth() + "x" + img.getHeight() + "px]")
-                                                .pageNumber(img.getPageNum()).pageRange(String.valueOf(img.getPageNum()))
-                                                .imageKeys(java.util.List.of(img.getImageKey())).chunkType("image").build());
+                                    if (img.getWidth() < 100 || img.getHeight() < 100) {
                                         continue;
                                     }
-                                    String imageKey = img.getImageKey();
-                                    String imgObjectKey = kbId + "/" + fileId + "/images/" + imageKey;
-                                    try (InputStream imgStream = minioService.download(imgObjectKey)) {
-                                        byte[] imgBytes = imgStream.readAllBytes();
-                                        String ocrText = null;
-                                        try { ocrText = ocrService.recognize(imgBytes, "png"); }
-                                        catch (Exception e) { log.warn("OCR failed for image {}, skipping: {}", imageKey, e.getMessage()); }
-                                        String content = (ocrText != null && !ocrText.isBlank()) ? ocrText.trim() : "[图片: 第" + img.getPageNum() + "页]";
-                                        int idx = chunks.size();
-                                        chunks.add(com.fastrag.module.knowledge.chunking.ChunkData.builder()
-                                                .id("chunk_" + idx).index(idx)
-                                                .content(content).chunkType("image")
-                                                .pageNumber(img.getPageNum()).pageRange(String.valueOf(img.getPageNum()))
-                                                .imageKeys(java.util.List.of(imageKey)).build());
+
+                                    final String fImageKey = img.getImageKey();
+                                    final String fImgObjectKey = kbId + "/" + fileId + "/images/" + fImageKey;
+                                    final int fPageNum = img.getPageNum();
+
+                                    ocrFutures.add(ocrExecutor.submit(() -> {
+                                        ocpSemaphore.acquire();
+                                        try {
+                                            byte[] imgBytes;
+                                            try (InputStream imgStream = minioService.download(fImgObjectKey)) {
+                                                imgBytes = imgStream.readAllBytes();
+                                            }
+                                            String ocrText = null;
+                                            try {
+                                                ocrText = ocrService.recognize(imgBytes, "png");
+                                            } catch (Exception e) {
+                                                log.warn("OCR failed for image {}, skipping: {}", fImageKey, e.getMessage());
+                                            }
+
+                                            if (ocrText != null && !ocrText.isBlank()) {
+                                                synchronized (chunksRef) {
+                                                    int idx = chunksRef.size();
+                                                    chunksRef.add(ChunkData.builder()
+                                                            .id("chunk_" + idx).index(idx)
+                                                            .content(ocrText.trim()).chunkType("image")
+                                                            .pageNumber(fPageNum).pageRange(String.valueOf(fPageNum))
+                                                            .imageKeys(java.util.List.of(fImageKey)).build());
+                                                }
+                                            }
+                                        } catch (Exception e) {
+                                            log.warn("Failed to process image {}: {}", fImageKey, e.getMessage());
+                                        } finally {
+                                            ocpSemaphore.release();
+                                        }
+                                        return null;
+                                    }));
+                                }
+
+                                // 等待所有 OCR 完成
+                                for (java.util.concurrent.Future<Void> f : ocrFutures) {
+                                    try { f.get(); } catch (Exception e) {
+                                        log.warn("OCR future failed: {}", e.getMessage());
                                     }
                                 }
-                                log.info("[TIMING] PDF image extraction & OCR: {} ms, {} image chunks",
-                                        System.currentTimeMillis() - tPdf, pdfImages.size());
+                                ocrExecutor.shutdown();
+
+                                log.info("[TIMING] PDF image extraction & OCR: {} ms, {} image chunks ({} total images)",
+                                        System.currentTimeMillis() - tPdf, chunksRef.size(), pdfImages.size());
                             }
                         } finally { doc.close(); }
                     } catch (Exception e) {

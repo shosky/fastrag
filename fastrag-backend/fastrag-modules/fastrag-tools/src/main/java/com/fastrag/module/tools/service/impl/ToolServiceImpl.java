@@ -2,11 +2,15 @@ package com.fastrag.module.tools.service.impl;
 
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fastrag.common.exception.BusinessException;
 import com.fastrag.module.tools.entity.Tool;
 import com.fastrag.module.tools.entity.ToolHttpConfig;
 import com.fastrag.module.tools.mapper.ToolMapper;
 import com.fastrag.module.tools.mapper.ToolHttpConfigMapper;
 import com.fastrag.module.tools.service.ToolService;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.util.DataScope;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.web.multipart.MultipartFile;
@@ -19,20 +23,44 @@ public class ToolServiceImpl implements ToolService {
     private final ToolMapper mapper;
     private final ToolHttpConfigMapper httpMapper;
 
+    /** 工具可见性：系统级（内置/存量） / 属主 / 同组织 / API Token */
+    private boolean visible(Tool t, LoginUser user) {
+        return DataScope.visible(user, t.getCreator(), t.getOrgId(), t.getIsBuiltin());
+    }
+
+    private void requireManage(Tool t) {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (t == null) throw BusinessException.notFound("工具不存在");
+        if (!DataScope.manageable(user, t.getCreator())) throw BusinessException.forbidden("无权管理该工具");
+    }
+
     @Override
     public List<Tool> list(String kw, String type) {
         var w = new LambdaQueryWrapper<Tool>();
         if (StrUtil.isNotBlank(kw)) w.like(Tool::getName, kw);
         if (StrUtil.isNotBlank(type)) w.eq(Tool::getType, type);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user)) {
+            w.and(q -> q.eq(Tool::getCreator, user.getUserId())
+                    .or(o -> o.eq(Tool::getOrgId, user.getOrgId())
+                            .or().eq(Tool::getCreator, "system")
+                            .or().eq(Tool::getIsBuiltin, 1)));
+        }
         List<Tool> list = mapper.selectList(w);
         list.forEach(this::attachHttpConfig);
+        // 非属主不返回 HTTP 配置（含 URL/authValue 凭据）
+        list.forEach(t -> { if (t.getHttpConfig() != null && !DataScope.manageable(user, t.getCreator())) t.setHttpConfig(null); });
         return list;
     }
 
     @Override
     public Tool get(String id) {
         Tool t = mapper.selectById(id);
-        if (t != null) attachHttpConfig(t);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (t == null || !visible(t, user)) throw BusinessException.forbidden("无权访问该工具");
+        attachHttpConfig(t);
+        // 非属主不返回 HTTP 配置（含 URL/authValue 凭据）
+        if (t.getHttpConfig() != null && !DataScope.manageable(user, t.getCreator())) t.setHttpConfig(null);
         return t;
     }
 
@@ -48,11 +76,15 @@ public class ToolServiceImpl implements ToolService {
     @SuppressWarnings("unchecked")
     @Override
     public Tool create(Map<String, Object> f) {
+        LoginUser user = SecurityUtil.getCurrentUser();
         var t = new Tool();
         t.setName((String) f.get("name"));
         t.setIdentifier((String) f.get("identifier"));
         t.setDescription((String) f.get("description"));
         t.setType((String) f.getOrDefault("type", "http"));
+        t.setCreator(user.getUserId());
+        t.setOrgId(user.getOrgId());
+        t.setIsBuiltin(0);
         // enabled: 前端发 Boolean，转 Integer(1/0)
         if (f.containsKey("enabled")) {
             Object en = f.get("enabled");
@@ -107,6 +139,7 @@ public class ToolServiceImpl implements ToolService {
     @Override
     public Tool update(String id, Map<String, Object> f) {
         var t = mapper.selectById(id);
+        requireManage(t);
         if (t == null) return null;
 
         if (f.containsKey("name")) t.setName((String) f.get("name"));
@@ -152,6 +185,8 @@ public class ToolServiceImpl implements ToolService {
 
     @Override
     public void delete(String id) {
+        var t = mapper.selectById(id);
+        requireManage(t);
         mapper.deleteById(id);
         httpMapper.deleteById(id);
     }
@@ -159,6 +194,7 @@ public class ToolServiceImpl implements ToolService {
     @Override
     public void toggleEnabled(String id) {
         var t = mapper.selectById(id);
+        requireManage(t);
         if (t != null) {
             t.setEnabled(t.getEnabled() == 1 ? 0 : 1);
             mapper.updateById(t);
@@ -167,6 +203,11 @@ public class ToolServiceImpl implements ToolService {
 
     @Override
     public ToolHttpConfig getApiConfig(String toolId) {
+        var t = mapper.selectById(toolId);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (t == null || !visible(t, user)) throw BusinessException.forbidden("无权访问该工具");
+        // HTTP 配置（URL/authValue）仅属主可见
+        if (!DataScope.manageable(user, t.getCreator())) throw BusinessException.forbidden("无权查看该工具配置");
         var cfg = httpMapper.selectById(toolId);
         if (cfg == null) {
             cfg = new ToolHttpConfig();
@@ -178,6 +219,8 @@ public class ToolServiceImpl implements ToolService {
 
     @Override
     public ToolHttpConfig saveApiConfig(String toolId, ToolHttpConfig config) {
+        var t = mapper.selectById(toolId);
+        requireManage(t);
         config.setToolId(toolId);
         var existing = httpMapper.selectById(toolId);
         if (existing == null) httpMapper.insert(config);

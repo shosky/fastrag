@@ -1,10 +1,12 @@
 package com.fastrag.module.knowledge.controller;
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
+import com.fastrag.common.enums.KBRole;
 import com.fastrag.common.enums.LogCategory;
 import com.fastrag.common.response.ApiResponse; import com.fastrag.module.knowledge.model.KbCreateRequest;
 import com.fastrag.module.knowledge.model.KbDto;
 import com.fastrag.module.knowledge.service.KbService; import com.fastrag.module.publish.service.LogService;
+import com.fastrag.security.annotation.KbAuth;
 import com.fastrag.security.util.SecurityUtil;
 import jakarta.validation.Valid; import lombok.RequiredArgsConstructor; import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
@@ -15,6 +17,8 @@ public class KbController {
 
     @GetMapping public ApiResponse<?> list(@RequestParam(required=false) String keyword,@RequestParam(required=false) String category,@RequestParam(defaultValue="1") int page,@RequestParam(defaultValue="20") int pageSize) { return ApiResponse.success(svc.list(keyword,category,page,pageSize)); }
     @GetMapping("/categories") public ApiResponse<?> categories() { return ApiResponse.success(svc.getCategories()); }
+
+    @KbAuth(KBRole.viewer)
     @GetMapping("/{id}") public ApiResponse<?> get(@PathVariable String id) { return ApiResponse.success(svc.get(id)); }
 
     @PostMapping
@@ -30,9 +34,11 @@ public class KbController {
         return ApiResponse.success(result);
     }
 
+    @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.kb_updated, target = "#id", detail = "更新知识库信息")
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@Valid @RequestBody KbCreateRequest req) { return ApiResponse.success(svc.update(id,req)); }
 
+    @KbAuth(KBRole.owner)
     @Loggable(category = LogCategory.operation, action = ActionType.kb_deleted, target = "#id", detail = "删除知识库")
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }
 }

@@ -81,7 +81,7 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
-    public FileDto upload(String kbId, MultipartFile file) {
+    public FileDto upload(String kbId, MultipartFile file, String folderId) {
         String objectKey = kbId + "/" + IdUtil.fastSimpleUUID();
 
         // 上传文件到 MinIO
@@ -103,6 +103,9 @@ public class FileServiceImpl implements FileService {
         f.setStatus("pending");
         f.setProgress(0);
         f.setChunkCount(0);
+        if (folderId != null && !folderId.isEmpty()) {
+            f.setFolderId(folderId);
+        }
         fileMapper.insert(f);
 
         log.info("File uploaded: {}", f.getId());
@@ -259,6 +262,29 @@ public class FileServiceImpl implements FileService {
             log.info("[Delete] Graph data cleaned for file: {}", fileId);
         } catch (Exception e) {
             log.warn("[Delete] Graph cleanup failed for file {}: {}", fileId, e.getMessage());
+        }
+
+        // 清理 MinIO 存储的文件
+        try {
+            KbFile f = fileMapper.selectById(fileId);
+            if (f != null && f.getObjectKey() != null) {
+                minioService.delete(f.getObjectKey());              // 原始上传文件
+            }
+            minioService.deleteByPrefix(kbId + "/" + fileId);      // 图片/分段等衍生文件
+        } catch (Exception e) {
+            log.warn("[Delete] MinIO cleanup failed for file {}: {}", fileId, e.getMessage());
+        }
+
+        // 清理 QA 对
+        try {
+            int qaDeleted = qaPairMapper.delete(new LambdaQueryWrapper<KbQaPair>()
+                    .eq(KbQaPair::getKbId, kbId)
+                    .eq(KbQaPair::getFileId, fileId));
+            if (qaDeleted > 0) {
+                log.info("[Delete] Deleted {} QA pairs for file: {}", qaDeleted, fileId);
+            }
+        } catch (Exception e) {
+            log.warn("[Delete] QA pair cleanup failed for file {}: {}", fileId, e.getMessage());
         }
     }
 
@@ -451,9 +477,9 @@ public class FileServiceImpl implements FileService {
             byte[] fileBytes = fileStream.readAllBytes();
             fileStream.close();
 
-            // 解析文档
+            // 解析文档（预览时跳过 LLM 增强，传 null 避免 enhanceWithLlm 被触发）
             ParseResult parseResult = documentParser.parse(
-                    new ByteArrayInputStream(fileBytes), f.getExtension(), strategyId);
+                    new ByteArrayInputStream(fileBytes), f.getExtension(), null);
 
             // 分块
             List<ChunkData> allChunks;
@@ -593,6 +619,14 @@ public class FileServiceImpl implements FileService {
         d.setDeletedAt(f.getDeletedAt());
         d.setCreatedAt(f.getCreatedAt());
         d.setUpdatedAt(f.getUpdatedAt());
+        // 解析策略 ID + 名称（分片列表页展示实际生效策略）
+        d.setParseStrategyId(f.getParseStrategyId());
+        if (f.getParseStrategyId() != null) {
+            KbParseStrategy strategy = strategyMapper.selectById(f.getParseStrategyId());
+            if (strategy != null) {
+                d.setParseStrategyName(strategy.getName());
+            }
+        }
         return d;
     }
 }

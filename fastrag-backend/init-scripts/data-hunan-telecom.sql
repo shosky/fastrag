@@ -31,7 +31,10 @@ SELECT 'role_super_admin', perm_key FROM sys_permission;
 -- KB 管理员权限
 INSERT IGNORE INTO sys_role_permission (role_id, permission_key) VALUES
 ('role_kb_admin', 'menu:home'), ('role_kb_admin', 'menu:knowledge'),
-('role_kb_admin', 'menu:knowledge:list'), ('role_kb_admin', 'menu:admin'),
+('role_kb_admin', 'menu:knowledge:list'), ('role_kb_admin', 'menu:knowledge:categories'),
+('role_kb_admin', 'menu:operation:kb-analytics'), ('role_kb_admin', 'menu:operation:retrieval-analysis'),
+('role_kb_admin', 'menu:operation:feedback'), ('role_kb_admin', 'menu:operation:model-monitor'),
+('role_kb_admin', 'menu:admin'),
 ('role_kb_admin', 'menu:admin:index'),
 ('role_kb_admin', 'menu:admin:system'), ('role_kb_admin', 'menu:admin:system:kb-config'),
 ('role_kb_admin', 'menu:admin:system:terminology'),
@@ -43,17 +46,21 @@ INSERT IGNORE INTO sys_role_permission (role_id, permission_key) VALUES
 ('role_kb_admin', 'kb:manage_eval'), ('role_kb_admin', 'kb:manage_strategy'), ('role_kb_admin', 'kb:view'),
 ('role_kb_admin', 'kb:search'), ('role_kb_admin', 'kb:acl_manage'),
 ('role_kb_admin', 'admin:access'), ('role_kb_admin', 'admin:org'), ('role_kb_admin', 'admin:user'),
-('role_kb_admin', 'admin:user:create'), ('role_kb_admin', 'admin:user:edit'), ('role_kb_admin', 'admin:user:disable');
+('role_kb_admin', 'admin:user:create'), ('role_kb_admin', 'admin:user:edit'), ('role_kb_admin', 'admin:user:disable'),
+('role_kb_admin', 'kb:manage');
 
--- KB 用户权限
+-- KB 用户权限（普通用户仅限知识库，无应用功能）
 INSERT IGNORE INTO sys_role_permission (role_id, permission_key) VALUES
 ('role_kb_user', 'menu:home'), ('role_kb_user', 'menu:knowledge'), ('role_kb_user', 'menu:knowledge:list'),
-('role_kb_user', 'menu:application'), ('role_kb_user', 'menu:application:center'),
+('role_kb_user', 'menu:knowledge:categories'),
 ('role_kb_user', 'kb:view'), ('role_kb_user', 'kb:search'), ('role_kb_user', 'kb:upload'),
 ('role_kb_user', 'kb:manage_chunks'), ('role_kb_user', 'kb:manage_graph'),
 ('role_kb_user', 'kb:manage_eval'), ('role_kb_user', 'kb:manage_strategy'),
 ('role_kb_user', 'kb:create'), ('role_kb_user', 'kb:edit'),
-('role_kb_user', 'app:use'), ('role_kb_user', 'qa:manage'), ('role_kb_user', 'testcase:manage');
+('role_kb_user', 'qa:manage'), ('role_kb_user', 'testcase:manage');
+-- 移除历史版本误授予的应用权限（INSERT IGNORE 不会删除已存在记录，需显式清理）
+DELETE FROM sys_role_permission
+WHERE role_id='role_kb_user' AND permission_key IN ('menu:application','menu:application:center','app:use');
 
 -- 只读用户权限
 INSERT IGNORE INTO sys_role_permission (role_id, permission_key) VALUES
@@ -460,8 +467,8 @@ INSERT IGNORE INTO sys_config (config_key, config_value, config_type, descriptio
 ('org_name', '{"value":"中国电信湖南分公司"}', 'brand', '组织名称', 1, 1),
 -- general：通用参数
 ('general_settings', '{"defaultLanguage":"zh-CN","timezone":"Asia/Shanghai"}', 'general', '通用设置', 1, 1),
-('general_chunk_size', '512', 'general', '默认分片大小', 1, 1),
-('general_chunk_overlap', '50', 'general', '默认分片重叠', 1, 1),
+('general_chunk_size', '2000', 'general', '默认分片大小', 1, 1),
+('general_chunk_overlap', '100', 'general', '默认分片重叠', 1, 1),
 ('general_search_top_k', '10', 'general', '默认搜索返回条数', 1, 1),
 ('general_retrieval_mode', 'hybrid', 'general', '默认检索模式', 1, 1),
 ('general_enable_rerank', 'false', 'general', '是否启用重排序', 1, 1),

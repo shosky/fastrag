@@ -61,6 +61,33 @@ public class MinioService {
     }
 
     /**
+     * 递归删除指定前缀下的所有文件（本地文件系统即删除目录树）
+     *
+     * @param prefix 路径前缀，如 "kbId/fileId"
+     */
+    public void deleteByPrefix(String prefix) {
+        if (prefix == null || prefix.isBlank()) return;
+        try {
+            Path dir = getBasePath().resolve(prefix);
+            if (Files.exists(dir)) {
+                try (var walk = Files.walk(dir)) {
+                    walk.sorted(java.util.Comparator.reverseOrder())
+                            .forEach(path -> {
+                                try {
+                                    Files.deleteIfExists(path);
+                                } catch (IOException e) {
+                                    log.warn("Failed to delete {}: {}", path, e.getMessage());
+                                }
+                            });
+                }
+                log.debug("Directory deleted from local storage: {}", prefix);
+            }
+        } catch (IOException e) {
+            log.error("Failed to delete directory: {}", prefix, e);
+        }
+    }
+
+    /**
      * 复制文件到新路径（用于跨知识库移动文件）
      */
     public void copy(String sourceKey, String destKey) {

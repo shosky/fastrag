@@ -70,7 +70,7 @@ function handleEdit(row: RoleMeta) {
   formData.value = {
     name: row.name,
     description: row.description,
-    permissions: [...row.permissions],
+    permissions: [...new Set(row.permissions)],
   }
   showDialog.value = true
 }
@@ -120,9 +120,11 @@ async function handleSave() {
   }
   const groupKeys = collectGroupKeys(PERMISSION_TREE)
 
-  const allPerms = [...checkedKeys, ...halfCheckedKeys].filter(
-    (key) => !groupKeys.includes(key),
-  )
+  const allPerms = [...new Set(
+    [...checkedKeys, ...halfCheckedKeys].filter(
+      (key) => !groupKeys.includes(key),
+    ),
+  )]
 
   if (editingId.value) {
     await api.updateRole(editingId.value, {

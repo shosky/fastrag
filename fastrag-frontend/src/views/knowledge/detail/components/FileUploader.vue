@@ -65,6 +65,7 @@ import { UploadFilled, Link, FolderOpened, Delete, ArrowLeft, Document, WarningF
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { formatFileSize } from '@/types/knowledge'
 import * as api from '@/api'
+import request from '@/utils/request'
 import { useParseStrategy } from '@/composables/useParseStrategy'
 
 const props = defineProps<{
@@ -72,6 +73,8 @@ const props = defineProps<{
   kbId?: string
   /** 已有文件名列表，用于上传时冲突检测 */
   existingFileNames?: string[]
+  /** 目标文件夹ID，用于上传到指定目录 */
+  folderId?: string | null
 }>()
 
 const emit = defineEmits<{
@@ -262,20 +265,17 @@ async function simulateUpload(index: number) {
   const kbId = props.kbId || 'kb_sample'
   const formData = new FormData()
   formData.append('file', item.file)
+  if (props.folderId) {
+    formData.append('folderId', props.folderId)
+  }
 
   try {
-    const response = await new Promise((resolve, reject) => {
-      const xhr = new XMLHttpRequest()
-      xhr.open('POST', `/api/kb/${kbId}/files`)
-
-      const token = localStorage.getItem('ais_token')
-      if (token) {
-        const cleanToken = token.replace(/^"|"$/g, '')
-        xhr.setRequestHeader('Authorization', `Bearer ${cleanToken}`)
-      }
-
-      xhr.upload.addEventListener('progress', (e) => {
-        if (e.lengthComputable) {
+    // 必须走统一 axios 实例（@/utils/request）：
+    // token 自动附加、403/401 等错误由拦截器统一弹出提示，禁止裸 XHR/fetch
+    const response = await request.post(`/kb/${kbId}/files`, formData, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      onUploadProgress: (e: any) => {
+        if (e.total > 0) {
           const progress = Math.round((e.loaded / e.total) * 100)
           uploadFiles.value[index] = {
             ...uploadFiles.value[index],
@@ -283,23 +283,12 @@ async function simulateUpload(index: number) {
             status: 'uploading',
           }
         }
-      })
-
-      xhr.onload = () => {
-        if (xhr.status >= 200 && xhr.status < 300) {
-          resolve(JSON.parse(xhr.responseText))
-        } else {
-          reject(new Error(xhr.responseText || '上传失败'))
-        }
-      }
-
-      xhr.onerror = () => reject(new Error('网络错误'))
-      xhr.send(formData)
+      },
     })
 
-    // 上传成功，保存文件ID
+    // 上传成功，保存文件ID（拦截器已解包 data，直接取 id）
     const responseData = response as any
-    const fileId = responseData?.data?.id || responseData?.id || responseData?.fileId
+    const fileId = responseData?.id || responseData?.fileId
     uploadFiles.value[index] = {
       ...uploadFiles.value[index],
       progress: 100,
@@ -307,11 +296,11 @@ async function simulateUpload(index: number) {
       fileId,
     }
   } catch (error: any) {
-    // 上传失败
+    // 上传失败（拦截器已弹出错误提示，这里仅标记文件状态）
     uploadFiles.value[index] = {
       ...uploadFiles.value[index],
       status: 'error',
-      error: error.message || '上传失败',
+      error: error?.message || '上传失败',
     }
   }
 }

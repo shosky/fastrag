@@ -2,7 +2,7 @@ package com.fastrag.module.iam.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.common.enums.KBRole;
 import com.fastrag.module.iam.entity.*; import com.fastrag.module.iam.mapper.*;
-import com.fastrag.module.iam.model.KbAclDto; import com.fastrag.module.iam.service.KbAclService;
+import com.fastrag.security.model.KbAclDto; import com.fastrag.security.service.KbAclService;
 import lombok.RequiredArgsConstructor; import org.springframework.data.redis.core.StringRedisTemplate; import org.springframework.stereotype.Service;
 import java.time.LocalDateTime; import java.util.*; import java.util.concurrent.TimeUnit; import java.util.stream.Collectors;
 @Service @RequiredArgsConstructor
@@ -15,7 +15,11 @@ public class KbAclServiceImpl implements KbAclService {
             var u=userMapper.selectById(e.getUserId()); d.setUserName(u!=null?u.getRealName():e.getUserId()); return d;
         }).collect(Collectors.toList());
     }
-    @Override public void setKbAcl(String kbId,List<KbAclDto> entries) { aclMapper.delete(new LambdaQueryWrapper<KbAcl>().eq(KbAcl::getKbId,kbId)); entries.forEach(e->addAclEntry(kbId,e.getUserId(),e.getKbRole(),e.getGrantedBy())); }
+    @Override public void setKbAcl(String kbId,List<KbAclDto> entries) {
+        // 先清理旧权限的 Redis 缓存，避免被移除权限的用户在缓存 TTL 内仍可访问
+        aclMapper.selectList(new LambdaQueryWrapper<KbAcl>().eq(KbAcl::getKbId,kbId)).forEach(e->redis.delete("kb:acl:"+kbId+":"+e.getUserId()));
+        aclMapper.delete(new LambdaQueryWrapper<KbAcl>().eq(KbAcl::getKbId,kbId)); entries.forEach(e->addAclEntry(kbId,e.getUserId(),e.getKbRole(),e.getGrantedBy()));
+    }
     @Override public void addAclEntry(String kbId,String userId,KBRole role,String grantedBy) {
         aclMapper.delete(new LambdaQueryWrapper<KbAcl>().eq(KbAcl::getKbId,kbId).eq(KbAcl::getUserId,userId));
         var a=new KbAcl(); a.setKbId(kbId); a.setUserId(userId); a.setKbRole(role.name()); a.setGrantedBy(grantedBy); a.setGrantedAt(LocalDateTime.now()); aclMapper.insert(a);

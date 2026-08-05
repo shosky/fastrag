@@ -14,6 +14,7 @@ public class SysUser {
     private String phone;
     private String email;
     private String passwordHash;
+    private String openid;
     private String roleId;
     private String status; // enabled / disabled
     private String orgId;

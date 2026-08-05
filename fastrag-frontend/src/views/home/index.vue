@@ -1,17 +1,23 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
+import { useAuth } from '@/composables/useAuth'
+import { PERMISSIONS } from '@/types/auth'
 import * as api from '@/api'
 
 const router = useRouter()
+const { hasPermission } = useAuth()
 const loading = ref(true)
 
 const quickEntries = ref([
-  { title: '知识库', icon: 'Collection', color: '#409eff', path: '/knowledge' },
-  { title: '应用中心', icon: 'Grid', color: '#67c23a', path: '/application' },
-  { title: '技能管理', icon: 'MagicStick', color: '#e6a23c', path: '/application/skill-management' },
-  { title: '工具管理', icon: 'Tools', color: '#909399', path: '/application/my-tools' },
+  { title: '知识库', icon: 'Collection', color: '#409eff', path: '/knowledge', perm: PERMISSIONS.MENU_KNOWLEDGE },
+  { title: '应用中心', icon: 'Grid', color: '#67c23a', path: '/application', perm: PERMISSIONS.APP_USE },
+  { title: '技能管理', icon: 'MagicStick', color: '#e6a23c', path: '/application/skill-management', perm: PERMISSIONS.APP_EDIT },
+  { title: '工具管理', icon: 'Tools', color: '#909399', path: '/application/my-tools', perm: PERMISSIONS.APP_USE },
 ])
+
+// 仅展示有权限的快捷入口
+const visibleEntries = computed(() => quickEntries.value.filter((e) => hasPermission(e.perm as any)))
 
 const recommendKBs = ref<any[]>([])
 const hotDocs = ref<any[]>([])
@@ -49,7 +55,7 @@ function goToKb(kbId: string) {
       <div class="section-title">快捷入口</div>
       <div class="quick-entries">
         <div
-          v-for="entry in quickEntries"
+          v-for="entry in visibleEntries"
           :key="entry.title"
           class="entry-card"
           @click="router.push(entry.path)"

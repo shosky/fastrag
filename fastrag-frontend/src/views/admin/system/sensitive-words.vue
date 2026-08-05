@@ -76,11 +76,34 @@ async function handleSave() {
 }
 
 function handleDownloadTemplate() {
-  ElMessage.info('模板下载中...')
+  api.downloadSensitiveWordTemplate().then((res: any) => {
+    const blob = new Blob([res], { type: 'text/csv;charset=utf-8' })
+    const url = window.URL.createObjectURL(blob)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'sensitive_words_template.csv'
+    link.click()
+    window.URL.revokeObjectURL(url)
+    ElMessage.success('模板下载成功')
+  }).catch(() => ElMessage.error('下载失败'))
 }
 
 function handleBatchImport() {
-  ElMessage.info('批量导入功能')
+  const input = document.createElement('input')
+  input.type = 'file'
+  input.accept = '.csv'
+  input.onchange = async (e: any) => {
+    const file = e.target.files?.[0]
+    if (!file) return
+    try {
+      const res: any = await api.importSensitiveWords(file)
+      ElMessage.success(`导入成功，共 ${res?.imported ?? 0} 条`)
+      await loadWords()
+    } catch {
+      ElMessage.error('导入失败')
+    }
+  }
+  input.click()
 }
 </script>
 

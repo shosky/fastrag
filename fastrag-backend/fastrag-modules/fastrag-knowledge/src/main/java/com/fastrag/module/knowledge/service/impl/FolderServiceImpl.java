@@ -7,6 +7,7 @@ import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbFolderMapper;
 import com.fastrag.module.knowledge.model.FolderNodeDto;
 import com.fastrag.module.knowledge.service.FolderService;
+import com.fastrag.common.exception.BusinessException;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -101,21 +102,21 @@ public class FolderServiceImpl implements FolderService {
         var f = mapper.selectOne(new LambdaQueryWrapper<KbFolder>()
                 .eq(KbFolder::getKbId, kbId).eq(KbFolder::getId, folderId));
         if (f == null) {
-            throw new RuntimeException("文件夹不存在");
+            throw BusinessException.badRequest("文件夹不存在");
         }
 
         // 检查是否有子文件夹
         long subFolderCount = mapper.selectCount(new LambdaQueryWrapper<KbFolder>()
                 .eq(KbFolder::getKbId, kbId).eq(KbFolder::getParentId, folderId));
         if (subFolderCount > 0) {
-            throw new RuntimeException("文件夹下存在子文件夹，请先删除子文件夹");
+            throw BusinessException.badRequest("文件夹下存在子文件夹，请先删除子文件夹");
         }
 
         // 检查文件夹内是否有文件
         long fileCount = fileMapper.selectCount(new LambdaQueryWrapper<KbFile>()
                 .eq(KbFile::getKbId, kbId).eq(KbFile::getFolderId, folderId));
         if (fileCount > 0) {
-            throw new RuntimeException("文件夹下存在文件，请先移出或删除文件");
+            throw BusinessException.badRequest("文件夹下存在文件，请先移出或删除文件");
         }
 
         mapper.deleteById(folderId);
@@ -130,6 +131,8 @@ public class FolderServiceImpl implements FolderService {
                     var n = new FolderNodeDto();
                     n.setId(f.getId());
                     n.setLabel(f.getName());
+                    n.setCreatedAt(f.getCreatedAt() != null ? f.getCreatedAt().toString() : null);
+                    n.setUpdatedAt(f.getUpdatedAt() != null ? f.getUpdatedAt().toString() : null);
                     n.setChildren(buildTree(all, f.getId()));
                     return n;
                 }).collect(Collectors.toList());

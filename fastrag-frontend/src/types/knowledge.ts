@@ -90,6 +90,10 @@ export interface RetrievalSettingConfig {
   graphMaxEntities?: number
   /** 同义词联想 */
   enableSynonymExpansion?: boolean
+  /** 图谱检索通道（后端图谱召回参与 RRF 融合，默认开） */
+  enableGraphExpand?: boolean
+  /** 关键词匹配：用户输入命中问答对触发关键词时优先返回 QA 结果 */
+  enableKeywordMatch?: boolean
 
   // ===== 多路召回（可选，默认关闭）=====
   /** 是否启用多路召回（关闭则只走单一 mode 通道） */
@@ -126,14 +130,12 @@ export interface RetrievalSettingConfig {
   mmrLambda?: number
 
   // ===== BM25 细节（debug / 高级用户用）=====
-  /** BM25 召回数量 */
+  /** BM25 召回数量（全文检索/混合检索的 BM25 候选数） */
   bm25RecallCount: number
   /** 向量检索权重（混合模式） */
   vectorWeight: number
   /** BM25 权重（混合模式） */
   bm25Weight: number
-  /** BM25 稀疏项丢弃比例 */
-  bm25SparseDropRate: number
 }
 
 /** 图谱扩展配置 */
@@ -239,33 +241,69 @@ export type ParseMethodType = 'default' | 'pptx' | 'pdf' | 'video' | 'audio'
 /** 表格处理模式 */
 export type TableMode = 'structured' | 'markdown' | 'ignore'
 
-/** 解析策略高级参数 */
-export interface ParseStrategyAdvanced {
-  /** 切片方式 */
-  splitMethod: 'fixed' | 'delimiter'
-  /** 固定切片长度 */
-  chunkLength: number
-  /** 分隔符列表 */
-  delimiters: string[]
-  /** 索引字段 */
-  indexFields: string[]
-  /** 是否启用文档摘要 */
-  enableDocSummary: boolean
-  /** PPT 整页解析 */
-  enablePptWholePage: boolean
+/** 解析配置组 */
+export interface ParseStrategyParseConfig {
   /** 表格处理模式 */
   tableMode: TableMode
+  /** PPT 整页解析（每页作为完整单元） */
+  enablePptWholePage: boolean
+  /** 视频关键帧采样间隔（秒），仅 parseMethod=video/audio 生效 */
+  keyframeIntervalSeconds?: number | null
+  /** 关键帧 pHash 哈希阈值 */
+  keyframeHashThreshold?: number | null
+  /** AI 文档摘要（二期） */
+  enableDocSummary: boolean
 }
 
-/** 默认高级参数 */
+/** 分片配置组 */
+export interface ParseStrategyChunkConfig {
+  /** 目标长度：段落累积至接近该值再落盘，超过才按句号切分 */
+  chunkLength: number
+  /** 相邻 chunk 重叠字符数 */
+  overlap: number
+  /** content 内嵌 Markdown 标题前缀 */
+  titlePrefix: boolean
+  /** 生成 title / headingPath 元数据 */
+  headingPath: boolean
+  /** 纯文本兜底路径的分隔符 */
+  delimiters: string[]
+}
+
+/** 索引配置组 */
+export interface ParseStrategyIndexConfig {
+  /** embedding 输入拼接字段（一期固定，二期开放配置） */
+  embedFields: string[]
+}
+
+/** 解析策略高级参数（分组类型化结构，替代原平铺 JSON） */
+export interface ParseStrategyAdvanced {
+  /** 解析配置 */
+  parse: ParseStrategyParseConfig
+  /** 分片配置 */
+  chunk: ParseStrategyChunkConfig
+  /** 索引配置 */
+  index: ParseStrategyIndexConfig
+}
+
+/** 默认高级参数（与后端系统默认值对齐：chunkLength=2000, overlap=100） */
 export const DEFAULT_ADVANCED: ParseStrategyAdvanced = {
-  splitMethod: 'fixed',
-  chunkLength: 2000,
-  delimiters: ['\n', '\n\n'],
-  indexFields: ['originalText', 'originalImage', 'imageOCR'],
-  enableDocSummary: false,
-  enablePptWholePage: true,
-  tableMode: 'structured',
+  parse: {
+    tableMode: 'structured',
+    enablePptWholePage: true,
+    keyframeIntervalSeconds: null,
+    keyframeHashThreshold: null,
+    enableDocSummary: false,
+  },
+  chunk: {
+    chunkLength: 2000,
+    overlap: 100,
+    titlePrefix: true,
+    headingPath: true,
+    delimiters: ['\n', '\n\n'],
+  },
+  index: {
+    embedFields: ['content', 'headingPath', 'fileName'],
+  },
 }
 
 /** 表格处理模式选项 */
@@ -298,6 +336,8 @@ export interface ParseStrategy {
   llmModel?: string
   /** 解析用 VLM 模型（图片/表格理解） */
   vlmModel?: string
+  /** 是否构建知识图谱 */
+  enableGraphBuild?: number
 }
 
 /** 解析策略表单数据 */
@@ -331,15 +371,6 @@ export const CHUNK_LENGTH_OPTIONS = [
   { label: '1,000', value: 1000 },
   { label: '500', value: 500 },
   { label: '自定义', value: 0 },
-]
-
-/** 索引字段选项 */
-export const INDEX_FIELD_OPTIONS = [
-  { label: '原始文本', value: 'originalText' },
-  { label: '原始图片', value: 'originalImage' },
-  { label: '图片 OCR', value: 'imageOCR' },
-  { label: '文档目录', value: 'documentTOC' },
-  { label: '文档名称', value: 'documentName' },
 ]
 
 /** 分隔符选项 */

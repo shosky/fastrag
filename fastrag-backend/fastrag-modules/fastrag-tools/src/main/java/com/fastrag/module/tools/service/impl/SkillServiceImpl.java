@@ -10,6 +10,10 @@ import com.fastrag.module.tools.mapper.SkillDependencyMapper;
 import com.fastrag.module.tools.mapper.SkillMapper;
 import com.fastrag.module.tools.mapper.SkillScopeMapper;
 import com.fastrag.module.tools.service.SkillService;
+import com.fastrag.common.exception.BusinessException;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.util.DataScope;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -29,6 +33,28 @@ public class SkillServiceImpl implements SkillService {
     private final SkillDependencyMapper dependencyMapper;
     private final SkillScopeMapper scopeMapper;
 
+    /** 技能可见性：系统级（内置/存量） / 属主 / 同组织 / API Token */
+    private boolean visible(Skill s, LoginUser user) {
+        return DataScope.visible(user, s.getCreator(), s.getOrgId(), s.getIsBuiltin());
+    }
+
+    private void requireManage(Skill s) {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (s == null) throw BusinessException.notFound("技能不存在");
+        if (!DataScope.manageable(user, s.getCreator())) throw BusinessException.forbidden("无权管理该技能");
+    }
+
+    /** 非 API Token 用户追加可见性条件（属主 / 同组织 / 系统级） */
+    private void applyScope(LambdaQueryWrapper<Skill> w) {
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user)) {
+            w.and(q -> q.eq(Skill::getCreator, user.getUserId())
+                    .or(o -> o.eq(Skill::getOrgId, user.getOrgId())
+                            .or().eq(Skill::getCreator, "system")
+                            .or().eq(Skill::getIsBuiltin, 1)));
+        }
+    }
+
     @Override
     public List<Skill> list(String keyword, String category) {
         LambdaQueryWrapper<Skill> w = new LambdaQueryWrapper<>();
@@ -38,6 +64,7 @@ public class SkillServiceImpl implements SkillService {
              .or(l -> l.like(Skill::getDescription, keyword));
         }
         if (StrUtil.isNotBlank(category)) w.eq(Skill::getCategory, category);
+        applyScope(w);
         w.orderByDesc(Skill::getUpdatedAt);
         return mapper.selectList(w);
     }
@@ -53,6 +80,7 @@ public class SkillServiceImpl implements SkillService {
         }
         if (StrUtil.isNotBlank(category)) w.eq(Skill::getCategory, category);
         if (StrUtil.isNotBlank(sourceType)) w.eq(Skill::getSourceType, sourceType);
+        applyScope(w);
         w.orderByDesc(Skill::getUpdatedAt);
         return mapper.selectList(w);
     }
@@ -64,18 +92,27 @@ public class SkillServiceImpl implements SkillService {
 
     @Override
     public Skill get(String id) {
-        return mapper.selectById(id);
+        Skill s = mapper.selectById(id);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (s == null || !visible(s, user)) throw BusinessException.forbidden("无权访问该技能");
+        return s;
     }
 
     @Override
     public Skill getBySlug(String slug) {
-        return mapper.selectBySlug(slug);
+        Skill s = mapper.selectBySlug(slug);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (s == null || !visible(s, user)) throw BusinessException.forbidden("无权访问该技能");
+        return s;
     }
 
     @Override
     @Transactional
     public Skill create(Map<String, Object> form) {
+        LoginUser user = SecurityUtil.getCurrentUser();
         Skill s = new Skill();
+        s.setCreator(user.getUserId());
+        s.setOrgId(user.getOrgId());
         applyBasicFields(s, form);
         s.setSourceType((String) form.getOrDefault("sourceType", "custom"));
         s.setIsBuiltin(0);
@@ -96,6 +133,7 @@ public class SkillServiceImpl implements SkillService {
     @Transactional
     public Skill update(String id, Map<String, Object> form) {
         Skill s = mapper.selectById(id);
+        requireManage(s);
         if (s == null) return null;
 
         applyBasicFields(s, form);
@@ -206,6 +244,7 @@ public class SkillServiceImpl implements SkillService {
     @Transactional
     public void delete(String id) {
         Skill s = mapper.selectById(id);
+        requireManage(s);
         if (s != null && Integer.valueOf(1).equals(s.getIsBuiltin())) {
             throw new RuntimeException("内置技能不允许删除");
         }
@@ -218,6 +257,7 @@ public class SkillServiceImpl implements SkillService {
     @Override
     public void toggleEnabled(String id) {
         Skill s = mapper.selectById(id);
+        requireManage(s);
         if (s != null) {
             s.setEnabled(s.getEnabled() == 1 ? 0 : 1);
             mapper.updateById(s);
@@ -227,6 +267,7 @@ public class SkillServiceImpl implements SkillService {
     @Override
     public void setEnabled(String id, boolean enabled) {
         Skill s = mapper.selectById(id);
+        requireManage(s);
         if (s != null) {
             s.setEnabled(enabled ? 1 : 0);
             mapper.updateById(s);

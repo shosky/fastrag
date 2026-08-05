@@ -66,6 +66,8 @@ public class Skill {
 
     /** 是否为内置技能 */
     private Integer isBuiltin;
+    private String creator; // 创建者 userId（system=系统预置）
+    private String orgId; // 归属组织
 
     /** SKILL.md frontmatter 元数据 (JSON) */
     @TableField(typeHandler = JacksonTypeHandler.class)

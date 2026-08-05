@@ -13,6 +13,7 @@ import com.fastrag.module.publish.service.LogService;
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 
 import java.util.*;
@@ -28,6 +29,7 @@ public class GraphServiceImpl implements GraphService {
     private final MessagePublisher messagePublisher;
     private final GraphQueryService graphQueryService;
     private final LogService logService;
+    private final JdbcTemplate jdbcTemplate;
 
     @Override
     public Map<String, Object> getGraphData(String kbId, Integer maxNodes, Boolean excludeChunks) {
@@ -91,10 +93,19 @@ public class GraphServiceImpl implements GraphService {
 
         r.put("entityCount", entityCount);
         r.put("relationCount", relationCount);
-        r.put("entityTypes", graphStore.getLabels(kbId));
+        // 实体类型分布：返回 [{name, count}] 数组，前端直接展示计数
+        Map<String, Long> typeCounts = graphStore.countEntitiesByType(kbId);
+        List<Map<String, Object>> entityTypes = new ArrayList<>();
+        typeCounts.forEach((name, cnt) -> {
+            Map<String, Object> t = new HashMap<>();
+            t.put("name", name);
+            t.put("count", cnt);
+            entityTypes.add(t);
+        });
+        r.put("entityTypes", entityTypes);
 
         log.info("[GraphQuery] /graph/stats result: entityCount={}, relationCount={}, entityTypes={} (fromIndex={})",
-                entityCount, relationCount, r.get("entityTypes"), fromIndex);
+                entityCount, relationCount, entityTypes, fromIndex);
         return r;
     }
 
@@ -186,7 +197,16 @@ public class GraphServiceImpl implements GraphService {
             log.warn("[Graph Retry] clearGraph failed for kb {}: {}", kbId, e.getMessage());
         }
 
-        // 2. 重置索引状态
+        // 2. 重置所有 chunk 的 graphIndexed 标记，使 full 模式构建能重新处理所有 chunk
+        try {
+            int resetCount = jdbcTemplate.update(
+                    "UPDATE kb_chunk SET graph_indexed = 0 WHERE kb_id = ?", kbId);
+            log.info("[Graph Retry] Reset graphIndexed for {} chunks in kb: {}", resetCount, kbId);
+        } catch (Exception e) {
+            log.warn("[Graph Retry] Failed to reset graphIndexed for kb {}: {}", kbId, e.getMessage());
+        }
+
+        // 3. 重置索引状态
         var idx = indexMapper.selectById(kbId);
         if (idx == null) {
             idx = new KbGraphIndex();
@@ -205,7 +225,7 @@ public class GraphServiceImpl implements GraphService {
             indexMapper.updateById(idx);
         }
 
-        // 3. 以 full 模式重新触发构建
+        // 4. 以 full 模式重新触发构建
         Map<String, Object> msg = new HashMap<>();
         msg.put("kbId", kbId);
         msg.put("mode", "full");

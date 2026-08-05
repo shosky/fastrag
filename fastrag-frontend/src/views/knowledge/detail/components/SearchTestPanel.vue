@@ -89,10 +89,12 @@ function clearAllImages() {
 }
 
 // --- 检索预处理开关 ---
+// 图谱扩展默认关闭：图谱不再改写 query（实体名拼词会稀释 embedding），
+// 图谱召回由后端检索主流程的图谱通道（enableGraphExpand）负责
 const preprocess = computed(() => ({
   autoCorrection: props.retrievalSettings?.enableAutoCorrection ?? true,
   queryRewrite: props.retrievalSettings?.enableQueryRewrite ?? true,
-  graphExpansion: props.retrievalSettings?.enableGraphExpansion ?? true,
+  graphExpansion: props.retrievalSettings?.enableGraphExpansion ?? false,
   synonymExpansion: props.retrievalSettings?.enableSynonymExpansion ?? true,
 }))
 
@@ -111,6 +113,36 @@ const searchHistory = ref<SearchHistoryItem[]>([])
 const historySeq = ref(0)
 const showHistory = ref(false)
 
+// --- 检索历史持久化（localStorage，按 kbId 隔离） ---
+function historyStorageKey() {
+  return `search-history:${props.kbId || 'default'}`
+}
+
+function loadHistory() {
+  try {
+    const raw = localStorage.getItem(historyStorageKey())
+    if (raw) {
+      const parsed = JSON.parse(raw)
+      if (Array.isArray(parsed)) {
+        searchHistory.value = parsed
+        historySeq.value = parsed.reduce((max: number, item: SearchHistoryItem) => Math.max(max, item.id), 0)
+      }
+    }
+  } catch {
+    // 存储不可用时静默忽略
+  }
+}
+
+function persistHistory() {
+  try {
+    localStorage.setItem(historyStorageKey(), JSON.stringify(searchHistory.value))
+  } catch {
+    // 存储不可用时静默忽略
+  }
+}
+
+onMounted(loadHistory)
+
 function addHistory(query: string, mode: 'text' | 'image', resultCount: number, duration: number) {
   searchHistory.value.unshift({
     id: ++historySeq.value,
@@ -125,6 +157,7 @@ function addHistory(query: string, mode: 'text' | 'image', resultCount: number, 
   if (searchHistory.value.length > 50) {
     searchHistory.value = searchHistory.value.slice(0, 50)
   }
+  persistHistory()
 }
 
 function handleHistoryClick(item: SearchHistoryItem) {
@@ -135,6 +168,11 @@ function handleHistoryClick(item: SearchHistoryItem) {
 
 async function clearHistory() {
   searchHistory.value = []
+  try {
+    localStorage.removeItem(historyStorageKey())
+  } catch {
+    // 存储不可用时静默忽略
+  }
   ElMessage.success('历史记录已清空')
 }
 
@@ -398,6 +436,8 @@ function handleKeydown(e: Event | KeyboardEvent) {
         >
           <div class="search-test__result-header">
             <span class="search-test__result-index">#{{ result.index }}</span>
+            <el-tag v-if="result.source === 'graph'" size="small" type="success" effect="plain">图谱召回</el-tag>
+            <el-tag v-if="result.source === 'qa'" size="small" type="warning" effect="plain">问答对</el-tag>
             <el-tag size="small" type="info" effect="plain">相似度: {{ result.similarity.toFixed(2) }}%</el-tag>
           </div>
 
