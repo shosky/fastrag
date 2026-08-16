@@ -1,5 +1,18 @@
 package com.fastrag.module.operation.controller;
 
+/**
+ * 聊天会话控制器。
+ *
+ * <p>提供用户聊天会话（问答记录）的分页查询接口，主要用于 Feedback 页面的"问答明细"Tab展示。
+ * 支持按关键词（模糊匹配用户提问内容）和用户ID进行筛选，按创建时间倒序排列。
+ *
+ * <p>REST API 端点：
+ * <ul>
+ *     <li>GET /api/chat-sessions - 分页查询聊天会话列表，支持 keyword、userId、page、pageSize 参数</li>
+ * </ul>
+ *
+ * <p>依赖 {@link ChatSessionMapper} 直接操作数据库查询。
+ */
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fastrag.common.response.ApiResponse;

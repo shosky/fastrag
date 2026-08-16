@@ -1,5 +1,8 @@
 <script setup lang="ts">
+import { nextTick, onMounted, watch } from 'vue'
+import { Refresh } from '@element-plus/icons-vue'
 import * as api from '@/api'
+import { usePagination } from '@/composables/usePagination'
 
 const props = defineProps<{
   kbId: string
@@ -9,44 +12,91 @@ const props = defineProps<{
 const activeCategory = ref<string>('all')
 const searchKeyword = ref('')
 
-const allLogs = ref<any[]>([])
+const logs = ref<any[]>([])
 const loading = ref(false)
 
-async function refresh() {
+// --- 分类统计（服务端分页后由接口返回） ---
+const stats = ref<Record<string, number>>({ total: 0, operation: 0, retrieval: 0, publish: 0 })
+
+// --- 分页（统一 usePagination） ---
+const {
+  currentPage,
+  pageSize,
+  total,
+} = usePagination(10)
+
+// EP 在切换 page-size 且当前页超出新页数时会同步补发一次 current-change，
+// 用该标志跳过这次多余的翻页请求，保持「切 size 回到第一页」的约定
+let suppressCurrentChange = false
+
+async function fetchLogs() {
   loading.value = true
   try {
-    const params: any = { page: 1, pageSize: 100 }
+    const params: any = { page: currentPage.value, pageSize: pageSize.value }
     if (activeCategory.value !== 'all') params.category = activeCategory.value
+    const keyword = searchKeyword.value.trim()
+    if (keyword) params.keyword = keyword
     const res = await api.getKbLogs(props.kbId, params)
-    allLogs.value = (res as any)?.list || (res as any) || []
+    logs.value = (res as any)?.list || []
+    total.value = Number((res as any)?.total ?? logs.value.length)
   } finally {
     loading.value = false
   }
 }
 
-watch(activeCategory, refresh)
-onMounted(refresh)
-
-const filteredLogs = computed(() => {
-  if (!searchKeyword.value) return allLogs.value
-  const kw = searchKeyword.value.toLowerCase()
-  return allLogs.value.filter((l: any) =>
-    (l.target || '').toLowerCase().includes(kw) ||
-    (l.detail || '').toLowerCase().includes(kw) ||
-    (l.operator || '').toLowerCase().includes(kw),
-  )
-})
-
-// --- 统计 ---
-const stats = computed(() => {
-  const all = allLogs.value
-  return {
-    total: all.length,
-    operation: all.filter((l: any) => l.category === 'operation').length,
-    retrieval: all.filter((l: any) => l.category === 'retrieval').length,
-    publish: all.filter((l: any) => l.category === 'publish').length,
+// 分类统计独立拉取，失败时保留默认值，不影响日志列表
+async function fetchStats() {
+  try {
+    const statsRes = await api.getKbLogStats(props.kbId)
+    stats.value = { total: 0, operation: 0, retrieval: 0, publish: 0, ...(statsRes as any) }
+  } catch {
+    // 忽略统计接口异常
   }
+}
+
+function refresh() {
+  fetchLogs()
+  fetchStats()
+}
+
+// 页码变化时重新拉取
+function handleCurrentChange(page: number) {
+  if (suppressCurrentChange) {
+    // 切 page-size 时 EP 补发的 current-change，跳过并保持第一页
+    suppressCurrentChange = false
+    currentPage.value = 1
+    return
+  }
+  currentPage.value = page
+  fetchLogs()
+}
+
+// 每页条数变化时重置到第一页并拉取
+function handleSizeChange(size: number) {
+  pageSize.value = size
+  currentPage.value = 1
+  suppressCurrentChange = true
+  nextTick(() => { suppressCurrentChange = false })
+  fetchLogs()
+}
+
+// 切换分类：回到第一页并刷新
+watch(activeCategory, () => {
+  currentPage.value = 1
+  fetchLogs()
 })
+
+// 搜索：300ms 防抖，回到第一页并刷新（服务端搜索）
+let searchTimer: ReturnType<typeof setTimeout> | undefined
+watch(searchKeyword, () => {
+  clearTimeout(searchTimer)
+  searchTimer = setTimeout(() => {
+    currentPage.value = 1
+    fetchLogs()
+  }, 300)
+})
+
+onMounted(refresh)
 
 // --- 类型配置 ---
 const categoryConfig: Record<string, { label: string; color: 'primary' | 'success' | 'warning' | 'danger' | 'info' }> = {
@@ -87,19 +137,24 @@ function getActionLabel(action: string): string {
         <el-radio-button value="retrieval">检索 ({{ stats.retrieval }})</el-radio-button>
         <el-radio-button value="publish">发布 ({{ stats.publish }})</el-radio-button>
       </el-radio-group>
-      <el-input
-        v-model="searchKeyword"
-        placeholder="搜索对象/详情/操作人"
-        clearable
-        size="small"
-        style="width: 220px"
-      >
-        <template #prefix><el-icon><Search /></el-icon></template>
-      </el-input>
+      <div class="log-panel__filter-actions">
+        <el-input
+          v-model="searchKeyword"
+          placeholder="搜索对象/详情/操作人"
+          clearable
+          size="small"
+          style="width: 220px"
+        >
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
+        <el-tooltip content="刷新" placement="top">
+          <el-button size="small" circle :icon="Refresh" :loading="loading" @click="refresh" />
+        </el-tooltip>
+      </div>
     </div>
 
     <!-- 日志表格 -->
-    <el-table v-loading="loading" :data="filteredLogs" stripe size="small">
+    <el-table v-loading="loading" :data="logs" stripe size="small">
       <el-table-column label="类型" width="80" align="center">
         <template #default="{ row }">
           <el-tag :type="categoryConfig[(row as any).category]?.color || 'info'" size="small">
@@ -168,7 +223,20 @@ function getActionLabel(action: string): string {
       </el-table-column>
     </el-table>
 
-    <el-empty v-if="filteredLogs.length === 0 && !loading" description="暂无日志记录" />
+    <el-empty v-if="logs.length === 0 && !loading" description="暂无日志记录" />
+
+    <!-- 分页（统一模板） -->
+    <div class="log-panel__pagination">
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="handleCurrentChange"
+        @size-change="handleSizeChange"
+      />
+    </div>
   </div>
 </template>
 
@@ -179,6 +247,13 @@ function getActionLabel(action: string): string {
   display: flex;
   flex-direction: column;
   gap: $spacing-base;
+
+  // 统一分页样式（AGENTS.md 规范，直接复制）
+  &__pagination {
+    display: flex;
+    justify-content: flex-end;
+    margin-top: 16px;
+  }
 }
 
 .log-panel__filter {
@@ -186,9 +261,12 @@ function getActionLabel(action: string): string {
   align-items: center;
   justify-content: space-between;
   gap: $spacing-base;
-  background: $bg-white;
-  border-radius: $radius-base;
-  padding: $spacing-sm $spacing-base;
+}
+
+.log-panel__filter-actions {
+  display: flex;
+  align-items: center;
+  gap: $spacing-sm;
 }
 
 .log-panel__detail {

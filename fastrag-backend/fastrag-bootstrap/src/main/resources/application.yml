@@ -76,6 +76,8 @@ ai:
   gateway:
     url: http://127.0.0.1:11434
     timeout: 30
+    # 单次 LLM 流式调用最大等待时长（秒），长回答/推理模型建议 >= 240
+    stream-timeout: 240
   # 外部 API 代理配置（访问 OpenAI 等被墙服务时需要）
   proxy:
     enabled: true
@@ -84,16 +86,30 @@ ai:
     # 不走代理的域名（正则表达式，逗号分隔不行、用 | 分隔多个）。
     # reactor-netty 的 nonProxyHosts 参数是正则而非 *.host 通配；
     # 实测本地 xray 代理对 api.siliconflow.cn 不通（请求挂起），必须直连；
+    # 本地地址（localhost/127.0.0.1，如 Ollama 网关 11434）也必须直连，
+    # 否则本地请求会经代理转发并触发 PrematureCloseException（语义切片 embedding 报错即此因）；
     # 其他需要代理才能访问的服务（OpenAI 等）不受影响。
-    non-proxy-hosts: '.*\.siliconflow\.cn'
+    non-proxy-hosts: 'localhost|127\.0\.0\.1|.*\.siliconflow\.cn'
   asr:
     url: https://api.siliconflow.cn
     key: ${ASR_API_KEY:}
     model: FunAudioLLM/SenseVoiceSmall
+    # 可选多引擎（上传向导可选择，需自行部署/配置对应服务，未配置时回退上方默认引擎）
+    engines:
+      whisper:
+        url: https://api.openai.com
+        key: ${WHISPER_API_KEY:}
+        model: whisper-1
   ocr:
     url: https://api.siliconflow.cn
     key: ${ASR_API_KEY:}
     model: deepseek-ai/DeepSeek-OCR
+    # 可选多引擎（PaddleOCR 需部署为 OpenAI 兼容接口，未配置时回退上方默认引擎）
+    engines:
+      paddle:
+        url: http://localhost:8866
+        key: ${PADDLE_OCR_KEY:}
+        model: PaddleOCR
   ffmpeg:
     path: D:\Servers\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe
 

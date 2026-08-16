@@ -28,13 +28,16 @@ const isCategoryManager = computed(() => {
 
 // 嵌入模型选项从 API 加载
 const embeddingModelOptions = ref<{label:string;value:string}[]>([])
+// LLM 模型选项（知识图谱构建用）
+const graphLlmOptions = ref<{label:string;value:string}[]>([])
 // 分类选项从 API 加载
 const categoryOptions = ref<{id:string;name:string;color?:string}[]>([])
+// 组织树（用于新建分类时选择归属组织）
+const orgTreeData = ref<any[]>([])
 const showAddCategoryDialog = ref(false)
 const newCategoryName = ref('')
 const newCategoryColor = ref('#1890ff')
 const newCategoryOrg = ref('')
-const categoryOrgOptions = ref<any[]>([])
 const colorPresets = ['#1890ff', '#52c41a', '#faad14', '#f56c6c', '#722ed1', '#13c2c2', '#eb2f96', '#5cdbd3']
 
 // --------------- Types ---------------
@@ -149,33 +152,23 @@ const filteredUsers = computed(() => {
 // --------------- Async data loading ---------------
 onMounted(async () => {
   try {
-    const [catsRes, modelsRes, orgListRes, personnelRes] = await Promise.all([
+    const [catsRes, modelsRes, orgTreeRes, personnelRes, llmRes] = await Promise.all([
       api.getKbCategories(),
       api.getModels({ purpose: 'Embedding' }),
-      api.getOrgFlat(),
+      api.getOrgTree(),
       api.getPersonnelSimple(),
+      api.getModels({ purpose: 'LLM' }),
     ])
     const cats: any[] = (catsRes as any)?.list || catsRes || []
     const models: any[] = (modelsRes as any)?.list || modelsRes || []
-    const orgList: any[] = (orgListRes as any)?.list || orgListRes || []
+    const orgTree: any[] = (orgTreeRes as any)?.list || orgTreeRes || []
     const personnel: any[] = (personnelRes as any)?.list || personnelRes || []
+    const llms: any[] = (llmRes as any)?.list || llmRes || []
     categoryOptions.value = (Array.isArray(cats) ? cats : []).map((c: any) => ({ id: c.id || c.name, name: c.name, color: c.color }))
-    // 分类不足时补全 mock 数据
-    if (categoryOptions.value.length < 3) {
-      const mockCats = [
-        { id: 'default', name: '默认分类', color: '#909399' },
-        { id: 'tech', name: '技术文档', color: '#1890ff' },
-        { id: 'product', name: '产品手册', color: '#52c41a' },
-        { id: 'faq', name: '常见问题', color: '#faad14' },
-      ]
-      const existingNames = new Set(categoryOptions.value.map(c => c.name))
-      for (const mc of mockCats) {
-        if (!existingNames.has(mc.name)) categoryOptions.value.push(mc)
-      }
-    }
+    orgTreeData.value = Array.isArray(orgTree) ? orgTree : []
     embeddingModelOptions.value = models.map((m: any) => ({ label: m.name || m.code, value: m.code || m.name }))
-    departments.value = orgList.map((o: any) => ({ id: o.id, name: o.name, isDefault: o.id === '1' }))
-    categoryOrgOptions.value = orgList.map((o: any) => ({ id: o.id, name: o.name }))
+    graphLlmOptions.value = llms.map((m: any) => ({ label: m.name || m.code, value: m.code || m.name }))
+    departments.value = orgTree.map((o: any) => ({ id: o.id, name: o.name, isDefault: o.id === '1' }))
     users.value = personnel
       .filter((p: any) => p.status === 'enabled')
       .map((p: any) => ({
@@ -201,6 +194,7 @@ function defaultForm(): KnowledgeBaseForm {
     parseMode: 'auto',
     splitMode: 'auto',
     graphAutoBuild: false,
+    graphLlmModel: '',
     fileTypeConfig,
     retrievalConfig: defaultRetrievalConfig(),
   }
@@ -279,6 +273,7 @@ watch(
       if (extended.parseMode) form.parseMode = extended.parseMode
       if (extended.splitMode) form.splitMode = extended.splitMode
       if (extended.graphAutoBuild !== undefined) form.graphAutoBuild = Boolean(extended.graphAutoBuild)
+      if (extended.graphLlmModel) form.graphLlmModel = extended.graphLlmModel
       if (extended.fileTypeConfig) Object.assign(fileTypeConfig, extended.fileTypeConfig)
       if (extended.retrievalConfig) Object.assign(form.retrievalConfig, extended.retrievalConfig)
 
@@ -947,15 +942,31 @@ function goToParseStrategy() {
 
             <!-- 知识图谱自动构建 -->
             <el-form-item label="知识图谱">
-              <div style="display: flex; align-items: center; gap: 8px">
-                <el-switch
-                  v-model="form.graphAutoBuild"
-                  :active-value="true"
-                  :inactive-value="false"
-                />
-                <span style="font-size: 13px; color: var(--text-secondary)">
-                  上传文件后自动构建知识图谱（需开启 Neo4j）
-                </span>
+              <div style="display: flex; flex-direction: column; gap: 8px; width: 100%">
+                <div style="display: flex; align-items: center; gap: 8px">
+                  <el-switch
+                    v-model="form.graphAutoBuild"
+                    :active-value="true"
+                    :inactive-value="false"
+                  />
+                  <span style="font-size: 13px; color: var(--text-secondary)">
+                    上传文件后自动构建知识图谱（需开启 Neo4j）
+                  </span>
+                </div>
+                <el-select
+                  v-if="form.graphAutoBuild"
+                  v-model="form.graphLlmModel"
+                  placeholder="选择用于图谱构建的 LLM 模型"
+                  clearable
+                  style="width: 280px"
+                >
+                  <el-option
+                    v-for="opt in graphLlmOptions"
+                    :key="opt.value"
+                    :label="opt.label"
+                    :value="opt.value"
+                  />
+                </el-select>
               </div>
             </el-form-item>
 
@@ -1072,14 +1083,14 @@ function goToParseStrategy() {
           <el-input v-model="newCategoryName" placeholder="请输入分类名称" @keyup.enter="handleCreateCategory" />
         </el-form-item>
         <el-form-item v-if="isCategoryManager" label="所属组织" required>
-          <el-select v-model="newCategoryOrg" placeholder="请选择所属组织" style="width: 100%">
-            <el-option
-              v-for="org in categoryOrgOptions"
-              :key="org.id"
-              :label="org.name"
-              :value="org.id"
-            />
-          </el-select>
+          <el-tree-select
+            v-model="newCategoryOrg"
+            :data="orgTreeData"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            placeholder="请选择所属组织"
+            check-strictly
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item label="颜色">
           <div style="display:flex;gap:8px;flex-wrap:wrap">

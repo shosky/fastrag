@@ -4,6 +4,29 @@ import com.fastrag.module.application.service.AppConfigService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor; import org.springframework.security.access.prepost.PreAuthorize; import org.springframework.web.bind.annotation.*;
 import java.util.Map;
+
+/**
+ * 应用配置控制器，提供应用各项配置的读写与管理REST API。
+ *
+ * <p>路由前缀：/api/apps/{appId}。按配置类型划分为以下功能区域：
+ * <ul>
+ *   <li>基础配置（basic）— 记忆轮数、输出格式等</li>
+ *   <li>对话配置（dialog）— 对话背景、对话参数</li>
+ *   <li>智能体配置（config）— prompt、summary、maxSteps/maxTurns/retryTimes/maxTokens等</li>
+ *   <li>触发器管理（triggers）— 触发器的CRUD、测试、运行</li>
+ *   <li>全局策略（global-policy）— 安全策略、兜底策略、变量管理、敏感词、未匹配策略</li>
+ *   <li>资源绑定 — 知识库（knowledge-bases）、数据库（databases）、技能（skills）、工具（tools）、MCP服务（mcp-services）</li>
+ *   <li>发布管理（publish）— 发布记录查询、上线发布</li>
+ *   <li>对话测试（dialog-tests）— 测试用例CRUD、CSV导出</li>
+ *   <li>对话优化（optimizations）— 优化建议CRUD、应用、分析、CSV导出</li>
+ *   <li>高级选项（advanced）— 导入导出、工作流配置、监控、调试、知识更新</li>
+ *   <li>对话记录（conversations）— 对话历史查询、详情、删除、CSV导出</li>
+ * </ul>
+ *
+ * <p>所有接口按操作类型要求不同权限：查看类接口需要 app:use 权限，
+ * 编辑类接口需要 app:edit 权限，发布接口需要 app:publish 权限。
+ * 依赖 {@link AppConfigService} 实现全部配置管理逻辑。
+ */
 @RestController @RequestMapping("/api/apps") @RequiredArgsConstructor
 public class AppConfigController {
     private final AppConfigService svc;

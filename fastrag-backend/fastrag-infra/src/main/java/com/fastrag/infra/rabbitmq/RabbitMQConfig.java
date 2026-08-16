@@ -1,5 +1,25 @@
 package com.fastrag.infra.rabbitmq;
 
+/**
+ * RabbitMQ 消息队列配置类，定义 Exchange、Queue、Binding 及消息序列化方式。
+ *
+ * <p>配置的组件：
+ * <ul>
+ *   <li>TopicExchange（{@code fastrag.direct}）— 持久化、非自动删除的主题交换机</li>
+ *   <li>Queue（{@code fastrag.ingestion.queue}）— 文档摄取任务队列，持久化</li>
+ *   <li>Queue（{@code fastrag.graph-build.queue}）— 图谱构建任务队列，持久化</li>
+ *   <li>Binding — 将队列绑定到交换机，routing key 分别为 {@code ingestion} 和 {@code graph-build}</li>
+ *   <li>MessageConverter（Jackson2JsonMessageConverter）— 使用 Jackson 将消息对象序列化为 JSON</li>
+ *   <li>RabbitTemplate — 配置了 JSON 消息转换器的 RabbitMQ 操作模板</li>
+ * </ul>
+ *
+ * <p>生效方式：通过 {@code @Configuration} 注解被 Spring 自动扫描加载，RabbitMQ 连接参数
+ * 来自 {@code application.yml} 中的 {@code spring.rabbitmq.*} 前缀配置。
+ *
+ * <p>与其他模块的交互：配置的 RabbitTemplate Bean 被 {@link MessagePublisher} 注入使用；
+ * 队列消费者在 fastrag-common 模块中通过 {@code @RabbitListener} 注解绑定消费。
+ */
+
 import org.springframework.amqp.core.*;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;

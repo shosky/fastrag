@@ -20,7 +20,11 @@
 	        <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-platform</artifactId></dependency>
 	        <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-publish</artifactId></dependency>
         <dependency><groupId>org.apache.pdfbox</groupId><artifactId>pdfbox</artifactId><version>3.0.1</version></dependency>
+        <!-- C4: 显式声明 poi 基础包（.xls 的 BIFF8 解析依赖），避免只依赖 poi-ooxml 的传递版本 -->
+        <dependency><groupId>org.apache.poi</groupId><artifactId>poi</artifactId><version>5.2.5</version></dependency>
         <dependency><groupId>org.apache.poi</groupId><artifactId>poi-ooxml</artifactId><version>5.2.5</version></dependency>
+        <!-- C5: poi-scratchpad 提供 HWPF（.doc 旧版 Word 的 OLE2 解析），WordExtractor 提取纯文本 -->
+        <dependency><groupId>org.apache.poi</groupId><artifactId>poi-scratchpad</artifactId><version>5.2.5</version></dependency>
             <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
         <!-- 单元测试 -->
         <dependency>

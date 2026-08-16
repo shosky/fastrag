@@ -1,5 +1,31 @@
 package com.fastrag.config;
 
+/**
+ * 数据库 Schema 自动初始化器。
+ * <p>在应用启动完成后（{@code ApplicationReadyEvent}）自动执行，负责确保数据库表结构与代码期望一致。
+ * 采用增量迁移策略，每次启动只创建缺失的表和添加缺失的列，保证幂等性和向后兼容。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>创建缺失的基础表（如 sensitive_word、sys_user_role、sys_dictionary、kb_publish_history、agent、agent_run、email_verification 等）</li>
+ *   <li>为已有表添加新增列（如 kb_parse_strategy 的 llm_model、kb_folder 的时间戳、agent/skill/mcp_service 等的组织隔离列 org_id 等）</li>
+ *   <li>为已有表的存量数据执行回填操作（如根据创建者组织回填 org_id、设置系统级内置数据的 creator 标识等）</li>
+ *   <li>创建全文检索索引（kb_chunk.content 的 FULLTEXT ngram 索引）</li>
+ *   <li>修正列类型兼容性问题（如 retrieval_metrics 从 JSON 改为 TEXT）</li>
+ *   <li>为角色补授细分权限（INSERT IGNORE 保证幂等）</li>
+ * </ul>
+ *
+ * <p>实现策略：
+ * <ul>
+ *   <li>建表使用 {@code CREATE TABLE IF NOT EXISTS} 语法保证幂等</li>
+ *   <li>添加列通过 {@link #addColumnIfNotExists} 方法实现，捕获 MySQL error code 1060（Duplicate column）来跳过已存在的列</li>
+ *   <li>所有操作通过 try-catch 包裹，单表失败不影响其他表的初始化</li>
+ *   <li>使用 {@code @Order(0)} 确保在其他 ApplicationListener 之前执行</li>
+ * </ul>
+ *
+ * <p>与其他模块的关系：本类直接通过 {@code JdbcTemplate} 操作数据库，服务于所有业务模块。
+ * 当 Flyway/Liquibase 等专业迁移工具引入后，此类应逐步废弃。
+ */
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
@@ -98,7 +124,20 @@ public class SchemaInitializer {
 
         // 添加解析策略模型字段（MySQL 不支持 IF NOT EXISTS，逐个尝试）
         addColumnIfNotExists("kb_parse_strategy", "llm_model", "VARCHAR(128)");
-        addColumnIfNotExists("kb_parse_strategy", "vlm_model", "VARCHAR(128)");
+        // 知识库级图谱 LLM 模型（parse strategy llmModel 为空时的 fallback）
+        addColumnIfNotExists("kb", "graph_llm_model", "VARCHAR(128) COMMENT '知识图谱构建用 LLM 模型'");
+        // 文件级专属自定义策略绑定（非空 = 该文件的隐藏策略，不参与知识库级策略匹配与列表）
+        addColumnIfNotExists("kb_parse_strategy", "file_id",
+                "VARCHAR(32) DEFAULT NULL COMMENT '文件级绑定：非空=该文件专属自定义策略' AFTER kb_id");
+        // 文件级策略按 file_id 查询较频繁，加索引（列已存在但索引缺失时兜底；重复索引错误忽略）
+        try {
+            jdbc.execute("ALTER TABLE kb_parse_strategy ADD INDEX idx_kb_parse_strategy_file (file_id)");
+        } catch (Exception e) {
+            log.info("Index kb_parse_strategy.file_id ensure skipped: {}", e.getMessage());
+        }
+
+        // kb_file 上传向导处理配置（引擎/语言/编码/优先级/重试/媒体，JSON）
+        addColumnIfNotExists("kb_file", "processing_config", "JSON");
 
         // kb_folder 表新增时间戳字段
         addColumnIfNotExists("kb_folder", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
@@ -262,6 +301,12 @@ public class SchemaInitializer {
 
         // kb_graph_index 表新增字段
         addColumnIfNotExists("kb_graph_index", "failed_chunks", "INT DEFAULT 0 COMMENT '构建失败的切片数'");
+
+        // kb_chunk 结构感知分块字段（对应 KbChunk.java title / headingPath）
+        // migration-20260628.sql 有同义 ALTER TABLE，但应用从不执行 init-scripts 下的迁移文件，
+        // 因此必须在 SchemaInitializer 中幂等添加，保证启动后表结构完整。
+        addColumnIfNotExists("kb_chunk", "title", "VARCHAR(255) DEFAULT NULL COMMENT '所属最近标题' AFTER chunk_type");
+        addColumnIfNotExists("kb_chunk", "heading_path", "VARCHAR(1024) DEFAULT NULL COMMENT '层级路径，如 第一章 > 1.1 背景' AFTER title");
 
         // ==================== 应用/工具/运营数据归属列（组织隔离） ====================
         // 存量数据回填为系统级（creator='system' / is_builtin=1），保持全员可见现状；

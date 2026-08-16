@@ -1,4 +1,25 @@
 package com.fastrag.module.publish.aspect;
+
+/**
+ * 知识库操作日志切面。
+ *
+ * <p>基于 Spring AOP 的 {@code @Around} 切面，拦截所有标注了 {@link Loggable} 注解的方法调用，
+ * 自动记录操作日志并发布审计事件。核心职责包括：</p>
+ * <ul>
+ *   <li>通过 SpEL 表达式解析日志的目标对象（target）和详细信息（detail）</li>
+ *   <li>自动从方法参数中提取 kbId（知识库ID）</li>
+ *   <li>从 SecurityContext 中获取当前操作人信息</li>
+ *   <li>根据操作类型（ActionType）的前缀自动匹配所属业务模块名称</li>
+ *   <li>操作成功或失败时分别写入不同状态的日志</li>
+ *   <li>通过 Spring {@link ApplicationEventPublisher} 发布 {@link SysAuditLogEvent} 审计事件</li>
+ * </ul>
+ *
+ * <p>模块匹配规则维护在 {@code MODULE_BY_PREFIX}（按操作名称前缀匹配）和
+ * {@code MODULE_BY_CATEGORY}（按日志分类匹配）两个静态 Map 中。</p>
+ *
+ * @see Loggable
+ * @see LogService
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;

@@ -16,11 +16,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 解析策略配置统一解析入口（覆盖链解析）。
+ * 解析策略配置统一解析器，负责将策略配置合并为统一的 {@link ParseStrategyConfig} 对象。
  *
- * <p>覆盖链（从高到低）：上传请求参数 > 选中策略 > KB 默认策略 > 系统默认值。</p>
- * <p>本类负责「系统默认值 + 策略 advanced（新分组结构 + 旧平铺字段兼容）」的合并，
- * 所有消费方（解析器、分片器、索引、图谱构建）只调用本入口，不再各自手拆 Map。</p>
+ * <p>核心职责：
+ * 实现覆盖链配置合并，优先级从高到低为：上传请求参数 > 选中策略 > KB 默认策略 > 系统默认值。
+ * 本类负责「系统默认值 + 策略 advanced 配置」的合并，所有消费方（解析器、分片器、索引、图谱构建）
+ * 统一调用本入口获取配置，不再各自解析 Map。
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>系统默认层：从 platform 模块的 SysConfig 读取通用配置（如 chunkSize、overlap），缺失时使用代码兜底值</li>
+ *   <li>策略层：根据 strategyId 查询 kb_parse_strategy 表，解析 advanced JSON 字段</li>
+ *   <li>支持新分组结构（parse/chunk/index）和旧平铺字段（chunkLength/delimiter/tableMode）两种格式，自动兼容回退</li>
+ *   <li>applyGroup 方法按分组（ParseConfig/ChunkConfig/IndexConfig）分别合并配置项</li>
+ *   <li>applyLegacyFields 方法处理旧版本策略的平铺字段，在新分组结构缺失时回退使用</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：
+ * <ul>
+ *   <li>platform 模块（{@link ConfigManageService}）— 获取系统级配置默认值</li>
+ *   <li>knowledge 模块（{@link KbParseStrategyMapper}）— 查询解析策略记录</li>
+ * </ul>
  */
 @Slf4j
 @Component
@@ -36,18 +52,22 @@ public class StrategyConfigResolver {
      * @param strategyId 策略 ID，可为 null（此时仅使用系统默认值）
      */
     public ParseStrategyConfig resolve(String strategyId) {
+        return resolve(strategyId != null ? strategyMapper.selectById(strategyId) : null);
+    }
+
+    /**
+     * 按显式策略对象解析配置（预览场景：临时构造的策略对象，未落库）。
+     */
+    public ParseStrategyConfig resolve(KbParseStrategy strategy) {
         ParseStrategyConfig config = new ParseStrategyConfig();
 
         // 1. 系统默认层（SysConfig 未配置时使用代码兜底，与前端 DEFAULT_ADVANCED 对齐）
-        config.getChunk().setChunkLength(getIntConfig("general_chunk_size", 2000));
+        config.getChunk().setChunkLength(getIntConfig("general_chunk_size", 1000));
         config.getChunk().setOverlap(getIntConfig("general_chunk_overlap", 100));
 
         // 2. 策略层
-        if (strategyId != null) {
-            KbParseStrategy strategy = strategyMapper.selectById(strategyId);
-            if (strategy != null && StringUtils.hasText(strategy.getAdvanced())) {
-                applyAdvanced(config, strategy.getAdvanced());
-            }
+        if (strategy != null && StringUtils.hasText(strategy.getAdvanced())) {
+            applyAdvanced(config, strategy.getAdvanced());
         }
 
         return config;
@@ -81,16 +101,19 @@ public class StrategyConfigResolver {
         Map<String, Object> group = (Map<String, Object>) groupValue;
         if (target instanceof ParseStrategyConfig.ParseConfig parse) {
             setIfPresent(group, "tableMode", v -> parse.setTableMode(String.valueOf(v)));
-            setIfPresent(group, "enablePptWholePage", v -> parse.setEnablePptWholePage(toBoolean(v)));
             setIfPresent(group, "keyframeIntervalSeconds", v -> parse.setKeyframeIntervalSeconds(((Number) v).intValue()));
             setIfPresent(group, "keyframeHashThreshold", v -> parse.setKeyframeHashThreshold(((Number) v).doubleValue()));
-            setIfPresent(group, "enableDocSummary", v -> parse.setEnableDocSummary(toBoolean(v)));
         } else if (target instanceof ParseStrategyConfig.ChunkConfig chunk) {
+            setIfPresent(group, "strategy", v -> chunk.setStrategy(String.valueOf(v)));
             setIfPresent(group, "chunkLength", v -> chunk.setChunkLength(((Number) v).intValue()));
             setIfPresent(group, "overlap", v -> chunk.setOverlap(((Number) v).intValue()));
             setIfPresent(group, "titlePrefix", v -> chunk.setTitlePrefix(toBoolean(v)));
             setIfPresent(group, "headingPath", v -> chunk.setHeadingPath(toBoolean(v)));
             setIfPresent(group, "delimiters", v -> chunk.setDelimiters(toStringList(v)));
+            setIfPresent(group, "parentMaxChunkLength", v -> chunk.setParentMaxChunkLength(((Number) v).intValue()));
+            setIfPresent(group, "parentAggLevel", v -> chunk.setParentAggLevel(String.valueOf(v)));
+            setIfPresent(group, "semanticThreshold", v -> chunk.setSemanticThreshold(((Number) v).intValue()));
+            setIfPresent(group, "embeddingModel", v -> chunk.setEmbeddingModel(String.valueOf(v)));
         } else if (target instanceof ParseStrategyConfig.IndexConfig index) {
             setIfPresent(group, "embedFields", v -> index.setEmbedFields(toStringList(v)));
         }
@@ -102,30 +125,52 @@ public class StrategyConfigResolver {
         ParseStrategyConfig.ChunkConfig chunk = config.getChunk();
         ParseStrategyConfig.ParseConfig parse = config.getParse();
 
-        if (!adv.containsKey("chunk") && adv.containsKey("chunkLength")) {
-            chunk.setChunkLength(((Number) adv.get("chunkLength")).intValue());
+        if (!adv.containsKey("chunk")) {
+            if (adv.containsKey("strategy")) {
+                chunk.setStrategy(String.valueOf(adv.get("strategy")));
+            }
+            if (adv.containsKey("chunkLength")) {
+                chunk.setChunkLength(((Number) adv.get("chunkLength")).intValue());
+            }
+            if (adv.containsKey("overlap")) {
+                chunk.setOverlap(((Number) adv.get("overlap")).intValue());
+            }
+            if (adv.containsKey("delimiters") && adv.get("delimiters") != null) {
+                chunk.setDelimiters(toStringList(adv.get("delimiters")));
+            }
+            // 旧字段为单数 delimiter（字符串），映射进新数组结构
+            if (adv.containsKey("delimiter") && adv.get("delimiter") != null) {
+                chunk.setDelimiters(List.of(String.valueOf(adv.get("delimiter"))));
+            }
+            if (adv.containsKey("titlePrefix")) {
+                chunk.setTitlePrefix(toBoolean(adv.get("titlePrefix")));
+            }
+            if (adv.containsKey("headingPath")) {
+                chunk.setHeadingPath(toBoolean(adv.get("headingPath")));
+            }
+            if (adv.containsKey("parentMaxChunkLength")) {
+                chunk.setParentMaxChunkLength(((Number) adv.get("parentMaxChunkLength")).intValue());
+            }
+            if (adv.containsKey("parentAggLevel")) {
+                chunk.setParentAggLevel(String.valueOf(adv.get("parentAggLevel")));
+            }
+            if (adv.containsKey("semanticThreshold")) {
+                chunk.setSemanticThreshold(((Number) adv.get("semanticThreshold")).intValue());
+            }
+            if (adv.containsKey("embeddingModel")) {
+                chunk.setEmbeddingModel(String.valueOf(adv.get("embeddingModel")));
+            }
         }
-        if (!adv.containsKey("chunk") && adv.containsKey("overlap")) {
-            chunk.setOverlap(((Number) adv.get("overlap")).intValue());
-        }
-        // 旧字段为单数 delimiter（字符串），映射进新数组结构
-        if (!adv.containsKey("chunk") && adv.containsKey("delimiter") && adv.get("delimiter") != null) {
-            chunk.setDelimiters(List.of(String.valueOf(adv.get("delimiter"))));
-        }
-        if (!adv.containsKey("parse") && adv.containsKey("tableMode")) {
-            parse.setTableMode(String.valueOf(adv.get("tableMode")));
-        }
-        if (!adv.containsKey("parse") && adv.containsKey("enablePptWholePage")) {
-            parse.setEnablePptWholePage(toBoolean(adv.get("enablePptWholePage")));
-        }
-        if (!adv.containsKey("parse") && adv.containsKey("enableDocSummary")) {
-            parse.setEnableDocSummary(toBoolean(adv.get("enableDocSummary")));
-        }
-        if (!adv.containsKey("parse") && adv.containsKey("keyframeIntervalSeconds")) {
-            parse.setKeyframeIntervalSeconds(((Number) adv.get("keyframeIntervalSeconds")).intValue());
-        }
-        if (!adv.containsKey("parse") && adv.containsKey("keyframeHashThreshold")) {
-            parse.setKeyframeHashThreshold(((Number) adv.get("keyframeHashThreshold")).doubleValue());
+        if (!adv.containsKey("parse")) {
+            if (adv.containsKey("tableMode")) {
+                parse.setTableMode(String.valueOf(adv.get("tableMode")));
+            }
+            if (adv.containsKey("keyframeIntervalSeconds")) {
+                parse.setKeyframeIntervalSeconds(((Number) adv.get("keyframeIntervalSeconds")).intValue());
+            }
+            if (adv.containsKey("keyframeHashThreshold")) {
+                parse.setKeyframeHashThreshold(((Number) adv.get("keyframeHashThreshold")).doubleValue());
+            }
         }
     }
 

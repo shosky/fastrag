@@ -3,13 +3,26 @@ import com.baomidou.mybatisplus.annotation.*; import com.baomidou.mybatisplus.ex
 import lombok.Data; import java.time.LocalDateTime; import java.util.List; import java.util.Map;
 
 /**
- * MCP 服务实体 - 对应 Yuxi 的 McpServerInfo 模型.
- * <p>
- * transport 含义:
+ * MCP（Model Context Protocol）服务实体，对应数据库表 {@code mcp_service}。
+ *
+ * <p>管理 MCP 服务的注册信息与连接配置，支持 stdio（本地进程通信）和 SSE（远程连接）两种传输协议。</p>
+ *
+ * <h3>核心字段：</h3>
  * <ul>
- *   <li>stdio - 本地进程通信 (command + args)</li>
- *   <li>sse   - Server-Sent Events 远程连接 (url)</li>
+ *   <li>{@code slug} - 唯一标识符（如 "filesystem-mcp"）</li>
+ *   <li>{@code name} - 显示名称</li>
+ *   <li>{@code transport} - 传输协议：{@code stdio}（command + args 启动子进程）/ {@code sse}（mcpUrl 远程连接）</li>
+ *   <li>{@code command / args} - stdio 模式下的启动命令和参数</li>
+ *   <li>{@code mcpUrl} - SSE 模式下的服务 URL</li>
+ *   <li>{@code env} - 环境变量（JSON map）</li>
+ *   <li>{@code authType / authValue} - 认证方式（none/bearer/basic）</li>
+ *   <li>{@code status} - 连接状态（online/offline/error）</li>
+ *   <li>{@code isBuiltin} - 是否为内置 MCP 服务（由 {@link McpBuiltinSeeder} 种子初始化）</li>
+ *   <li>{@code orgId} - 归属组织</li>
  * </ul>
+ *
+ * @see McpTool
+ * @see McpCallLog
  */
 @Data
 @TableName(value = "mcp_service", autoResultMap = true)

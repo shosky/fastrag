@@ -1,5 +1,31 @@
 package com.fastrag.ai.embedding;
 
+/**
+ * 文本向量化（Embedding）服务，负责将文本转换为高维向量表示。
+ *
+ * <p>本服务通过 OpenAI 兼容的 Embeddings API 将文本转为向量，是 RAG（检索增强生成）
+ * 系统中文档索引和语义检索的核心基础服务。</p>
+ *
+ * <p>核心能力：
+ * <ul>
+ *   <li>单文本向量化（{@link #embed(String, String)}）</li>
+ *   <li>批量文本向量化（{@link #embed(String, List)}）</li>
+ *   <li>动态 API 路由（{@link #embed(String, List, String, String)}），支持指定自定义 API 地址和密钥</li>
+ * </ul>
+ *
+ * <p>实现细节：
+ * <ul>
+ *   <li>注入 {@link com.fastrag.ai.config.AiGatewayConfig} 创建的 aiWebClient 和 aiHttpClient</li>
+ *   <li>默认走 AI 网关的相对路径（/v1/embeddings），支持动态路由到外部 API</li>
+ *   <li>请求体使用 JsonMapper 启用 ESCAPE_NON_ASCII，将中文等非 ASCII 字符转义为
+ *       Unicode 转义序列（\\uXXXX），以兼容 SiliconFlow 等网关对 UTF-8 中文处理的 bug（返回 20015）</li>
+ *   <li>动态路由时独立构建 WebClient 实例，避免 baseUrl 路径拼接问题</li>
+ *   <li>请求超时 60 秒</li>
+ * </ul>
+ *
+ * <p>依赖：aiWebClient（默认网关客户端）、aiHttpClient（支持代理的底层 HTTP 客户端）、
+ * ObjectMapper（JSON 序列化）</p>
+ */
 import com.fastrag.ai.model.EmbeddingRequest;
 import com.fasterxml.jackson.core.json.JsonWriteFeature;
 import com.fasterxml.jackson.databind.JsonNode;

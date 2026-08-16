@@ -1,4 +1,31 @@
 package com.fastrag.module.publish.controller;
+
+/**
+ * 知识库版本发布与审核 REST 控制器。
+ *
+ * <p>提供知识库版本管理和审核流程的 REST API，包括版本的创建、状态流转，
+ * 以及审核任务的提交、审批和驳回。</p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>{@code GET  /api/kb/{kbId}/versions} - 查询指定知识库的所有版本列表</li>
+ *   <li>{@code GET  /api/kb/{kbId}/versions/latest} - 获取最新版本</li>
+ *   <li>{@code GET  /api/kb/{kbId}/versions/published} - 获取当前已发布的版本</li>
+ *   <li>{@code POST /api/kb/{kbId}/versions} - 创建新版本</li>
+ *   <li>{@code POST /api/kb/{kbId}/versions/{vid}/transition} - 版本状态流转（draft/pending_review/approved/published/rejected）</li>
+ *   <li>{@code GET  /api/reviews} - 查询审核任务列表，可按 kbId 过滤</li>
+ *   <li>{@code GET  /api/kb/{kbId}/review/{id}} - 获取审核任务详情</li>
+ *   <li>{@code POST /api/reviews} - 提交审核申请</li>
+ *   <li>{@code POST /api/reviews/{id}/approve} - 审批通过</li>
+ *   <li>{@code POST /api/reviews/{id}/reject} - 审批驳回</li>
+ * </ul>
+ *
+ * <p>状态流转接口支持前端传入动作名（submit/approve/publish/reject/draft），
+ * 后端自动映射为对应的状态名。</p>
+ *
+ * @see PublishService
+ * @see ReviewService
+ */
 import com.fastrag.common.response.ApiResponse; import com.fastrag.module.publish.entity.*;
 import com.fastrag.module.publish.service.*; import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;
 @RestController @RequiredArgsConstructor

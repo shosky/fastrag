@@ -3,6 +3,8 @@ package com.fastrag.module.knowledge.model;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import lombok.Data;
 
+import java.util.List;
+
 /**
  * 分片 DTO，用于接口返回
  */
@@ -26,6 +28,8 @@ public class ChunkDto {
     private String headingPath;      // 层级路径
     private Integer graphIndexed;
     private String extractionResult;
+    private String parentId;         // 父子分片：子分片指向父分片 ID
+    private List<ChunkDto> children; // 父子分片：父分片行内嵌子分片（仅列表接口父分片行携带）
 
     /**
      * 从 KbChunk 实体转换为 DTO
@@ -51,6 +55,7 @@ public class ChunkDto {
         d.setHeadingPath(e.getHeadingPath());
         d.setGraphIndexed(e.getGraphIndexed());
         d.setExtractionResult(e.getExtractionResult());
+        d.setParentId(e.getParentId());
         return d;
     }
 }

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { Search, Refresh, Setting, Document, Loading } from '@element-plus/icons-vue'
+import { Search, Refresh, Setting, Document, Loading, Share } from '@element-plus/icons-vue'
 import { useForceGraph } from '@/composables/useForceGraph'
 import type { GraphNode, GraphEdge, GraphBuildStatus } from '@/types/evaluation'
 import { ElMessage } from 'element-plus'
@@ -37,9 +37,13 @@ const {
   visibleEntityCount,
   visibleRelationCount,
   isSearchActive,
+  showChunks,
   entityTypes,
   initGraph,
   load,
+  filterByType,
+  toggleChunks,
+  expandNeighbors,
   selectNode,
   clearSelection,
   searchNodes,
@@ -54,6 +58,39 @@ const {
 
 // 构建状态从 props 获取
 const isBuilding = computed(() => props.buildStatus.status === 'building')
+
+// 当前类型过滤（用于统计弹窗高亮与"全部"复位）
+const activeTypeFilter = ref<string | null>(null)
+
+/** 点击类型统计项 → 图内过滤下钻（KG-08） */
+function handleTypeFilter(typeName: string) {
+  if (activeTypeFilter.value === typeName) {
+    // 再次点击同一类型 = 取消过滤
+    activeTypeFilter.value = null
+    filterByType(null)
+  } else {
+    activeTypeFilter.value = typeName
+    filterByType(typeName)
+  }
+}
+
+/** 清除类型过滤 */
+function handleClearTypeFilter() {
+  activeTypeFilter.value = null
+  filterByType(null)
+}
+
+/** 邻居展开（KG-08） */
+function handleExpandNeighbors() {
+  if (selectedNode.value) {
+    expandNeighbors(selectedNode.value)
+  }
+}
+
+/** Chunk 节点开关（el-switch change 回调参数为 string|number|boolean，需归一） */
+function handleChunkToggle(val: string | number | boolean) {
+  toggleChunks(Boolean(val))
+}
 
 // 标准化 entityTypes：兼容后端返回 string[] 和 EntityType[]
 const normalizedEntityTypes = computed(() => {
@@ -248,6 +285,16 @@ onBeforeUnmount(() => {
 
       <!-- Floating action buttons (top right) -->
       <div class="knowledge-graph__actions-float">
+        <el-tooltip content="显示 Chunk 节点" placement="bottom">
+          <el-switch
+            :model-value="showChunks"
+            size="small"
+            inline-prompt
+            active-text="Chunk"
+            inactive-text="隐藏"
+            @change="handleChunkToggle"
+          />
+        </el-tooltip>
         <el-tooltip content="索引管理" placement="bottom">
           <el-button circle @click="emit('open-index')">
             <el-icon><Document /></el-icon>
@@ -258,6 +305,13 @@ onBeforeUnmount(() => {
             <el-icon><Setting /></el-icon>
           </el-button>
         </el-tooltip>
+      </div>
+
+      <!-- 邻居展开（选中节点时出现） -->
+      <div v-if="selectedNode" class="knowledge-graph__expand-float">
+        <el-button size="small" type="primary" plain :icon="Share" @click="handleExpandNeighbors">
+          展开邻居
+        </el-button>
       </div>
 
       <!-- Stats bar (bottom left) -->
@@ -283,13 +337,26 @@ onBeforeUnmount(() => {
         <div v-if="showEntityTypePopup" class="knowledge-graph__entity-popup">
           <div class="knowledge-graph__entity-popup-header">
             <h4>实体类型分布</h4>
-            <el-button link @click="closeEntityTypePopup">×</el-button>
+            <span class="knowledge-graph__entity-popup-actions">
+              <el-button
+                v-if="activeTypeFilter"
+                link
+                size="small"
+                type="primary"
+                @click="handleClearTypeFilter"
+              >
+                显示全部
+              </el-button>
+              <el-button link @click="closeEntityTypePopup">×</el-button>
+            </span>
           </div>
           <div class="knowledge-graph__entity-popup-body">
             <div
               v-for="(type, idx) in normalizedEntityTypes"
               :key="idx"
               class="knowledge-graph__entity-type-item"
+              :class="{ 'knowledge-graph__entity-type-item--active': activeTypeFilter === type.name }"
+              @click="handleTypeFilter(type.name)"
             >
               <span class="knowledge-graph__entity-dot" :style="{ backgroundColor: type.color }" />
               <span class="knowledge-graph__entity-name">{{ type.name }}</span>
@@ -376,6 +443,18 @@ onBeforeUnmount(() => {
     z-index: 100;
     display: flex;
     gap: $spacing-xs;
+    align-items: center;
+    background: rgba(255, 255, 255, 0.95);
+    padding: 4px $spacing-sm;
+    border-radius: $radius-base;
+    box-shadow: $shadow-sm;
+  }
+
+  &__expand-float {
+    position: absolute;
+    top: 64px;
+    right: $spacing-base;
+    z-index: 100;
   }
 
   &__stats-float {
@@ -436,6 +515,12 @@ onBeforeUnmount(() => {
     }
   }
 
+  &__entity-popup-actions {
+    display: flex;
+    align-items: center;
+    gap: $spacing-xs;
+  }
+
   &__entity-popup-body {
     padding: $spacing-sm;
     max-height: 300px;
@@ -449,10 +534,21 @@ onBeforeUnmount(() => {
     padding: $spacing-xs $spacing-sm;
     font-size: 14px;
     color: $text-primary;
+    cursor: pointer;
+    border-radius: $radius-sm;
 
     &:hover {
       background: $bg-hover;
-      border-radius: $radius-sm;
+    }
+
+    &--active {
+      background: $bg-hover;
+      box-shadow: inset 2px 0 0 $color-primary;
+
+      .knowledge-graph__entity-name {
+        color: $color-primary;
+        font-weight: 600;
+      }
     }
   }
 

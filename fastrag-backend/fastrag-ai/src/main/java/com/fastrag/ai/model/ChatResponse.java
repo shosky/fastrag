@@ -1,5 +1,28 @@
 package com.fastrag.ai.model;
 
+/**
+ * 结构化的 LLM 响应模型，支持解析 OpenAI 格式的文本回复和工具调用结果。
+ *
+ * <p>本类是 {@link com.fastrag.ai.llm.LlmService} 非流式调用的统一返回类型，
+ * 同时也用于流式调用收集完所有 chunk 后的最终组装结果。</p>
+ *
+ * <p>核心字段说明：
+ * <ul>
+ *   <li>{@code content} - LLM 生成的文本回复内容</li>
+ *   <li>{@code toolCalls} - LLM 请求调用的工具列表（当 finishReason 为 "tool_calls" 时有值）</li>
+ *   <li>{@code finishReason} - 生成结束原因，如 "stop"（正常结束）、"tool_calls"（需要工具调用）、
+ *       "length"（达到 token 上限被截断）</li>
+ * </ul>
+ *
+ * <p>提供两种构建方式：
+ * <ul>
+ *   <li>{@link #parse(JsonNode)} - 从 OpenAI 格式的 JSON 响应中解析，提取 content 和 tool_calls</li>
+ *   <li>{@link #text(String)} - 快速构建纯文本响应的便捷工厂方法</li>
+ * </ul>
+ *
+ * <p>可通过 {@link #hasToolCalls()} 判断 LLM 是否发起了工具调用，
+ * 调用方据此决定是否需要执行工具并将结果回传。</p>
+ */
 import com.fasterxml.jackson.databind.JsonNode;
 import lombok.Data;
 import java.util.ArrayList;

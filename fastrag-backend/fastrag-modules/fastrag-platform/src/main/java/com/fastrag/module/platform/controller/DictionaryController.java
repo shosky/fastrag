@@ -1,5 +1,27 @@
 package com.fastrag.module.platform.controller;
 
+/**
+ * 数据字典管理控制器
+ * <p>
+ * 提供系统数据字典的增删改查功能，支持按字典类型（type）分组查询。
+ * 字典数据用于管理系统中各类枚举值、下拉选项等配置型数据。
+ * </p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>GET /api/dictionaries — 查询字典列表，支持按 type 过滤，返回按类型分组的格式化数据</li>
+ *   <li>GET /api/dictionaries/types — 获取所有字典类型列表</li>
+ *   <li>POST /api/dictionaries — 创建字典条目（type、key、value）</li>
+ *   <li>PUT /api/dictionaries/{id} — 更新字典条目</li>
+ *   <li>DELETE /api/dictionaries/{id} — 删除字典条目</li>
+ * </ul>
+ *
+ * <p>查询接口对返回数据做了格式化适配，将 {@link com.fastrag.module.platform.entity.SysDictionary}
+ * 实体转换为前端所需的 id/key/label/value/enabled/remark 结构。</p>
+ *
+ * @see com.fastrag.module.platform.service.DictionaryService
+ * @see com.fastrag.module.platform.entity.SysDictionary
+ */
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.platform.entity.SysDictionary;
 import com.fastrag.module.platform.service.DictionaryService;

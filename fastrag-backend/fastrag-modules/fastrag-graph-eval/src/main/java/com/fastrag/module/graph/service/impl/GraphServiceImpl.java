@@ -1,5 +1,35 @@
 package com.fastrag.module.graph.service.impl;
 
+/**
+ * 知识图谱数据管理服务实现类，实现 {@link com.fastrag.module.graph.service.GraphService} 接口。
+ *
+ * <p>提供知识图谱的全功能管理，包括数据可视化查询、图谱构建、文件管理和PPR检索增强等功能。
+ * 是知识图谱模块的核心业务实现，协调GraphStore存储层、消息队列和日志服务等组件。</p>
+ *
+ * <p>核心业务逻辑：</p>
+ * <ul>
+ *   <li>图谱数据查询：委托 {@link com.fastrag.infra.graph.GraphStore} 获取图谱节点/边数据、
+ *       统计信息、子图搜索和标签列表。统计信息优先从KbGraphIndex缓存读取，
+ *       缓存缺失时从存储层实时查询并自动修复缓存</li>
+ *   <li>图谱构建：更新构建状态为building后，通过 {@link com.fastrag.infra.rabbitmq.MessagePublisher}
+ *       发送图谱构建消息到消息队列，由消费者异步处理。支持full（全量）和incremental（增量）两种模式</li>
+ *   <li>重试构建：清空旧图谱数据，重置所有chunk的graph_indexed标记，以full模式重新触发构建</li>
+ *   <li>文件图谱删除：删除指定文件关联的图谱数据，并同步刷新KbGraphIndex缓存计数。
+ *       图谱已清空时重置为idle状态</li>
+ *   <li>设置管理：将图谱构建配置序列化为JSON存储到KbGraphIndex的settings字段</li>
+ *   <li>PPR排序：委托 {@link GraphQueryService} 执行Personalized PageRank算法</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：</p>
+ * <ul>
+ *   <li>{@link com.fastrag.infra.graph.GraphStore} - 图谱数据的底层存储（MySQL/Neo4j）</li>
+ *   <li>{@link com.fastrag.infra.rabbitmq.MessagePublisher} - 图谱构建消息发布</li>
+ *   <li>{@link GraphQueryService} - PPR排序计算</li>
+ *   <li>{@link com.fastrag.module.publish.service.LogService} - 操作日志记录</li>
+ * </ul>
+ *
+ * @see com.fastrag.module.graph.service.GraphService
+ */
 import cn.hutool.json.JSONUtil;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
@@ -252,6 +282,8 @@ public class GraphServiceImpl implements GraphService {
         r.put("maxNodes", 100);
         r.put("searchDepth", 2);
         r.put("excludeChunkNodes", true);
+        // KG-07：KB 级实体类型 schema（逗号/换行分隔；空则回退全局白名单）
+        r.put("entitySchema", "");
         return r;
     }
 
@@ -292,13 +324,59 @@ public class GraphServiceImpl implements GraphService {
     @Override
     public void deleteFileGraph(String kbId, String fileId) {
         graphStore.deleteFileGraph(kbId, fileId);
-        log.info("Deleted file graph data: kb={}, file={}", kbId, fileId);
+        // 重置该文件 chunks 的 graph_indexed，使后续增量构建不会跳过它们
+        jdbcTemplate.update(
+                "UPDATE kb_chunk SET graph_indexed = 0 WHERE kb_id = ? AND file_id = ?", kbId, fileId);
+        log.info("Deleted file graph data and reset graph_indexed: kb={}, file={}", kbId, fileId);
+        // 同步 KbGraphIndex 缓存：删除文件后计数/状态仍展示旧值（stats/build-status 直接读缓存）
+        refreshIndexAfterDelete(kbId);
         // 记录删除图谱日志（覆盖 FileServiceImpl 内部调用场景）
         try {
             logService.addLog(kbId, LogCategory.operation, ActionType.graph_deleted,
                     fileId, "删除文件关联图谱数据", "system", "success", null);
         } catch (Exception e) {
             log.warn("[Log] Failed to record graph delete log for kb={}, file={}", kbId, fileId);
+        }
+    }
+
+    /**
+     * 文件删除后刷新 KbGraphIndex 缓存计数：
+     * 图谱已清空时重置为 idle（否则 stats/build-status 仍返回删除前的旧值）；
+     * 仍有残留实体时仅同步计数与 chunk 口径。
+     */
+    private void refreshIndexAfterDelete(String kbId) {
+        try {
+            var idx = indexMapper.selectById(kbId);
+            if (idx == null) return;
+
+            long entityCount = graphStore.countEntities(kbId);
+            long relationCount = graphStore.countRelations(kbId);
+            if (entityCount == 0 && relationCount == 0) {
+                idx.setStatus("idle");
+                idx.setBuildProgress(0);
+                idx.setEntityCount(0);
+                idx.setRelationCount(0);
+                idx.setTotalChunks(0);
+                idx.setBuiltChunks(0);
+                idx.setFailedChunks(0);
+                idx.setBuildError(null);
+                idx.setLastBuiltAt(null);
+            } else {
+                idx.setEntityCount((int) entityCount);
+                idx.setRelationCount((int) relationCount);
+                // 同步剩余 chunk 口径（kb_chunk 中未删除的）
+                Long total = jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM kb_chunk WHERE kb_id = ?", Long.class, kbId);
+                Long built = jdbcTemplate.queryForObject(
+                        "SELECT COUNT(*) FROM kb_chunk WHERE kb_id = ? AND graph_indexed = 1", Long.class, kbId);
+                idx.setTotalChunks(total != null ? total.intValue() : 0);
+                idx.setBuiltChunks(built != null ? built.intValue() : 0);
+            }
+            indexMapper.updateById(idx);
+            log.info("[Graph Delete] Refreshed KbGraphIndex for kb={}: entityCount={}, relationCount={}, status={}",
+                    kbId, entityCount, relationCount, idx.getStatus());
+        } catch (Exception e) {
+            log.warn("[Graph Delete] Failed to refresh KbGraphIndex for kb={}: {}", kbId, e.getMessage());
         }
     }
 

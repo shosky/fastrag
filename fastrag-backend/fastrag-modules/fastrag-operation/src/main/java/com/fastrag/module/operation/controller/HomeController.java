@@ -1,5 +1,27 @@
 package com.fastrag.module.operation.controller;
 
+/**
+ * 首页数据聚合控制器。
+ *
+ * <p>提供系统首页所需的全局数据聚合接口，包括推荐知识库、热门文档、热门应用和最近动态。
+ * 所有数据均基于当前登录用户的权限进行过滤：API Token用户不过滤，普通用户按组织+ACL过滤。
+ *
+ * <p>核心逻辑：
+ * <ul>
+ *     <li>推荐知识库：按创建时间倒序取最新5个有权限的知识库</li>
+ *     <li>热门文档：按浏览量倒序取TOP 10已完成处理的文档</li>
+ *     <li>热门应用：按创建时间倒序取最新5个应用（需具备 app:use 权限）</li>
+ *     <li>最近动态：按时间倒序取最新10条操作日志</li>
+ * </ul>
+ *
+ * <p>REST API 端点：
+ * <ul>
+ *     <li>GET /api/home - 获取首页聚合数据（推荐知识库、热门文档、热门应用、最近动态）</li>
+ * </ul>
+ *
+ * <p>依赖模块：fastrag-knowledge（KnowledgeBaseMapper、KbFileMapper）、fastrag-application（AppMapper）、
+ * fastrag-publish（KbLogMapper）、fastrag-security（KbAccessChecker、SecurityUtil）
+ */
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fastrag.common.response.ApiResponse;

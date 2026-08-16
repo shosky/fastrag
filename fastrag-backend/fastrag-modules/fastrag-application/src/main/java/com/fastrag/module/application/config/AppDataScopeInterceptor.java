@@ -6,6 +6,7 @@ import com.fastrag.module.application.mapper.AppMapper;
 import com.fastrag.security.filter.LoginUser;
 import com.fastrag.security.util.DataScope;
 import com.fastrag.security.util.SecurityUtil;
+import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
@@ -35,6 +36,8 @@ public class AppDataScopeInterceptor implements HandlerInterceptor {
 
     @Override
     public boolean preHandle(HttpServletRequest request, HttpServletResponse response, Object handler) {
+        // SSE/异步请求完成或超时后的 ASYNC 二次分发不再鉴权（此时 SecurityContext 为空，原请求已校验过）
+        if (request.getDispatcherType() == DispatcherType.ASYNC) return true;
         if (!(handler instanceof HandlerMethod)) return true;
 
         String path = request.getRequestURI();

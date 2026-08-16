@@ -1,4 +1,37 @@
 package com.fastrag.module.iam.controller;
+
+/**
+ * 知识库访问控制（ACL）控制器，管理知识库级别的用户权限分配。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>查询某个知识库的 ACL 列表（owner 权限）</li>
+ *   <li>批量设置知识库的 ACL 规则（owner 权限）</li>
+ *   <li>为知识库添加单条 ACL 记录（owner 权限）</li>
+ *   <li>移除知识库中指定用户的 ACL 记录（owner 权限）</li>
+ *   <li>查询用户可访问的知识库 ID 列表</li>
+ *   <li>查询用户在指定知识库中的角色</li>
+ * </ul>
+ *
+ * <p>提供的 REST API 端点：
+ * <ul>
+ *   <li>{@code GET    /api/kb/{kbId}/acl} —— 获取知识库 ACL 列表</li>
+ *   <li>{@code PUT    /api/kb/{kbId}/acl} —— 批量设置知识库 ACL</li>
+ *   <li>{@code POST   /api/kb/{kbId}/acl} —— 添加 ACL 条目</li>
+ *   <li>{@code DELETE /api/kb/{kbId}/acl/{userId}} —— 移除 ACL 条目</li>
+ *   <li>{@code GET    /api/acl/users/{userId}/kbs} —— 查询用户可访问的知识库</li>
+ *   <li>{@code GET    /api/acl/users/{userId}/kbs/{kbId}/role} —— 查询用户在知识库中的角色</li>
+ * </ul>
+ *
+ * <p>知识库写操作（GET/PUT/POST/DELETE acl）仅限知识库 owner 访问，
+ * 通过 {@code @KbAuth(KBRole.owner)} 注解实现。
+ * 查询用户可访问知识库的接口仅允许查询自身或管理员可查询任意用户。
+ * ACL 数据由 {@code KbAclService}（security 模块）管理，本控制器作为 IAM 模块的入口。
+ * 所有写操作均通过 {@code @Loggable} 记录审计日志。
+ *
+ * @see KbAclService
+ * @see KBRole
+ */
 import com.fastrag.common.enums.KBRole; import com.fastrag.common.exception.BusinessException; import com.fastrag.common.response.ApiResponse;
 import com.fastrag.security.model.KbAclDto; import com.fastrag.security.service.KbAclService;
 import com.fastrag.security.annotation.KbAuth;

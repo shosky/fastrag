@@ -13,9 +13,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Backend implementation for the primary chatbot agent.
- * Uses {@link ChatBotContext} as its context schema and supports
- * file upload and file management capabilities.
+ * 主聊天机器人Agent后端实现，是系统默认的智能对话后端。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>使用{@link ChatBotContext}作为上下文Schema，支持丰富的配置项（如模型选择、系统提示词、工具开关等）</li>
+ *   <li>声明支持file_upload和files能力，即允许用户上传文件和管理文件</li>
+ *   <li>构建执行图时使用{@link ChatBotState}作为状态Schema</li>
+ *   <li>提供后端信息查询能力，支持按用户角色过滤可配置项</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>后端ID固定为"ChatbotAgent"，显示名称为"智能助手"</li>
+ *   <li>buildGraph方法从上下文中提取model、systemPrompt和tools构建AgentGraph</li>
+ *   <li>getInfo方法通过反射实例化ChatBotContext来获取可配置项列表，支持按userRole过滤</li>
+ *   <li>中间件链配置目前预留扩展接口（middlewareChain待后续接入）</li>
+ * </ul></p>
+ *
+ * @see AgentBackend 后端接口定义
+ * @see ChatBotContext 聊天机器人上下文Schema
+ * @see ChatBotState 聊天机器人运行状态
  */
 @Slf4j
 @Component

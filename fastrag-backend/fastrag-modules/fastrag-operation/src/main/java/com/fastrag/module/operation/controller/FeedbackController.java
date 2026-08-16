@@ -1,4 +1,25 @@
 package com.fastrag.module.operation.controller;
+
+/**
+ * 用户反馈管理控制器。
+ *
+ * <p>提供用户反馈的完整生命周期管理接口，包括反馈的创建、查询、更新、删除和回复功能，
+ * 以及反馈统计和概览数据的获取。
+ *
+ * <p>REST API 端点：
+ * <ul>
+ *     <li>GET /api/feedback - 分页查询用户反馈列表，支持 kbId、feedback、status、page、pageSize 参数</li>
+ *     <li>GET /api/feedback/all - 查询所有反馈列表（不分页），支持 kbId 过滤</li>
+ *     <li>GET /api/feedback/statistics - 获取反馈统计数据（按知识库）</li>
+ *     <li>GET /api/feedback/overview - 获取反馈概览数据</li>
+ *     <li>POST /api/feedback - 创建新的用户反馈</li>
+ *     <li>PUT /api/feedback/{id} - 更新指定反馈信息</li>
+ *     <li>DELETE /api/feedback/{id} - 删除指定反馈</li>
+ *     <li>POST /api/feedback/{id}/reply - 对指定反馈进行回复</li>
+ * </ul>
+ *
+ * <p>委托 {@link FeedbackService} 完成具体的业务逻辑处理。
+ */
 import com.fastrag.common.response.ApiResponse; import com.fastrag.module.operation.entity.UserFeedback;
 import com.fastrag.module.operation.service.FeedbackService;
 import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;

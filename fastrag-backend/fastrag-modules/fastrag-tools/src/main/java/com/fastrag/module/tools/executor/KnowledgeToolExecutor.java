@@ -9,6 +9,20 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 知识库工具执行器。
+ *
+ * <p>Agent可调用的知识库工具，提供知识库列表查询和知识库内容检索两大功能。
+ * 实现 {@link ToolExecutor} 接口，type为"knowledge"。</p>
+ *
+ * <p>支持的工具操作：</p>
+ * <ul>
+ *   <li>list_kbs - 列出当前用户可访问的所有知识库，包含名称、ID和描述</li>
+ *   <li>query_kb - 在指定知识库中执行向量检索，返回相关内容片段，支持自定义返回条数(top_k)</li>
+ * </ul>
+ *
+ * <p>底层通过 {@code KbOperationService} 进行实际的知识库操作。</p>
+ */
 @Slf4j
 @Component
 @RequiredArgsConstructor

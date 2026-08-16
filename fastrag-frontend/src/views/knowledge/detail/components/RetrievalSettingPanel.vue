@@ -207,11 +207,13 @@ const keywordWeight = computed(() => (1 - (localConfig.value.semanticWeight ?? 0
     <el-form-item label="组装策略">
       <el-radio-group :model-value="localConfig.contextAssemblyStrategy ?? 'concat'" @change="(v: any) => updateStr('contextAssemblyStrategy', v)">
         <el-radio value="concat">直接拼接</el-radio>
+        <el-radio value="parent_chunk">父分片</el-radio>
         <el-radio value="parent_document">父文档</el-radio>
         <el-radio value="window">窗口扩展</el-radio>
       </el-radio-group>
       <div class="retrieval-form__hint">
         <template v-if="(localConfig.contextAssemblyStrategy ?? 'concat') === 'concat'">直接拼接命中 chunk 的内容作为上下文</template>
+        <template v-else-if="(localConfig.contextAssemblyStrategy ?? 'concat') === 'parent_chunk'">命中子分片时返回其所属父分片（按标题聚合的章节），未分层的文档返回命中分片自身</template>
         <template v-else-if="(localConfig.contextAssemblyStrategy ?? 'concat') === 'parent_document'">返回命中 chunk 所属的完整文档/段落</template>
         <template v-else>返回命中 chunk 及其前后各 N 个相邻 chunk</template>
       </div>

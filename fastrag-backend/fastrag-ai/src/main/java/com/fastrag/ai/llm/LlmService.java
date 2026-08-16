@@ -1,5 +1,44 @@
 package com.fastrag.ai.llm;
 
+/**
+ * LLM（大语言模型）服务，封装与各类大模型交互的统一调用层。
+ *
+ * <p>本服务是 fastrag-ai 模块最核心的服务类，通过 OpenAI 兼容的 Chat Completions API
+ * 与各类大语言模型通信，支持对话、流式输出、工具调用（Function Calling）、
+ * 思考模式（Thinking）等多种调用模式。</p>
+ *
+ * <p>核心能力：
+ * <ul>
+ *   <li><b>非流式对话</b> - 同步调用 LLM 获取完整回复（{@link #chat} 系列方法）</li>
+ *   <li><b>流式对话</b> - 返回 Flux 逐 chunk 推送文本增量（{@link #streamChat}）</li>
+ *   <li><b>流式 + 工具调用</b> - 返回 Flux 逐事件推送，区分 thinking/content/tool_call_delta/finish
+ *       （{@link #streamChatWithTools}）</li>
+ *   <li><b>带 Tool Calling 的调用</b> - 支持 OpenAI Function Calling 格式的工具定义和调用
+ *       （{@link #chatWithTools}、{@link #chatWithToolsStream}）</li>
+ *   <li><b>图谱抽取专用</b> - 支持自定义超时和 max_tokens 的流式调用
+ *       （{@link #chatWithTimeout}），避免长输出截断</li>
+ * </ul>
+ *
+ * <p>实现细节：
+ * <ul>
+ *   <li>注入 {@link com.fastrag.ai.config.AiGatewayConfig} 创建的 aiWebClient 和 aiHttpClient</li>
+ *   <li>支持动态 API 路由：通过 apiUrl/apiUrl 参数指定自定义网关地址，否则使用默认网关</li>
+ *   <li>流式 tool_calls 采用增量合并策略：按 index 累积 id/name/arguments 片段</li>
+ *   <li>Thinking 提取双策略：优先从 delta.reasoning_content 提取（DeepSeek 格式），
+ *       流结束后回退正则提取 &lt;think&gt; 标签内容（Qwen3 格式）</li>
+ *   <li>超时配置：默认请求超时由 {@code ai.gateway.timeout} 控制（默认 30 秒），
+ *       流式总超时为 2 倍请求超时</li>
+ * </ul>
+ *
+ * <p>配置项（application.yml）：
+ * <ul>
+ *   <li>{@code ai.gateway.url} - 默认网关地址</li>
+ *   <li>{@code ai.gateway.timeout} - 网关超时秒数，默认 30</li>
+ * </ul>
+ *
+ * <p>依赖：aiWebClient（默认网关 WebClient）、aiHttpClient（代理 HTTP 客户端）、
+ * ObjectMapper（JSON 解析）</p>
+ */
 import com.fastrag.ai.model.ChatChunk;
 import com.fastrag.ai.model.ChatMessage;
 import com.fastrag.ai.model.ChatRequest;

@@ -12,8 +12,21 @@ import java.util.UUID;
 /**
  * 通用文件上传控制器
  * <p>
- * 用于 Logo 等通用文件上传，不限定于特定业务域。
- * 文件存储使用 MinioService 基础设施。
+ * 提供通用的文件上传接口，主要用于 Logo、品牌图片等非特定业务域的文件上传。
+ * 文件存储基于 MinIO 对象存储服务（{@link com.fastrag.infra.minio.MinioService}），
+ * 上传后返回可通过 HTTP 访问的文件 URL。
+ * </p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>POST /api/upload — 上传文件（仅支持 image/jpeg、image/png 格式，大小不超过 1MB），
+ *       文件存储路径为 uploads/brand/{uuid}.{ext}，返回可访问的 URL</li>
+ * </ul>
+ *
+ * <p>上传流程：校验文件类型和大小 -> 生成 UUID 文件名 -> 通过 MinioService 存储到 MinIO ->
+ * 返回 /api/files/{objectKey} 格式的访问 URL。</p>
+ *
+ * @see com.fastrag.infra.minio.MinioService
  */
 @Slf4j
 @RestController

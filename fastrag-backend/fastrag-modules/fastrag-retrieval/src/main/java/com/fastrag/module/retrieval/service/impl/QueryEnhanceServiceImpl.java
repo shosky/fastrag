@@ -20,16 +20,26 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 查询增强服务实现
+ * 查询增强服务实现。
  *
- * <p>提供：
+ * <p>实现 {@link QueryEnhanceService} 接口，提供多种查询增强策略以提升检索效果。</p>
+ *
+ * <h3>核心实现逻辑：</h3>
  * <ul>
- *   <li>suggest — 查询建议（占位）</li>
- *   <li>expandSynonyms — 同义词扩展（占位）</li>
- *   <li>applyQueryRules — 规则改写（占位）</li>
- *   <li>extractEntities — 用 LLM 从 query 中提取实体（NER）</li>
- *   <li>expandGraph — 用提取的实体在图谱中展开邻居，拼入检索 query</li>
+ *   <li>{@code suggest} - 查询建议（当前为占位实现，直接返回原始查询）</li>
+ *   <li>{@code expandSynonyms} - 同义词扩展，调用 {@link TermService} 获取同义词列表拼入查询</li>
+ *   <li>{@code applyQueryRules} - 查询规则改写（当前为占位实现，直接返回原始查询）</li>
+ *   <li>{@code extractEntities} - NER 实体提取：通过 LLM 从查询中提取命名实体，
+ *       无 NER 模型配置时降级为基于正则的简单分词（英文按词、中文按连续块 + n-gram 切分）</li>
+ *   <li>{@code expandGraph} - 图谱扩展：先用 NER 提取实体，再通过 {@link GraphStore} 在知识图谱中
+ *       展开邻居实体和关系，将实体名称和关系标签拼入原始查询生成增强查询文本</li>
  * </ul>
+ *
+ * <p>图谱扩展流程中的关键交互：依赖 platform 模块的 {@link ModelRecordMapper} 解析 NER 模型配置，
+ * 依赖 infra 模块的 {@link GraphStore} 执行图谱查询，依赖 platform 模块的 {@link TermService} 进行同义词扩展。
+ * 同时通过 Redis 进行知识库访问权限校验。</p>
+ *
+ * @see QueryEnhanceService
  */
 @Slf4j
 @Service

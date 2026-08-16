@@ -27,6 +27,20 @@ export interface AgentStateEvent {
   artifacts?: string[]
 }
 
+/** 知识来源条目（RAG 检索结果） */
+export interface SourceItem {
+  fileName?: string
+  score?: number
+  content?: string
+  fileId?: string
+  kbId?: string
+  chunkIndex?: number
+  chunkType?: string
+  imageKeys?: string[]
+  /** 本地 UI 状态：是否展开全文（非后端字段） */
+  _expanded?: boolean
+}
+
 /**
  * 应用对话流式回调接口
  */
@@ -38,12 +52,13 @@ export interface AppChatCallbacks {
   onToolCall?: (toolCall: ToolCallEvent) => void
   onToolResult?: (result: ToolResultEvent) => void
   onAgentState?: (state: AgentStateEvent) => void
+  onSources?: (sources: SourceItem[]) => void
 }
 
 /**
  * SSE 流式对话 composable
  * 用于应用中心的流式对话功能
- * 支持扩展事件：thinking / tool_call / tool_result / agent_state
+ * 支持扩展事件：thinking / tool_call / tool_result / agent_state / sources
  */
 export function useAppChatStream() {
   const isStreaming = ref(false)
@@ -60,6 +75,7 @@ export function useAppChatStream() {
    * @param onThinking 思考过程增量回调（可选）
    * @param onToolCall 工具调用开始回调（可选）
    * @param onToolResult 工具执行结果回调（可选）
+   * @param onSources 知识来源回调（可选）
    * @param onAgentState 智能体状态变更回调（可选）
    */
   async function sendMessage(
@@ -72,6 +88,7 @@ export function useAppChatStream() {
     onThinking?: (content: string) => void,
     onToolCall?: (toolCall: ToolCallEvent) => void,
     onToolResult?: (result: ToolResultEvent) => void,
+    onSources?: (sources: SourceItem[]) => void,
     onAgentState?: (state: AgentStateEvent) => void
   ) {
     abortController.value = new AbortController()
@@ -180,6 +197,17 @@ export function useAppChatStream() {
                 try {
                   const data = JSON.parse(event.data) as AgentStateEvent
                   onAgentState(data)
+                } catch {
+                  // ignore
+                }
+              }
+              break
+            }
+            case 'sources': {
+              if (onSources) {
+                try {
+                  const data = JSON.parse(event.data) as { sources?: SourceItem[] }
+                  onSources(Array.isArray(data.sources) ? data.sources : [])
                 } catch {
                   // ignore
                 }

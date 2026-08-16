@@ -1,5 +1,30 @@
 package com.fastrag.module.iam.controller;
 
+/**
+ * API Token 管理控制器，提供平台级程序化访问的 Token 生命周期管理接口。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>Token 列表查询（返回值已脱敏，不暴露真实 Token）</li>
+ *   <li>创建新的 API Token</li>
+ *   <li>撤销（删除）指定的 API Token</li>
+ * </ul>
+ *
+ * <p>提供的 REST API 端点：
+ * <ul>
+ *   <li>{@code GET  /api/api-tokens} —— 获取全部 Token 列表</li>
+ *   <li>{@code POST /api/api-tokens} —— 创建 API Token</li>
+ *   <li>{@code DELETE /api/api-tokens/{tokenId}} —— 撤销指定 Token</li>
+ * </ul>
+ *
+ * <p>所有接口均要求 {@code kb:manage} 权限。创建操作会通过 {@code @Loggable}
+ * 记录审计日志。Token 的实际校验逻辑由 {@code ApiTokenValidatorImpl} 完成，
+ * 与 Spring Security 过滤器链集成。
+ *
+ * @see ApiTokenService
+ * @see ApiTokenCreateRequest
+ * @see ApiTokenDto
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
@@ -15,9 +40,6 @@ import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
 
-/**
- * API Token 管理控制器，提供平台级程序化访问的 Token 生命周期管理。
- */
 @RestController
 @RequestMapping("/api/api-tokens")
 @RequiredArgsConstructor

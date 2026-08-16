@@ -202,10 +202,16 @@ function handleOpenGraphSettings() {
   indexManagementVisible.value = false
 }
 
-function handleGraphSettingsApply(settings: any) {
+async function handleGraphSettingsApply(settings: any) {
   graphSettingsVisible.value = false
-  ElMessage.success('图谱设置已应用')
-  console.log('Graph settings:', settings)
+  if (!kbId) return
+  try {
+    // 持久化到 kb_graph_index.settings（含 entitySchema 等），下次图谱构建生效
+    await api.saveGraphSettings(kbId, settings)
+    ElMessage.success('图谱设置已保存，下次构建生效')
+  } catch (e: any) {
+    ElMessage.error('保存设置失败: ' + (e.message || e))
+  }
 }
 
 function handleOpenIndexManagement() {
@@ -306,6 +312,7 @@ function handleStartEvaluationFromBenchmark(benchmarkId: string) {
           />
           <GraphSettingsPopup
             v-model:visible="graphSettingsVisible"
+            :kb-id="kbId"
             @apply="handleGraphSettingsApply"
           />
         </div>

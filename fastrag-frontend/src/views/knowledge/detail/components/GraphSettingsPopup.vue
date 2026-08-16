@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { Close } from '@element-plus/icons-vue'
+import { getGraphSettings } from '@/api'
 
 // --- Props & Emits ---
 const props = defineProps<{
   visible: boolean
+  kbId?: string
 }>()
 
 const emit = defineEmits<{
@@ -16,6 +18,8 @@ interface GraphSettings {
   maxNodes: number
   searchDepth: number
   excludeChunkNodes: boolean
+  /** KB 级实体类型 schema（KG-07）：逗号/换行分隔，空则回退全局白名单 */
+  entitySchema: string
 }
 
 // --- Settings state ---
@@ -23,12 +27,35 @@ const settings = ref<GraphSettings>({
   maxNodes: 100,
   searchDepth: 2,
   excludeChunkNodes: true,
+  entitySchema: '',
 })
+
+const settingsLoading = ref(false)
 
 // --- Popup visibility ---
 const popupVisible = computed({
   get: () => props.visible,
   set: (val: boolean) => emit('update:visible', val),
+})
+
+// 打开时从后端加载设置（保存于 kb_graph_index.settings）
+watch(popupVisible, async (val) => {
+  if (val && props.kbId) {
+    settingsLoading.value = true
+    try {
+      const remote = await getGraphSettings(props.kbId) as Partial<GraphSettings>
+      settings.value = {
+        maxNodes: Number(remote.maxNodes) || 100,
+        searchDepth: Number(remote.searchDepth) || 2,
+        excludeChunkNodes: remote.excludeChunkNodes !== false,
+        entitySchema: remote.entitySchema || '',
+      }
+    } catch (e) {
+      console.warn('[GraphSettings] Failed to load settings:', e)
+    } finally {
+      settingsLoading.value = false
+    }
+  }
 })
 
 // --- Apply settings ---
@@ -40,7 +67,7 @@ function handleApply() {
 
 <template>
   <Transition name="popup-slide">
-    <div v-if="popupVisible" class="graph-settings">
+    <div v-if="popupVisible" class="graph-settings" v-loading="settingsLoading">
       <!-- Header -->
       <div class="graph-settings__header">
         <h3 class="graph-settings__title">图谱设置</h3>
@@ -76,6 +103,20 @@ function handleApply() {
           <label class="graph-settings__label">排除 Chunk 节点</label>
           <el-switch v-model="settings.excludeChunkNodes" />
         </div>
+
+        <!-- KB 级实体类型 schema（KG-07） -->
+        <div class="graph-settings__field">
+          <label class="graph-settings__label">
+            实体类型 Schema
+            <span class="graph-settings__hint">（逗号或换行分隔；留空则使用全局白名单）</span>
+          </label>
+          <el-input
+            v-model="settings.entitySchema"
+            type="textarea"
+            :rows="4"
+            placeholder="例如：巡检对象、巡检项、配置项、设备、数值"
+          />
+        </div>
       </div>
 
       <!-- Footer -->
@@ -96,11 +137,12 @@ function handleApply() {
   top: 60px;
   right: 100px;
   z-index: 300;
-  width: 280px;
+  width: 300px;
+  max-height: calc(100% - 120px);
+  overflow-y: auto;
   background: $bg-white;
   border-radius: $radius-base;
   box-shadow: $shadow-lg;
-  overflow: hidden;
 
   // --- Header ---
   &__header {
@@ -136,6 +178,12 @@ function handleApply() {
     font-size: 14px;
     font-weight: 500;
     color: $text-primary;
+  }
+
+  &__hint {
+    font-size: 12px;
+    font-weight: 400;
+    color: $text-secondary;
   }
 
   // --- Footer ---

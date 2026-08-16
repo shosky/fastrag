@@ -1,9 +1,54 @@
 package com.fastrag.common.enums;
 
 /**
- * 系统操作动作类型枚举
- * <p>统一所有模块的重要操作的动作标识，记录到 {@code kb_log} 和 {@code sys_audit_log}。
- * <p>命名规范：{模块}_{动作}，使用小写 snake_case。
+ * 系统操作动作类型枚举。
+ * <p>统一所有模块的重要操作的动作标识，记录到 {@code kb_log} 和 {@code sys_audit_log} 审计日志表中。
+ *
+ * <p>命名规范：{模块}_{动作}，使用小写 snake_case，便于日志查询和统计分析。
+ *
+ * <p>枚举值按业务模块分组，涵盖以下领域：
+ * <ul>
+ *   <li><b>知识库本体</b> - kb_created, kb_updated, kb_deleted</li>
+ *   <li><b>文件生命周期</b> - file_uploaded, file_processed, file_processing_started, file_processing_failed,
+ *       file_updated, file_removed, file_restored, file_permanent_deleted, file_copied, file_retried, file_downloaded, file_moved</li>
+ *   <li><b>文件夹</b> - folder_created, folder_updated, folder_deleted</li>
+ *   <li><b>QA 对</b> - qa_pair_created, qa_pair_updated, qa_pair_deleted, qa_pair_confirmed</li>
+ *   <li><b>分片</b> - chunk_created, chunk_updated, chunk_deleted</li>
+ *   <li><b>解析策略</b> - strategy_created, strategy_updated, strategy_deleted, strategy_set_default</li>
+ *   <li><b>知识图谱</b> - graph_build_started, graph_build_completed, graph_build_failed, graph_build_retried,
+ *       graph_deleted, graph_settings_updated</li>
+ *   <li><b>评测</b> - evaluation_run, evaluation_deleted</li>
+ *   <li><b>基准测试</b> - benchmark_created, benchmark_generated, benchmark_deleted, benchmark_imported</li>
+ *   <li><b>知识发布</b> - publish_published, publish_revoked, publish_reset, publish_plan_created</li>
+ *   <li><b>应用管理</b> - app_created, app_updated, app_deleted, app_published, app_config_updated,
+ *       app_bind_kb, app_unbind_kb, app_bind_db, app_unbind_db, app_bind_skill, app_unbind_skill,
+ *       app_bind_tool, app_unbind_tool, app_bind_mcp, app_unbind_mcp,
+ *       app_trigger_created/updated/deleted, app_dialog_test_created/updated/deleted,
+ *       app_optimization_created/updated/deleted, app_optimization_applied</li>
+ *   <li><b>工作流管理</b> - workflow_created, workflow_updated, workflow_deleted, workflow_published,
+ *       workflow_node_added/updated/deleted/moved,
+ *       workflow_template_created/updated/deleted,
+ *       workflow_test_case_created/deleted</li>
+ *   <li><b>Agent 管理</b> - agent_created, agent_updated, agent_deleted, agent_config_updated, agent_set_default</li>
+ *   <li><b>IAM 用户管理</b> - user_created/updated/deleted, user_status_changed, user_role_assigned,
+ *       role_created/updated/deleted, role_set_default,
+ *       permission_created/updated/deleted</li>
+ *   <li><b>系统配置</b> - config_created/updated/deleted, config_imported, config_exported, config_reset_default,
+ *       security_policy_created/updated/deleted,
+ *       publish_strategy_created/updated/deleted</li>
+ *   <li><b>模型管理</b> - model_created/updated/deleted, model_imported, model_trained, model_tested</li>
+ *   <li><b>工具、技能、MCP</b> - tool_created/updated/deleted, skill_created/updated/deleted,
+ *       mcp_service_created/updated/deleted, db_instance_created/updated/deleted</li>
+ *   <li><b>对话管理</b> - conversation_deleted</li>
+ *   <li><b>API Token</b> - token_created, token_deleted</li>
+ *   <li><b>其他</b> - reset_config_saved, config_changed</li>
+ * </ul>
+ *
+ * <p>使用场景：配合 {@link com.fastrag.common.annotation.Loggable} 注解使用，
+ * 由 {@code KbLogAspect} 切面收集并写入审计日志。
+ *
+ * @see com.fastrag.common.annotation.Loggable
+ * @see com.fastrag.common.event.SysAuditLogEvent
  */
 public enum ActionType {
     // ==================== 知识库本体 ====================

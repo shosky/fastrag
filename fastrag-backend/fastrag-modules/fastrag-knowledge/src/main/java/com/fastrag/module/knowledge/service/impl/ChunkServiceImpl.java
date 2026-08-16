@@ -6,6 +6,7 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.fastrag.ai.embedding.EmbeddingService;
 import com.fastrag.infra.graph.GraphStore;
 import com.fastrag.infra.milvus.MilvusService;
+import com.fastrag.infra.rabbitmq.MessagePublisher;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
@@ -19,6 +20,7 @@ import com.fastrag.module.platform.entity.ModelRecord;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.ObjectProvider;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -37,14 +39,55 @@ public class ChunkServiceImpl implements ChunkService {
     private final MilvusService milvusService;
     private final EmbeddingService embeddingService;
     private final GraphStore graphStore;
+    /** 图谱构建消息发布器（ObjectProvider 避免与 infra 模块产生循环依赖，同 IngestionConsumer 模式） */
+    private final ObjectProvider<MessagePublisher> messagePublisherProvider;
 
     @Override
     public Map<String, Object> list(String kbId, String fileId, int page, int pageSize) {
+        // 父子分片模式：存在父分片时按父分片分页（父分片行内嵌子分片），
+        // 无父分片的孤立子分片（单分片章节）按 chunk_index 保持文档顺序混排
+        LambdaQueryWrapper<KbChunk> parentW = new LambdaQueryWrapper<KbChunk>()
+                .eq(KbChunk::getKbId, kbId)
+                .eq(KbChunk::getChunkType, "parent");
+        if (fileId != null && !fileId.isBlank()) parentW.eq(KbChunk::getFileId, fileId);
+        long parentCount = mapper.selectCount(parentW);
+
+        var result = new HashMap<String, Object>();
+        if (parentCount > 0) {
+            var w = new LambdaQueryWrapper<KbChunk>()
+                    .eq(KbChunk::getKbId, kbId)
+                    .and(q -> q.eq(KbChunk::getChunkType, "parent")
+                            .or(o -> o.isNull(KbChunk::getParentId).ne(KbChunk::getChunkType, "parent")));
+            if (fileId != null && !fileId.isBlank()) w.eq(KbChunk::getFileId, fileId);
+            w.orderByAsc(KbChunk::getChunkIndex);
+            var r = mapper.selectPage(new Page<>(page, pageSize), w);
+
+            List<ChunkDto> items = new ArrayList<>();
+            for (KbChunk row : r.getRecords()) {
+                ChunkDto dto = ChunkDto.toDto(row);
+                if ("parent".equals(row.getChunkType())) {
+                    // 父分片行内嵌子分片
+                    List<KbChunk> children = mapper.selectList(new LambdaQueryWrapper<KbChunk>()
+                            .eq(KbChunk::getParentId, row.getId())
+                            .orderByAsc(KbChunk::getChunkIndex));
+                    dto.setChildren(children.stream().map(ChunkDto::toDto).collect(Collectors.toList()));
+                }
+                items.add(dto);
+            }
+            result.put("mode", "parent");
+            result.put("list", items);
+            result.put("total", r.getTotal());
+            result.put("page", page);
+            result.put("pageSize", pageSize);
+            return result;
+        }
+
+        // 单层模式（原逻辑）
         var w = new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getKbId, kbId);
         if (fileId != null && !fileId.isBlank()) w.eq(KbChunk::getFileId, fileId);
         w.orderByAsc(KbChunk::getChunkIndex);
         var r = mapper.selectPage(new Page<>(page, pageSize), w);
-        var result = new HashMap<String, Object>();
+        result.put("mode", "single");
         result.put("list", r.getRecords());
         result.put("total", r.getTotal());
         result.put("page", page);
@@ -54,7 +97,9 @@ public class ChunkServiceImpl implements ChunkService {
 
     @Override
     public long getCount(String kbId) {
-        return mapper.selectCount(new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getKbId, kbId));
+        return mapper.selectCount(new LambdaQueryWrapper<KbChunk>()
+                .eq(KbChunk::getKbId, kbId)
+                .ne(KbChunk::getChunkType, "parent"));
     }
 
     @Override
@@ -134,6 +179,9 @@ public class ChunkServiceImpl implements ChunkService {
         // 更新文件 chunkCount
         updateFileChunkCount(fileId);
 
+        // 图谱联动：新分片未做图谱提取（graph_indexed=null），自动触发增量构建补齐
+        triggerIncrementalGraphBuild(kbId, fileId);
+
         log.info("[Chunk Create] Created chunk: id={}, index={}, fileId={}", chunkId, newChunkIndex, fileId);
         return ChunkDto.toDto(chunk);
     }
@@ -185,7 +233,12 @@ public class ChunkServiceImpl implements ChunkService {
 
         mapper.updateById(chunk);
 
-        // 图谱联动：内容变化时清理旧图谱数据并标记待重新提取
+        // 父子分片联动：编辑子分片后重新拼接其所属父分片内容，保持一致性
+        if (contentChanged) {
+            refreshParentContent(chunk);
+        }
+
+        // 图谱联动：内容变化时清理旧图谱数据并标记待重新提取，随后自动触发增量构建（KG-02）
         if (contentChanged) {
             try {
                 graphStore.deleteChunkGraph(kbId, id);
@@ -203,6 +256,8 @@ public class ChunkServiceImpl implements ChunkService {
             } catch (Exception e) {
                 log.warn("[Chunk Update] Failed to reset graphIndexed for chunk {}: {}", id, e.getMessage());
             }
+            // 触发增量图谱构建（受文件 enableGraphBuild 开关约束；增量模式只处理该 chunk，成本低）
+            triggerIncrementalGraphBuild(kbId, chunk.getFileId());
         }
 
         log.info("[Chunk Update] Updated chunk: {}", id);
@@ -223,27 +278,35 @@ public class ChunkServiceImpl implements ChunkService {
         String fileId = chunk.getFileId();
         int deletedIndex = chunk.getChunkIndex();
 
-        // 删除 MySQL 记录
-        mapper.deleteById(id);
+        // 删除 MySQL 记录（父分片级联删除其子分片）
+        List<String> cascadeIds = new ArrayList<>();
+        if ("parent".equals(chunk.getChunkType())) {
+            cascadeIds = mapper.selectList(new LambdaQueryWrapper<KbChunk>()
+                            .eq(KbChunk::getParentId, id))
+                    .stream().map(KbChunk::getId).collect(Collectors.toList());
+        }
+        cascadeIds.add(id);
+        mapper.deleteBatchIds(cascadeIds);
 
         // 删除 Milvus 向量
         String collection = "kb_" + kbId.replace("-", "_");
         try {
-            milvusService.deleteById(collection, id);
-            log.info("[Chunk Delete] Milvus vector deleted for chunk: {}", id);
+            milvusService.deleteByIds(collection, cascadeIds);
+            log.info("[Chunk Delete] Milvus vectors deleted for chunks: {}", cascadeIds);
         } catch (Exception e) {
-            log.warn("[Chunk Delete] Milvus delete failed for chunk {}: {}", id, e.getMessage());
+            log.warn("[Chunk Delete] Milvus delete failed for chunks {}: {}", cascadeIds, e.getMessage());
         }
 
         // 清理知识图谱数据（MENTIONS + 回收孤立实体/关系）
-        try {
-            graphStore.deleteChunkGraph(kbId, id);
-            log.info("[Chunk Delete] Graph data cleaned for chunk: {}", id);
-        } catch (Exception e) {
-            log.warn("[Chunk Delete] Graph cleanup failed for chunk {}: {}", id, e.getMessage());
+        for (String cascadeId : cascadeIds) {
+            try {
+                graphStore.deleteChunkGraph(kbId, cascadeId);
+            } catch (Exception e) {
+                log.warn("[Chunk Delete] Graph cleanup failed for chunk {}: {}", cascadeId, e.getMessage());
+            }
         }
 
-        // 将大于 deletedIndex 的分片索引 -1（保持连续性）
+        // 将大于 deletedIndex 的分片索引 -1（保持连续性；父分片索引取首个子分片位置，不参与移位）
         shiftChunkIndices(fileId, deletedIndex + 1, -1);
 
         // 更新文件 chunkCount
@@ -272,6 +335,20 @@ public class ChunkServiceImpl implements ChunkService {
         }
 
         if (validIds.isEmpty()) return;
+
+        // 父分片级联：删除父分片时连同其子分片一起删除
+        Set<String> parentIds = chunks.stream()
+                .filter(c -> "parent".equals(c.getChunkType()))
+                .map(KbChunk::getId)
+                .collect(Collectors.toSet());
+        if (!parentIds.isEmpty()) {
+            List<KbChunk> children = mapper.selectList(new LambdaQueryWrapper<KbChunk>()
+                    .in(KbChunk::getParentId, parentIds));
+            for (KbChunk child : children) {
+                validIds.add(child.getId());
+                fileIds.add(child.getFileId());
+            }
+        }
 
         // 批量删除 MySQL
         mapper.deleteBatchIds(validIds);
@@ -311,6 +388,7 @@ public class ChunkServiceImpl implements ChunkService {
         List<KbChunk> affectedChunks = mapper.selectList(
                 new LambdaQueryWrapper<KbChunk>()
                         .eq(KbChunk::getFileId, fileId)
+                        .ne(KbChunk::getChunkType, "parent") // 父分片索引取首个子分片位置，不参与移位
                         .ge(KbChunk::getChunkIndex, startIndex)
                         .orderByAsc(KbChunk::getChunkIndex));
         for (KbChunk c : affectedChunks) {
@@ -393,15 +471,70 @@ public class ChunkServiceImpl implements ChunkService {
     }
 
     /**
-     * 更新文件的 chunkCount
+     * 更新文件的 chunkCount（只统计子分片，父分片不计数）
      */
     private void updateFileChunkCount(String fileId) {
         KbFile file = fileMapper.selectById(fileId);
         if (file != null) {
             long count = mapper.selectCount(
-                    new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getFileId, fileId));
+                    new LambdaQueryWrapper<KbChunk>()
+                            .eq(KbChunk::getFileId, fileId)
+                            .ne(KbChunk::getChunkType, "parent"));
             file.setChunkCount((int) count);
             fileMapper.updateById(file);
+        }
+    }
+
+    /**
+     * 子分片内容变更后，重新拼接其所属父分片内容（父子分片一致性）。
+     * 父分片内容 = 子分片内容按 "\n\n" 拼接，与分片阶段 ParentChunkAssembler 规则一致。
+     */
+    private void refreshParentContent(KbChunk child) {
+        if (child.getParentId() == null || child.getParentId().isBlank()) return;
+        try {
+            List<KbChunk> children = mapper.selectList(new LambdaQueryWrapper<KbChunk>()
+                    .eq(KbChunk::getParentId, child.getParentId())
+                    .orderByAsc(KbChunk::getChunkIndex));
+            if (children.isEmpty()) return;
+            String content = children.stream()
+                    .map(KbChunk::getContent)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.joining("\n\n"));
+            mapper.update(null, new LambdaUpdateWrapper<KbChunk>()
+                    .eq(KbChunk::getId, child.getParentId())
+                    .set(KbChunk::getContent, content));
+            log.info("[Chunk Update] Parent chunk refreshed: {} ({} children)", child.getParentId(), children.size());
+        } catch (Exception e) {
+            log.warn("[Chunk Update] Failed to refresh parent chunk {}: {}", child.getParentId(), e.getMessage());
+        }
+    }
+
+    /**
+     * 触发增量图谱构建（KG-02）。
+     * <p>开关与文件上传链路一致：文件 enableGraphBuild=1（上传时由 KB graphAutoBuild 解析并落库）
+     * 才自动触发；增量模式只处理 graph_indexed=0 的 chunk，单个分片构建成本低。</p>
+     */
+    private void triggerIncrementalGraphBuild(String kbId, String fileId) {
+        try {
+            KbFile file = fileMapper.selectById(fileId);
+            if (file == null || !Integer.valueOf(1).equals(file.getEnableGraphBuild())) {
+                log.debug("[Chunk Graph] Graph build skipped: file enableGraphBuild != 1, fileId={}", fileId);
+                return;
+            }
+            MessagePublisher pub = messagePublisherProvider.getIfAvailable();
+            if (pub == null) {
+                log.warn("[Chunk Graph] MessagePublisher bean not available, cannot trigger graph build for kb={}, fileId={}", kbId, fileId);
+                return;
+            }
+            Map<String, Object> graphMsg = new HashMap<>();
+            graphMsg.put("kbId", kbId);
+            graphMsg.put("fileId", fileId);
+            graphMsg.put("mode", "incremental");
+            pub.publishGraphBuild(graphMsg);
+            log.info("[Chunk Graph] Incremental graph build message published: kb={}, fileId={}", kbId, fileId);
+        } catch (Exception e) {
+            log.warn("[Chunk Graph] Failed to trigger incremental graph build: kb={}, fileId={}, error={}",
+                    kbId, fileId, e.getMessage());
         }
     }
 }

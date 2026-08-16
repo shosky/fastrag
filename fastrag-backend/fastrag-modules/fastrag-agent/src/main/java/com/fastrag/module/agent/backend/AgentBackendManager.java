@@ -13,9 +13,24 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Registry and manager for all {@link AgentBackend} implementations.
- * Discovers backend beans at startup and provides lookup methods
- * for the rest of the application.
+ * Agent后端注册中心与管理器，负责发现、注册和查找所有{@link AgentBackend}实现。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>在Spring容器启动时（@PostConstruct），自动从ApplicationContext中扫描所有AgentBackend类型的Bean并注册</li>
+ *   <li>维护一个以backendId为Key的有序Map，支持按ID查找后端</li>
+ *   <li>对外提供统一的查询接口，包括按ID获取、判断是否存在、获取所有已注册后端等</li>
+ *   <li>封装后端信息查询逻辑，可直接返回适用于API响应的后端信息Map</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>使用LinkedHashMap保持后端的注册顺序</li>
+ *   <li>当出现重复ID时会打印警告日志并覆盖已注册的后端</li>
+ *   <li>查找不存在的后端时抛出BusinessException（NOT_FOUND）</li>
+ * </ul></p>
+ *
+ * @see AgentBackend Agent后端接口
  */
 @Slf4j
 @Component

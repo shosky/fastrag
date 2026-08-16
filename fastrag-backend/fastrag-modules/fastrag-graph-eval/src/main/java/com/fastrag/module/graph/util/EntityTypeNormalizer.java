@@ -1,5 +1,20 @@
 package com.fastrag.module.graph.util;
 
+/**
+ * 实体类型归一化工具类（对标 LightRAG 类型收敛策略）。
+ *
+ * <p>在知识图谱构建过程中，LLM 抽取的实体类型（label）往往不收敛，容易产生数百种冗余类型和大量 UNKNOWN 堆积，
+ * 严重影响图谱质量和下游检索效果。本工具通过白名单匹配与编辑距离归并策略，将 LLM 输出的实体类型收敛到可控范围内。
+ * 归一化优先级为：白名单精确匹配（忽略大小写）→ 编辑距离 ≤1 的模糊归并（如 "故障类别"→"故障类型"）→ 未命中则归为 UNKNOWN。</p>
+ *
+ * <p>白名单来源支持外部配置（application.yml 中 {@code graph.entity-type-whitelist}，逗号分隔），
+ * 为空时使用内置的 {@link #DEFAULT_WHITELIST} 默认集合（覆盖故障、告警、指标、设备、系统、文档等十余个业务领域的高频实体类型）。
+ * 归一化后的实体类型统一写入 {@link com.fastrag.module.graph.entity.KbGraphEntity} 的 label 字段，
+ * 确保 {@link com.fastrag.module.graph.entity.KbGraphEntity} 表中实体类型的一致性和可查询性。</p>
+ *
+ * <p>本类为无状态工具类，仅包含静态方法，主要被 {@link com.fastrag.module.graph.util.ExtractionNormalizer}
+ * 和图谱构建流程间接调用。</p>
+ */
 import java.util.Arrays;
 import java.util.Collection;
 import java.util.Collections;

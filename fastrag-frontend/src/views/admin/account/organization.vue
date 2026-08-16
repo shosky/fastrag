@@ -26,19 +26,11 @@ onMounted(() => {
   loadOrgTree()
 })
 
-// --- 上级组织选项（扁平列表，排除自身） ---
-const parentOptions = ref<{ id: string; name: string; path: string }[]>([])
-
-async function refreshParentOptions() {
-  parentOptions.value = ((await api.getOrgFlat()) as any || []).filter((o: any) => o.id !== editingId.value)
-}
-
 // --- CRUD ---
 async function handleAdd() {
   drawerTitle.value = '新增组织'
   editingId.value = ''
   formData.value = { name: '', alias: '', parentId: '' }
-  await refreshParentOptions()
   showDrawer.value = true
 }
 
@@ -46,7 +38,6 @@ async function handleAddChild(parentId: string) {
   drawerTitle.value = '新增下级组织'
   editingId.value = ''
   formData.value = { name: '', alias: '', parentId }
-  await refreshParentOptions()
   showDrawer.value = true
 }
 
@@ -54,7 +45,6 @@ async function handleEdit(row: OrgNode) {
   drawerTitle.value = '编辑组织'
   editingId.value = row.id
   formData.value = { name: row.name, alias: row.alias || '', parentId: row.parentId || '' }
-  await refreshParentOptions()
   showDrawer.value = true
 }
 
@@ -137,14 +127,15 @@ async function handleSave() {
           <el-input v-model="formData.alias" placeholder="请输入别名（可选）" />
         </el-form-item>
         <el-form-item label="上级组织">
-          <el-select v-model="formData.parentId" placeholder="无（顶级组织）" clearable style="width: 100%">
-            <el-option
-              v-for="org in parentOptions"
-              :key="org.id"
-              :label="org.path"
-              :value="org.id"
-            />
-          </el-select>
+          <el-tree-select
+            v-model="formData.parentId"
+            :data="orgTree"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            placeholder="无（顶级组织）"
+            clearable
+            check-strictly
+            style="width: 100%"
+          />
         </el-form-item>
       </el-form>
       <template #footer>

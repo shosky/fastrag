@@ -113,6 +113,7 @@ public class KbServiceImpl implements KbService {
         e.setParseMode(req.getParseMode());
         e.setSplitMode(req.getSplitMode());
         e.setGraphAutoBuild(req.getGraphAutoBuild() != null && req.getGraphAutoBuild() ? 1 : 0);
+        e.setGraphLlmModel(req.getGraphLlmModel());
         e.setFileTypeConfig(req.getFileTypeConfig() != null ? JSONUtil.toJsonStr(req.getFileTypeConfig()) : null);
         e.setRetrievalConfig(req.getRetrievalConfig() != null ? JSONUtil.toJsonStr(req.getRetrievalConfig()) : null);
         e.setCreator(creator);
@@ -153,6 +154,7 @@ public class KbServiceImpl implements KbService {
         if (req.getFileTypeConfig() != null) e.setFileTypeConfig(JSONUtil.toJsonStr(req.getFileTypeConfig()));
         if (req.getRetrievalConfig() != null) e.setRetrievalConfig(JSONUtil.toJsonStr(req.getRetrievalConfig()));
         if (req.getGraphAutoBuild() != null) e.setGraphAutoBuild(req.getGraphAutoBuild() ? 1 : 0);
+        if (req.getGraphLlmModel() != null) e.setGraphLlmModel(req.getGraphLlmModel());
         mapper.updateById(e);
 
         // 同步标签实体
@@ -274,6 +276,7 @@ public class KbServiceImpl implements KbService {
             if (tag == null) {
                 tag = new KbTag();
                 tag.setName(name);
+                tag.setKbId(kbId);
                 tag.setUsageCount(0);
                 tag.setCreatedBy(creator);
                 kbTagMapper.insert(tag);
@@ -311,6 +314,7 @@ public class KbServiceImpl implements KbService {
         d.setSplitMode(e.getSplitMode());
         d.setPermission(e.getPermission());
         d.setGraphAutoBuild(e.getGraphAutoBuild());
+        d.setGraphLlmModel(e.getGraphLlmModel());
         d.setFileTypeConfig(StrUtil.isNotBlank(e.getFileTypeConfig()) ? JSONUtil.parse(e.getFileTypeConfig()) : null);
         d.setRetrievalConfig(StrUtil.isNotBlank(e.getRetrievalConfig()) ? JSONUtil.parse(e.getRetrievalConfig()) : null);
         return d;

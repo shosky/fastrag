@@ -6,7 +6,17 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * 系统登录日志控制器
+ * 系统登录日志控制器。
+ *
+ * <p>提供用户登录日志的查询接口，支持按用户ID和登录状态（success/failed/logout）进行过滤，
+ * 可限制返回条数，用于安全审计和登录行为分析。
+ *
+ * <p>REST API 端点：
+ * <ul>
+ *     <li>GET /api/audit/login-log - 查询登录日志列表，支持 userId、status、limit 参数</li>
+ * </ul>
+ *
+ * <p>委托 {@link SysLoginLogService} 完成具体的数据查询逻辑。
  */
 @RestController
 @RequestMapping("/api/audit/login-log")

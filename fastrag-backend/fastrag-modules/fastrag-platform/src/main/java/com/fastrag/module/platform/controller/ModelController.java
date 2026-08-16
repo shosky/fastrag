@@ -1,4 +1,29 @@
 package com.fastrag.module.platform.controller;
+
+/**
+ * 模型管理控制器
+ * <p>
+ * 提供AI模型的完整生命周期管理，包括模型的增删改查、启用/禁用切换、
+ * 批量导入，以及模型在线测试（对话、向量化、重排序）功能。
+ * 同时支持M4模型预置配置的管理。
+ * </p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>模型列表与详情：GET /api/models（支持keyword和purpose过滤）、GET /api/models/{id}</li>
+ *   <li>模型在线测试：POST /api/models/{id}/test-chat（对话测试）、
+ *       POST /api/models/{id}/test-embedding（向量化测试）、POST /api/models/{id}/test-rerank（重排序测试）</li>
+ *   <li>模型CRUD：POST /api/models（创建）、PUT /api/models/{id}（更新）、DELETE /api/models/{id}（删除）</li>
+ *   <li>模型操作：POST /api/models/{id}/toggle（启用/禁用切换）、POST /api/models/import（批量导入）</li>
+ *   <li>M4模型预置：GET /api/models/presets（列表）、POST /api/models/presets（创建）、
+ *       PUT /api/models/presets/{id}（更新）、DELETE /api/models/presets/{id}（删除）</li>
+ * </ul>
+ *
+ * <p>所有写操作通过 {@link com.fastrag.common.annotation.Loggable} 注解记录操作日志。
+ * 测试端点允许前端直接对模型发起对话、Embedding、Rerank请求以验证模型可用性。</p>
+ *
+ * @see com.fastrag.module.platform.service.ModelService
+ */
 import com.fastrag.common.response.ApiResponse; import com.fastrag.module.platform.service.ModelService;
 import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;
 import java.util.List; import java.util.Map;

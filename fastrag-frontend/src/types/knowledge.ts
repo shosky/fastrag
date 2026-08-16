@@ -14,6 +14,8 @@ export interface KnowledgeBase {
   type: '团队' | '个人'
   /** 是否自动构建知识图谱（默认关闭） */
   graphAutoBuild?: number
+  /** 知识图谱构建用 LLM 模型（parse strategy 未配置时的 fallback） */
+  graphLlmModel?: string
 }
 
 /** 文档信息 */
@@ -54,6 +56,8 @@ export interface KnowledgeBaseForm {
   splitMode: 'auto' | 'custom'
   /** 是否自动构建知识图谱 */
   graphAutoBuild?: boolean
+  /** 知识图谱构建用 LLM 模型 */
+  graphLlmModel?: string
   fileTypeConfig: FileTypeConfig
   retrievalConfig: RetrievalSettingConfig
 }
@@ -110,8 +114,14 @@ export interface RetrievalSettingConfig {
   fusionStrategy?: 'rrf' | 'weighted' | 'interleave'
 
   // ===== 上下文组装（可选，默认 concat）=====
-  /** 上下文组装策略 */
-  contextAssemblyStrategy?: 'concat' | 'parent_document' | 'window'
+  /**
+   * 上下文组装策略：
+   * - concat：直接返回命中的子分片
+   * - parent_chunk：命中子分片时返回其所属父分片（按标题聚合的章节），单层文档退化为返回自身
+   * - parent_document：返回命中分片所属的完整文档
+   * - window：返回命中分片及其前后 N 个相邻分片
+   */
+  contextAssemblyStrategy?: 'concat' | 'parent_chunk' | 'parent_document' | 'window'
   /** 窗口模式：命中 chunk 的前后 N 个 chunk */
   contextWindowSize?: number
   /** context 最大 token 数 */
@@ -206,6 +216,23 @@ export interface KnowledgeFile {
   parseStrategyId?: string
   /** 解析策略名称（用于显示） */
   parseStrategyName?: string
+  /** 当前绑定策略的高级配置（含文件级专属策略；分片策略设置对话框据此回填参数） */
+  parseStrategyAdvanced?: {
+    parse?: Record<string, unknown>
+    chunk?: {
+      strategy?: string
+      chunkLength?: number
+      overlap?: number
+      delimiters?: string[]
+      parentMaxChunkLength?: number
+      parentAggLevel?: string
+      semanticThreshold?: number
+      embeddingModel?: string
+      titlePrefix?: boolean
+      headingPath?: boolean
+    }
+    index?: Record<string, unknown>
+  }
   /** 切片数量 */
   chunkCount?: number
   /** 处理模式: chunk | qa */
@@ -235,8 +262,81 @@ export interface ProcessingConfig {
   keyframeInterval?: number
 }
 
-/** 解析策略类型 */
-export type ParseMethodType = 'default' | 'pptx' | 'pdf' | 'video' | 'audio'
+/** 解析策略类型（文档类型，与后端 ParseMethodRegistry 对齐） */
+export type ParseMethodType = 'default' | 'pdf' | 'doc' | 'docx' | 'pptx' | 'xlsx' | 'video' | 'audio' | 'image'
+
+/** 分片策略类型 */
+export type ChunkStrategyType = 'rule_fixed' | 'rule_recursive' | 'structure_aware' | 'semantic' | 'parent_child'
+
+/** 分片策略元信息 */
+export interface ChunkStrategyOption {
+  value: ChunkStrategyType
+  label: string
+  icon: string
+  description: string
+  tag: string
+}
+
+/** 分片策略选项列表 */
+export const CHUNK_STRATEGY_OPTIONS: ChunkStrategyOption[] = [
+  {
+    value: 'rule_fixed',
+    label: '固定大小切分',
+    icon: 'Grid',
+    description: '按字符/词/Token 数量固定切开，加入少量 Overlap。适合通用知识库。',
+    tag: '规则·固定',
+  },
+  {
+    value: 'rule_recursive',
+    label: '递归字符切分',
+    icon: 'Sort',
+    description: '优先按段落切，再退化到换行、句子、字符。适合通用知识库。',
+    tag: '规则·递归',
+  },
+  {
+    value: 'structure_aware',
+    label: '结构感知切片',
+    icon: 'Files',
+    description: '按 Markdown 标题、HTML DOM、PDF 版面、代码函数、表格、图片等结构切分，自动附加章节标题。',
+    tag: '结构感知',
+  },
+  {
+    value: 'semantic',
+    label: '语义切片',
+    icon: 'MagicStick',
+    description: '计算相邻句子的向量相似度，在语义突变处断开。适合长文本、叙事内容、高质量知识库。',
+    tag: '语义切片',
+  },
+  {
+    value: 'parent_child',
+    label: '父子切片',
+    icon: 'Share',
+    description: '子分片用于精确召回，父分片按标题自动聚合用于上下文生成。',
+    tag: '父子切片',
+  },
+]
+
+/** 策略标签颜色映射 */
+export const STRATEGY_TAG_TYPE_MAP: Record<ChunkStrategyType, string> = {
+  rule_fixed: 'info',
+  rule_recursive: 'info',
+  structure_aware: 'primary',
+  semantic: 'success',
+  parent_child: 'warning',
+}
+
+/** 策略值 → 元信息快速查找表 */
+export const STRATEGY_TYPE_MAP = Object.fromEntries(
+  CHUNK_STRATEGY_OPTIONS.map((opt) => [opt.value, opt]),
+) as Record<ChunkStrategyType, ChunkStrategyOption>
+
+/** 父分片聚合层级选项（仅 parent_child 策略使用） */
+export const PARENT_AGG_LEVEL_OPTIONS = [
+  { label: '一级标题（H1）', value: 'H1' },
+  { label: '二级标题（H2）', value: 'H2' },
+  { label: '三级标题（H3）', value: 'H3' },
+  { label: '自动（智能选择）', value: 'auto' },
+] as const
 
 /** 表格处理模式 */
 export type TableMode = 'structured' | 'markdown' | 'ignore'
@@ -245,21 +345,22 @@ export type TableMode = 'structured' | 'markdown' | 'ignore'
 export interface ParseStrategyParseConfig {
   /** 表格处理模式 */
   tableMode: TableMode
-  /** PPT 整页解析（每页作为完整单元） */
-  enablePptWholePage: boolean
-  /** 视频关键帧采样间隔（秒），仅 parseMethod=video/audio 生效 */
+  /** 视频关键帧采样间隔（秒），仅 parseMethod=video 生效（audio 走纯 ASR） */
   keyframeIntervalSeconds?: number | null
   /** 关键帧 pHash 哈希阈值 */
   keyframeHashThreshold?: number | null
-  /** AI 文档摘要（二期） */
-  enableDocSummary: boolean
 }
 
 /** 分片配置组 */
 export interface ParseStrategyChunkConfig {
-  /** 目标长度：段落累积至接近该值再落盘，超过才按句号切分 */
+  /** 分片策略类型 */
+  strategy: ChunkStrategyType
+  /**
+   * 子分片长度（父子分片模式下为子分片目标长度；
+   * 父分片按标题层级自动聚合，最大长度 = 该值 × 2，超过按子分片边界二次切分）
+   */
   chunkLength: number
-  /** 相邻 chunk 重叠字符数 */
+  /** 相邻子分片重叠字符数 */
   overlap: number
   /** content 内嵌 Markdown 标题前缀 */
   titlePrefix: boolean
@@ -267,6 +368,14 @@ export interface ParseStrategyChunkConfig {
   headingPath: boolean
   /** 纯文本兜底路径的分隔符 */
   delimiters: string[]
+  /** 父分片最大长度（仅 parent_child 策略生效），聚合后超过按句子边界二次切分 */
+  parentMaxChunkLength?: number
+  /** 父分片聚合标题层级（仅 parent_child 策略生效）：H1 / H2 / H3 / auto */
+  parentAggLevel?: 'H1' | 'H2' | 'H3' | 'auto'
+  /** 语义切片阈值（0~100，对应 0.0~1.0，仅 semantic 策略生效） */
+  semanticThreshold?: number
+  /** 语义切片 Embedding 模型 code（仅 semantic 策略生效，空 = 系统默认） */
+  embeddingModel?: string
 }
 
 /** 索引配置组 */
@@ -281,25 +390,28 @@ export interface ParseStrategyAdvanced {
   parse: ParseStrategyParseConfig
   /** 分片配置 */
   chunk: ParseStrategyChunkConfig
-  /** 索引配置 */
-  index: ParseStrategyIndexConfig
+  /** 索引配置（二期开放，一期后端固定策略消费，可省略） */
+  index?: ParseStrategyIndexConfig
 }
 
-/** 默认高级参数（与后端系统默认值对齐：chunkLength=2000, overlap=100） */
+/** 默认高级参数（与后端系统默认值对齐：子分片长度=1000, overlap=100, delimiters=["\n\n"]） */
 export const DEFAULT_ADVANCED: ParseStrategyAdvanced = {
   parse: {
     tableMode: 'structured',
-    enablePptWholePage: true,
     keyframeIntervalSeconds: null,
     keyframeHashThreshold: null,
-    enableDocSummary: false,
   },
   chunk: {
-    chunkLength: 2000,
+    strategy: 'rule_fixed',
+    chunkLength: 1000,
     overlap: 100,
     titlePrefix: true,
     headingPath: true,
-    delimiters: ['\n', '\n\n'],
+    delimiters: ['\n\n'],
+    parentMaxChunkLength: 2000,
+    parentAggLevel: 'auto' as const,
+    semanticThreshold: 30,
+    embeddingModel: '',
   },
   index: {
     embedFields: ['content', 'headingPath', 'fileName'],
@@ -334,10 +446,8 @@ export interface ParseStrategy {
   advanced?: ParseStrategyAdvanced
   /** 解析用 LLM 模型（智能分段、内容提取） */
   llmModel?: string
-  /** 解析用 VLM 模型（图片/表格理解） */
-  vlmModel?: string
-  /** 是否构建知识图谱 */
-  enableGraphBuild?: number
+  /** 引用该策略的未删除文件数（删除确认提示影响面：删除后这些文件回退自动匹配） */
+  fileCount?: number
 }
 
 /** 解析策略表单数据 */
@@ -350,25 +460,37 @@ export interface ParseStrategyForm {
   advanced?: ParseStrategyAdvanced
   /** 解析用 LLM 模型 */
   llmModel?: string
-  /** 解析用 VLM 模型 */
-  vlmModel?: string
-  /** 是否构建知识图谱 */
-  enableGraphBuild?: boolean
 }
 
-/** 解析方法类型选项 */
-export const PARSE_METHOD_OPTIONS: { label: string; value: ParseMethodType }[] = [
-  { label: '通用解析', value: 'default' },
-  { label: 'PPT解析', value: 'pptx' },
-  { label: 'PDF解析', value: 'pdf' },
-  { label: '视频解析', value: 'video' },
-  { label: '音频解析', value: 'audio' },
-]
+/** 解析方法元数据（文档类型，来自后端 /parse-strategies/meta，避免前后端口径漂移） */
+export interface ParseMethodMeta {
+  /** 方法代码（文档类型） */
+  code: ParseMethodType
+  /** 用户可见的类型名称 */
+  label: string
+  /** 该方法兼容的扩展名（带点，default 为预选文档类扩展名） */
+  extensions: string[]
+}
+
+/** 解析方法元数据接口响应 */
+export interface ParseStrategyMeta {
+  methods: ParseMethodMeta[]
+  /** 全部受支持扩展名（default 类型可选全集） */
+  supportedExtensions: string[]
+}
 
 /** 切片长度选项 */
 export const CHUNK_LENGTH_OPTIONS = [
-  { label: '2,000', value: 2000 },
   { label: '1,000', value: 1000 },
+  { label: '500', value: 500 },
+  { label: '200', value: 200 },
+  { label: '自定义', value: 0 },
+]
+
+/** 父子切片专用子分片长度预设（子分片用于向量精确召回，长度更小） */
+export const CHUNK_LENGTH_OPTIONS_PARENT_CHILD = [
+  { label: '100', value: 100 },
+  { label: '200', value: 200 },
   { label: '500', value: 500 },
   { label: '自定义', value: 0 },
 ]
@@ -379,36 +501,6 @@ export const DELIMITER_OPTIONS = [
   { label: '\\n\\n 换行符x2', value: '\n\n' },
   { label: '句号', value: '。' },
   { label: '分号', value: '；' },
-]
-
-/** 文件扩展名选项 */
-export const EXTENSION_OPTIONS = [
-  { label: '.pdf', value: '.pdf' },
-  { label: '.docx', value: '.docx' },
-  { label: '.doc', value: '.doc' },
-  { label: '.xlsx', value: '.xlsx' },
-  { label: '.xls', value: '.xls' },
-  { label: '.pptx', value: '.pptx' },
-  { label: '.ppt', value: '.ppt' },
-  { label: '.md', value: '.md' },
-  { label: '.txt', value: '.txt' },
-  { label: '.csv', value: '.csv' },
-  { label: '.jpg', value: '.jpg' },
-  { label: '.jpeg', value: '.jpeg' },
-  { label: '.png', value: '.png' },
-  { label: '.bmp', value: '.bmp' },
-  { label: '.tiff', value: '.tiff' },
-  { label: '.gif', value: '.gif' },
-  { label: '.mp3', value: '.mp3' },
-  { label: '.wav', value: '.wav' },
-  { label: '.m4a', value: '.m4a' },
-  { label: '.aac', value: '.aac' },
-  { label: '.ogg', value: '.ogg' },
-  { label: '.mp4', value: '.mp4' },
-  { label: '.avi', value: '.avi' },
-  { label: '.mov', value: '.mov' },
-  { label: '.mkv', value: '.mkv' },
-  { label: '.flv', value: '.flv' },
 ]
 
 /** 文件类型图标映射 */

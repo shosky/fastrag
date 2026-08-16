@@ -1,5 +1,31 @@
 package com.fastrag.module.graph.service.impl;
 
+/**
+ * 基准测试题目异步生成助手。
+ *
+ * <p>单独抽取为独立的Spring Bean，确保 {@link org.springframework.scheduling.annotation.Async} 注解
+ * 通过Spring AOP代理生效，避免在 {@link BenchmarkServiceImpl} 同类内部调用时异步机制失效的问题。</p>
+ *
+ * <p>核心职责：</p>
+ * <ul>
+ *   <li>根据构建方法（vector/graph）构建不同的LLM提示词</li>
+ *   <li>vector模式：基于知识库文档chunk生成问答对，LLM从文档片段中提取问题和答案</li>
+ *   <li>graph模式：基于知识图谱实体和关系生成问答对，LLM利用图谱结构信息出题</li>
+ *   <li>解析LLM返回的JSON格式题目数据，持久化到数据库</li>
+ *   <li>调用失败时自动重置基准测试的题目计数，避免前端显示误导信息</li>
+ * </ul>
+ *
+ * <p>关键实现细节：</p>
+ * <ul>
+ *   <li>使用流式收集+长超时（默认300s）避免外网API网络抖动导致的超时</li>
+ *   <li>输出上限设为8192 tokens，避免JSON截断</li>
+ *   <li>支持从model表解析自定义模型的API URL和Key，支持自定义路由</li>
+ *   <li>使用 {@link org.springframework.transaction.support.TransactionTemplate} 确保题目插入和计数更新的原子性</li>
+ * </ul>
+ *
+ * @see BenchmarkServiceImpl
+ * @see BenchmarkResponseParser
+ */
 import cn.hutool.json.JSONUtil;
 import com.fastrag.ai.llm.LlmService;
 import com.fastrag.module.graph.entity.KbBenchmark;

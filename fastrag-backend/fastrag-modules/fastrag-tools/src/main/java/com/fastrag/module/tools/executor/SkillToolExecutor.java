@@ -7,6 +7,18 @@ import org.springframework.stereotype.Component;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * 技能工具执行器。
+ *
+ * <p>Agent可调用的技能操作工具，提供技能的读取和激活功能。
+ * 实现 {@link ToolExecutor} 接口，type为"skill"。</p>
+ *
+ * <p>支持的工具操作：</p>
+ * <ul>
+ *   <li>read_skill - 读取指定技能的Markdown内容，包含技能元数据(name、slug、description)和详细说明</li>
+ *   <li>activate - 激活指定技能，返回激活成功信息及依赖项列表</li>
+ * </ul>
+ */
 @Slf4j
 @Component
 public class SkillToolExecutor implements ToolExecutor {

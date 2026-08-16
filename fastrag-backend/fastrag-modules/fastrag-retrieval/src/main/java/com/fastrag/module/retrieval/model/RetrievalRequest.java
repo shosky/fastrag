@@ -1,5 +1,23 @@
 package com.fastrag.module.retrieval.model;
 
+/**
+ * 知识检索请求模型。
+ *
+ * <p>封装检索请求的参数，包括知识库ID、查询文本和检索配置。
+ * 检索配置（{@link RetrievalConfig}）支持丰富的检索策略参数，
+ * 所有字段使用包装类型（可空），未传时不覆盖知识库已保存配置或系统默认值。</p>
+ *
+ * <h3>核心字段：</h3>
+ * <ul>
+ *   <li>{@code knowledgeId} - 目标知识库ID</li>
+ *   <li>{@code query} - 用户检索查询文本</li>
+ *   <li>{@code config} - 检索配置，包含检索模式、topK、阈值、预处理、多路召回、重排序、上下文组装等参数</li>
+ * </ul>
+ *
+ * <p>配置合并优先级：请求参数 > 知识库已保存配置 > 系统默认值</p>
+ *
+ * @see RetrievalConfig
+ */
 import lombok.Data;
 
 @Data

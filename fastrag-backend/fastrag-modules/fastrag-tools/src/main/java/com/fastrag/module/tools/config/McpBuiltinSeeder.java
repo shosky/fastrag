@@ -15,9 +15,22 @@ import java.util.Map;
 
 /**
  * MCP 内置服务种子数据初始化器。
- * <p>
- * 增量同步模式：内置服务列表硬编码在此，启动时与 DB 对比，
- * 不存在的创建，已存在的更新描述/配置（但不覆盖用户修改的 enabled 状态）。
+ *
+ * <p>实现 {@link CommandLineRunner}，在 Spring Boot 启动时自动执行，
+ * 将硬编码的内置 MCP 服务列表与数据库（{@code mcp_service} 表）进行增量同步。</p>
+ *
+ * <h3>核心实现逻辑：</h3>
+ * <ul>
+ *   <li>增量同步模式：启动时遍历 {@link #BUILTIN_SERVICES} 硬编码列表，逐个与 DB 对比</li>
+ *   <li>新建逻辑：slug + isBuiltin=1 查询无记录时执行 insert，设置 enabled 和 status=offline</li>
+ *   <li>更新逻辑：已有记录时更新 name/description/transport/command/args，
+ *       但<strong>不覆盖</strong>用户修改的 enabled、status、lastUsed 等字段</li>
+ * </ul>
+ *
+ * <p>当前内置服务包括：filesystem（文件系统）、fetch（网页抓取）、sequential-thinking（链式思维）。</p>
+ *
+ * @see McpService
+ * @see McpServiceMapper
  */
 @Slf4j
 @Component

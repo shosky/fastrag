@@ -1,5 +1,29 @@
 package com.fastrag.module.graph.service.impl;
 
+/**
+ * 基准测试服务实现类，实现 {@link com.fastrag.module.graph.service.BenchmarkService} 接口。
+ *
+ * <p>提供知识图谱基准测试的完整生命周期管理，包括手动创建、LLM自动生成和JSONL文件导入三种方式。</p>
+ *
+ * <p>核心业务逻辑：</p>
+ * <ul>
+ *   <li>手动创建：创建空的基准测试记录，后续可通过generate接口触发LLM自动生成题目</li>
+ *   <li>LLM自动生成：先创建基准测试记录，然后通过 {@link BenchmarkGenerationHelper} 异步调用LLM
+ *       生成题目，立即返回基准记录（不等待生成完成）。支持vector（基于文档chunk）和
+ *       graph（基于图谱实体/关系）两种生成模式</li>
+ *   <li>JSONL导入：解析JSONL格式文件内容，逐行提取question/goldChunks/goldAnswer字段，
+ *       批量插入题目并更新基准计数</li>
+ *   <li>删除：级联删除基准测试关联的所有题目记录</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：</p>
+ * <ul>
+ *   <li>通过 {@link BenchmarkGenerationHelper} 异步执行LLM题目生成</li>
+ *   <li>通过 {@link com.fastrag.module.publish.service.LogService} 记录操作日志</li>
+ * </ul>
+ *
+ * @see com.fastrag.module.graph.service.BenchmarkService
+ */
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.common.enums.ActionType;

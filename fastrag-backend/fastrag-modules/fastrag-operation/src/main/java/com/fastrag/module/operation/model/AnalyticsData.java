@@ -1,5 +1,25 @@
 package com.fastrag.module.operation.model;
 
+/**
+ * 知识库分析数据模型。
+ *
+ * <p>用于封装知识库维度的统计分析结果，作为 {@link com.fastrag.module.operation.controller.AnalyticsController}
+ * 的响应数据返回给前端。
+ *
+ * <p>包含三部分数据：
+ * <ul>
+ *     <li>metrics - 核心指标列表（总知识库数、总文档数、活跃文档数、知识引用率等）</li>
+ *     <li>hotKBs - 热门知识库排行（按文档数量排序 TOP 5）</li>
+ *     <li>hotDocs - 热门文档排行（按浏览量排序 TOP 5）</li>
+ * </ul>
+ *
+ * <p>内部嵌套类：
+ * <ul>
+ *     <li>{@link MetricItem} - 单个指标项，包含标签、数值、展示值和趋势信息</li>
+ *     <li>{@link HotKb} - 热门知识库项，包含排名、名称和文档数量</li>
+ *     <li>{@link HotDoc} - 热门文档项，包含排名、名称、所属知识库和浏览量</li>
+ * </ul>
+ */
 import lombok.Builder;
 import lombok.Data;
 import java.util.List;

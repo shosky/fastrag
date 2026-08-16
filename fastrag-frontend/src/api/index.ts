@@ -1,6 +1,6 @@
 import request from '@/utils/request'
 import type { GraphData, GraphStats, PprRankItem } from '@/types/evaluation'
-import type { GraphExpansionResult, ParseStrategy, ParseStrategyForm } from '@/types/knowledge'
+import type { GraphExpansionResult, ParseStrategy, ParseStrategyForm, ParseStrategyMeta } from '@/types/knowledge'
 
 // ===========================================================================
 // 首页 API
@@ -18,8 +18,6 @@ export async function getKbAnalytics() {
   return request.get('/analytics/kb')
 }
 import type {
-  GraphData,
-  GraphStats,
   Benchmark,
   BenchmarkQuestion,
   BenchmarkGenerateConfig,
@@ -129,7 +127,7 @@ export async function uploadFile(kbId: string, formData: FormData) {
   })
 }
 
-export async function processFile(kbId: string, fileId: string, config?: { processingMode?: string; qaConfig?: Record<string, unknown> }) {
+export async function processFile(kbId: string, fileId: string, config?: Record<string, unknown>) {
   return request.post(`/kb/${kbId}/files/${fileId}/process`, config)
 }
 
@@ -169,10 +167,38 @@ export async function getFileProcessingStatus(kbId: string, fileId: string) {
   return request.get(`/kb/${kbId}/files/${fileId}/processing-status`)
 }
 
-export async function previewFileChunks(kbId: string, fileId: string, strategyId?: string) {
-  return request.get(`/kb/${kbId}/files/${fileId}/preview`, {
-    params: strategyId ? { strategyId } : undefined,
-  })
+export async function previewFileChunks(
+  kbId: string,
+  fileId: string,
+  strategyId?: string,
+  customConfig?: { parseMethod?: string; advanced?: Record<string, unknown> },
+) {
+  const params: Record<string, string> = {}
+  if (strategyId) params.strategyId = strategyId
+  // 自定义临时策略预览（未落库）：{parseMethod, advanced}，非空时优先于 strategyId
+  if (customConfig && (customConfig.parseMethod || customConfig.advanced)) {
+    params.customConfig = JSON.stringify(customConfig)
+  }
+  return request.get(`/kb/${kbId}/files/${fileId}/preview`, { params: Object.keys(params).length ? params : undefined })
+}
+
+/**
+ * 保存文件级专属自定义解析/分片策略并重新分片（原子完成）。
+ * body 结构同解析策略表单：name/description/parseMethod/extensions/advanced/llmModel
+ */
+export async function saveFileStrategy(
+  kbId: string,
+  fileId: string,
+  data: {
+    name?: string
+    description?: string
+    parseMethod: string
+    extensions: string[]
+    advanced?: Record<string, unknown>
+    llmModel?: string
+  },
+) {
+  return request.post(`/kb/${kbId}/files/${fileId}/strategy`, data)
 }
 
 export async function downloadFile(kbId: string, fileId: string) {
@@ -245,6 +271,14 @@ export async function batchDeleteChunks(kbId: string, ids: string[]) {
   return request.post(`/kb/${kbId}/chunks/batch-delete`, ids)
 }
 
+/**
+ * 重新分片：删除旧分片与向量后重跑 解析→分片→向量化。
+ * @param config.strategyId 三态：缺省=沿用当前绑定；非空 id=换绑重切；空串=清除覆盖回自动匹配重切
+ */
+export async function reChunkFile(kbId: string, fileId: string, config?: { strategyId?: string }) {
+  return request.post(`/kb/${kbId}/files/${fileId}/re-chunk`, config)
+}
+
 // ===========================================================================
 // QA 对 API
 // ===========================================================================
@@ -275,6 +309,11 @@ export async function confirmQaPair(kbId: string, id: string) {
 
 export async function fetchParseStrategyTemplates() {
   return request.get('/parse-strategy-templates')
+}
+
+/** 解析方法（文档类型）元数据：类型 ↔ 扩展名 的唯一权威映射，来自后端 ParseMethodRegistry */
+export async function getParseStrategyMeta(): Promise<ParseStrategyMeta> {
+  return request.get('/parse-strategies/meta')
 }
 
 export async function fetchStrategies(kbId: string): Promise<ParseStrategy[]> {
@@ -346,8 +385,18 @@ export async function applyQueryRules(query: string): Promise<string> {
 // 知识图谱 API
 // ===========================================================================
 
-export async function fetchGraphData(kbId: string): Promise<GraphData> {
-  return request.get(`/kb/${kbId}/graph`)
+export async function fetchGraphData(kbId: string, excludeChunks: boolean = true): Promise<GraphData> {
+  return request.get(`/kb/${kbId}/graph`, { params: { excludeChunks } })
+}
+
+/** 图谱邻居展开（检索增强）：以实体为种子展开 1-2 跳子图 */
+export async function expandGraphSubgraph(
+  kbId: string,
+  query: string,
+  depth: number = 2,
+  maxEntities: number = 20,
+): Promise<GraphData> {
+  return request.post(`/graph/expand`, { kbId, query, depth, maxEntities })
 }
 
 export async function fetchGraphStats(kbId: string): Promise<GraphStats> {
@@ -362,8 +411,8 @@ export async function getGraphIndexStatus(kbId: string) {
   return request.get(`/kb/${kbId}/graph/index`)
 }
 
-export async function buildGraphIndex(kbId: string) {
-  return request.post(`/kb/${kbId}/graph/index/build`)
+export async function buildGraphIndex(kbId: string, fileIds?: string[], mode?: string) {
+  return request.post(`/kb/${kbId}/graph/index/build`, fileIds ? { fileIds, mode: mode || 'full' } : undefined)
 }
 
 export async function getGraphBuildStatus(kbId: string) {
@@ -513,8 +562,12 @@ export async function rejectReview(reviewId: string, reason?: string) {
 // 日志 API
 // ===========================================================================
 
-export async function getKbLogs(kbId: string, params?: { category?: string; page?: number; pageSize?: number }) {
+export async function getKbLogs(kbId: string, params?: { category?: string; keyword?: string; page?: number; pageSize?: number }) {
   return request.get(`/kb/${kbId}/logs`, { params })
+}
+
+export async function getKbLogStats(kbId: string) {
+  return request.get(`/kb/${kbId}/logs/stats`)
 }
 
 export async function getKbUpdateLogs(kbId: string, params?: { type?: string; page?: number; pageSize?: number }) {

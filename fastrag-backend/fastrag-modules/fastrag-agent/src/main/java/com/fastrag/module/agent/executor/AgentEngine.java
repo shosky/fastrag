@@ -15,6 +15,7 @@ import com.fastrag.module.tools.executor.*;
 import com.fastrag.module.tools.registry.ToolDefinition;
 import com.fastrag.module.tools.registry.ToolRegistry;
 import lombok.RequiredArgsConstructor;
+import org.springframework.beans.factory.annotation.Value;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -27,14 +28,44 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.function.Consumer;
 
 /**
- * 智能体核心引擎（替代 AgentExecutor）。
- * 统一的流式执行引擎，支持工具调用循环 + 中间件链 + thinking 提取 + SSE 事件推送。
+ * 智能体核心执行引擎，统一的流式/同步执行引擎，支持工具调用循环、中间件链、thinking提取和SSE事件推送。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>实现Agent的核心执行循环：调用LLM -> 解析工具调用 -> 执行工具 -> 将结果反馈LLM -> 重复直到获得最终回答</li>
+ *   <li>在执行前后集成中间件链，实现工具注册、上下文增强、响应拦截等横切关注点</li>
+ *   <li>支持流式执行（SSE推送）和同步执行（返回AgentResult）两种模式</li>
+ *   <li>提取LLM的thinking内容（如DeepSeek/Qwen3的思考过程）并单独推送</li>
+ *   <li>处理工具调用失败的场景（连续失败超过3次时注入系统提示要求LLM停止重试）</li>
+ * </ul></p>
  *
  * <p>两种执行模式：
  * <ul>
- *   <li>{@link #executeStream} — 流式执行（应用对话场景），通过 SseEmitter 推送事件</li>
- *   <li>{@link #executeSync} — 同步执行（Agent 场景），返回 AgentResult</li>
- * </ul>
+ *   <li>executeStream - 流式执行，用于应用对话场景，通过SseEmitter实时推送事件（init/message/thinking/tool_call/tool_result/end/error等）</li>
+ *   <li>executeSync - 同步执行，用于Agent/子Agent场景，返回AgentResult对象，事件记录到RunEventPublisher</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>执行流程：解析工具定义 -> 构建消息列表 -> 前置中间件（注册新工具）-> LLM调用循环（最多MAX_ITERATIONS=15轮）-> 后置中间件 -> 工具执行</li>
+ *   <li>工具执行：参数解析 -> JSON Schema验证 -> 查找ToolExecutor -> 执行 -> 截断输出到5000字符反馈给LLM</li>
+ *   <li>中间件拦截：通过AgentMiddlewareChain.getToolCallInterceptor检查是否有中间件要拦截工具调用（如SubAgentMiddleware拦截task工具）</li>
+ *   <li>流式消费：使用CountDownLatch阻塞等待Flux流完成，分类处理THINKING/CONTENT/TOOL_CALL_DELTA/FINISH事件</li>
+ *   <li>JSON修复：当LLM生成包含未转义双引号的无效JSON参数时，自动尝试修复</li>
+ *   <li>到达最大迭代次数时返回兜底提示信息</li>
+ * </ul></p>
+ *
+ * <p>与其他模块的交互：
+ * <ul>
+ *   <li>依赖LlmService（fastrag-ai模块）进行LLM调用</li>
+ *   <li>依赖ToolRegistry和ToolExecutorFactory（fastrag-tools模块）进行工具解析和执行</li>
+ *   <li>依赖AgentMiddlewareChain执行中间件链</li>
+ *   <li>依赖RunEventPublisher记录运行事件</li>
+ * </ul></p>
+ *
+ * @see AgentMiddlewareChain 中间件链
+ * @see AgentResult 同步执行结果
+ * @see LlmStreamResult 流式执行结果
  */
 @Slf4j
 @Component
@@ -48,8 +79,12 @@ public class AgentEngine {
     private final AgentMiddlewareChain middlewareChain;
     private final ObjectMapper objectMapper;
 
-    /** @Value("${llm.gateway.timeout:30}") */
+    @Value("${ai.gateway.timeout:30}")
     private int gatewayTimeoutSeconds = 30;
+
+    /** 单次 LLM 流式调用最大等待时长（秒）；需小于 SSE emitter 超时（默认 5 分钟） */
+    @Value("${ai.gateway.stream-timeout:240}")
+    private long streamTimeoutSeconds;
 
     /** 最大工具调用轮次 */
     private static final int MAX_ITERATIONS = 15;
@@ -533,8 +568,8 @@ public class AgentEngine {
                 () -> latch.countDown()
         );
 
-        // 阻塞等待流完成
-        long timeout = Math.max(60L, (long) gatewayTimeoutSeconds * 3);
+        // 阻塞等待流完成（长回答/推理模型可能超过 90s，使用独立流式超时配置）
+        long timeout = streamTimeoutSeconds > 0 ? streamTimeoutSeconds : Math.max(60L, (long) gatewayTimeoutSeconds * 3);
         boolean completed = latch.await(timeout, TimeUnit.SECONDS);
 
         if (!completed) {

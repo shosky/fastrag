@@ -1,5 +1,23 @@
 package com.fastrag.module.knowledge.controller;
 
+/**
+ * 文档分片（Chunk）管理控制器，提供分片的 CRUD 和批量操作 REST API。
+ *
+ * <p>核心职责：管理知识库中文档经分块处理后的 Chunk 数据，支持手动创建、编辑、删除和批量删除。
+ *
+ * <p>提供的 REST API 端点（基础路径 {@code /api/kb/{kbId}/chunks}）：
+ * <ul>
+ *   <li>{@code GET /} — 分页列出指定知识库（可选按 fileId 过滤）的分片列表（viewer 权限）</li>
+ *   <li>{@code GET /count} — 获取知识库的分片总数（viewer 权限）</li>
+ *   <li>{@code GET /{id}} — 获取单个分片详情（viewer 权限）</li>
+ *   <li>{@code POST /} — 新建分片（editor 权限）</li>
+ *   <li>{@code PUT /{id}} — 更新分片内容（editor 权限）</li>
+ *   <li>{@code DELETE /{id}} — 删除单个分片（editor 权限）</li>
+ *   <li>{@code POST /batch-delete} — 批量删除分片（editor 权限）</li>
+ * </ul>
+ *
+ * <p>所有端点均通过 {@link KbAuth} 注解进行知识库级别的权限校验。
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.KBRole;

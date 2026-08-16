@@ -1,5 +1,33 @@
 package com.fastrag.ai.rerank;
 
+/**
+ * Rerank（重排序）服务，负责对候选文档按与查询的相关性进行精排。
+ *
+ * <p>本服务调用兼容 Cohere / Jina 格式的 Rerank API（POST /v1/rerank），
+ * 在 RAG 检索流程中作为"粗检索后的精排"环节使用，通过语义相关性模型
+ * 对初步召回的文档进行重新排序，提升检索精度。</p>
+ *
+ * <p>核心能力：
+ * <ul>
+ *   <li>文档重排序（{@link #rerank}），支持指定返回 top N 条结果</li>
+ *   <li>动态 API 路由（支持自定义 API 地址和密钥）</li>
+ * </ul>
+ *
+ * <p>实现细节：
+ * <ul>
+ *   <li>注入 {@link com.fastrag.ai.config.AiGatewayConfig} 创建的 aiWebClient 和 aiHttpClient</li>
+ *   <li>默认走 AI 网关的相对路径（/v1/rerank），支持动态路由到外部 API</li>
+ *   <li>请求体格式：{@code {"model":"...", "query":"...", "documents":[...], "top_n":N}}</li>
+ *   <li>响应体格式：{@code {"results":[{"index":0, "relevance_score":0.95}, ...]}}</li>
+ *   <li>结果按 relevance_score 降序排列后返回</li>
+ *   <li>与 EmbeddingService 相同，请求体使用 JsonMapper 启用 ESCAPE_NON_ASCII，
+ *       将中文转义为 Unicode 序列以兼容 SiliconFlow 网关</li>
+ *   <li>请求超时 60 秒</li>
+ * </ul>
+ *
+ * <p>依赖：aiWebClient（默认网关客户端）、aiHttpClient（代理 HTTP 客户端）、
+ * ObjectMapper（JSON 序列化）</p>
+ */
 import com.fasterxml.jackson.core.json.JsonWriteFeature;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;

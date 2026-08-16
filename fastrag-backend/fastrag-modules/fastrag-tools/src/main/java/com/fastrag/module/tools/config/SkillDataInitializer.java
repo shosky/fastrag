@@ -25,9 +25,25 @@ import java.util.Map;
 
 /**
  * 内置技能种子数据初始化器。
- * 从 classpath:builtin-skills/ 目录下扫描 SKILL.md 文件，
- * 解析后与数据库对比，增量同步内置技能，
- * 同时将整个技能目录（含 references/ scripts/）复制到运行时数据目录。
+ *
+ * <p>实现 {@link CommandLineRunner}，在 Spring Boot 启动时自动执行，
+ * 从 classpath {@code builtin-skills/} 目录下扫描所有子目录的 {@code SKILL.md} 文件，
+ * 通过 {@link SkillMarkdownParser} 解析后与数据库（{@code skill} 表）进行增量同步。</p>
+ *
+ * <h3>核心实现逻辑：</h3>
+ * <ul>
+ *   <li>资源扫描：使用 {@link PathMatchingResourcePatternResolver} 匹配
+ *       {@code classpath:builtin-skills/&#42;/SKILL.md}，加载每个技能目录的 SKILL.md 内容</li>
+ *   <li>内容哈希：对 SKILL.md 做 MD5 摘要，若哈希一致则跳过更新（避免无变化写入）</li>
+ *   <li>增量同步：slug 查询无记录时 insert（标记 builtin+recommended），
+ *       已有记录且哈希变化时 update（保留 enabled、shareConfig 等用户可修改字段）</li>
+ *   <li>文件复制：将整个技能目录（SKILL.md + references/ + scripts/）复制到
+ *       {@code ${fastrag.data-dir}/skills/{slug}/} 运行时数据目录，供技能执行时引用</li>
+ * </ul>
+ *
+ * @see Skill
+ * @see SkillMapper
+ * @see SkillMarkdownParser
  */
 @Slf4j
 @Component

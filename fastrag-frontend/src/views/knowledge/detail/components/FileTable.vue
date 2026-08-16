@@ -24,7 +24,7 @@ const emit = defineEmits<{
   (e: 'move', file: KnowledgeFile): void
   (e: 'rename', file: KnowledgeFile): void
   (e: 'copy', file: KnowledgeFile): void
-  (e: 'changeStrategy', file: KnowledgeFile, strategyId: string, strategyName: string): void
+  (e: 'changeStrategy', file: KnowledgeFile): void
   (e: 'toggleGraphBuild', file: KnowledgeFile, enabled: boolean): void
   (e: 'enterFolder', folderId: string): void
   (e: 'renameFolder', folderId: string, label: string): void
@@ -184,12 +184,14 @@ function handleCommand(command: Command, file: KnowledgeFile) {
   }
 }
 
-// 修改策略
-function handleChangeStrategy(file: KnowledgeFile, strategyId: string) {
-  const s = props.strategies?.find((x) => x.id === strategyId)
-  if (s) {
-    emit('changeStrategy', file, s.id, s.name)
-  }
+// 换策略入口：QA 模式文件不受分片策略影响，处理中/回收站文件由对话框内守卫与后端兜底
+function canChangeStrategy(file: KnowledgeFile): boolean {
+  return file.processingMode !== 'qa'
+}
+
+// 点击策略 tag → 打开「换策略重新分片」对话框（由 FileManager 承载）
+function handleChangeStrategy(file: KnowledgeFile) {
+  emit('changeStrategy', file)
 }
 
 // 切换知识图谱开关
@@ -324,37 +326,21 @@ function handleFolderCommand(cmd: string, folder: FolderRow) {
         </template>
       </el-table-column>
 
-      <!-- Parse strategy column -->
+      <!-- Parse strategy column：点击打开「换策略重新分片」对话框（ADR-0001：绑定变更与重切原子完成） -->
       <el-table-column label="处理策略" width="160" align="center">
         <template #default="{ row }">
           <span v-if="row.isFolder" class="file-table__no-data">-</span>
           <template v-else>
-          <el-dropdown
+          <el-tag
             v-if="row.parseStrategyName"
-            trigger="click"
-            @command="(cmd: string) => handleChangeStrategy(row as KnowledgeFile, cmd)"
+            :type="isDefaultStrategy(row as KnowledgeFile) ? 'info' : 'primary'"
+            size="small"
+            :class="['file-table__strategy-tag', { 'is-clickable': canChangeStrategy(row as KnowledgeFile) }]"
+            @click="canChangeStrategy(row as KnowledgeFile) && handleChangeStrategy(row as KnowledgeFile)"
           >
-            <el-tag
-              :type="isDefaultStrategy(row as KnowledgeFile) ? 'info' : 'primary'"
-              size="small"
-              class="file-table__strategy-tag"
-            >
-              {{ row.parseStrategyName }}
-              <el-icon class="file-table__strategy-caret"><Setting /></el-icon>
-            </el-tag>
-            <template #dropdown>
-              <el-dropdown-menu>
-                <el-dropdown-item
-                  v-for="s in strategies"
-                  :key="s.id"
-                  :command="s.id"
-                >
-                  {{ s.name }}
-                  <el-tag v-if="s.isDefault" size="small" type="info" class="file-table__default-tag">默认</el-tag>
-                </el-dropdown-item>
-              </el-dropdown-menu>
-            </template>
-          </el-dropdown>
+            {{ row.parseStrategyName }}
+            <el-icon v-if="canChangeStrategy(row as KnowledgeFile)" class="file-table__strategy-caret"><Setting /></el-icon>
+          </el-tag>
           <span v-else class="file-table__no-strategy">未设置</span>
           </template>
         </template>
@@ -591,10 +577,18 @@ function handleFolderCommand(cmd: string, folder: FolderRow) {
   }
 
   &__strategy-tag {
-    cursor: pointer;
+    cursor: default;
     display: inline-flex;
     align-items: center;
     gap: 2px;
+
+    &.is-clickable {
+      cursor: pointer;
+
+      &:hover {
+        opacity: 0.8;
+      }
+    }
   }
 
   &__strategy-caret {

@@ -11,6 +11,19 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * 系统审计日志服务实现类。
+ *
+ * <p>负责系统审计日志的查询和写入操作。审计日志记录用户在系统中执行的关键操作，
+ * 用于安全审计和操作追溯。支持按模块过滤查询，默认返回最近100条记录。</p>
+ *
+ * <p>核心功能：</p>
+ * <ul>
+ *   <li>list - 按模块过滤查询审计日志，支持自定义limit，按时间倒序排列</li>
+ *   <li>addLog - 写入审计日志记录，包含操作用户、模块、操作类型、目标、详情、IP、状态等信息；
+ *       写入失败仅记录warn日志，不阻断业务流程</li>
+ * </ul>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

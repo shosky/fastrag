@@ -1,5 +1,44 @@
 package com.fastrag.module.graph.service.impl;
 
+/**
+ * 评测执行异步助手。
+ *
+ * <p>单独抽取为独立的Spring Bean，确保 {@link org.springframework.scheduling.annotation.Async} 注解
+ * 通过Spring AOP代理生效，避免在 {@link EvaluationServiceImpl} 同类内部调用时异步机制失效的问题。</p>
+ *
+ * <p>核心职责：异步执行评测任务的完整流程——从基准测试题目中逐题进行检索、生成答案、评判正确性，
+ * 最终汇总生成评测报告。评测结果包括检索召回率（Recall@1/3/5/10）和答案准确率。</p>
+ *
+ * <p>性能优化策略：</p>
+ * <ul>
+ *   <li>批量Embedding：所有题目一次性向量化，减少HTTP往返次数</li>
+ *   <li>并行处理：多题并发检索+生成，使用Semaphore限制最大并发数为4，避免API限流</li>
+ *   <li>合并LLM调用：答案生成与评判合并为一次API调用，减少50%的LLM请求量。
+ *       输出格式精简为最小JSON结构以降低token消耗</li>
+ * </ul>
+ *
+ * <p>评测流程：</p>
+ * <ol>
+ *   <li>从基准测试加载所有题目</li>
+ *   <li>批量向量化所有查询文本</li>
+ *   <li>并行处理每道题目：检索相关chunk（支持vector/hybrid/fulltext三种检索模式），
+ *       计算Recall@K指标，调用LLM生成答案并评判正确性</li>
+ *   <li>聚合所有题目的指标，计算综合评测分数（Recall@10 * 0.7 + answerAccuracy * 0.3）</li>
+ *   <li>批量写入评测结果并更新评测任务状态为completed</li>
+ * </ol>
+ *
+ * <p>降级策略：LLM调用超时或失败时，自动降级为基于规则评判（关键数字命中率和关键词命中率匹配）。</p>
+ *
+ * <p>与其他模块的交互：</p>
+ * <ul>
+ *   <li>{@link com.fastrag.ai.llm.LlmService} - LLM答案生成和评判</li>
+ *   <li>{@link com.fastrag.ai.embedding.EmbeddingService} - 文本向量化</li>
+ *   <li>{@link com.fastrag.infra.milvus.MilvusService} - 向量检索</li>
+ *   <li>{@link com.fastrag.ai.rerank.RerankService} - Rerank重排序</li>
+ * </ul>
+ *
+ * @see EvaluationServiceImpl
+ */
 import com.fastrag.ai.embedding.EmbeddingService;
 import com.fastrag.ai.llm.LlmService;
 import com.fastrag.ai.rerank.RerankService;

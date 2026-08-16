@@ -1,4 +1,26 @@
 package com.fastrag.module.knowledge.controller;
+/**
+ * 解析策略管理控制器，提供知识库级别的解析策略 CRUD 与冲突检测 REST API。
+ *
+ * <p>核心职责：
+ * 管理知识库的文档解析策略（ParseStrategy），包括策略的创建、修改、删除、
+ * 设为默认策略、按文件扩展名解析匹配策略以及检测扩展名冲突。所有写操作
+ * 均通过 KbAuth 限制为 editor 及以上角色，并记录审计日志。
+ *
+ * <p>REST 端点（基础路径 /api/kb/{kbId}/parse-strategies）：
+ * <ul>
+ *   <li>GET    /                   — 查询该知识库下所有解析策略列表（viewer 及以上）</li>
+ *   <li>GET    /{id}               — 获取单个解析策略详情（viewer 及以上）</li>
+ *   <li>POST   /                   — 创建解析策略（editor 及以上）</li>
+ *   <li>PUT    /{id}               — 更新解析策略（editor 及以上）</li>
+ *   <li>DELETE /{id}               — 删除解析策略（editor 及以上）</li>
+ *   <li>POST   /{id}/set-default   — 将指定策略设为默认解析策略（editor 及以上）</li>
+ *   <li>GET    /resolve             — 按文件扩展名解析匹配策略（viewer 及以上）</li>
+ *   <li>POST   /conflicts          — 检测扩展名冲突，传入扩展名列表和排除 ID（editor 及以上）</li>
+ * </ul>
+ *
+ * <p>依赖服务：ParseStrategyService（策略业务逻辑）、LogService（操作审计日志）。
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.KBRole;

@@ -1,4 +1,22 @@
 package com.fastrag.module.retrieval.service.impl;
+
+/**
+ * 知识库更新提醒服务实现。
+ *
+ * <p>实现 {@link UpdateRemindService} 接口，管理知识库的定时更新提醒功能。</p>
+ *
+ * <h3>核心实现逻辑：</h3>
+ * <ul>
+ *   <li>配置管理：支持新增和更新提醒配置，新增时默认启用且 cron 为 "0 9 * * *"</li>
+ *   <li>触发提醒：查询自上次提醒时间以来的 {@code kb_update_log} 更新条数，
+ *       同时更新 lastRemindAt 时间戳。若无提醒配置记录则返回默认状态</li>
+ * </ul>
+ *
+ * <p>与 publish 模块交互：通过 {@link KbUpdateLogMapper} 查询实际更新日志条数。</p>
+ *
+ * @see UpdateRemindService
+ * @see KbUpdateRemindMapper
+ */
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.publish.entity.KbUpdateLog;
 import com.fastrag.module.publish.mapper.KbUpdateLogMapper;

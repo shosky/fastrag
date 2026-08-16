@@ -1,5 +1,6 @@
 package com.fastrag.module.retrieval.service.impl;
 
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.embedding.EmbeddingService;
@@ -41,10 +42,46 @@ import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 /**
- * 检索服务实现
+ * 检索服务实现 —— RAG 系统核心检索引擎。
  *
- * <p>支持三种检索模式：vector（向量）、fulltext（全文）、hybrid（混合 RRF 融合）。</p>
- * <p>同时支持多路召回、查询预处理、重排序、MMR 多样性、上下文组装等能力。</p>
+ * <p>实现 {@link RetrievalService} 接口，是知识库检索的完整执行链路，涵盖从查询预处理、
+ * 多路召回、融合排序、后处理到上下文组装的全流程。</p>
+ *
+ * <h3>支持的检索模式：</h3>
+ * <ul>
+ *   <li><b>vector</b>：纯向量检索（Milvus COSINE 近似搜索），失败时降级为 MySQL LIKE</li>
+ *   <li><b>fulltext</b>：全文检索（MySQL FULLTEXT 索引），失败时降级为 MySQL LIKE</li>
+ *   <li><b>hybrid</b>：混合检索，向量 + 全文双路召回后加权融合（默认模式）</li>
+ * </ul>
+ *
+ * <h3>核心处理流程（Phase 1-7）：</h3>
+ * <ol>
+ *   <li>Phase 3 - 查询预处理：自动纠错、查询改写（规则）、同义词扩展（可选）</li>
+ *   <li>Phase 2 - 核心检索分发：根据 mode 选择 vector/fulltext/hybrid，或进入多路召回模式</li>
+ *   <li>Phase 5 - 多路召回 + 融合：支持 RRF（Reciprocal Rank Fusion）、加权融合、交叉融合三种策略，
+ *       召回通道包括向量、全文、QA 问答对、图谱子图（GraphStore 实体匹配 + 邻居 LIKE）</li>
+ *   <li>图谱通道（方案 A）：独立召回通道，通过 NER + 向量语义双路匹配实体，再 LIKE 召回关联 chunk，
+ *       与主检索结果 RRF 融合（不将实体名拼入 query 避免稀释 embedding）</li>
+ *   <li>Phase 4 - 后处理：Rerank 模型重排、LLM 重排、MMR 多样性控制（可选）</li>
+ *   <li>Phase 6 - 上下文组装：支持 concat（直接拼接）、parent_document（父文档整篇）、
+ *       window（前后 N 个 chunk 窗口）三种策略</li>
+ *   <li>Phase 7 - 配置加载与合并：优先级为 请求参数 &gt; 知识库保存配置 &gt; 系统默认值</li>
+ * </ol>
+ *
+ * <h3>关键依赖：</h3>
+ * <ul>
+ *   <li>{@link MilvusService}：向量相似度搜索</li>
+ *   <li>{@link EmbeddingService}：查询文本向量化</li>
+ *   <li>{@link RerankService}：Rerank 模型重排序</li>
+ *   <li>{@link QueryEnhanceService}：NER 实体识别、图谱扩展、同义词扩展、查询改写</li>
+ *   <li>{@link GraphStore}：知识图谱实体存储与向量搜索</li>
+ * </ul>
+ *
+ * <p>额外能力：权限校验（Redis kb:acl 缓存）、内容去重、检索日志双写（KbRetrievalLog + KbLog）。</p>
+ *
+ * @see RetrievalService
+ * @see RetrievalRequest
+ * @see SearchResultItem
  */
 @Slf4j
 @Service
@@ -171,10 +208,11 @@ public class RetrievalServiceImpl implements RetrievalService {
             }
         }
 
-        // ---- 统一设置结果序号 ----
+        // ---- 统一设置结果序号 + 填充来源文件名 ----
         for (int i = 0; i < results.size(); i++) {
             results.get(i).setIndex(i);
         }
+        resolveFileNames(results);
 
         log.info("[Retrieval] ====== Search done kb={}, query='{}', results={}, elapsed={}ms ======",
                 kbId, originalQuery, results.size(), System.currentTimeMillis() - startMs);
@@ -198,7 +236,8 @@ public class RetrievalServiceImpl implements RetrievalService {
         return chunkMapper.selectCount(
                 new LambdaQueryWrapper<KbChunk>()
                         .eq(KbChunk::getKbId, kbId)
-                        .in(KbChunk::getFileId, activeFileIds));
+                        .in(KbChunk::getFileId, activeFileIds)
+                        .ne(KbChunk::getChunkType, "parent"));
     }
 
     // ========================================================================
@@ -616,6 +655,7 @@ public class RetrievalServiceImpl implements RetrievalService {
                 List<KbChunk> chunks = chunkMapper.selectList(
                         new LambdaQueryWrapper<KbChunk>()
                                 .eq(KbChunk::getKbId, kbId)
+                                .ne(KbChunk::getChunkType, "parent")
                                 .like(KbChunk::getContent, name)
                                 .last("LIMIT " + Math.max(count / Math.max(nameList.size(), 1), 1)));
                 for (KbChunk chunk : chunks) {
@@ -976,10 +1016,50 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
 
         return switch (strategy) {
+            case "parent_chunk" -> assembleParentChunk(results);
             case "parent_document" -> assembleParentDocument(results);
             case "window" -> assembleWindow(results, config);
             default -> results;
         };
+    }
+
+    /**
+     * 父分片模式（parent_chunk）：命中子分片（parentId 非空）时返回其所属父分片作为上下文；
+     * 命中单层分片（无父分片）时退化为返回自身。父分片不参与召回（未向量化、全文检索排除），
+     * 仅作为命中后的上下文放大。
+     */
+    private List<SearchResultItem> assembleParentChunk(List<SearchResultItem> results) {
+        List<SearchResultItem> assembled = new ArrayList<>();
+        for (SearchResultItem hit : results) {
+            if (hit.getParentId() == null || hit.getParentId().isBlank()) {
+                assembled.add(hit);
+                continue;
+            }
+            KbChunk parent = chunkMapper.selectById(hit.getParentId());
+            if (parent == null || parent.getContent() == null || parent.getContent().isBlank()) {
+                assembled.add(hit);
+                continue;
+            }
+            SearchResultItem item = new SearchResultItem();
+            item.setIndex(hit.getIndex());
+            item.setContent(parent.getContent());
+            item.setFileId(hit.getFileId());
+            item.setChunkIndex(hit.getChunkIndex());   // 保留命中的子分片位置
+            item.setParentId(hit.getParentId());
+            item.setSimilarity(hit.getSimilarity());
+            item.setDistance(hit.getDistance());
+            item.setSource(hit.getSource());
+            item.setChannel(hit.getChannel());
+            // 父分片内容预览
+            String content = parent.getContent();
+            if (content.length() > 200) {
+                item.setPreviewSnippet(content.substring(0, 200) + "...");
+            } else {
+                item.setPreviewSnippet(content);
+            }
+            assembled.add(item);
+        }
+        return assembled;
     }
 
     /**
@@ -1084,10 +1164,13 @@ public class RetrievalServiceImpl implements RetrievalService {
         item.setContent(chunk.getContent());
         item.setFileId(chunk.getFileId());
         item.setChunkIndex(chunk.getChunkIndex() != null ? chunk.getChunkIndex() : 0);
+        item.setParentId(chunk.getParentId());
         item.setSimilarity(similarity);
         item.setDistance(distance);
         item.setSource(source);
         item.setChannel(channel);
+        item.setChunkType(chunk.getChunkType());
+        item.setImageKeys(parseImageKeys(chunk.getImageKeys()));
         // 截取前 200 字作为预览
         String content = chunk.getContent();
         if (content != null && content.length() > 200) {
@@ -1096,6 +1179,17 @@ public class RetrievalServiceImpl implements RetrievalService {
             item.setPreviewSnippet(content);
         }
         return item;
+    }
+
+    /** 解析 chunk.imageKeys JSON 数组字符串为 List */
+    private List<String> parseImageKeys(String imageKeysJson) {
+        if (StrUtil.isBlank(imageKeysJson)) return null;
+        try {
+            return JSONUtil.toList(imageKeysJson, String.class);
+        } catch (Exception e) {
+            log.warn("[parseImageKeys] Failed to parse imageKeys: {}", imageKeysJson);
+            return null;
+        }
     }
 
     /** 获取知识库的嵌入模型完整配置（模型名 + API地址 + 密钥） */
@@ -1135,6 +1229,29 @@ public class RetrievalServiceImpl implements RetrievalService {
         } catch (Exception e) {
             log.warn("[isFileDeleted] Check failed for fileId={}", fileId, e);
             return false;
+        }
+    }
+
+    /** 批量填充结果条目的来源文件名（按 fileId 批量查 kb_file） */
+    private void resolveFileNames(List<SearchResultItem> results) {
+        Set<String> fileIds = results.stream()
+                .map(SearchResultItem::getFileId)
+                .filter(Objects::nonNull)
+                .filter(fid -> !fid.isBlank())
+                .collect(Collectors.toSet());
+        if (fileIds.isEmpty()) return;
+        try {
+            Map<String, String> idToName = new HashMap<>();
+            for (KbFile file : fileMapper.selectBatchIds(fileIds)) {
+                idToName.put(file.getId(), file.getName());
+            }
+            for (SearchResultItem item : results) {
+                if (item.getFileId() != null) {
+                    item.setFileName(idToName.get(item.getFileId()));
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[resolveFileNames] Failed to resolve file names, count={}", fileIds.size(), e);
         }
     }
 
@@ -1201,6 +1318,7 @@ public class RetrievalServiceImpl implements RetrievalService {
         List<KbChunk> chunks = chunkMapper.selectList(
                 new LambdaQueryWrapper<KbChunk>()
                         .eq(KbChunk::getKbId, kbId)
+                        .ne(KbChunk::getChunkType, "parent")
                         .like(KbChunk::getContent, query)
                         .orderByDesc(KbChunk::getChunkIndex)
                         .last("LIMIT " + (topK * 3)));

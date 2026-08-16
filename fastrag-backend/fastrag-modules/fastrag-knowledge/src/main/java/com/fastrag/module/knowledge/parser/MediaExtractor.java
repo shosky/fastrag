@@ -5,9 +5,19 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 
+import org.apache.pdfbox.contentstream.PDFGraphicsStreamEngine;
+import org.apache.pdfbox.contentstream.operator.Operator;
+import org.apache.pdfbox.cos.COSBase;
+import org.apache.pdfbox.cos.COSName;
+import org.apache.pdfbox.pdmodel.graphics.PDXObject;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImage;
+import org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject;
+import org.apache.pdfbox.util.Matrix;
+
 import javax.imageio.ImageIO;
 import java.awt.*;
 import java.awt.color.ColorSpace;
+import java.awt.geom.Point2D;
 import java.awt.image.*;
 import java.io.*;
 import java.nio.file.*;
@@ -266,32 +276,91 @@ public class MediaExtractor {
     }
 
     /**
-     * 从 PDF 中提取所有内嵌图片，重编码为统一 PNG 格式
+     * 按给定时间范围裁剪音视频（上传向导 timeRanges）。
+     * <p>
+     * 使用 FFmpeg {@code -ss start -t duration} 截取指定区间，输出为原格式（重新编码，
+     * 兼容 mp4/mp3 等容器的 seek 精确性）；FFmpeg 不可用或失败时返回原始字节。
      *
-     * @param pdfDocument PDFBox PDDocument 对象
-     * @param kbId        知识库 ID
-     * @param fileId      文件 ID
-     * @param minioService MinioService 用于上传图片
-     * @return 图片信息列表 {pageNum, imageKey}
+     * @param mediaBytes  原始音视频字节
+     * @param extension   文件扩展名
+     * @param start       起始时间（秒）
+     * @param duration    裁剪时长（秒）
+     * @return 裁剪后的字节；失败时返回原始字节
      */
+    public byte[] cropMedia(byte[] mediaBytes, String extension, double start, double duration) {
+        if (mediaBytes == null || mediaBytes.length == 0 || duration <= 0) {
+            return mediaBytes;
+        }
+        if (!isFfmpegAvailable()) {
+            log.warn("FFmpeg not available, cannot crop media");
+            return mediaBytes;
+        }
+
+        Path tempInput = null;
+        Path tempOutput = null;
+        try {
+            tempInput = Files.createTempFile("fastrag_crop_input_", "." + extension);
+            Files.write(tempInput, mediaBytes);
+            tempOutput = Files.createTempFile("fastrag_crop_output_", "." + extension);
+
+            ProcessBuilder pb = new ProcessBuilder(
+                    ffmpegPath, "-i", tempInput.toString(),
+                    "-ss", String.valueOf(start),
+                    "-t", String.valueOf(duration),
+                    "-y",
+                    tempOutput.toString()
+            );
+            pb.redirectErrorStream(true);
+
+            Process process = pb.start();
+            try (BufferedReader reader = new BufferedReader(new InputStreamReader(process.getInputStream()))) {
+                String line;
+                while ((line = reader.readLine()) != null) {
+                    log.trace("FFmpeg crop: {}", line);
+                }
+            }
+            int exitCode = process.waitFor();
+            if (exitCode == 0) {
+                byte[] result = Files.readAllBytes(tempOutput);
+                log.info("Media cropped [{}, +{}s]: {} bytes (was {} bytes)", start, duration, result.length, mediaBytes.length);
+                return result;
+            }
+            log.warn("FFmpeg crop failed (exit={}), using full media", exitCode);
+            return mediaBytes;
+        } catch (Exception e) {
+            log.error("Media crop failed, using full media", e);
+            return mediaBytes;
+        } finally {
+            try { if (tempInput != null) Files.deleteIfExists(tempInput); } catch (IOException ignored) {}
+            try { if (tempOutput != null) Files.deleteIfExists(tempOutput); } catch (IOException ignored) {}
+        }
+    }
+
     /**
-     * 从 PDF 中提取内嵌图片（过滤小图标/装饰图），
+     * 从 PDF 中提取内嵌图片（过滤小图标/装饰图/页眉页脚图/重复模板图），
      * 上传到 MinIO 并返回图片信息列表。
      *
      * 过滤规则：
-     * - 短边 < 100px → 跳过（图标、装饰线，CSS像素 @96dpi，约1英寸）
+     * - 短边 < 100px 或 面积 < 30,000px² → 跳过（图标、装饰线，ImageFilter 统一尺寸规则）
      * - 面积 < 页面面积 1% → 跳过（页眉页脚装饰、背景纹理）
-     * - 宽度或高度 > 2000 → 跳过（全页扫描图由 OCR 路径处理）
+     * - 图片中心位于页面上/下部 10% 区域 → 跳过（页眉页脚 logo，位置规则）
+     * - 纯色/纯透明占比 > 85% 或 颜色种类 < 16 → 跳过（纯色色块/占位符，视觉丰富度规则）
      * - PNG 编码后 < 1KB → 跳过（空白/极小图）
+     * - 同文档内 MD5/pHash 重复 ≥ 3 次 → 跳过（模板 logo/全局水印，频次规则）
+     * - 超大图片（全页扫描图）不过滤：保留提取 + OCR + 分片，
+     *   扫描页中的表格/文字内容可通过图片 OCR 进入检索（与页文本 OCR 兜底互补）
      */
     public List<PdfImage> extractPdfImages(
             org.apache.pdfbox.pdmodel.PDDocument pdfDocument,
             String kbId, String fileId,
             com.fastrag.infra.minio.MinioService minioService) {
         List<PdfImage> result = new ArrayList<>();
+        // ① 收集阶段：逐页过滤 + 重编码，先不上传（供频次去重整体判断）
+        List<PdfCandidate> candidates = new ArrayList<>();
         int skippedSmall = 0;
-        int skippedLarge = 0;
         int skippedAreaPct = 0;
+        int skippedHeaderFooter = 0;
+        int skippedColor = 0;
         int skippedTinyBytes = 0;
         try {
             int pageCount = pdfDocument.getNumberOfPages();
@@ -303,6 +372,9 @@ public class MediaExtractor {
                 float pageH = pageBox.getHeight();
                 double pageArea = pageW * pageH;
 
+                // 采集本页内嵌图片的渲染位置（供页眉/页脚位置规则使用）
+                Map<String, List<float[]>> boxesByName = collectImageBoxes(page);
+
                 org.apache.pdfbox.pdmodel.PDResources resources = page.getResources();
                 int imgIndex = 0;
                 for (var name : resources.getXObjectNames()) {
@@ -313,17 +385,10 @@ public class MediaExtractor {
 
                         int w = image.getWidth();
                         int h = image.getHeight();
-                        int minSide = Math.min(w, h);
 
-                        // 过滤小图片（短边 < 100px，约1英寸以下的图标/装饰）
-                        if (minSide < 100) {
+                        // 过滤小图片（短边 < 100px 或 面积 < 30,000px²，图标/装饰线）
+                        if (ImageFilter.isDecorativeBySize(w, h)) {
                             skippedSmall++;
-                            continue;
-                        }
-
-                        // 过滤超大图片（全页背景/扫描图 — 由 OCR/VLM 路径处理）
-                        if (w > 2000 || h > 2000) {
-                            skippedLarge++;
                             continue;
                         }
 
@@ -334,8 +399,21 @@ public class MediaExtractor {
                             continue;
                         }
 
+                        // 过滤页眉/页脚位置图片（中心位于页面上/下部 10%，且面积不超过页面 25%）
+                        if (isInHeaderFooterZone(boxesByName.get(name.getName()), pageH, imgArea, pageArea)) {
+                            skippedHeaderFooter++;
+                            continue;
+                        }
+
                         // 重编码为统一 PNG
                         BufferedImage bi = image.getImage();
+
+                        // 过滤纯色/纯透明占比高或颜色种类少的图片（纯色色块/占位符，视觉丰富度规则）
+                        if (ImageFilter.isDecorativeByColor(bi)) {
+                            skippedColor++;
+                            continue;
+                        }
+
                         ByteArrayOutputStream baos = new ByteArrayOutputStream();
                         ImageIO.write(bi, "png", baos);
                         byte[] pngBytes = baos.toByteArray();
@@ -346,30 +424,56 @@ public class MediaExtractor {
                             continue;
                         }
 
-                        // 上传到 MinIO
                         String imageKey = "page_" + (pageNum + 1) + "_img_" + imgIndex + ".png";
-                        String objectKey = kbId + "/" + fileId + "/images/" + imageKey;
-                        try (ByteArrayInputStream is = new ByteArrayInputStream(pngBytes)) {
-                            minioService.upload(objectKey, is, "image/png");
-                        }
-
-                        result.add(PdfImage.builder()
-                                .pageNum(pageNum + 1)
-                                .imageKey(imageKey)
-                                .width(w)
-                                .height(h)
-                                .build());
+                        candidates.add(new PdfCandidate(pageNum + 1, imageKey, w, h, pngBytes));
                         imgIndex++;
                     }
                 }
             }
-            int skippedTotal = skippedSmall + skippedLarge + skippedAreaPct + skippedTinyBytes;
-            log.info("Extracted {} images from PDF ({} pages), skipped {} (small={}, oversize={}, areaPct={}, tinyBytes={})",
-                    result.size(), pageCount, skippedTotal, skippedSmall, skippedLarge, skippedAreaPct, skippedTinyBytes);
+
+            // ② 频次去重（模板与频次规则）：同文档内重复 >= 3 次的图片（模板 logo/水印）整组过滤
+            int skippedRepeated = 0;
+            if (candidates.size() >= ImageDedup.REPEAT_THRESHOLD) {
+                Map<String, byte[]> keyToData = new HashMap<>();
+                for (PdfCandidate c : candidates) {
+                    keyToData.put(c.imageKey, c.pngBytes);
+                }
+                Set<String> repeated = ImageDedup.findRepeatedKeys(keyToData);
+                if (!repeated.isEmpty()) {
+                    skippedRepeated = repeated.size();
+                    candidates.removeIf(c -> repeated.contains(c.imageKey));
+                }
+            }
+
+            // ③ 上传阶段：仅上传去重后保留的图片
+            for (PdfCandidate c : candidates) {
+                String objectKey = kbId + "/" + fileId + "/images/" + c.imageKey;
+                try (ByteArrayInputStream is = new ByteArrayInputStream(c.pngBytes)) {
+                    minioService.upload(objectKey, is, "image/png");
+                }
+                result.add(PdfImage.builder()
+                        .pageNum(c.pageNum)
+                        .imageKey(c.imageKey)
+                        .width(c.width)
+                        .height(c.height)
+                        .build());
+            }
+
+            int skippedTotal = skippedSmall + skippedAreaPct + skippedHeaderFooter
+                    + skippedColor + skippedTinyBytes + skippedRepeated;
+            log.info("Extracted {} images from PDF ({} pages), skipped {} (small={}, areaPct={}, headerFooter={}, color={}, tinyBytes={}, repeated={})",
+                    result.size(), pageCount, skippedTotal, skippedSmall, skippedAreaPct,
+                    skippedHeaderFooter, skippedColor, skippedTinyBytes, skippedRepeated);
         } catch (Exception e) {
             log.error("Failed to extract images from PDF", e);
         }
         return result;
+    }
+
+    /**
+     * PDF 图片提取候选（收集阶段暂存，去重后统一上传）
+     */
+    private record PdfCandidate(int pageNum, String imageKey, int width, int height, byte[] pngBytes) {
     }
 
     /**
@@ -384,6 +488,136 @@ public class MediaExtractor {
         private String imageKey;   // MinIO 图片 key (如 "page_1_img_0.png")
         private int width;
         private int height;
+    }
+
+    /**
+     * 采集页面内嵌图片的渲染位置（页面用户空间坐标，y 轴向上，单位 pt），
+     * 按图片 XObject 名称分组（同一图片多处绘制会有多个位置）。
+     * <p>通过遍历页面 content stream 的 Do 操作符与 CTM 矩阵计算边界框，
+     * 供页眉/页脚位置过滤使用。失败时返回空 Map（位置未知的图片不过滤）。</p>
+     */
+    private Map<String, List<float[]>> collectImageBoxes(org.apache.pdfbox.pdmodel.PDPage page) {
+        try {
+            ImagePositionEngine engine = new ImagePositionEngine(page);
+            engine.processPage(page);
+            return engine.getBoxesByName();
+        } catch (Exception e) {
+            log.warn("Failed to collect image positions: {}", e.getMessage());
+            return Map.of();
+        }
+    }
+
+    /**
+     * 页眉/页脚位置过滤：图片<b>所有</b>出现位置的中心均位于页面上/下部 10% 区域，
+     * 且图片面积不超过页面 25%（排除大面积图）时判定为页眉/页脚装饰。
+     * 任一位置在正文区域则保留（同一图片在页眉与正文同时使用时视为内容图）。
+     */
+    private boolean isInHeaderFooterZone(List<float[]> boxes, float pageH,
+                                         double imgArea, double pageArea) {
+        if (boxes == null || boxes.isEmpty()) return false; // 位置未知 → 不过滤
+        if (imgArea > pageArea * 0.25) return false;         // 大面积图不按位置过滤
+        for (float[] box : boxes) {
+            if (!ImageFilter.isInHeaderFooterZone(box[1], box[3], pageH)) {
+                return false; // 任一位置在正文区域 → 保留
+            }
+        }
+        return true;
+    }
+
+    /**
+     * 遍历页面 content stream，采集每张内嵌图片的渲染位置（Do 操作符 + CTM）。
+     * <p>图片绘制在单位方块 [0,1]x[0,1] 经 CTM 变换后的区域，取 4 角点的包围盒；
+     * 同一 XObject 多处绘制会产生多个位置条目。仅用于位置采集，不渲染任何内容。</p>
+     */
+    static class ImagePositionEngine extends PDFGraphicsStreamEngine {
+
+        private final Map<String, List<float[]>> boxesByName = new HashMap<>();
+
+        ImagePositionEngine(org.apache.pdfbox.pdmodel.PDPage page) {
+            super(page);
+        }
+
+        @Override
+        protected void processOperator(Operator operator, List<COSBase> arguments) throws IOException {
+            if ("Do".equals(operator.getName()) && !arguments.isEmpty()
+                    && arguments.get(0) instanceof COSName xobjectName) {
+                PDXObject xobject = getResources().getXObject(xobjectName);
+                if (xobject instanceof PDImageXObject) {
+                    Matrix ctm = getGraphicsState().getCurrentTransformationMatrix();
+                    // 图片绘制在单位方块经 CTM 变换后的区域，取 4 角点包围盒
+                    Point2D.Float p00 = ctm.transformPoint(0, 0);
+                    Point2D.Float p10 = ctm.transformPoint(1, 0);
+                    Point2D.Float p01 = ctm.transformPoint(0, 1);
+                    Point2D.Float p11 = ctm.transformPoint(1, 1);
+                    float minX = Math.min(Math.min(p00.x, p10.x), Math.min(p01.x, p11.x));
+                    float maxX = Math.max(Math.max(p00.x, p10.x), Math.max(p01.x, p11.x));
+                    float minY = Math.min(Math.min(p00.y, p10.y), Math.min(p01.y, p11.y));
+                    float maxY = Math.max(Math.max(p00.y, p10.y), Math.max(p01.y, p11.y));
+                    boxesByName.computeIfAbsent(xobjectName.getName(), k -> new ArrayList<>())
+                            .add(new float[]{minX, minY, maxX, maxY});
+                }
+            }
+            super.processOperator(operator, arguments);
+        }
+
+        Map<String, List<float[]>> getBoxesByName() {
+            return boxesByName;
+        }
+
+        // ===== PDFGraphicsStreamEngine 抽象方法：本工具仅关心图片位置，其余空实现 =====
+
+        @Override
+        public void appendRectangle(Point2D p0, Point2D p1, Point2D p2, Point2D p3) {
+        }
+
+        @Override
+        public void drawImage(PDImage pdImage) {
+        }
+
+        @Override
+        public void clip(int windingRule) {
+        }
+
+        @Override
+        public void moveTo(float x, float y) {
+        }
+
+        @Override
+        public void lineTo(float x, float y) {
+        }
+
+        @Override
+        public void curveTo(float x1, float y1, float x2, float y2, float x3, float y3) {
+        }
+
+        @Override
+        public Point2D getCurrentPoint() {
+            return new Point2D.Float(0, 0);
+        }
+
+        @Override
+        public void closePath() {
+        }
+
+        @Override
+        public void endPath() {
+        }
+
+        @Override
+        public void strokePath() {
+        }
+
+        @Override
+        public void fillPath(int windingRule) {
+        }
+
+        @Override
+        public void fillAndStrokePath(int windingRule) {
+        }
+
+        @Override
+        public void shadingFill(COSName shadingName) {
+        }
     }
 
     /**
@@ -497,10 +731,10 @@ public class MediaExtractor {
      * 5. 计算中位数，高于中位数为 1，否则为 0
      * 6. 生成 64 位哈希字符串
      *
-     * @param imageBytes JPEG 图片字节
-     * @return 64 位十六进制哈希字符串
+     * @param imageBytes 图片字节
+     * @return 64 位十六进制哈希字符串；图片无法解码时返回全 0（调用方应跳过全 0）
      */
-    private String computePerceptualHash(byte[] imageBytes) {
+    public static String computePerceptualHash(byte[] imageBytes) {
         try {
             BufferedImage img = ImageIO.read(new ByteArrayInputStream(imageBytes));
             if (img == null) {
@@ -553,7 +787,7 @@ public class MediaExtractor {
     /**
      * 将 BufferedImage 转为灰度二维数组
      */
-    private double[][] toGrayscale(BufferedImage img, int width, int height) {
+    private static double[][] toGrayscale(BufferedImage img, int width, int height) {
         double[][] gray = new double[height][width];
         ColorConvertOp op = new ColorConvertOp(ColorSpace.getInstance(ColorSpace.CS_GRAY), null);
         BufferedImage grayImg = op.filter(img, null);
@@ -569,7 +803,7 @@ public class MediaExtractor {
     /**
      * 对灰度矩阵应用 DCT（离散余弦变换）
      */
-    private double[][] applyDCT(double[][] matrix) {
+    private static double[][] applyDCT(double[][] matrix) {
         int N = matrix.length;
         double[][] result = new double[N][N];
 
@@ -598,7 +832,7 @@ public class MediaExtractor {
      * @param hash2 哈希字符串
      * @return 汉明距离（不同位的数量）
      */
-    private int hammingDistance(String hash1, String hash2) {
+    public static int hammingDistance(String hash1, String hash2) {
         if (hash1 == null || hash2 == null || hash1.length() != hash2.length()) {
             return 64; // 最大距离
         }

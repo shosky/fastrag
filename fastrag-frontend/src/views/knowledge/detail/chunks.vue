@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRouter, useRoute } from 'vue-router'
-import { onBeforeUnmount, watch } from 'vue'
-import { ArrowLeft, Download, Search, Edit, Grid, ArrowDown, ArrowUp, Delete, Upload, Setting, VideoPlay, VideoPause, Plus } from '@element-plus/icons-vue'
+import { nextTick, onBeforeUnmount, watch } from 'vue'
+import { ArrowLeft, Download, Search, Edit, Grid, ArrowDown, ArrowUp, ArrowRight, Delete, Upload, Setting, VideoPlay, VideoPause, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 
@@ -216,31 +216,15 @@ const totalChunks = ref(0)
 // --- 从 API 加载 chunks ---
 const chunks = ref<Chunk[]>([])
 
+// 来源定位：从 query 读取目标切片 id（如 {fileId}_chunk_{index}）
+const targetChunkId = ref<string>((route.query.chunkId as string) || '')
+
 async function loadChunks() {
   try {
     const res: any = await api.getChunks(kbId, { fileId, page: currentPage.value, pageSize: pageSize.value })
     const list = res?.list || res || []
     totalChunks.value = res?.total || 0
-	    chunks.value = list.map((mc: any, i: number) => ({
-	      id: mc.id || `chunk_${mc.chunkIndex || i}`,
-	      index: mc.chunkIndex || i,
-	      content: mc.content || '',
-	      startTime: mc.startTime ?? undefined,
-	      endTime: mc.endTime ?? undefined,
-	      chunkType: mc.chunkType || 'text',
-	      imageKeys: mc.imageKeys ? (typeof mc.imageKeys === 'string' ? JSON.parse(mc.imageKeys) : mc.imageKeys) : undefined,
-	      pageNumber: mc.pageNumber ?? undefined,
-	      title: mc.title || undefined,
-	      headingPath: mc.headingPath || undefined,
-	      metadata: {
-        fileId: mc.fileId || fileId,
-        fileName: mc.fileName || '',
-        chunkIndex: mc.chunkIndex || i,
-        tokenCount: (mc.content || '').length,
-        createdAt: mc.createdAt || '',
-        updatedAt: mc.updatedAt || '',
-      },
-    }))
+    chunks.value = (list || []).map((mc: any, i: number) => mapChunk(mc, i))
     // 生成 markdown 内容（如果 chunk 有 headingPath 则在内容前加层级路径注释）
     if (chunks.value.length > 0) {
       markdownContent.value = chunks.value.map((c) => {
@@ -248,9 +232,82 @@ async function loadChunks() {
         return header + c.content
       }).join('\n\n---\n\n')
     }
+    // 有定位目标时滚动高亮（当前页未命中则翻到目标所在页）
+    if (targetChunkId.value) locateTargetChunk()
   } catch {
     // ignore
   }
+}
+
+/** 定位到目标切片：展开所属父分片 + 滚动到视口高亮 */
+function locateTargetChunk() {
+  const findIn = (list: Chunk[]): Chunk | null =>
+    list.find(c => c.id === targetChunkId.value) || null
+  const findParent = (list: Chunk[]): Chunk | null =>
+    list.find(c => c.children?.some(child => child.id === targetChunkId.value)) || null
+
+  const direct = findIn(chunks.value)
+  const parent = direct ? null : findParent(chunks.value)
+
+  // 当前页没有目标：从 id 解析 index 并翻页（chunkId 格式 {fileId}_chunk_{index}）
+  if (!direct && !parent) {
+    const m = targetChunkId.value.match(/_chunk_(\d+)$/)
+    if (m) {
+      const targetPage = Math.floor(Number(m[1]) / pageSize.value) + 1
+      if (targetPage !== currentPage.value && targetPage <= Math.ceil(totalChunks.value / pageSize.value)) {
+        currentPage.value = targetPage
+        loadChunks()
+      }
+    }
+    return
+  }
+
+  if (parent) selectedChunk.value = parent
+  nextTick(() => {
+    const el = document.querySelector(`[data-chunk-id="${targetChunkId.value}"]`) as HTMLElement | null
+    el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+  })
+}
+
+// 支持同一页面内再次跳转定位（如从来源面板点击不同切片）
+watch(() => route.query.chunkId, (v) => {
+  targetChunkId.value = (v as string) || ''
+  if (targetChunkId.value) locateTargetChunk()
+})
+
+/**
+ * 分片数据映射：兼容单层与父子分片两种结构。
+ * - 单层模式：普通分片行
+ * - 父子模式：父分片行（chunkType='parent'）内嵌 children（子分片数组），
+ *   孤立子分片（无父分片的单分片章节）作为普通行混排
+ */
+function mapChunk(mc: any, i: number): Chunk {
+  const base: Chunk = {
+    id: mc.id || `chunk_${mc.chunkIndex || i}`,
+    index: mc.chunkIndex || i,
+    content: mc.content || '',
+    startTime: mc.startTime ?? undefined,
+    endTime: mc.endTime ?? undefined,
+    chunkType: mc.chunkType || 'text',
+    parentId: mc.parentId || undefined,
+    imageKeys: mc.imageKeys ? (typeof mc.imageKeys === 'string' ? JSON.parse(mc.imageKeys) : mc.imageKeys) : undefined,
+    pageNumber: mc.pageNumber ?? undefined,
+    title: mc.title || undefined,
+    headingPath: mc.headingPath || undefined,
+    metadata: {
+      fileId: mc.fileId || fileId,
+      fileName: mc.fileName || '',
+      chunkIndex: mc.chunkIndex || i,
+      tokenCount: (mc.content || '').length,
+      createdAt: mc.createdAt || '',
+      updatedAt: mc.updatedAt || '',
+    },
+  }
+  // 父子模式：父分片行内嵌子分片
+  if (mc.children && Array.isArray(mc.children) && mc.children.length > 0) {
+    base.children = mc.children.map((child: any, ci: number) => mapChunk(child, ci))
+  }
+  return base
 }
 
 function handlePageChange(page: number) {
@@ -379,6 +436,11 @@ const filteredChunks = computed(() => {
 
 const selectedCount = computed(() => selectedChunks.value.size)
 
+/** 选中项中是否包含父分片（批量删除提示级联） */
+const isParentSelected = computed(() =>
+  chunks.value.some(c => c.chunkType === 'parent' && selectedChunks.value.has(c.id))
+)
+
 // --- Methods ---
 function goBack() {
   router.push(`/knowledge/${kbId}`)
@@ -393,6 +455,10 @@ function toggleExpand(chunk: Chunk) {
 }
 
 function startEdit(chunk: Chunk) {
+  if (chunk.chunkType === 'parent') {
+    ElMessage.warning('父分片由子分片自动聚合生成，请展开后编辑子分片')
+    return
+  }
   editingChunk.value = chunk
   editingContent.value = chunk.content
   editDialogVisible.value = true
@@ -507,6 +573,52 @@ async function handleCreateChunk() {
 
 function handleDownload() {
   ElMessage.success('开始下载分片数据')
+}
+
+// --- 重新分片：按当前解析策略重跑 解析→分片→向量化（删除旧分片与向量） ---
+const reChunking = ref(false)
+async function handleReChunk() {
+  try {
+    await ElMessageBox.confirm(
+      '重新分片将删除该文件全部旧分片与向量数据，并按当前解析策略重新解析、分片和向量化。' +
+      '如果修改了解析策略（如子分片长度），需要重新分片后才会生效。确定继续吗？',
+      '重新分片',
+      { confirmButtonText: '重新分片', cancelButtonText: '取消', type: 'warning' },
+    )
+    reChunking.value = true
+    await api.reChunkFile(kbId, fileId)
+    ElMessage.success('已触发重新分片，处理完成后列表将自动更新')
+    // 轮询文件状态，完成后刷新列表
+    pollReChunkStatus()
+  } catch (e: any) {
+    if (e !== 'cancel' && e?.message) {
+      ElMessage.error(e?.message || '重新分片失败')
+    }
+  } finally {
+    reChunking.value = false
+  }
+}
+
+let reChunkTimer: ReturnType<typeof setInterval> | null = null
+function pollReChunkStatus() {
+  if (reChunkTimer) clearInterval(reChunkTimer)
+  reChunkTimer = setInterval(async () => {
+    try {
+      const res: any = await api.getFileProcessingStatus(kbId, fileId)
+      const status = res?.status || ''
+      if (status === 'completed') {
+        if (reChunkTimer) { clearInterval(reChunkTimer); reChunkTimer = null }
+        ElMessage.success('重新分片完成')
+        loadChunks()
+        loadFileInfo()
+      } else if (status === 'failed') {
+        if (reChunkTimer) { clearInterval(reChunkTimer); reChunkTimer = null }
+        ElMessage.error('重新分片失败，请查看文件处理状态')
+      }
+    } catch {
+      // 忽略轮询错误，继续等待
+    }
+  }, 3000)
 }
 
 function formatFileSize(bytes: number): string {
@@ -656,7 +768,8 @@ async function batchDelete() {
   }
   try {
     await ElMessageBox.confirm(
-      `确定要删除选中的 ${selectedChunks.value.size} 个分片吗？删除后将同时移除其向量数据。`,
+      `确定要删除选中的 ${selectedChunks.value.size} 个分片吗？删除后将同时移除其向量数据。` +
+      (isParentSelected.value ? '（选中的父分片将连同其全部子分片一起删除）' : ''),
       '批量删除',
       { confirmButtonText: '删除', cancelButtonText: '取消', type: 'warning' }
     )
@@ -681,6 +794,7 @@ function batchExport() {
 }
 
 onBeforeUnmount(() => {
+  if (reChunkTimer) clearInterval(reChunkTimer)
   if (audioBlobUrl.value) URL.revokeObjectURL(audioBlobUrl.value)
   if (videoBlobUrl.value) URL.revokeObjectURL(videoBlobUrl.value)
   Object.values(imageBlobUrls.value).forEach(url => URL.revokeObjectURL(url))
@@ -717,6 +831,7 @@ onBeforeUnmount(() => {
       </div>
       <div class="chunks-page__header-right">
         <el-button type="primary" :icon="Plus" @click="openCreateDialog">新增分片</el-button>
+        <el-button :loading="reChunking" @click="handleReChunk">重新分片</el-button>
         <el-button :icon="Download" @click="handleDownload">下载分片</el-button>
       </div>
     </div>
@@ -892,9 +1007,11 @@ onBeforeUnmount(() => {
                   <!-- Parent chunk -->
                   <div
                     class="chunks-page__chunk-item"
+                    :data-chunk-id="chunk.id"
                     :class="{
                       'chunks-page__chunk-item--active': selectedChunk?.id === chunk.id,
                       'chunks-page__chunk-item--has-children': chunk.children && chunk.children.length > 0,
+                      'chunks-page__chunk-item--highlight': targetChunkId === chunk.id,
                     }"
                     @click="toggleExpand(chunk)"
                   >
@@ -904,7 +1021,16 @@ onBeforeUnmount(() => {
                         @click.stop
                         @change="toggleChunkSelection(chunk.id)"
                       />
+                      <!-- 父子模式：父分片行可展开/收起子分片 -->
+                      <el-icon
+                        v-if="chunk.children && chunk.children.length > 0"
+                        class="chunks-page__chunk-expand"
+                      >
+                        <ArrowRight v-if="selectedChunk?.id !== chunk.id" />
+                        <ArrowDown v-else />
+                      </el-icon>
                       <span class="chunks-page__chunk-index">#{{ chunk.index }}</span>
+                      <el-tag v-if="chunk.chunkType === 'parent'" size="small" type="primary">父分片</el-tag>
                       <el-tag v-if="chunk.chunkType === 'image'" size="small" type="warning">图片</el-tag>
                       <el-tag v-else-if="chunk.chunkType === 'table'" size="small" type="success">表格</el-tag>
                       <el-tag v-else-if="chunk.chunkType === 'code'" size="small" type="info">代码</el-tag>
@@ -949,6 +1075,8 @@ onBeforeUnmount(() => {
                       v-for="child in chunk.children"
                       :key="child.id"
                       class="chunks-page__chunk-item chunks-page__chunk-item--child"
+                      :data-chunk-id="child.id"
+                      :class="{ 'chunks-page__chunk-item--highlight': targetChunkId === child.id }"
                     >
                       <div class="chunks-page__chunk-header">
                         <el-checkbox
@@ -957,6 +1085,9 @@ onBeforeUnmount(() => {
                           @change="toggleChunkSelection(child.id)"
                         />
                         <span class="chunks-page__chunk-index">#{{ chunk.index }}.{{ child.index }}</span>
+                        <el-tag v-if="child.chunkType === 'image'" size="small" type="warning">图片</el-tag>
+                        <el-tag v-else-if="child.chunkType === 'table'" size="small" type="success">表格</el-tag>
+                        <el-tag v-else-if="child.chunkType === 'code'" size="small" type="info">代码</el-tag>
                         <span class="chunks-page__chunk-id">ID: {{ child.id }}</span>
                         <el-button
                           :icon="Edit"
@@ -1726,6 +1857,12 @@ onBeforeUnmount(() => {
       background: #E3F2FD;
     }
 
+    &--highlight {
+      border-color: $color-warning;
+      background: #FFF8E1;
+      box-shadow: 0 0 0 2px rgba(250, 173, 20, 0.25);
+    }
+
     &--has-children {
       border-left: 3px solid $color-primary;
     }
@@ -1744,7 +1881,13 @@ onBeforeUnmount(() => {
     margin-bottom: $spacing-sm;
   }
 
-	  &__chunk-index {
+  &__chunk-expand {
+    cursor: pointer;
+    color: $color-primary;
+    font-size: 14px;
+  }
+
+  &__chunk-index {
 	    font-weight: 600;
 	    color: $color-primary;
 	    font-size: 14px;

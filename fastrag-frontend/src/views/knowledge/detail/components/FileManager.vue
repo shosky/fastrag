@@ -12,6 +12,7 @@ import ChunkManagementPanel from './ChunkManagementPanel.vue'
 import MoveFileDialog from './MoveFileDialog.vue'
 import RenameFileDialog from './RenameFileDialog.vue'
 import RecycleBinDialog from './RecycleBinDialog.vue'
+import StrategyChangeDialog from './StrategyChangeDialog.vue'
 import { useFiles } from '@/composables/useFiles'
 import { useParseStrategy } from '@/composables/useParseStrategy'
 
@@ -70,7 +71,6 @@ const {
   retry,
   toggleGraphBuild,
   upload,
-  changeStrategy,
   createFolder,
   renameFolder,
   deleteFolder,
@@ -99,12 +99,31 @@ async function handleUpload(_selectedFiles: File[], config: UploadConfig & { fil
   const fileIds = config.fileIds || []
   if (fileIds.length > 0) {
     // fire-and-forget：触发处理请求（后端通过 RabbitMQ 异步执行，请求立即返回）
+    // 全量转发上传向导配置（引擎/语言/编码/优先级/重试/媒体配置/解析策略），后端持久化并消费
     const processConfig: Record<string, unknown> = {}
     if (config.processingMode && config.processingMode !== 'chunk') {
       processConfig.processingMode = config.processingMode
     }
-    if (config.qaConfig) {
-      processConfig.qaConfig = config.qaConfig
+    if (config.parseStrategyId) {
+      processConfig.parseStrategyId = config.parseStrategyId
+    }
+    if (config.language) {
+      processConfig.language = config.language
+    }
+    if (config.encoding) {
+      processConfig.encoding = config.encoding
+    }
+    if (config.priority) {
+      processConfig.priority = config.priority
+    }
+    if (config.retryCount != null) {
+      processConfig.retryCount = config.retryCount
+    }
+    if (config.engineConfig) {
+      processConfig.engineConfig = config.engineConfig
+    }
+    if (config.mediaConfig) {
+      processConfig.mediaConfig = config.mediaConfig
     }
 
     fileIds.forEach((fid) => {
@@ -482,10 +501,19 @@ function handleCopy(file: KnowledgeFile) {
   ElMessage.success(`已复制文件: ${file.name}`)
 }
 
-// --- Change strategy ---
-function handleChangeStrategy(file: KnowledgeFile, strategyId: string, strategyName: string) {
-  changeStrategy(file.id, strategyId, strategyName)
-  ElMessage.success(`已修改解析策略：${strategyName}`)
+// --- Change strategy（换策略重新分片对话框，ADR-0001：绑定变更与重切原子完成） ---
+const strategyChangeVisible = ref(false)
+const strategyChangeFile = ref<KnowledgeFile | null>(null)
+
+function handleChangeStrategy(file: KnowledgeFile) {
+  strategyChangeFile.value = file
+  strategyChangeVisible.value = true
+}
+
+async function handleStrategyChangeSubmitted(fileId: string) {
+  // 重切任务已入队：刷新列表并轮询处理状态
+  await load()
+  startPolling([fileId])
 }
 
 // --- Toggle graph build ---
@@ -493,11 +521,12 @@ async function handleToggleGraphBuild(file: KnowledgeFile, enabled: boolean) {
   try {
     await toggleGraphBuild(file.id, enabled)
     if (enabled) {
-      // 开启图谱后自动重新处理文件，触发知识图谱提取
-      await api.processFile(props.kbId!, file.id)
-      startPolling([file.id])
-      ElMessage.success(`已开启「${file.name}」的知识图谱构建，正在重新处理...`)
+      // 仅触发图谱构建（基于已有 chunks），不重新解析/分块/向量化
+      await api.buildGraphIndex(props.kbId!, [file.id], 'full')
+      ElMessage.success(`已开启「${file.name}」的知识图谱构建`)
     } else {
+      // 关闭时清理该文件已有的图谱数据
+      await api.deleteFileGraph(props.kbId!, file.id)
       ElMessage.success(`已关闭「${file.name}」的知识图谱构建`)
     }
   } catch {
@@ -613,6 +642,14 @@ onBeforeUnmount(() => {
       :file="moveFile"
       :folders="folders"
       @confirm="handleMoveConfirm"
+    />
+
+    <!-- 分片策略设置对话框（点击文件列表策略 tag 打开，保存为文件专属策略并重切） -->
+    <StrategyChangeDialog
+      v-model="strategyChangeVisible"
+      :kb-id="kbId"
+      :file="strategyChangeFile"
+      @submitted="handleStrategyChangeSubmitted"
     />
 
     <!-- Batch move target dialog (复用文件树选择) -->

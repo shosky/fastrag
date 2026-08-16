@@ -1,5 +1,36 @@
 package com.fastrag.infra.milvus;
 
+/**
+ * Milvus 向量数据库服务，提供知识库文档 Chunk 的向量存储和语义检索能力。
+ *
+ * <p>核心职责：管理 Milvus Collection 的生命周期，为知识库的 RAG 检索提供向量相似度搜索支持。
+ *
+ * <p>依赖的外部系统：
+ * <ul>
+ *   <li>Milvus 向量数据库：通过 {@link MilvusServiceClient} Java SDK 连接，
+ *       连接参数来自配置项 {@code milvus.host} 和 {@code milvus.port}（默认 127.0.0.1:19530）</li>
+ * </ul>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>初始化时通过 {@code @PostConstruct} 创建连接并验证可用性，连接不可用时降级为空实现（不阻塞应用启动）</li>
+ *   <li>Collection Schema 包含 5 个字段：id（主键 VarChar）、vector（FloatVector）、kb_id、file_id、chunk_index</li>
+ *   <li>向量索引采用 IVF_FLAT 类型 + COSINE 相似度度量，nlist=128</li>
+ *   <li>所有操作在 Milvus 客户端不可用时安全跳过（返回空结果或记录警告日志）</li>
+ *   <li>通过 {@code @PreDestroy} 在应用关闭时释放连接资源</li>
+ * </ul>
+ *
+ * <p>提供的核心能力：
+ * <ul>
+ *   <li>{@code createCollection} — 幂等创建 Collection（含索引创建和加载）</li>
+ *   <li>{@code insert} — 批量插入向量数据</li>
+ *   <li>{@code search} — 基于查询向量的 top-K 相似度搜索（COSINE 度量）</li>
+ *   <li>{@code deleteByFileId / deleteById / deleteByIds} — 按文件 ID 或 Chunk ID 删除向量数据</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：被知识库的文档处理和检索服务调用，每个知识库对应一个独立的 Collection。
+ */
+
 import io.milvus.client.MilvusServiceClient;
 import io.milvus.grpc.DataType;
 import io.milvus.grpc.MutationResult;
@@ -24,10 +55,6 @@ import java.util.*;
 import java.util.concurrent.TimeUnit;
 import java.util.stream.Collectors;
 
-/**
- * Milvus 向量数据库服务
- * 连接 Milvus 实例，提供 Collection 创建、向量插入、相似度搜索、按文件删除等功能。
- */
 @Service
 public class MilvusService {
 

@@ -1,5 +1,6 @@
 package com.fastrag.module.knowledge.chunking;
 
+import com.fastrag.ai.embedding.EmbeddingService;
 import com.fastrag.module.knowledge.config.StrategyConfigResolver;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
@@ -23,7 +24,8 @@ import static org.mockito.Mockito.when;
  *
  * 覆盖：段落累积（目标长度语义）、标题切分、headingPath 栈、
  * F1（标题合并进首段，无纯标题空壳）、overlap、tableMode=ignore、
- * F3（chunkType/imageKeys）、delimiters（新结构 + 旧平铺兼容）。
+ * F3（chunkType/imageKeys）、delimiters（新结构 + 旧平铺兼容）、
+ * 递归字符切分（rule_recursive）、语义切片（semantic）。
  */
 @ExtendWith(MockitoExtension.class)
 class ChunkingServiceImplTest {
@@ -34,12 +36,15 @@ class ChunkingServiceImplTest {
     @Mock
     private ConfigManageService configService;
 
+    @Mock
+    private EmbeddingService embeddingService;
+
     private ChunkingServiceImpl chunkingService;
 
     @BeforeEach
     void setUp() {
         StrategyConfigResolver resolver = new StrategyConfigResolver(strategyMapper, configService);
-        chunkingService = new ChunkingServiceImpl(resolver, new MarkdownSerializer());
+        chunkingService = new ChunkingServiceImpl(resolver, new MarkdownSerializer(), embeddingService);
     }
 
     // ========== 测试数据构造 ==========
@@ -270,5 +275,134 @@ class ChunkingServiceImplTest {
         List<ChunkData> chunks = chunkingService.structuralChunk(nodes, "s1");
 
         assertEquals(1, chunks.size(), "新结构 chunkLength=2000 生效，短段落合并为单 chunk");
+    }
+
+    // ========== 递归字符切分（rule_recursive） ==========
+
+    @Test
+    void 递归切分按首分隔符切分且短片段合并() {
+        // chunkLength=30：第一段（超长，降级句子分隔符）+ 第二段单独成块
+        mockChunkLength(30);
+        mockOverlap(0);
+        when(strategyMapper.selectById("s1")).thenReturn(strategy("{\"chunk\":{\"strategy\":\"rule_recursive\",\"delimiters\":[\"\\n\\n\"]}}"));
+
+        String text = "第一句话的内容很长很长很长很长很长很长很长很长很长很长很长很长很长很长很长很长很长很长很长。\n\n第二段很短。";
+        List<ChunkData> chunks = chunkingService.recursiveChunk(text, "s1");
+
+        assertTrue(chunks.size() >= 2, "超长首段 + 短第二段应产生多个 chunk");
+        // 首个 chunk 不应超过 chunkLength + 少量余量
+        assertTrue(chunks.get(0).getContent().length() <= 30 + 30,
+                "chunk 不应远超目标长度, actual=" + chunks.get(0).getContent().length());
+        assertTrue(chunks.get(chunks.size() - 1).getContent().contains("第二段很短。"));
+    }
+
+    @Test
+    void 递归切分文本中无分隔符时降级句子边界() {
+        // delimiters=["@@"]，文本中不存在 → 降级到句子边界
+        mockChunkLength(10);
+        mockOverlap(0);
+        when(strategyMapper.selectById("s1")).thenReturn(strategy("{\"chunk\":{\"strategy\":\"rule_recursive\",\"delimiters\":[\"@@\"]}}"));
+
+        List<ChunkData> chunks = chunkingService.recursiveChunk("这是第一句。这是第二句。这是第三句。", "s1");
+
+        assertTrue(chunks.size() >= 2, "无匹配分隔符时应按句子边界兜底切分");
+        for (ChunkData chunk : chunks) {
+            assertTrue(chunk.getContent().length() <= 10 + 10, "每块不应远超 chunkLength");
+        }
+    }
+
+    @Test
+    void 递归切分无任何分隔符时硬切() {
+        // delimiters 为空 + 无句子边界（无标点长文本）→ 按 chunkLength 硬切
+        mockChunkLength(8);
+        mockOverlap(0);
+        when(strategyMapper.selectById("s1")).thenReturn(strategy("{\"chunk\":{\"strategy\":\"rule_recursive\",\"delimiters\":[]}}"));
+
+        List<ChunkData> chunks = chunkingService.recursiveChunk("abcdefghijklmnopqrstuvwxyz", "s1");
+
+        assertEquals(4, chunks.size(), "26 字符 / 8 每块 = 至少 4 块");
+        for (ChunkData chunk : chunks) {
+            assertTrue(chunk.getContent().length() <= 8 + 8, "硬切块不应远超 chunkLength");
+        }
+    }
+
+    @Test
+    void 递归切分携带overlap尾部() {
+        mockChunkLength(20);
+        mockOverlap(5);
+        when(strategyMapper.selectById("s1")).thenReturn(strategy("{\"chunk\":{\"strategy\":\"rule_recursive\"}}"));
+
+        String longText = "段落一的内容。段落二的内容。段落三的内容。段落四的内容。段落五的内容。段落六的内容。段落七的内容。段落八的内容。段落九的内容。段落十的内容。";
+        List<ChunkData> chunks = chunkingService.recursiveChunk(longText, "s1");
+
+        assertTrue(chunks.size() >= 2, "长文本应切成多个 chunk");
+        String prev = chunks.get(0).getContent();
+        String expectedTail = prev.substring(prev.length() - 5);
+        assertTrue(chunks.get(1).getContent().startsWith(expectedTail),
+                "chunk[1] 应以 overlap 尾部开头, expected=" + expectedTail);
+    }
+
+    // ========== 语义切片（semantic） ==========
+
+    @Test
+    void 语义切片在低相似度处断开() {
+        mockChunkLength(1000); // 避免长度上限干扰
+        when(strategyMapper.selectById("s1")).thenReturn(
+                strategy("{\"chunk\":{\"strategy\":\"semantic\",\"semanticThreshold\":50,\"embeddingModel\":\"embed-1\"}}"));
+
+        // 句子向量：s0/s1 相似（同主题），s2 与它们迥异（主题突变）
+        // [1,0] [0.9,0.1]（与 s0 相似）[0,1]（突变）
+        when(embeddingService.embed("embed-1", List.of("这是第一句。", "这是第二句。", "这是第三句。"))).thenReturn(
+                List.of(
+                        List.of(1f, 0f),
+                        List.of(0.9f, 0.1f),
+                        List.of(0f, 1f)));
+
+        List<ChunkData> chunks = chunkingService.semanticChunk("这是第一句。这是第二句。这是第三句。", "s1", null);
+
+        assertEquals(2, chunks.size(), "s1↔s2 相似（0.98>0.5）同块；s2↔s3 突变（0.1<0.5）断开");
+        assertTrue(chunks.get(0).getContent().contains("这是第一句。"));
+        assertTrue(chunks.get(0).getContent().contains("这是第二句。"));
+        assertTrue(chunks.get(1).getContent().contains("这是第三句。"));
+    }
+
+    @Test
+    void 语义切片无模型时回退规则分片() {
+        mockChunkLength(1000);
+        mockOverlap(0);
+        // 策略与 KB 均未配置 embeddingModel
+        when(strategyMapper.selectById("s1")).thenReturn(strategy("{\"chunk\":{\"strategy\":\"semantic\"}}"));
+
+        List<ChunkData> chunks = chunkingService.semanticChunk("这是第一句。这是第二句。", "s1", null);
+
+        assertFalse(chunks.isEmpty(), "无模型时不应中断，回退规则分片");
+        assertEquals(1, chunks.size(), "短文本规则分片为单块");
+    }
+
+    @Test
+    void 语义切片embedding失败时回退规则分片() {
+        mockChunkLength(1000);
+        mockOverlap(0);
+        when(strategyMapper.selectById("s1")).thenReturn(
+                strategy("{\"chunk\":{\"strategy\":\"semantic\",\"embeddingModel\":\"embed-1\"}}"));
+        when(embeddingService.embed("embed-1", List.of("这是第一句。", "这是第二句。"))).thenThrow(new RuntimeException("API down"));
+
+        List<ChunkData> chunks = chunkingService.semanticChunk("这是第一句。这是第二句。", "s1", null);
+
+        assertFalse(chunks.isEmpty(), "embedding 异常应回退规则分片而非失败");
+    }
+
+    @Test
+    void 语义切片kb级模型兜底() {
+        mockChunkLength(1000);
+        when(strategyMapper.selectById("s1")).thenReturn(
+                strategy("{\"chunk\":{\"strategy\":\"semantic\",\"semanticThreshold\":50}}"));
+        // 策略级未配置 → 使用 KB 级模型
+        when(embeddingService.embed("kb-embed", List.of("这是第一句。", "这是第二句。"))).thenReturn(
+                List.of(List.of(1f, 0f), List.of(0f, 1f)));
+
+        List<ChunkData> chunks = chunkingService.semanticChunk("这是第一句。这是第二句。", "s1", "kb-embed");
+
+        assertEquals(2, chunks.size(), "KB 级模型兜底生效，低相似度断开");
     }
 }

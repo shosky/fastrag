@@ -1,5 +1,26 @@
 package com.fastrag.module.graph.util;
 
+/**
+ * LLM 知识图谱提取结果规范化工具类。
+ *
+ * <p>对大语言模型从文档中提取的实体和关系（三元组）进行后处理规范化，是图谱构建流水线中
+ * LLM 输出到持久化存储之间的关键中间处理环节。核心处理逻辑包括三个方面：</p>
+ * <ul>
+ *   <li>实体去重与合并：按 (normalized_name, label) 二元组对实体进行去重，
+ *       重复实体的属性列表取并集（基于 {@link NameNormalizer} 标准化后按 text+label 判重）</li>
+ *   <li>关系端点解析：支持关系端点为内联 Entity 对象（Map 结构）或字符串引用两种形式，
+ *       自动通过标准化名称查找映射到已去重的实体</li>
+ *   <li>默认值填充：实体 label 默认填充 "Entity"，关系 label 默认填充 "RELATED_TO"，
+ *       元数据中注入 extractor_type="llm" 和 schema_version=1</li>
+ * </ul>
+ *
+ * <p>内部定义了 {@link Attribute}、{@link Entity}、{@link Relation}、{@link ExtractionResult} 四个静态数据模型，
+ *   与 LLM 提取 JSON 输出的结构一一对应。规范化后的实体和关系将被进一步加工
+ *   （类型归一化、ID 哈希计算）后写入 {@link com.fastrag.module.graph.entity.KbGraphEntity} 和
+ *   {@link com.fastrag.module.graph.entity.KbGraphRelation} 数据表。</p>
+ *
+ * <p>本类为无状态工具类，仅包含静态方法，由图谱构建流程在 LLM 提取完成后调用。</p>
+ */
 import com.fasterxml.jackson.annotation.JsonInclude;
 import com.fasterxml.jackson.annotation.JsonProperty;
 import lombok.Data;
@@ -29,6 +50,7 @@ public final class ExtractionNormalizer {
         private String text;
         @JsonProperty("label")
         private String label = "Entity";
+        private String description;
         private List<Attribute> attributes;
     }
 
@@ -91,8 +113,12 @@ public final class ExtractionNormalizer {
 
             Entity existing = entityMap.get(key);
             if (existing != null) {
-                // 合并属性
+                // 合并属性 + 补全描述（已有非空描述不覆盖）
                 mergeAttributes(existing, entity);
+                if ((existing.getDescription() == null || existing.getDescription().isBlank())
+                        && entity.getDescription() != null && !entity.getDescription().isBlank()) {
+                    existing.setDescription(entity.getDescription());
+                }
             } else {
                 entity.setText(entity.getText().trim());
                 entity.setLabel(label);

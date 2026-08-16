@@ -4,6 +4,12 @@ import type { RetrievalConfig } from './knowledge'
 // 知识图谱
 // ===========================================================================
 
+/** 实体属性项（键值对，对应后端 attributes JSON） */
+export interface GraphAttribute {
+  text: string
+  label: string
+}
+
 /** 图谱节点（数据层，不含渲染坐标） */
 export interface GraphNode {
   id: string
@@ -20,14 +26,20 @@ export interface GraphNode {
   description?: string
   /** 标准化名称（用于去重匹配） */
   normalizedName?: string
+  /** 实体属性（后端返回 JSON 字符串，或已解析数组） */
+  attributes?: string | GraphAttribute[]
 }
 
-/** 图谱关系（source/target 用实体名称，与 GraphRelation 对齐） */
+/** 图谱关系（source/target 用实体名称；source_id/target_id 为端点实体 ID，优先用于 G6 连线） */
 export interface GraphEdge {
   id?: string
   source: string
   target: string
   label: string
+  /** 源实体确定性 ID（KG-01：后端返回，前端优先用 id 连线，消除同名节点错连） */
+  source_id?: string
+  /** 目标实体确定性 ID */
+  target_id?: string
 }
 
 /** 实体类型聚合统计 */

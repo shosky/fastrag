@@ -21,6 +21,7 @@ import com.fastrag.module.retrieval.service.RetrievalService;
 import com.fastrag.security.filter.LoginUser;
 import com.fastrag.security.util.DataScope;
 import com.fastrag.security.util.SecurityUtil;
+import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -498,10 +499,20 @@ public class AppServiceImpl implements AppService {
                 // 将 SecurityContext 传播到异步线程，供下游（如 recordLog）使用
                 SecurityContextHolder.setContext(securityContext);
                 // RAG 知识库检索（异步执行，不阻塞 HTTP 线程）
-                String ragContext = retrieveContext(appId, query);
+                RetrievalContext retrievalCtx = retrieveContext(appId, query);
+                String ragContext = retrievalCtx.getRagContext();
                 String effectiveSystemPrompt = effectiveSystemPromptBase;
                 if (StrUtil.isNotBlank(ragContext)) {
                     effectiveSystemPrompt = effectiveSystemPromptBase + "\n\n以下是相关知识库检索到的参考资料，请参考这些资料回答用户问题：\n\n" + ragContext + "\n\n请根据以上参考资料回答用户问题。如果参考资料中没有相关信息，请如实告知用户。";
+                }
+
+                // 向前端推送本次回答的知识来源（在回答生成前发送）
+                try {
+                    Map<String, Object> srcData = new LinkedHashMap<>();
+                    srcData.put("sources", retrievalCtx.getSources());
+                    emitter.send(SseEmitter.event().name("sources").data(srcData));
+                } catch (Exception e) {
+                    log.warn("[AppChat] Failed to send sources event: {}", e.getMessage());
                 }
 
                 // 构建历史消息
@@ -648,13 +659,15 @@ public class AppServiceImpl implements AppService {
     /**
      * RAG 知识库检索
      */
-    private String retrieveContext(String appId, String query) {
+    private RetrievalContext retrieveContext(String appId, String query) {
         List<AppKbBinding> kbBindings = kbBindingMapper.selectList(
                 new LambdaQueryWrapper<AppKbBinding>()
                         .eq(AppKbBinding::getAppId, appId)
                         .eq(AppKbBinding::getEnabled, 1));
 
-        if (kbBindings.isEmpty()) return null;
+        RetrievalContext ctx = new RetrievalContext();
+        ctx.setSources(new ArrayList<>());
+        if (kbBindings.isEmpty()) return ctx;
 
         StringBuilder context = new StringBuilder();
         int refIndex = 1;
@@ -675,13 +688,32 @@ public class AppServiceImpl implements AppService {
                     if (StrUtil.isNotBlank(item.getContent())) {
                         context.append("【参考资料").append(refIndex++).append("】\n")
                                .append(item.getContent()).append("\n\n");
+                        // 收集知识来源（文件名 / 相似度 / 内容 / 定位信息）
+                        Map<String, Object> src = new LinkedHashMap<>();
+                        src.put("fileName", item.getFileName());
+                        src.put("score", item.getSimilarity());
+                        src.put("fileId", item.getFileId());
+                        src.put("kbId", binding.getKbId());
+                        src.put("chunkIndex", item.getChunkIndex());
+                        src.put("chunkType", item.getChunkType());
+                        src.put("imageKeys", item.getImageKeys());
+                        src.put("content", item.getContent());
+                        ctx.getSources().add(src);
                     }
                 }
             } catch (Exception e) {
                 log.warn("[AppChat] RAG retrieval failed for kbId={}: {}", binding.getKbId(), e.getMessage());
             }
         }
-        return context.length() > 0 ? context.toString() : null;
+        ctx.setRagContext(context.length() > 0 ? context.toString() : null);
+        return ctx;
+    }
+
+    /** RAG 检索结果：拼接进 system prompt 的上下文 + 供前端展示的知识来源列表 */
+    @Data
+    private static class RetrievalContext {
+        private String ragContext;
+        private List<Map<String, Object>> sources = new ArrayList<>();
     }
 
     /**

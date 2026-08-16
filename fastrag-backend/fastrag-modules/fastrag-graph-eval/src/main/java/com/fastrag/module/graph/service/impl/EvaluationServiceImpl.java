@@ -1,5 +1,30 @@
 package com.fastrag.module.graph.service.impl;
 
+/**
+ * 评测服务实现类，实现 {@link com.fastrag.module.graph.service.EvaluationService} 接口。
+ *
+ * <p>提供知识图谱评测任务的管理入口，负责评测任务的创建、查询和启动执行。
+ * 实际的评测执行逻辑委托给 {@link EvaluationExecutionHelper} 异步处理。</p>
+ *
+ * <p>核心业务逻辑：</p>
+ * <ul>
+ *   <li>列表查询：按创建时间倒序返回指定知识库下的所有评测任务</li>
+ *   <li>详情查询：返回评测任务信息及每道题的评测结果明细</li>
+ *   <li>启动评测：校验基准测试参数（必须指定benchmark且基准测试必须有题目），
+ *       创建评测记录后通过 {@link EvaluationExecutionHelper} 异步执行评测</li>
+ *   <li>参数校验失败时创建status为failed的评测记录，避免前端误以为评测已启动</li>
+ *   <li>删除：级联删除评测任务关联的所有评测结果记录</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：</p>
+ * <ul>
+ *   <li>通过 {@link EvaluationExecutionHelper} 异步执行评测</li>
+ *   <li>通过 {@link com.fastrag.module.publish.service.LogService} 记录操作日志</li>
+ * </ul>
+ *
+ * @see com.fastrag.module.graph.service.EvaluationService
+ * @see EvaluationExecutionHelper
+ */
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
 import com.fastrag.module.graph.entity.KbBenchmarkQuestion;

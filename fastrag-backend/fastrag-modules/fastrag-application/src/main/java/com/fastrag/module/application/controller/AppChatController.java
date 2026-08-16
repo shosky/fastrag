@@ -16,7 +16,23 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 应用对话控制器 - 提供流式对话和会话管理 API
+ * 应用对话控制器，提供应用级别的流式对话与会话管理REST API。
+ *
+ * <p>路由前缀：/api/apps/{appId}/chat。所有接口要求 app:use 权限。
+ * 核心端点包括：
+ * <ul>
+ *   <li>POST /stream — SSE流式对话，接收用户提问并以Server-Sent Events方式返回模型生成内容</li>
+ *   <li>POST /sessions — 创建新的对话会话</li>
+ *   <li>GET /sessions — 获取当前用户在该应用下的会话列表</li>
+ *   <li>GET /sessions/{sessionId}/messages — 获取指定会话的消息历史</li>
+ *   <li>DELETE /sessions/{sessionId} — 删除指定会话</li>
+ *   <li>DELETE /messages/{messageId} — 软删除单条消息</li>
+ *   <li>POST /messages/{messageId}/feedback — 对消息进行反馈（点赞/点踩）</li>
+ *   <li>PUT /messages/{messageId} — 编辑消息内容</li>
+ * </ul>
+ *
+ * <p>依赖 {@link AppService} 完成实际的对话调度和会话管理逻辑，
+ * 通过 {@link SecurityUtil} 获取当前登录用户信息。
  */
 @RestController
 @RequestMapping("/api/apps/{appId}/chat")

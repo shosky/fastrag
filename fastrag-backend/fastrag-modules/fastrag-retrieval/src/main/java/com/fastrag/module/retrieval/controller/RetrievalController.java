@@ -1,4 +1,35 @@
 package com.fastrag.module.retrieval.controller;
+
+/**
+ * 知识检索服务 REST 控制器。
+ *
+ * <p>提供知识检索、查询增强（建议/同义词/规则改写/图谱扩展）、
+ * 检索日志管理和更新提醒等功能的 REST API。</p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>{@code POST /api/retrieval/search} - 知识检索（核心接口，支持向量/全文/混合模式）</li>
+ *   <li>{@code GET  /api/retrieval/kb/{kbId}/chunks/count} - 获取知识库 chunk 总数</li>
+ *   <li>{@code POST /api/query/suggest} - 查询建议</li>
+ *   <li>{@code POST /api/query/expand-synonyms} - 同义词扩展</li>
+ *   <li>{@code POST /api/query-rules/apply} - 查询规则改写</li>
+ *   <li>{@code POST /api/graph/expand} - 知识图谱扩展</li>
+ *   <li>{@code GET  /api/retrieval/logs} - 检索日志分页查询</li>
+ *   <li>{@code GET  /api/retrieval/logs/analysis} - 检索日志统计分析</li>
+ *   <li>{@code POST /api/retrieval/logs} - 添加检索日志</li>
+ *   <li>{@code PUT  /api/retrieval/logs/{id}} - 更新检索日志</li>
+ *   <li>{@code GET  /api/kb/{kbId}/update-remind} - 获取指定知识库的更新提醒</li>
+ *   <li>{@code GET  /api/update-remind} - 查询更新提醒列表</li>
+ *   <li>{@code POST /api/update-remind} - 保存更新提醒配置</li>
+ *   <li>{@code PUT  /api/update-remind/{id}} - 更新提醒配置</li>
+ *   <li>{@code DELETE /api/update-remind/{id}} - 删除提醒配置</li>
+ * </ul>
+ *
+ * @see RetrievalService
+ * @see QueryEnhanceService
+ * @see RetrievalLogService
+ * @see UpdateRemindService
+ */
 import com.fastrag.common.response.ApiResponse; import com.fastrag.module.retrieval.entity.*;
 import com.fastrag.module.retrieval.model.*;
 import com.fastrag.module.retrieval.service.*; import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;

@@ -13,20 +13,29 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * 工具实体。
- * <p>
- * inputs 字段存储标准 JSON Schema，示例:
- * <pre>
- * {
- *   "type": "object",
- *   "properties": {
- *     "city": { "type": "string", "description": "城市名称" },
- *     "date": { "type": "string", "enum": ["今天","明天","后天"], "description": "查询日期" }
- *   },
- *   "required": ["city"]
- * }
- * </pre>
- * 该 schema 同时用于：前端参数表单渲染、LLM function calling parameters、后端参数校验。
+ * 自定义工具（Tool）实体，对应数据库表 {@code tool}。
+ *
+ * <p>管理用户自定义的 HTTP 工具，通过 REST API 调用对接外部服务。
+ * 工具与 MCP 工具共同构成 Agent 的工具集，由 {@link ToolRegistry} 统一注册管理。</p>
+ *
+ * <h3>核心字段：</h3>
+ * <ul>
+ *   <li>{@code id} - 主键（雪花 ID）</li>
+ *   <li>{@code name} - 工具名称</li>
+ *   <li>{@code identifier} - 工具标识符</li>
+ *   <li>{@code type} - 工具类型</li>
+ *   <li>{@code inputs} - 输入参数 JSON Schema（用于前端表单渲染、LLM function calling、后端参数校验）</li>
+ *   <li>{@code outputs} - 输出参数 JSON Schema</li>
+ *   <li>{@code outputMapping} - 输出映射规则（JSONPath，如 {@code $.data.temperature}）</li>
+ *   <li>{@code tags} - 标签（JSON 数组字符串，序列化/反序列化自动转换）</li>
+ *   <li>{@code enabled} - 是否启用</li>
+ *   <li>{@code isBuiltin} - 是否为内置工具</li>
+ *   <li>{@code orgId} - 归属组织</li>
+ *   <li>{@code httpConfig} - HTTP 配置（非 DB 字段，关联 {@link ToolHttpConfig}）</li>
+ * </ul>
+ *
+ * @see ToolHttpConfig
+ * @see ToolRegistry
  */
 @Data
 @TableName(value = "tool", autoResultMap = true)

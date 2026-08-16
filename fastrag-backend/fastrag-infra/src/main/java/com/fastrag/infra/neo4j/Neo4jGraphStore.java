@@ -1,5 +1,41 @@
 package com.fastrag.infra.neo4j;
 
+/**
+ * 基于 Neo4j 图数据库的知识图谱存储实现（参考 Yuxi CypherTemplates + 三存储架构）。
+ *
+ * <p>核心职责：使用 Neo4j 原生 Cypher 查询语言实现知识图谱的全部操作，包括实体/关系创建、
+ * 多跳展开检索、关键词搜索、Mention 追踪和孤立节点回收等。
+ *
+ * <p>依赖的外部系统：Neo4j 图数据库，通过 Neo4j Java Driver 直连（不依赖 Spring Data Neo4j，保持轻量）。
+ *
+ * <p>图模型设计：
+ * <ul>
+ *   <li>节点标签：{@code Entity}（实体节点，属性包括 kbId/name/normalizedName/entityType/embedding）、
+ *       {@code Chunk}（文档块节点，属性包括 kbId/chunkId/fileId/content）</li>
+ *   <li>关系类型：{@code RELATION}（实体间关系，属性包括 kbId/label/tripleId/content）、
+ *       {@code MENTIONS}（实体→Chunk 的关联，属性包括 kbId/createdAt）</li>
+ *   <li>独立索引节点：{@code TripleMention}（三元组与 Chunk 的溯源关联，因为 Neo4j 中
+ *       RELATION 是 relationship 类型不能有出边）</li>
+ *   <li>命名空间隔离：所有节点和关系均携带 kbId 属性，实现多知识库的数据隔离</li>
+ * </ul>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>实体和关系使用 MERGE 语句实现幂等创建，MERGE 键为 (kbId, name)，避免重复节点</li>
+ *   <li>expandGraph 支持模糊匹配（CONTAINS）和 mentionCount 加权排序，支持 1-2 跳邻居展开</li>
+ *   <li>实体向量检索：利用 Neo4j 5.11+ 的原生向量索引（entity_embedding），支持 COSINE 相似度；
+ *       索引创建失败时静默降级为文本匹配</li>
+ *   <li>文件/Chunk 删除时通过 DETACH DELETE 和 NOT EXISTS 子查询回收孤立节点</li>
+ *   <li>renameChunkId 通过创建新节点→迁移关系→删除旧节点的方式处理 Neo4j 不支持修改 MATCH 键属性的限制</li>
+ * </ul>
+ *
+ * <p>条件装配：通过 {@code @ConditionalOnProperty(prefix = "neo4j", name = "enabled", havingValue = "true")}
+ * 注解控制，仅当 {@code neo4j.enabled=true} 时创建此 Bean。
+ *
+ * <p>与其他模块的交互：通过 {@link GraphStore} 接口被上层知识库处理服务调用；
+ * 被 {@link Neo4jService} 委托调用以保持向后兼容。
+ */
+
 import com.fastrag.infra.graph.GraphStore;
 import lombok.RequiredArgsConstructor;
 import org.neo4j.driver.Driver;
@@ -15,18 +51,6 @@ import org.springframework.stereotype.Repository;
 import java.util.*;
 import java.util.stream.Collectors;
 
-/**
- * Neo4j 图存储实现（参考 Yuxi CypherTemplates + 三存储架构）
- *
- * <p>使用 Neo4j Java Driver 直连，不依赖 Spring Data Neo4j，保持轻量。
- * <ul>
- *   <li>节点标签：Entity（实体），Chunk（文档块）</li>
- *   <li>关系类型：RELATION（实体间关系），MENTIONS（实体→Chunk 关联）</li>
- *   <li>命名空间：通过 kbId 属性隔离不同知识库</li>
- * </ul>
- *
- * <p>仅当 neo4j.enabled=true 时创建此 Bean。
- */
 @Repository
 @ConditionalOnProperty(prefix = "neo4j", name = "enabled", havingValue = "true")
 @RequiredArgsConstructor
@@ -60,7 +84,8 @@ public class Neo4jGraphStore implements GraphStore {
     // ==================== Entity ====================
 
     @Override
-    public void createEntity(String kbId, String entityId, String name, String normalizedName, String type) {
+    public void createEntity(String kbId, String entityId, String name, String normalizedName, String type,
+                             String description, String attributes) {
         if (name == null || name.isBlank()) return;
         String normalized = normalizedName != null ? normalizedName : name.trim().toLowerCase();
         try (Session session = neo4jDriver.session()) {
@@ -69,12 +94,16 @@ public class Neo4jGraphStore implements GraphStore {
                 // entityType 作为属性回填（而非 MERGE 键），避免同名实体因不同 type 产生分裂节点
                 tx.run("MERGE (e:Entity {kbId: $kbId, name: $name}) " +
                         "ON CREATE SET e.entityId = $entityId, e.normalizedName = $normalizedName, " +
-                        "e.entityType = $type, e.createdAt = datetime() " +
+                        "e.entityType = $type, e.description = $description, e.attributes = $attributes, " +
+                        "e.createdAt = datetime() " +
                         "ON MATCH SET e.normalizedName = coalesce(e.normalizedName, $normalizedName), " +
                         "e.entityId = coalesce(e.entityId, $entityId), " +
-                        "e.entityType = coalesce(e.entityType, $type)",
+                        "e.entityType = coalesce(e.entityType, $type), " +
+                        "e.description = coalesce(e.description, $description), " +
+                        "e.attributes = coalesce(e.attributes, $attributes)",
                         p("kbId", kbId, "entityId", entityId, "name", name.trim(),
-                                "normalizedName", normalized, "type", type != null ? type : "UNKNOWN"));
+                                "normalizedName", normalized, "type", type != null ? type : "UNKNOWN",
+                                "description", description, "attributes", attributes));
                 return null;
             });
         } catch (Exception e) {
@@ -83,23 +112,73 @@ public class Neo4jGraphStore implements GraphStore {
     }
 
     @Override
-    public void createRelation(String kbId, String tripleId, String source, String target, String label, String content) {
+    public void createRelation(String kbId, String tripleId, String sourceId, String source,
+                               String targetId, String target, String label, String content) {
         if (source == null || target == null || source.isBlank() || target.isBlank()) return;
         String relLabel = label != null ? label : "RELATED";
         String relContent = content != null ? content : (source.trim() + " -> " + relLabel + " -> " + target.trim());
         try (Session session = neo4jDriver.session()) {
             session.writeTransaction(tx -> {
+                // 端点实体 ID：调用方未提供时（跨 chunk 引用）从已存在节点回填（coalesce），
+                // 确保边始终携带 sourceId/targetId（KG-01）
                 tx.run("MERGE (s:Entity {kbId: $kbId, name: $source}) " +
                         "MERGE (t:Entity {kbId: $kbId, name: $target}) " +
                         "MERGE (s)-[r:RELATION {kbId: $kbId, label: $label}]->(t) " +
-                        "ON CREATE SET r.tripleId = $tripleId, r.content = $content, r.createdAt = datetime() " +
-                        "ON MATCH SET r.tripleId = coalesce(r.tripleId, $tripleId), r.content = coalesce(r.content, $content)",
-                        p("kbId", kbId, "tripleId", tripleId, "source", source.trim(),
-                                "target", target.trim(), "label", relLabel, "content", relContent));
+                        "ON CREATE SET r.tripleId = $tripleId, " +
+                        "r.sourceId = coalesce($sourceId, s.entityId), r.targetId = coalesce($targetId, t.entityId), " +
+                        "r.content = $content, r.createdAt = datetime() " +
+                        "ON MATCH SET r.tripleId = coalesce(r.tripleId, $tripleId), " +
+                        "r.sourceId = coalesce(r.sourceId, $sourceId, s.entityId), " +
+                        "r.targetId = coalesce(r.targetId, $targetId, t.entityId), " +
+                        "r.content = coalesce(r.content, $content)",
+                        p("kbId", kbId, "tripleId", tripleId, "sourceId", sourceId, "targetId", targetId,
+                                "source", source.trim(), "target", target.trim(), "label", relLabel, "content", relContent));
                 return null;
             });
         } catch (Exception e) {
             log.warn("Neo4j createRelation failed: kb={}, {}->{}, error={}", kbId, source, target, e.getMessage());
+        }
+    }
+
+    @Override
+    public String findEntityId(String kbId, String normalizedName) {
+        if (!enabled || normalizedName == null || normalizedName.isBlank()) return null;
+        try (Session session = neo4jDriver.session()) {
+            return session.readTransaction(tx -> {
+                Result r = tx.run(
+                        "MATCH (e:Entity {kbId: $kbId}) WHERE e.normalizedName = $name " +
+                        "RETURN e.entityId AS id LIMIT 1",
+                        p("kbId", kbId, "name", normalizedName));
+                return r.hasNext() ? r.next().get("id", (String) null) : null;
+            });
+        } catch (Exception e) {
+            log.warn("Neo4j findEntityId failed: kb={}, name={}, error={}", kbId, normalizedName, e.getMessage());
+            return null;
+        }
+    }
+
+    @Override
+    public List<Map<String, String>> listEntityMentions(String kbId) {
+        if (!enabled) return Collections.emptyList();
+        try (Session session = neo4jDriver.session()) {
+            return session.readTransaction(tx -> {
+                Result r = tx.run(
+                        "MATCH (e:Entity {kbId: $kbId})-[:MENTIONS]->(c:Chunk {kbId: $kbId}) " +
+                        "RETURN e.entityId AS entityId, c.chunkId AS chunkId",
+                        p("kbId", kbId));
+                List<Map<String, String>> list = new ArrayList<>();
+                while (r.hasNext()) {
+                    Record rec = r.next();
+                    Map<String, String> m = new HashMap<>(2);
+                    m.put("entityId", rec.get("entityId", (String) null));
+                    m.put("chunkId", rec.get("chunkId", (String) null));
+                    list.add(m);
+                }
+                return list;
+            });
+        } catch (Exception e) {
+            log.warn("Neo4j listEntityMentions failed: kb={}, error={}", kbId, e.getMessage());
+            return Collections.emptyList();
         }
     }
 
@@ -114,7 +193,7 @@ public class Neo4jGraphStore implements GraphStore {
                 Result r = tx.run(
                         "MATCH (e:Entity {kbId: $kbId}) " +
                         "RETURN e.entityId AS id, e.name AS name, e.normalizedName AS normalizedName, " +
-                        "e.entityType AS entityType, e.description AS description " +
+                        "e.entityType AS entityType, e.description AS description, e.attributes AS attributes " +
                         "LIMIT $limit",
                         p("kbId", kbId, "limit", maxNodes));
                 List<Map<String, Object>> list = new ArrayList<>();
@@ -125,6 +204,7 @@ public class Neo4jGraphStore implements GraphStore {
                     row.put("name", ((org.neo4j.driver.Value) rec.get("name")).asString(""));
                     row.put("entity_type", ((org.neo4j.driver.Value) rec.get("entityType")).asString(""));
                     row.put("description", rec.get("description", (String) null));
+                    row.put("attributes", rec.get("attributes", (String) null));
                     list.add(row);
                 }
                 return list;
@@ -147,7 +227,8 @@ public class Neo4jGraphStore implements GraphStore {
                 Result r = tx.run(
                         "MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
                         "WHERE s.name IN $names AND t.name IN $names " +
-                        "RETURN r.tripleId AS id, s.name AS source, t.name AS target, r.label AS label " +
+                        "RETURN r.tripleId AS id, r.sourceId AS sourceId, r.targetId AS targetId, " +
+                        "s.name AS source, t.name AS target, r.label AS label " +
                         "LIMIT $limit",
                         p("kbId", kbId, "names", nodeNames, "limit", maxNodes * 3));
                 List<Map<String, Object>> list = new ArrayList<>();
@@ -155,6 +236,8 @@ public class Neo4jGraphStore implements GraphStore {
                     Record rec = r.next();
                     Map<String, Object> row = new HashMap<>();
                     row.put("id", rec.get("id", (String) null));
+                    row.put("source_id", rec.get("sourceId", (String) null));
+                    row.put("target_id", rec.get("targetId", (String) null));
                     row.put("source", ((org.neo4j.driver.Value) rec.get("source")).asString(""));
                     row.put("target", ((org.neo4j.driver.Value) rec.get("target")).asString(""));
                     row.put("label", ((org.neo4j.driver.Value) rec.get("label")).asString(""));
@@ -172,6 +255,52 @@ public class Neo4jGraphStore implements GraphStore {
                         .filter(n -> !"chunk".equalsIgnoreCase(String.valueOf(n.get("entity_type"))))
                         .collect(Collectors.toList());
                 log.info("[Neo4jQuery] After excludeChunks: {} -> {} nodes", beforeFilter, nodes.size());
+            } else {
+                // 展示 Chunk 节点 + MENTIONS 边（对齐 Yuxi exclude_chunk 参数；KG-08）
+                List<Map<String, Object>> chunkNodes = session.readTransaction(tx -> {
+                    Result r = tx.run(
+                            "MATCH (c:Chunk {kbId: $kbId}) " +
+                            "RETURN c.chunkId AS id, c.content AS content LIMIT $limit",
+                            p("kbId", kbId, "limit", maxNodes));
+                    List<Map<String, Object>> list = new ArrayList<>();
+                    while (r.hasNext()) {
+                        Record rec = r.next();
+                        Map<String, Object> row = new HashMap<>();
+                        row.put("id", rec.get("id", (String) null));
+                        row.put("name", rec.get("id", (String) null));
+                        row.put("entity_type", "chunk");
+                        row.put("description", rec.get("content", (String) null));
+                        list.add(row);
+                    }
+                    return list;
+                });
+                nodes.addAll(chunkNodes);
+                log.info("[Neo4jQuery] excludeChunks=false: added {} chunk nodes", chunkNodes.size());
+
+                // MENTIONS 边：实体 -> Chunk（展示模式下附加）
+                if (!chunkNodes.isEmpty()) {
+                    List<Map<String, Object>> mentionEdges = session.readTransaction(tx -> {
+                        Result r = tx.run(
+                                "MATCH (e:Entity {kbId: $kbId})-[m:MENTIONS]->(c:Chunk {kbId: $kbId}) " +
+                                "RETURN e.entityId AS sourceId, e.name AS source, c.chunkId AS targetId, c.chunkId AS target " +
+                                "LIMIT $limit",
+                                p("kbId", kbId, "limit", maxNodes * 2));
+                        List<Map<String, Object>> list = new ArrayList<>();
+                        while (r.hasNext()) {
+                            Record rec = r.next();
+                            Map<String, Object> row = new HashMap<>();
+                            row.put("id", "m_" + rec.get("sourceId", (String) null) + "_" + rec.get("targetId", (String) null));
+                            row.put("source_id", rec.get("sourceId", (String) null));
+                            row.put("target_id", rec.get("targetId", (String) null));
+                            row.put("source", ((org.neo4j.driver.Value) rec.get("source")).asString(""));
+                            row.put("target", ((org.neo4j.driver.Value) rec.get("target")).asString(""));
+                            row.put("label", "MENTIONS");
+                            list.add(row);
+                        }
+                        return list;
+                    });
+                    edges.addAll(mentionEdges);
+                }
             }
 
             return result("nodes", nodes, "edges", edges);
@@ -322,7 +451,8 @@ public class Neo4jGraphStore implements GraphStore {
                         "MATCH (e:Entity {kbId: $kbId}) " +
                         "WHERE e.name =~ $pattern OR e.normalizedName =~ $pattern " +
                         "OR e.entityType =~ $pattern OR e.description =~ $pattern " +
-                        "RETURN e.entityId AS id, e.name AS name, e.entityType AS entityType " +
+                        "RETURN e.entityId AS id, e.name AS name, e.entityType AS entityType, " +
+                        "e.description AS description, e.attributes AS attributes " +
                         "LIMIT $limit",
                         p("kbId", kbId, "pattern", pattern, "limit", maxNodes));
                 List<Map<String, Object>> list = new ArrayList<>();
@@ -332,6 +462,8 @@ public class Neo4jGraphStore implements GraphStore {
                     row.put("id", rec.get("id", (String) null));
                     row.put("name", ((org.neo4j.driver.Value) rec.get("name")).asString(""));
                     row.put("entity_type", ((org.neo4j.driver.Value) rec.get("entityType")).asString(""));
+                    row.put("description", rec.get("description", (String) null));
+                    row.put("attributes", rec.get("attributes", (String) null));
                     list.add(row);
                 }
                 return list;
@@ -347,7 +479,8 @@ public class Neo4jGraphStore implements GraphStore {
                     Result r = tx.run(
                             "MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
                             "WHERE s.name IN $names AND t.name IN $names " +
-                            "RETURN r.tripleId AS id, s.name AS source, t.name AS target, r.label AS label " +
+                            "RETURN r.tripleId AS id, r.sourceId AS sourceId, r.targetId AS targetId, " +
+                            "s.name AS source, t.name AS target, r.label AS label " +
                             "LIMIT $limit",
                             p("kbId", kbId, "names", nodeNames, "limit", maxNodes * 2));
                     List<Map<String, Object>> list = new ArrayList<>();
@@ -355,6 +488,8 @@ public class Neo4jGraphStore implements GraphStore {
                         Record rec = r.next();
                         Map<String, Object> row = new HashMap<>();
                         row.put("id", rec.get("id", (String) null));
+                        row.put("source_id", rec.get("sourceId", (String) null));
+                        row.put("target_id", rec.get("targetId", (String) null));
                         row.put("source", ((org.neo4j.driver.Value) rec.get("source")).asString(""));
                         row.put("target", ((org.neo4j.driver.Value) rec.get("target")).asString(""));
                         row.put("label", ((org.neo4j.driver.Value) rec.get("label")).asString(""));
@@ -436,7 +571,7 @@ public class Neo4jGraphStore implements GraphStore {
     }
 
     @Override
-    public void createEntityMention(String kbId, String entityName, String chunkId) {
+    public void createEntityMention(String kbId, String entityName, String entityId, String chunkId, String fileId) {
         if (!enabled) return;
         try (Session session = neo4jDriver.session()) {
             session.writeTransaction(tx -> {
@@ -455,15 +590,15 @@ public class Neo4jGraphStore implements GraphStore {
     }
 
     @Override
-    public void createTripleMention(String kbId, String tripleId, String chunkId) {
+    public void createTripleMention(String kbId, String tripleId, String chunkId, String fileId) {
         if (!enabled) return;
         // 关系（RELATION 是 relationship 类型）不能有出边，因此用独立的 :TripleMention 索引节点
         // 记录 关系↔分块 溯源（对标 LightRAG relation_chunks），供删除/权重统计/孤儿回收使用
         try (Session session = neo4jDriver.session()) {
             session.writeTransaction(tx -> {
                 tx.run("MERGE (tm:TripleMention {kbId: $kbId, tripleId: $tripleId, chunkId: $chunkId}) " +
-                        "ON CREATE SET tm.createdAt = datetime()",
-                        p("kbId", kbId, "tripleId", tripleId, "chunkId", chunkId));
+                        "ON CREATE SET tm.fileId = $fileId, tm.createdAt = datetime()",
+                        p("kbId", kbId, "tripleId", tripleId, "chunkId", chunkId, "fileId", fileId));
                 return null;
             });
         } catch (Exception e) {
@@ -738,6 +873,13 @@ public class Neo4jGraphStore implements GraphStore {
         if (!enabled) return;
         try (Session session = neo4jDriver.session()) {
             session.writeTransaction(tx -> {
+                // 0. 边端点实体 ID 回填（KG-01）：跨 chunk 引用且端点实体从未被单独提取时，
+                //    关系边的 sourceId/targetId 可能为空，从端点节点属性回填
+                tx.run("MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
+                        "WHERE r.sourceId IS NULL OR r.targetId IS NULL " +
+                        "SET r.sourceId = coalesce(r.sourceId, s.entityId), " +
+                        "r.targetId = coalesce(r.targetId, t.entityId)",
+                        p("kbId", kbId));
                 // 1. 回收孤立的 RELATION（无任何 TripleMention 引用 = 不再被任何 chunk 提及）
                 tx.run("MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
                         "WHERE NOT EXISTS { MATCH (:TripleMention {kbId: r.kbId, tripleId: r.tripleId}) } " +

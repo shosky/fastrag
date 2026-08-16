@@ -1,5 +1,30 @@
 package com.fastrag.module.platform.controller;
 
+/**
+ * 敏感词管理控制器
+ * <p>
+ * 提供敏感词的增删改查、批量导入导出功能。敏感词配置包含三级拦截策略：
+ * 阻止用户输入（blockInput）、联网检索屏蔽（blockSearch）、模型生成答案时替换（replaceAnswer）。
+ * 敏感词的分类信息以 JSON 字符串形式存储在 category 字段中，查询接口会将其解析为独立布尔字段供前端使用。
+ * </p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>GET /api/sensitive-words — 查询敏感词列表，返回格式化的前端表格数据（word、reply、blockInput、blockSearch、replaceAnswer 等）</li>
+ *   <li>POST /api/sensitive-words — 创建敏感词，包含词语、替换文本、分类标志和级别</li>
+ *   <li>PUT /api/sensitive-words/{id} — 更新敏感词</li>
+ *   <li>DELETE /api/sensitive-words/{id} — 删除敏感词</li>
+ *   <li>GET /api/sensitive-words/template — 下载 CSV 模板文件，用于批量导入</li>
+ *   <li>POST /api/sensitive-words/import — 从 CSV 文件批量导入敏感词</li>
+ * </ul>
+ *
+ * <p>批量导入时跳过 CSV 文件头行，逐行解析敏感词、指定回复和三个布尔标志。
+ * 文件上传使用 Spring 的 MultipartFile 处理。</p>
+ *
+ * @see com.fastrag.module.platform.service.SensitiveWordService
+ * @see com.fastrag.module.platform.entity.SensitiveWord
+ */
+
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.platform.entity.SensitiveWord;
 import com.fastrag.module.platform.service.SensitiveWordService;

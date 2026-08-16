@@ -6,10 +6,17 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
 /**
- * 模型监控分析控制器
+ * 模型监控分析控制器。
  *
- * 数据来源：model_call_log 表
- * URL 前缀：/api/monitor/model
+ * <p>提供AI模型调用维度的监控分析功能，数据来源于 model_call_log 表。
+ * 支持按时间范围和模型关键字进行筛选，返回模型调用的统计总览数据。
+ *
+ * <p>REST API 端点：
+ * <ul>
+ *     <li>GET /api/monitor/model/overview - 获取模型监控总览数据，支持 timeRange（天）、keyword、page、pageSize 参数</li>
+ * </ul>
+ *
+ * <p>委托 {@link ModelMonitorService} 完成具体的数据聚合和统计逻辑。
  */
 @RestController
 @RequestMapping("/api/monitor/model")

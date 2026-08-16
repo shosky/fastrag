@@ -1,4 +1,35 @@
 package com.fastrag.module.platform.controller;
+
+/**
+ * 平台配置管理控制器
+ * <p>
+ * 提供系统级配置的统一管理入口，涵盖模型训练/测试、系统配置CRUD、安全策略管理、发布策略管理等多个功能域。
+ * 所有写操作均通过 {@link com.fastrag.common.annotation.Loggable} 注解记录操作审计日志。
+ * </p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>模型训练与测试：POST /api/models/{id}/train、POST /api/models/{id}/test、
+ *       GET /api/models/{id}/trainings、GET /api/models/{id}/test-reports、GET /api/models/export</li>
+ *   <li>系统配置管理：GET /api/config（按类型查询）、PUT /api/config（保存配置）、
+ *       GET /api/config/history（变更历史）、GET/POST /api/config/export|import（导入导出）、
+ *       GET/PUT /api/config/default（默认值管理）、POST /api/config/reset-to-default（重置为默认）</li>
+ *   <li>业务开关配置：PUT /api/config/publish-switch（发布开关）、PUT /api/config/review-switch（审核开关）、
+ *       PUT /api/config/review-flow（审核流程）、PUT /api/config/doc-guide（文档导读）、
+ *       PUT /api/config/review-flow-binding（审核流程绑定）、PUT /api/config/publish-settings、PUT /api/config/review-settings</li>
+ *   <li>状态查询：GET /api/config/publish-status、GET /api/config/review-status</li>
+ *   <li>安全策略CRUD：GET/POST /api/security-policies、PUT/DELETE /api/security-policies/{id}</li>
+ *   <li>发布策略CRUD：GET/POST /api/publish-strategies、PUT/DELETE /api/publish-strategies/{id}</li>
+ * </ul>
+ *
+ * <p>该控制器直接依赖 {@link com.fastrag.module.platform.service.ConfigManageService} 处理所有业务逻辑，
+ * 本身不包含业务实现，仅做参数转发与响应封装。配置值以 JSON 字符串形式存储，通过内部 ObjectMapper 进行序列化。</p>
+ *
+ * @see com.fastrag.module.platform.service.ConfigManageService
+ * @see com.fastrag.module.platform.entity.SysConfig
+ * @see com.fastrag.module.platform.entity.SysSecurityPolicy
+ * @see com.fastrag.module.platform.entity.SysPublishStrategy
+ */
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.platform.entity.SysPublishStrategy;
 import com.fastrag.module.platform.entity.SysSecurityPolicy;

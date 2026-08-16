@@ -1,5 +1,40 @@
 package com.fastrag.module.iam.controller;
 
+/**
+ * 认证控制器，提供用户登录、登出、注册、密码重置及微信小程序登录等认证相关接口。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>用户名/密码登录与登出</li>
+ *   <li>获取当前登录用户信息</li>
+ *   <li>邮箱验证码发送与用户注册</li>
+ *   <li>密码重置</li>
+ *   <li>微信小程序登录（code 换 openid，自动注册或登录）</li>
+ *   <li>微信扫码登录（PC 端生成二维码场景值，小程序扫码确认）</li>
+ * </ul>
+ *
+ * <p>提供的 REST API 端点：
+ * <ul>
+ *   <li>{@code POST /api/auth/login} —— 用户名/密码登录</li>
+ *   <li>{@code GET  /api/auth/userinfo} —— 获取当前用户信息</li>
+ *   <li>{@code POST /api/auth/logout} —— 登出</li>
+ *   <li>{@code POST /api/auth/send-code} —— 发送邮箱验证码</li>
+ *   <li>{@code POST /api/auth/register} —— 用户注册</li>
+ *   <li>{@code POST /api/auth/reset-password} —— 重置密码</li>
+ *   <li>{@code GET  /api/auth/wechat/qr-scene} —— 生成微信扫码登录场景值</li>
+ *   <li>{@code GET  /api/auth/wechat/qr-status} —— 轮询扫码登录状态</li>
+ *   <li>{@code POST /api/auth/wechat/login} —— 微信小程序登录</li>
+ *   <li>{@code POST /api/auth/wechat/qr-confirm} —— 小程序端扫码确认登录</li>
+ * </ul>
+ *
+ * <p>所有认证操作均会通过 {@code SysLoginLogService} 记录登录/登出/注册日志，
+ * 包括客户端 IP、设备信息、操作系统和浏览器等 UA 解析结果。
+ * 微信登录流程依赖 {@code WechatMiniAppProperties} 提供的 appId 和 appSecret，
+ * 通过调用微信 code2Session 接口换取 openId/unionId。
+ *
+ * @see AuthService
+ * @see SysLoginLogService
+ */
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.common.util.IpUtil;
 import com.fastrag.common.util.UserAgentUtil;

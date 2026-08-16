@@ -1,5 +1,23 @@
 package com.fastrag.module.knowledge.controller;
 
+/**
+ * 知识库文件夹管理控制器，提供文件夹的 CRUD REST API。
+ *
+ * <p>核心职责：管理知识库内的文件夹结构，支持创建、列表、重命名和删除操作，
+ * 用于组织知识库中的文件层级。
+ *
+ * <p>提供的 REST API 端点（基础路径 {@code /api/kb/{kbId}/folders}）：
+ * <ul>
+ *   <li>{@code GET /} — 列出知识库下所有文件夹（viewer 权限）</li>
+ *   <li>{@code POST /} — 创建文件夹（支持指定 parentId 构建层级）（editor 权限）</li>
+ *   <li>{@code GET /{id}/name} — 获取文件夹名称（viewer 权限）</li>
+ *   <li>{@code PUT /{id}} — 重命名文件夹（editor 权限）</li>
+ *   <li>{@code DELETE /{id}} — 删除文件夹（editor 权限）</li>
+ * </ul>
+ *
+ * <p>所有端点通过 {@link KbAuth} 进行知识库级别权限校验，
+ * 文件夹操作通过 {@link LogService} 记录日志。
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.KBRole;

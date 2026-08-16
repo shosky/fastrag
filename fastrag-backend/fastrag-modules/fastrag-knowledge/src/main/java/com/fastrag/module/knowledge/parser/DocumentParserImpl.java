@@ -21,12 +21,35 @@ import org.apache.pdfbox.Loader;
 import org.apache.pdfbox.pdmodel.PDDocument;
 import org.apache.pdfbox.rendering.PDFRenderer;
 import org.apache.pdfbox.text.PDFTextStripper;
-import org.apache.poi.xwpf.usermodel.*;
+import org.apache.poi.EncryptedDocumentException;
+import org.apache.poi.hssf.usermodel.HSSFWorkbook;
+import org.apache.poi.hwpf.HWPFDocument;
+import org.apache.poi.hwpf.extractor.WordExtractor;
+import org.apache.poi.hwpf.model.PicturesTable;
+import org.apache.poi.hwpf.usermodel.Picture;
+import org.apache.poi.ooxml.POIXMLException;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.DataFormatter;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.util.CellRangeAddress;
 import org.apache.poi.xssf.usermodel.XSSFWorkbook;
-import org.apache.poi.xslf.usermodel.XMLSlideShow;
+import org.apache.poi.xslf.usermodel.*;
+import org.apache.poi.hslf.usermodel.HSLFSlide;
+import org.apache.poi.hslf.usermodel.HSLFSlideShow;
 import org.apache.poi.sl.extractor.SlideShowExtractor;
+import org.apache.poi.sl.usermodel.PictureData;
+import org.apache.poi.sl.usermodel.PictureShape;
+import org.apache.poi.sl.usermodel.PlaceableShape;
+import org.apache.poi.sl.usermodel.Shape;
+import org.apache.poi.sl.usermodel.ShapeContainer;
+import org.apache.poi.sl.usermodel.TextShape;
+import org.apache.poi.xwpf.usermodel.*;
 import org.springframework.stereotype.Service;
 
+import java.io.ByteArrayInputStream;
+import java.io.IOException;
 import java.io.InputStream;
 import java.util.*;
 import java.util.NavigableMap;
@@ -37,6 +60,7 @@ import java.nio.charset.Charset;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.util.function.Predicate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -58,7 +82,19 @@ public class DocumentParserImpl implements DocumentParser {
 
     @Override
     public ParseResult parse(InputStream fileStream, String extension, String strategyId) {
+        return parse(fileStream, extension, strategyId, null);
+    }
+
+    @Override
+    public ParseResult parse(InputStream fileStream, String extension, String strategyId, ParseOptions options) {
         KbParseStrategy strategy = strategyId != null ? strategyMapper.selectById(strategyId) : null;
+        return parse(fileStream, extension, strategy, options);
+    }
+
+    /**
+     * 按显式策略对象解析（预览场景：临时构造的策略对象，未落库，含自定义解析方式与 advanced 配置）。
+     */
+    public ParseResult parse(InputStream fileStream, String extension, KbParseStrategy strategy, ParseOptions options) {
         String method = strategy != null ? strategy.getParseMethod() : null;
 
         // 当策略未指定解析方法或为 default 时，根据文件扩展名自动选择解析器
@@ -70,14 +106,15 @@ public class DocumentParserImpl implements DocumentParser {
 
         try {
             return switch (method) {
-                case "pdf" -> parsePdf(fileStream, strategy);
-                case "pptx" -> parsePptx(fileStream, strategy);
+                case "pdf" -> parsePdf(fileStream, strategy, options);
+                case "doc" -> parseDoc(fileStream, strategy);
                 case "docx" -> parseDocx(fileStream, strategy);
-                case "xlsx" -> parseExcel(fileStream, strategy);
-                case "video" -> parseVideo(fileStream, extension, strategy);
-                case "audio" -> parseAudio(fileStream, extension, strategy);
-                case "image" -> parseImage(fileStream, extension, strategy);
-                default -> parseDefault(fileStream, strategy);
+                case "pptx" -> parsePptx(fileStream, extension, strategy);
+                case "xlsx" -> parseExcel(fileStream, extension, strategy);
+                case "video" -> parseVideo(fileStream, extension, strategy, options);
+                case "audio" -> parseAudio(fileStream, extension, strategy, options);
+                case "image" -> parseImage(fileStream, extension, strategy, options);
+                default -> parseDefault(fileStream, strategy, options);
             };
         } catch (Exception e) {
             log.error("Document parsing failed for extension: {}", extension, e);
@@ -86,25 +123,14 @@ public class DocumentParserImpl implements DocumentParser {
     }
 
     /**
-     * 根据文件扩展名推断解析方法
+     * 根据文件扩展名推断解析方法。
+     * 委托 {@link ParseMethodRegistry}（唯一权威映射，含 .ppt → pptx 等），未识别时返回 default 纯文本兜底。
      */
     private String resolveMethodByExtension(String extension) {
-        if (extension == null || extension.isBlank()) {
-            return "default";
-        }
-        return switch (extension.toLowerCase().trim()) {
-            case "pdf" -> "pdf";
-            case "docx" -> "docx";
-            case "pptx" -> "pptx";
-            case "xlsx", "xls" -> "xlsx";
-            case "mp4", "avi", "mov", "mkv", "flv", "wmv", "webm" -> "video";
-            case "mp3", "wav", "m4a", "aac", "ogg", "flac", "wma" -> "audio";
-            case "jpg", "jpeg", "png", "gif", "bmp", "webp", "tiff" -> "image";
-            default -> "default"; // txt, md, csv 等纯文本文件
-        };
+        return ParseMethodRegistry.resolveByExtension(extension);
     }
 
-    private ParseResult parsePdf(InputStream stream, KbParseStrategy strategy) throws Exception {
+    private ParseResult parsePdf(InputStream stream, KbParseStrategy strategy, ParseOptions options) throws Exception {
         byte[] pdfBytes = stream.readAllBytes();
         try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
             int totalPages = doc.getNumberOfPages();
@@ -114,6 +140,10 @@ public class DocumentParserImpl implements DocumentParser {
             StringBuilder textWithMarkers = new StringBuilder();
             PDFRenderer renderer = new PDFRenderer(doc);
 
+            // 页 → 最近标题映射（供 PDF 图片分片的语义上下文，1-based）
+            Map<Integer, String> pageTitles = new HashMap<>();
+            String currentTitle = null;
+
             for (int pageNum = 0; pageNum < totalPages; pageNum++) {
                 // 提取该页文本
                 PDFTextStripper stripper = new PDFTextStripper();
@@ -121,13 +151,14 @@ public class DocumentParserImpl implements DocumentParser {
                 stripper.setEndPage(pageNum + 1);
                 String pageText = stripper.getText(doc);
 
-                // 扫描件 OCR 兜底：文字太少则渲染页面为图片调 DeepSeek-OCR
+                // 扫描件 OCR 兜底：文字太少则渲染页面为图片调 OCR
                 if (pageText.trim().length() < 50) {
                     try {
                         java.awt.image.BufferedImage pageImage = renderer.renderImageWithDPI(pageNum, 200);
                         java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
                         javax.imageio.ImageIO.write(pageImage, "png", baos);
-                        String ocrResult = ocrService.recognize(baos.toByteArray(), "png");
+                        String ocrResult = ocrService.recognize(baos.toByteArray(), "png",
+                                options != null ? options.getOcrEngine() : null);
                         if (ocrResult != null && !ocrResult.isBlank()) {
                             log.info("OCR fallback for page {}: {} chars", pageNum + 1, ocrResult.length());
                             pageText = ocrResult;
@@ -136,6 +167,13 @@ public class DocumentParserImpl implements DocumentParser {
                         log.warn("OCR fallback failed for page {}: {}", pageNum + 1, e.getMessage());
                     }
                 }
+
+                // 页标题检测：该页第一个"标题样"行，无则继承上一页标题（跨页章节延续）
+                String pageTitle = detectPdfTitleLine(pageText);
+                if (pageTitle != null) {
+                    currentTitle = pageTitle;
+                }
+                pageTitles.put(pageNum + 1, currentTitle);
 
                 textWithMarkers.append(pageText.trim());
                 if (pageNum < totalPages - 1) {
@@ -153,14 +191,51 @@ public class DocumentParserImpl implements DocumentParser {
             return ParseResult.builder()
                     .text(fullText)
                     .pages(totalPages)
+                    .pageTitles(pageTitles)
                     .build();
         }
     }
 
+    /**
+     * 从 PDF 页文本中检测"标题行"（供图片分片的语义上下文）。
+     * 取该页第一个符合条件的行。特征：
+     * - 长度 5~60 字符（过滤短页眉与长正文）
+     * - 非纯数字/页码
+     * - 不以句子结束标点结尾（。，；：！？等，标题通常无句号）
+     * - 数字 token 少于 3 个（表格/数据行通常含多个数字）
+     */
+    private String detectPdfTitleLine(String pageText) {
+        if (pageText == null || pageText.isBlank()) return null;
+        for (String line : pageText.split("\n")) {
+            String t = line.trim();
+            if (isPdfTitleLikeLine(t)) return t;
+        }
+        return null;
+    }
+
+    private boolean isPdfTitleLikeLine(String t) {
+        if (t.isEmpty()) return false;
+        if (t.length() < 5 || t.length() > 60) return false;
+        if (t.matches("^[\\d\\s\\-–.]+$")) return false; // 纯数字/页码
+        char last = t.charAt(t.length() - 1);
+        if (last == '。' || last == '.' || last == '，' || last == ',' || last == '；'
+                || last == ';' || last == '：' || last == ':' || last == '！' || last == '？') {
+            return false;
+        }
+        // 数字 token 过多（表格/数据行特征）
+        long digitTokens = java.util.Arrays.stream(t.split("\\s+"))
+                .filter(w -> w.matches(".*\\d.*")).count();
+        return digitTokens < 3;
+    }
+
     private ParseResult parseDocx(InputStream stream, KbParseStrategy strategy) throws Exception {
         try (XWPFDocument doc = new XWPFDocument(stream)) {
-            // 结构化解析：遍历 body elements
-            List<DocNode> nodes = parseDocxStructured(doc);
+            // 结构化解析：遍历 body elements（同时收集内嵌图片字节，供消费方上传 MinIO）
+            List<ParseResult.ParseImage> images = new ArrayList<>();
+            int[] skippedDecorative = {0}; // 装饰性图片过滤计数（解析期内共享）
+            List<DocNode> nodes = parseDocxStructured(doc, images, skippedDecorative);
+            // 频次去重：同文档重复 >= 3 次的图片（模板 logo/水印）整组过滤（同步剔除 IMAGE 节点）
+            deduplicateRepeatedImages(nodes, images);
             // 序列化为 Markdown
             String markdown = markdownSerializer.serialize(nodes);
             // 可选 LLM 增强
@@ -168,23 +243,175 @@ public class DocumentParserImpl implements DocumentParser {
                 LlmConfig llmCfg = resolveLlmConfig(strategy);
                 markdown = enhanceWithLlm(markdown, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
             }
+            log.info("Extracted {} images from .docx, filtered {} decorative images",
+                    images.size(), skippedDecorative[0]);
             return ParseResult.builder()
                     .text(markdown)
                     .nodes(nodes)
+                    .images(images)
                     .pages(1)
                     .build();
         }
     }
 
     /**
-     * 结构化解析 DOCX：遍历 body elements，生成 DocNode 列表
+     * 解析旧版 Word 文档（.doc，OLE2 二进制格式）。
+     *
+     * <p>使用 POI HWPF 组件提取文本和嵌入图片。HWPF 处于维护模式，无法像 docx 一样
+     * 提取标题层级/表格结构，因此降级为纯文本段落提取：文本内容完整保留（含表格单元格文本），
+     * 但结构化程度弱于 docx。图片通过 PicturesTable 提取，供图片分片使用。</p>
+     *
+     * <p>处理流程：HWPFDocument 打开 → WordExtractor 提取全文 → 按行生成 PARAGRAPH 节点
+     * → 提取嵌入图片 → Markdown 序列化 → 可选 LLM 增强。</p>
      */
-    private List<DocNode> parseDocxStructured(XWPFDocument doc) {
+    private ParseResult parseDoc(InputStream stream, KbParseStrategy strategy) throws Exception {
+        byte[] bytes = stream.readAllBytes();
+        try (HWPFDocument doc = new HWPFDocument(new ByteArrayInputStream(bytes))) {
+            // 1. 提取纯文本（WordExtractor 自动拼接段落/表格单元格文本）
+            String rawText;
+            try (WordExtractor extractor = new WordExtractor(doc)) {
+                rawText = extractor.getText();
+            }
+
+            // 2. 按行生成 PARAGRAPH 节点（doc 无标题样式信息，统一按段落处理）
+            List<DocNode> nodes = new ArrayList<>();
+            for (String line : rawText.split("\n")) {
+                String trimmed = line.trim();
+                if (trimmed.isEmpty()) continue;
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.PARAGRAPH)
+                        .content(trimmed)
+                        .build());
+            }
+
+            // 3. 提取嵌入图片（上下文取文档文本开头片段，HWPF 无法定位图片所在段落）
+            List<ParseResult.ParseImage> images = extractDocImages(doc, nodes);
+            // 频次去重：同文档重复 >= 3 次的图片（模板 logo/水印）整组过滤（同步剔除 IMAGE 节点）
+            deduplicateRepeatedImages(nodes, images);
+
+            // 4. 序列化为 Markdown 文本
+            String text = markdownSerializer.serialize(nodes);
+
+            // 5. 可选 LLM 增强
+            if (strategy != null && strategy.getLlmModel() != null) {
+                LlmConfig llmCfg = resolveLlmConfig(strategy);
+                text = enhanceWithLlm(text, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
+            }
+
+            return ParseResult.builder()
+                    .text(text)
+                    .nodes(nodes)
+                    .images(images)
+                    .pages(1)
+                    .build();
+        } catch (Exception e) {
+            // 加密/损坏文件给出明确提示（复用异常链关键字检测）
+            if (isEncryptedWorkbookError(e)) {
+                throw new RuntimeException("Word 文件已加密或受密码保护，无法解析", e);
+            }
+            throw e;
+        }
+    }
+
+    /**
+     * 从 HWPFDocument 提取嵌入图片为 ParseImage 列表，同时在 DocNode 中插入 IMAGE 节点。
+     * 图片上下文取文档起始文本片段（HWPF 无法定位图片所属段落）。
+     */
+    private List<ParseResult.ParseImage> extractDocImages(HWPFDocument doc, List<DocNode> nodes) {
+        List<ParseResult.ParseImage> images = new ArrayList<>();
+        int skipped = 0;
+        try {
+            PicturesTable pics = doc.getPicturesTable();
+            if (pics == null) return images;
+            List<Picture> allPics = pics.getAllPictures();
+            if (allPics == null || allPics.isEmpty()) return images;
+
+            // 上下文：取节点文本前 200 字符作为图片的语义上下文
+            StringBuilder contextBuilder = new StringBuilder();
+            for (DocNode n : nodes) {
+                if (n.getContent() != null) {
+                    contextBuilder.append(n.getContent()).append("\n");
+                    if (contextBuilder.length() > 200) break;
+                }
+            }
+            String context = contextBuilder.length() > 200
+                    ? contextBuilder.substring(0, 200) : contextBuilder.toString();
+
+            for (int i = 0; i < allPics.size(); i++) {
+                Picture pic = allPics.get(i);
+                // 解析期统一过滤（ImageFilter）：尺寸/宽高比规则，尺寸未知时按字节 < 15KB 兜底；
+                // 视觉丰富度规则：纯色/透明占比高或颜色种类少的色块/占位符
+                // （HWPF 无法定位图片所属段落/页眉页脚，PicturesTable 含页眉页脚图片，
+                //   靠尺寸/字节/颜色规则过滤掉大部分装饰图）
+                Integer w = pic.getWidth() > 0 ? (int) pic.getWidth() : null;
+                Integer h = pic.getHeight() > 0 ? (int) pic.getHeight() : null;
+                if (ImageFilter.isDecorative(w, h, pic.getContent())
+                        || ImageFilter.isDecorativeByColor(pic.getContent())) {
+                    skipped++;
+                    continue;
+                }
+                String ext = pic.suggestFileExtension();
+                if (ext == null || ext.isBlank()) ext = "png";
+                // 稳定命名（按文档内图片序号，与 images 列表一一对应），
+                // 由 IngestionConsumer 按 {kbId}/{fileId}/images/{imageKey} 上传到 MinIO
+                String imageKey = "doc_img_" + i + "." + ext;
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.IMAGE)
+                        .imageKey(imageKey)
+                        .imageCaption("图片")
+                        .build());
+                images.add(ParseResult.ParseImage.builder()
+                        .imageKey(imageKey)
+                        .data(pic.getContent())
+                        .contentType(resolveImageContentType(ext))
+                        .width(w)
+                        .height(h)
+                        .context(context)
+                        .build());
+            }
+            log.info("Extracted {} images from .doc file, filtered {} decorative images",
+                    images.size(), skipped);
+        } catch (Exception e) {
+            log.warn("Failed to extract images from .doc file: {}", e.getMessage());
+        }
+        return images;
+    }
+
+    /**
+     * 频次去重（模板与频次规则）：同文档内 MD5/pHash 重复出现 >= 3 次的图片
+     * （公司公文模板 Logo、全局水印、每页重复的装饰图）整组过滤，
+     * 同步剔除 nodes 中对应的 IMAGE 节点，避免 Markdown 序列化残留失效图片引用。
+     */
+    private void deduplicateRepeatedImages(List<DocNode> nodes, List<ParseResult.ParseImage> images) {
+        if (images == null || images.size() < ImageDedup.REPEAT_THRESHOLD) return;
+        Map<String, byte[]> keyToData = new HashMap<>();
+        for (ParseResult.ParseImage img : images) {
+            keyToData.put(img.getImageKey(), img.getData());
+        }
+        Set<String> repeated = ImageDedup.findRepeatedKeys(keyToData);
+        if (repeated.isEmpty()) return;
+        images.removeIf(img -> repeated.contains(img.getImageKey()));
+        nodes.removeIf(n -> n.getType() == DocNode.NodeType.IMAGE && repeated.contains(n.getImageKey()));
+        log.info("Filtered {} repeated decorative images (template logo/watermark)", repeated.size());
+    }
+
+    /**
+     * 结构化解析 DOCX：遍历 body elements，生成 DocNode 列表。
+     * 同时维护"最近标题"作为图片等元素的上下文（用于图片分片的语义上下文）。
+     */
+    private List<DocNode> parseDocxStructured(XWPFDocument doc, List<ParseResult.ParseImage> images,
+                                              int[] skippedDecorative) {
         List<DocNode> nodes = new ArrayList<>();
+        String currentTitle = null;
         for (IBodyElement element : doc.getBodyElements()) {
             if (element instanceof XWPFParagraph p) {
+                // 维护最近标题上下文（供图片分片使用）
+                String heading = docxHeadingTitle(p);
+                if (heading != null) {
+                    currentTitle = heading;
+                }
                 // 一个段落可能产出多个节点（标题+图片，或公式+图片等）
-                nodes.addAll(parseDocxParagraph(p));
+                nodes.addAll(parseDocxParagraph(p, images, currentTitle, skippedDecorative));
             } else if (element instanceof XWPFTable t) {
                 nodes.add(parseDocxTable(t));
             }
@@ -193,28 +420,51 @@ public class DocumentParserImpl implements DocumentParser {
     }
 
     /**
+     * 判断 DOCX 段落是否为标题（Word 样式名含 heading），是则返回标题文本，否则返回 null。
+     * 供 parseDocxParagraph 产出 HEADING 节点、parseDocxStructured 维护上下文共用。
+     */
+    private String docxHeadingTitle(XWPFParagraph p) {
+        String style = p.getStyle();
+        String styleId = p.getStyleID();
+        if (style == null && styleId == null) return null;
+        String s = (style != null ? style : styleId).toLowerCase();
+        if (s.startsWith("heading") || s.contains("heading")) {
+            String text = p.getText().trim();
+            return text.isEmpty() ? p.getText() : text;
+        }
+        return null;
+    }
+
+    /**
      * 解析 DOCX 段落：检测标题、代码块、数学公式、内嵌图片、普通段落
      * 返回列表以支持一个段落产出多个节点（如多个图片）
+     *
+     * @param images           图片收集容器（供消费方上传 MinIO + OCR）
+     * @param contextTitle     图片所在位置的最近标题（文档上下文，可为 null）
+     * @param skippedDecorative 装饰性图片过滤计数（与 parseDocx 共享，int[] 以便在循环中累加）
      */
-    private List<DocNode> parseDocxParagraph(XWPFParagraph p) {
+    private List<DocNode> parseDocxParagraph(XWPFParagraph p, List<ParseResult.ParseImage> images,
+                                             String contextTitle, int[] skippedDecorative) {
         List<DocNode> nodes = new ArrayList<>();
         String style = p.getStyle();
         String styleId = p.getStyleID();
         String text = p.getText().trim();
 
         // 1. 标题检测（通过 Word 样式名）
+        String heading = docxHeadingTitle(p);
+        if (heading != null) {
+            String s = (p.getStyle() != null ? p.getStyle() : p.getStyleID()).toLowerCase();
+            int level = extractDocxHeadingLevel(s);
+            nodes.add(DocNode.builder()
+                    .type(DocNode.NodeType.HEADING)
+                    .level(level)
+                    .title(heading)
+                    .build());
+            return nodes; // 标题段落只产出标题节点
+        }
+        // TOC 目录样式跳过（style/styleId 已在方法开头声明）
         if (style != null || styleId != null) {
-            String s = style != null ? style.toLowerCase() : styleId.toLowerCase();
-            if (s.startsWith("heading") || s.contains("heading")) {
-                int level = extractDocxHeadingLevel(s);
-                nodes.add(DocNode.builder()
-                        .type(DocNode.NodeType.HEADING)
-                        .level(level)
-                        .title(text.isEmpty() ? p.getText().trim() : text)
-                        .build());
-                return nodes; // 标题段落只产出标题节点
-            }
-            // TOC 目录样式跳过
+            String s = (style != null ? style : styleId).toLowerCase();
             if (s.contains("toc") || s.contains("目录")) {
                 return nodes; // empty
             }
@@ -255,20 +505,49 @@ public class DocumentParserImpl implements DocumentParser {
             }
         }
 
-        // 5. 图片节点生成
+        // 5. 图片节点生成（解析期过滤装饰性图片：小尺寸/分隔线/极小字节，
+        //    避免垃圾图上传 MinIO 与 OCR；消费端不再需要过滤）
         if (hasPictures) {
+            // 图片上下文：最近标题 + 所在段落文本摘要（标题 | 段落摘要）
+            String picContext = null;
+            if (text != null && !text.isBlank()) {
+                String excerpt = text.length() > 80 ? text.substring(0, 80) + "..." : text;
+                picContext = (contextTitle != null && !contextTitle.isBlank())
+                        ? contextTitle + " | " + excerpt
+                        : excerpt;
+            } else {
+                picContext = contextTitle;
+            }
             for (XWPFPicture pic : pictures) {
                 XWPFPictureData picData = pic.getPictureData();
-                String ext = picData != null ? picData.suggestFileExtension() : "png";
-                String imageKey = "docx_img_" + System.currentTimeMillis() + "_" + nodes.size() + "." + ext;
-                // TODO: 此 imageKey 仅为占位符，未上传真实图片到 MinIO。
-                // IngestionConsumer 应在 ingest 阶段从 XWPFPictureData 获取字节并上传。
-                // 当前设计：解析器负责检测和标记图片，上传由调用方负责。
+                // 无数据的图片无法上传 MinIO，直接跳过
+                if (picData == null) continue;
+                // 解析期统一过滤（ImageFilter）：尺寸/宽高比规则，尺寸未知时按字节 < 15KB 兜底；
+                // 视觉丰富度规则：纯色/透明占比高或颜色种类少的色块/占位符
+                Integer w = extractPictureWidth(pic);
+                Integer h = extractPictureHeight(pic);
+                if (ImageFilter.isDecorative(w, h, picData.getData())
+                        || ImageFilter.isDecorativeByColor(picData.getData())) {
+                    skippedDecorative[0]++;
+                    continue;
+                }
+                String ext = picData.suggestFileExtension();
+                // 稳定命名（按文档内图片序号，与 images 列表一一对应），
+                // 由 IngestionConsumer 按 {kbId}/{fileId}/images/{imageKey} 上传到 MinIO
+                String imageKey = "docx_img_" + images.size() + "." + ext;
                 String caption = pic.getDescription() != null ? pic.getDescription() : "图片";
                 nodes.add(DocNode.builder()
                         .type(DocNode.NodeType.IMAGE)
                         .imageKey(imageKey)
                         .imageCaption(caption)
+                        .build());
+                images.add(ParseResult.ParseImage.builder()
+                        .imageKey(imageKey)
+                        .data(picData.getData())
+                        .contentType(resolveImageContentType(ext))
+                        .width(w)
+                        .height(h)
+                        .context(picContext)
                         .build());
             }
         }
@@ -396,6 +675,77 @@ public class DocumentParserImpl implements DocumentParser {
     }
 
     /**
+     * 根据图片扩展名解析 MIME 类型（用于 MinIO 上传）
+     */
+    private String resolveImageContentType(String ext) {
+        if (ext == null) return "application/octet-stream";
+        return switch (ext.toLowerCase()) {
+            case "png" -> "image/png";
+            case "jpg", "jpeg" -> "image/jpeg";
+            case "gif" -> "image/gif";
+            case "bmp" -> "image/bmp";
+            case "tiff" -> "image/tiff";
+            case "webp" -> "image/webp";
+            case "svg" -> "image/svg+xml";
+            default -> "application/octet-stream";
+        };
+    }
+
+    /**
+     * 提取图片宽度（像素，EMU → px），失败返回 null（如无 extents 或 schema 方法不可用）
+     */
+    private Integer extractPictureWidth(XWPFPicture pic) {
+        return extractPictureExtent(pic, true);
+    }
+
+    /**
+     * 提取图片高度（像素，EMU → px），失败返回 null
+     */
+    private Integer extractPictureHeight(XWPFPicture pic) {
+        return extractPictureExtent(pic, false);
+    }
+
+    /**
+     * 从 CTPicture 读取图片尺寸（EMU 单位，1px = 9525 EMU）。
+     * <p>尺寸位于 pic:pic 祖先的 wp:inline / wp:anchor 的 wp:extent 子元素（cx/cy 属性）。
+     * 用 DOM 遍历实现，不依赖 poi-ooxml-lite 中 schema 方法的存在性。</p>
+     */
+    private Integer extractPictureExtent(XWPFPicture pic, boolean width) {
+        try {
+            Object ctPicture = pic.getCTPicture();
+            if (ctPicture == null) return null;
+            org.w3c.dom.Node node = (org.w3c.dom.Node)
+                    ctPicture.getClass().getMethod("getDomNode").invoke(ctPicture);
+
+            // 向上找 wp:inline 或 wp:anchor（其下含 wp:extent 尺寸元素）
+            while (node != null) {
+                if (node instanceof org.w3c.dom.Element el) {
+                    String name = el.getLocalName();
+                    if ("inline".equals(name) || "anchor".equals(name)) {
+                        org.w3c.dom.NodeList children = el.getChildNodes();
+                        for (int i = 0; i < children.getLength(); i++) {
+                            org.w3c.dom.Node child = children.item(i);
+                            if (child instanceof org.w3c.dom.Element ce
+                                    && "extent".equals(ce.getLocalName())) {
+                                String attr = width ? "cx" : "cy";
+                                String val = ce.getAttribute(attr);
+                                if (!val.isEmpty()) {
+                                    return (int) (Long.parseLong(val) / 9525);
+                                }
+                            }
+                        }
+                    }
+                }
+                node = node.getParentNode();
+            }
+            return null;
+        } catch (Exception e) {
+            log.debug("Failed to extract picture extent: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
      * 从 Word 样式中提取标题层级
      * heading1 → 1, heading 2 → 2, Heading3 → 3
      */
@@ -510,42 +860,1064 @@ public class DocumentParserImpl implements DocumentParser {
         return digitStartCount <= cells.size() / 2.0;
     }
 
-    private ParseResult parsePptx(InputStream stream, KbParseStrategy strategy) throws Exception {
-        try (XMLSlideShow ppt = new XMLSlideShow(stream);
-             SlideShowExtractor extractor = new SlideShowExtractor(ppt)) {
-            String text = extractor.getText();
-            int slides = ppt.getSlides().size();
-            return ParseResult.builder().text(text).pages(slides).build();
+    /**
+     * 解析 PPTX：结构化遍历 slide shapes 生成 DocNode（对齐 DOCX）。
+     * - 每页生成 HEADING（页标题占位符或"第 N 页"），作为分片边界
+     * - XSLFTextShape → PARAGRAPH / HEADING（标题占位符）
+     * - XSLFTable → DocNode(TABLE)（复用 isHeaderRow 识别表头）
+     * - XSLFPictureShape → IMAGE 节点 + ParseImage（上传 + OCR 由 IngestionConsumer 完成）
+     * - XSLFGroupShape → 递归
+     * - 图表（XSLFGraphicFrame）不提取（POI 对 chart part 支持受限）
+     */
+    private ParseResult parsePptx(InputStream stream, String extension, KbParseStrategy strategy) throws Exception {
+        // 旧版二进制 .ppt（OLE2）：XMLSlideShow 仅支持 OOXML .pptx，降级走 HSLF（与 .doc→HWPF 同模式）
+        if (extension != null && ".ppt".equalsIgnoreCase(extension.trim())) {
+            return parsePptLegacy(stream, strategy);
         }
-    }
+        try (XMLSlideShow ppt = new XMLSlideShow(stream)) {
+            List<DocNode> nodes = new ArrayList<>();
+            List<ParseResult.ParseImage> images = new ArrayList<>();
+            int[] skippedDecorative = {0}; // 装饰性图片过滤计数（递归遍历内共享）
+            int slideIndex = 0;
+            for (XSLFSlide slide : ppt.getSlides()) {
+                // Slide 边界：HEADING（页标题占位符文本或"第 N 页"）
+                String slideTitle = slide.getTitle();
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.HEADING)
+                        .level(1)
+                        .title(slideTitle != null && !slideTitle.isBlank()
+                                ? slideTitle : "第 " + (slideIndex + 1) + " 页")
+                        .pageNumber(slideIndex)
+                        .build());
 
-    private ParseResult parseExcel(InputStream stream, KbParseStrategy strategy) throws Exception {
-        try (XSSFWorkbook workbook = new XSSFWorkbook(stream)) {
-            StringBuilder sb = new StringBuilder();
-            for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
-                var sheet = workbook.getSheetAt(i);
-                sb.append("=== ").append(sheet.getSheetName()).append(" ===\n");
-                sheet.forEach(row -> {
-                    row.forEach(cell -> sb.append(cell.toString()).append("\t"));
-                    sb.append("\n");
-                });
+                // 遍历 shapes（递归处理组形状）
+                parsePptxShapes(slide, nodes, images, slideIndex, skippedDecorative);
+                slideIndex++;
             }
-            return ParseResult.builder().text(sb.toString()).pages(workbook.getNumberOfSheets()).build();
+
+            // 频次去重：同文档重复 >= 3 次的图片（模板 logo/水印）整组过滤（同步剔除 IMAGE 节点）
+            deduplicateRepeatedImages(nodes, images);
+
+            // 序列化为 Markdown（供 ruleBasedChunk 兜底与展示）
+            String text = markdownSerializer.serialize(nodes);
+            log.info("Parsed {} slides, extracted {} images, filtered {} decorative images",
+                    slideIndex, images.size(), skippedDecorative[0]);
+            return ParseResult.builder()
+                    .text(text)
+                    .pages(slideIndex)
+                    .nodes(nodes)
+                    .images(images)
+                    .build();
         }
     }
 
-    private ParseResult parseDefault(InputStream stream, KbParseStrategy strategy) throws Exception {
+    /**
+     * 递归遍历 PPT shapes，生成 DocNode / 收集图片
+     */
+    private void parsePptxShapes(XSLFShapeContainer container, List<DocNode> nodes,
+                                 List<ParseResult.ParseImage> images, int slideIndex,
+                                 int[] skippedDecorative) {
+        for (XSLFShape shape : container) {
+            if (shape instanceof XSLFTextShape textShape) {
+                String text = textShape.getText().trim();
+                if (text.isEmpty()) continue;
+                // 符号字符画过滤：SmartArt/结构图导出的 ◻◇ 占位字符树无语义价值，
+                // 曾实测整段进入向量库污染检索（约 200 行符号树被向量化）
+                if (isSymbolArtText(text)) {
+                    skippedDecorative[0]++;
+                    continue;
+                }
+                // 标题占位符 → HEADING；其余 → PARAGRAPH
+                if (isPptxTitlePlaceholder(textShape)) {
+                    nodes.add(DocNode.builder()
+                            .type(DocNode.NodeType.HEADING)
+                            .level(1)
+                            .title(text)
+                            .pageNumber(slideIndex)
+                            .build());
+                } else {
+                    nodes.add(DocNode.builder()
+                            .type(DocNode.NodeType.PARAGRAPH)
+                            .content(text)
+                            .pageNumber(slideIndex)
+                            .build());
+                }
+            } else if (shape instanceof XSLFTable table) {
+                // 表格 → 结构化 TABLE 节点（复用 isHeaderRow）
+                nodes.add(parsePptxTable(table, slideIndex));
+            } else if (shape instanceof XSLFPictureShape pic) {
+                // 图片 → IMAGE 节点 + ParseImage（上传 + OCR 由消费方完成）
+                XSLFPictureData picData = pic.getPictureData();
+                if (picData == null) continue;
+                // 解析期统一过滤（ImageFilter）：尺寸/宽高比规则，尺寸未知时按字节 < 15KB 兜底；
+                // 视觉丰富度规则：纯色/透明占比高或颜色种类少的色块/占位符
+                Integer w = extractPptxPictureWidth(pic);
+                Integer h = extractPptxPictureHeight(pic);
+                if (ImageFilter.isDecorative(w, h, picData.getData())
+                        || ImageFilter.isDecorativeByColor(picData.getData())) {
+                    skippedDecorative[0]++;
+                    continue;
+                }
+                String ext = picData.suggestFileExtension();
+                String imageKey = "pptx_img_" + images.size() + "." + ext;
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.IMAGE)
+                        .imageKey(imageKey)
+                        .imageCaption("图片")
+                        .pageNumber(slideIndex)
+                        .build());
+                images.add(ParseResult.ParseImage.builder()
+                        .imageKey(imageKey)
+                        .data(picData.getData())
+                        .contentType(resolveImageContentType(ext))
+                        .width(w)
+                        .height(h)
+                        .context("第 " + (slideIndex + 1) + " 页")
+                        .pageNumber(slideIndex)
+                        .build());
+            } else if (shape instanceof XSLFGroupShape group) {
+                // 组形状：递归
+                parsePptxShapes(group, nodes, images, slideIndex, skippedDecorative);
+            }
+            // XSLFGraphicFrame（图表/SmartArt）、连接符等：不提取（POI 支持受限）
+        }
+    }
+
+    /**
+     * 判断 PPT 文本形状是否为标题占位符（TITLE / CENTERED_TITLE / SUBTITLE）
+     */
+    private boolean isPptxTitlePlaceholder(XSLFTextShape textShape) {
+        try {
+            org.apache.poi.sl.usermodel.Placeholder ph = textShape.getPlaceholder();
+            return ph == org.apache.poi.sl.usermodel.Placeholder.TITLE
+                    || ph == org.apache.poi.sl.usermodel.Placeholder.CENTERED_TITLE
+                    || ph == org.apache.poi.sl.usermodel.Placeholder.SUBTITLE;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /**
+     * HSLF（旧版 .ppt）标题占位符判断。
+     * HSLF 文本形状的 getPlaceholder 为具体类方法（不在 common-sl 接口上），反射调用。
+     */
+    private boolean isHslfTitlePlaceholder(Object shape) {
+        try {
+            Object ph = shape.getClass().getMethod("getPlaceholder").invoke(shape);
+            if (ph == null) return false;
+            String name = String.valueOf(ph);
+            return "TITLE".equals(name) || "CENTERED_TITLE".equals(name) || "SUBTITLE".equals(name);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    /** MIME 类型 → 扩展名（HSLF 图片数据无 suggestFileExtension，从 contentType 反推） */
+    private static String contentTypeToExt(String contentType) {
+        if (contentType == null) return "png";
+        String ct = contentType.toLowerCase();
+        if (ct.contains("jpeg") || ct.contains("jpg")) return "jpg";
+        if (ct.contains("png")) return "png";
+        if (ct.contains("gif")) return "gif";
+        if (ct.contains("bmp")) return "bmp";
+        if (ct.contains("tiff")) return "tiff";
+        if (ct.contains("emf")) return "emf";
+        if (ct.contains("wmf")) return "wmf";
+        return "png";
+    }
+
+    /**
+     * 检测「符号字符画」文本：SmartArt/结构关系图导出的占位字符树
+     * （如 "◻[3], [258.42]\n │\n◻[3], [267.37]..."，由几何符号+坐标数字构成）。
+     *
+     * <p>判定规则：非空白字符 ≥ 30、几何/制表/箭头符号出现 ≥ 5 次、
+     * 且字母与 CJK 字符占比 < 10%（正常 PPT 文本以文字为主，代码块以字母为主，均不误杀）。
+     * 这类文本无语义价值，曾实测整段进入向量库污染检索。
+     */
+    static boolean isSymbolArtText(String text) {
+        if (text == null) return false;
+        int geo = 0;      // 几何符号（U+25A0–25FF）、制表符（U+2500–257F）、箭头（U+2190–21FF）
+        int letters = 0;  // 字母/CJK（有效语义字符，Character.isLetter 对中文为 true）
+        int len = 0;      // 非空白字符总数
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if (Character.isWhitespace(c)) continue;
+            len++;
+            if (Character.isLetter(c)) {
+                letters++;
+            } else if ((c >= 0x2500 && c <= 0x25FF) || (c >= 0x2190 && c <= 0x21FF)) {
+                geo++;
+            }
+        }
+        return len >= 30 && geo >= 5 && letters * 10 < len;
+    }
+
+    /**
+     * 解析旧版 PPT（.ppt，OLE2 二进制格式）。
+     *
+     * <p>使用 POI HSLF 组件（与 .doc→HWPF 同为降级模式）。HSLF 无结构化表格 API
+     * （PPT97 表格以形状组合呈现，单元格文本经文本形状提取），结构化程度弱于 pptx，
+     * 但标题层级、正文、嵌入图片均完整保留，图片处理与 pptx 对齐
+     * （ImageFilter 装饰图过滤 + 频次去重 + 消费方上传/OCR）。
+     */
+    private ParseResult parsePptLegacy(InputStream stream, KbParseStrategy strategy) throws Exception {
+        try (HSLFSlideShow ppt = new HSLFSlideShow(stream)) {
+            List<DocNode> nodes = new ArrayList<>();
+            List<ParseResult.ParseImage> images = new ArrayList<>();
+            int[] skippedDecorative = {0};
+            int slideIndex = 0;
+            for (HSLFSlide slide : ppt.getSlides()) {
+                // Slide 边界：HEADING（页标题或"第 N 页"，与 pptx 一致）
+                String slideTitle = null;
+                try {
+                    slideTitle = slide.getTitle();
+                } catch (Exception ignore) {
+                    // HSLF 标题提取失败时退化为页码占位
+                }
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.HEADING)
+                        .level(1)
+                        .title(slideTitle != null && !slideTitle.isBlank()
+                                ? slideTitle : "第 " + (slideIndex + 1) + " 页")
+                        .pageNumber(slideIndex)
+                        .build());
+
+                parsePptLegacyShapes(slide, nodes, images, slideIndex, skippedDecorative);
+                slideIndex++;
+            }
+
+            // 频次去重：同文档重复 >= 3 次的图片（模板 logo/水印）整组过滤（与 pptx/docx 一致）
+            deduplicateRepeatedImages(nodes, images);
+
+            String text = markdownSerializer.serialize(nodes);
+            log.info("Parsed {} slides (legacy .ppt), extracted {} images, filtered {} decorative/symbol-art",
+                    slideIndex, images.size(), skippedDecorative[0]);
+            return ParseResult.builder()
+                    .text(text)
+                    .pages(slideIndex)
+                    .nodes(nodes)
+                    .images(images)
+                    .build();
+        } catch (Exception e) {
+            if (e instanceof EncryptedDocumentException || isEncryptedWorkbookError(e)) {
+                throw new RuntimeException("PPT 文件已加密或受密码保护，无法解析", e);
+            }
+            throw new RuntimeException("PPT（.ppt）解析失败: " + e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 递归遍历旧版 PPT shapes（基于 common-sl 通用接口），生成 DocNode / 收集图片。
+     * 行为对齐 parsePptxShapes：标题占位符→HEADING、文本→PARAGRAPH（含符号画过滤）、
+     * 图片→IMAGE 节点 + ParseImage（ImageFilter 过滤）。
+     */
+    private void parsePptLegacyShapes(ShapeContainer<?, ?> container, List<DocNode> nodes,
+                                      List<ParseResult.ParseImage> images, int slideIndex,
+                                      int[] skippedDecorative) {
+        for (Shape<?, ?> shape : container) {
+            if (shape instanceof TextShape<?, ?> ts) {
+                String text = ts.getText() == null ? "" : ts.getText().trim();
+                if (text.isEmpty()) continue;
+                if (isSymbolArtText(text)) {
+                    skippedDecorative[0]++;
+                    continue;
+                }
+                if (isHslfTitlePlaceholder(ts)) {
+                    nodes.add(DocNode.builder()
+                            .type(DocNode.NodeType.HEADING)
+                            .level(1)
+                            .title(text)
+                            .pageNumber(slideIndex)
+                            .build());
+                } else {
+                    nodes.add(DocNode.builder()
+                            .type(DocNode.NodeType.PARAGRAPH)
+                            .content(text)
+                            .pageNumber(slideIndex)
+                            .build());
+                }
+            } else if (shape instanceof org.apache.poi.hslf.usermodel.HSLFPictureShape pic) {
+                // suggestFileExtension 为 HSLFPictureData 具体方法，不落在 common 接口上
+                org.apache.poi.hslf.usermodel.HSLFPictureData picData = pic.getPictureData();
+                if (picData == null) continue;
+                // 解析期统一过滤（ImageFilter）：与 pptx/docx 同规则
+                Integer w = null;
+                Integer h = null;
+                try {
+                    var anchor = pic.getAnchor();
+                    if (anchor != null && anchor.getWidth() > 0 && anchor.getHeight() > 0) {
+                        w = (int) anchor.getWidth();
+                        h = (int) anchor.getHeight();
+                    }
+                } catch (Exception ignore) {
+                    // anchor 不可用时尺寸传 null，走字节兜底规则
+                }
+                if (ImageFilter.isDecorative(w, h, picData.getData())
+                        || ImageFilter.isDecorativeByColor(picData.getData())) {
+                    skippedDecorative[0]++;
+                    continue;
+                }
+                String ext = contentTypeToExt(picData.getContentType());
+                String imageKey = "ppt_img_" + images.size() + "." + ext;
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.IMAGE)
+                        .imageKey(imageKey)
+                        .imageCaption("图片")
+                        .pageNumber(slideIndex)
+                        .build());
+                images.add(ParseResult.ParseImage.builder()
+                        .imageKey(imageKey)
+                        .data(picData.getData())
+                        .contentType(resolveImageContentType(ext))
+                        .width(w)
+                        .height(h)
+                        .context("第 " + (slideIndex + 1) + " 页")
+                        .pageNumber(slideIndex)
+                        .build());
+            } else if (shape instanceof ShapeContainer<?, ?> group) {
+                // 组形状：递归
+                parsePptLegacyShapes(group, nodes, images, slideIndex, skippedDecorative);
+            }
+        }
+    }
+
+    /**
+     * 解析 PPT 表格为 DocNode(TABLE)：复用 isHeaderRow 识别表头，结构对齐 DOCX/Excel
+     */
+    private DocNode parsePptxTable(XSLFTable table, int slideIndex) {
+        List<String> headers = new ArrayList<>();
+        List<List<String>> rows = new ArrayList<>();
+        boolean firstRow = true;
+        for (XSLFTableRow row : table.getRows()) {
+            List<String> cells = new ArrayList<>();
+            for (XSLFTableCell cell : row.getCells()) {
+                cells.add(cell.getText() != null ? cell.getText().trim() : "");
+            }
+            if (firstRow && isHeaderRow(cells)) {
+                headers = cells;
+            } else {
+                rows.add(cells);
+            }
+            firstRow = false;
+        }
+        // 未识别出表头时用第一行作为表头（与 parseDocxTable 一致）
+        if (headers.isEmpty() && !rows.isEmpty()) {
+            headers = rows.remove(0);
+        }
+        return DocNode.builder()
+                .type(DocNode.NodeType.TABLE)
+                .headers(headers)
+                .rows(rows)
+                .pageNumber(slideIndex)
+                .build();
+    }
+
+    /**
+     * 提取 PPT 图片宽度（像素，anchor points → px @96dpi），失败返回 null。
+     * <p>注意：XSLFPictureShape.getAnchor() 返回 <b>points</b>（POI 内部按 12700 EMU/pt 存储，
+     * getAnchor 经 Units.toPoints 换算），并非 EMU，不能除以 9525。</p>
+     */
+    private Integer extractPptxPictureWidth(XSLFPictureShape pic) {
+        try {
+            java.awt.geom.Rectangle2D anchor = pic.getAnchor();
+            return anchor != null ? (int) (anchor.getWidth() * 96.0 / 72.0) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * 提取 PPT 图片高度（像素，anchor points → px @96dpi），失败返回 null
+     */
+    private Integer extractPptxPictureHeight(XSLFPictureShape pic) {
+        try {
+            java.awt.geom.Rectangle2D anchor = pic.getAnchor();
+            return anchor != null ? (int) (anchor.getHeight() * 96.0 / 72.0) : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    // ========== Excel 解析（xlsx / xls） ==========
+
+    /** Q13: 单个 Sheet 最大行数保护（防止超大 Excel 引发 OOM） */
+    private static final int MAX_ROWS_PER_SHEET = 10000;
+    /** Q13: 单个 Sheet 最大列数保护 */
+    private static final int MAX_COLUMNS_PER_SHEET = 200;
+    /** Q8: 表头区域检测的最大扫描深度（标题行 + 列名行，用户场景前 3 行为标题） */
+    private static final int MAX_HEADER_DEPTH = 10;
+    /** S4: 合并表头空值占比超过该阈值时触发 LLM 兜底 */
+    private static final double LLM_HEADER_EMPTY_RATIO = 0.3;
+    /** LLM 表头合并：单行上下文最大长度（超长截断，防止 token 溢出） */
+    private static final int LLM_CONTEXT_MAX_LINE = 200;
+    /** LLM 表头合并：上下文总最大长度 */
+    private static final int LLM_CONTEXT_MAX_TOTAL = 4000;
+
+    /**
+     * 解析 Excel 文件（.xlsx / .xls），输出结构化 DocNode（HEADING + TABLE）。
+     *
+     * <p>改进点：DataFormatter 格式化、合并单元格、隐藏行列过滤、多行表头检测与合并、
+     * LLM 表头兜底、超大 Sheet 保护、异常分类提示。
+     */
+    private ParseResult parseExcel(InputStream stream, String extension, KbParseStrategy strategy) throws Exception {
+        // 解析 LLM 配置（供复杂多行表头兜底使用）
+        String llmModel = strategy != null ? strategy.getLlmModel() : null;
+        LlmConfig llmConfig = resolveLlmConfig(strategy);
+
+        try {
+            // 委托共享方法解析（独立文件解析：全部 Sheet，启用 LLM 表头兜底）
+            List<DocNode> nodes = parseExcelContent(stream, null, llmModel, llmConfig);
+
+            // 序列化为 Markdown 文本
+            String text = markdownSerializer.serialize(nodes);
+
+            // 有效 Sheet 数 = HEADING 节点数（隐藏 Sheet 不产生节点）
+            int pages = (int) nodes.stream()
+                    .filter(n -> n.getType() == DocNode.NodeType.HEADING)
+                    .count();
+
+            return ParseResult.builder()
+                    .text(text)
+                    .pages(pages)
+                    .nodes(nodes)
+                    .build();
+        } catch (EncryptedDocumentException e) {
+            // S5: 加密文件给出明确提示
+            log.warn("Excel file is encrypted or password-protected: {}", e.getMessage());
+            throw new RuntimeException("Excel 文件已加密或受密码保护，无法解析", e);
+        } catch (IOException | POIXMLException e) {
+            // S5: 损坏/格式异常文件给出明确提示
+            if (isEncryptedWorkbookError(e)) {
+                throw new RuntimeException("Excel 文件已加密或受密码保护，无法解析", e);
+            }
+            log.warn("Excel file is corrupted or unreadable: {}", e.getMessage());
+            throw new RuntimeException("Excel 文件损坏或格式异常，无法解析", e);
+        }
+    }
+
+    /**
+     * 判断异常链中是否存在加密文件相关错误（POI 对不同格式抛出的异常类型不一致，消息兜底判断）
+     */
+    private boolean isEncryptedWorkbookError(Throwable e) {
+        while (e != null) {
+            if (e.getMessage() != null && e.getMessage().toLowerCase().contains("encrypt")) {
+                return true;
+            }
+            e = e.getCause();
+        }
+        return false;
+    }
+
+    /**
+     * 从 InputStream 解析 Excel 内容为 DocNode 列表（共享方法）。
+     * 用于独立 Excel 文件解析，也用于嵌入在 PDF/DOCX/PPTX 中的 Excel。
+     *
+     * @param stream       Excel 文件流（内部读取并关闭 Workbook）
+     * @param sheetFilter  可选 Sheet 名称过滤器（嵌入场景可只提取特定 Sheet），null 表示全部
+     * @param llmModel     LLM 模型名（复杂表头兜底用），null 则不启用 LLM
+     * @param llmConfig    LLM 配置（apiUrl/apiKey），null 则不启用 LLM
+     * @return HEADING(Sheet 名) + TABLE(表格数据) 节点列表
+     */
+    public List<DocNode> parseExcelContent(InputStream stream, Predicate<String> sheetFilter,
+                                           String llmModel, LlmConfig llmConfig) throws Exception {
+        try (Workbook workbook = detectAndCreateWorkbook(stream)) {
+            DataFormatter formatter = new DataFormatter();
+            List<DocNode> nodes = new ArrayList<>();
+            int sheetIndex = 0;
+
+            for (int i = 0; i < workbook.getNumberOfSheets(); i++) {
+                Sheet sheet = workbook.getSheetAt(i);
+
+                // Q12: 跳过隐藏 Sheet（Workbook 接口方法，不依赖 poi-ooxml-schemas）
+                if (workbook.isSheetHidden(i)) continue;
+
+                // 嵌入场景按名称过滤
+                if (sheetFilter != null && !sheetFilter.test(sheet.getSheetName())) continue;
+
+                // Q14: Sheet 名称作为 HEADING 节点
+                String sheetName = sheet.getSheetName();
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.HEADING)
+                        .level(1)
+                        .title(sheetName)
+                        .pageNumber(sheetIndex)
+                        .build());
+
+                // Q10: 有效行范围
+                int firstRow = sheet.getFirstRowNum();
+                int lastRow = sheet.getLastRowNum();
+                if (firstRow < 0 || firstRow > lastRow) {
+                    sheetIndex++; // 空 Sheet：仅保留标题节点
+                    continue;
+                }
+
+                // S6/Q13: 超大 Sheet 保护
+                int effectiveLastRow = Math.min(lastRow, MAX_ROWS_PER_SHEET);
+                if (lastRow > MAX_ROWS_PER_SHEET) {
+                    log.warn("Sheet '{}' has {} rows, truncated to {}", sheetName, lastRow + 1, MAX_ROWS_PER_SHEET);
+                }
+
+                // M7: 预构建合并区域索引（行号 → 合并区域列表），O(1) 查找
+                Map<Integer, List<CellRangeAddress>> mergedRegionIndex = buildMergedRegionIndex(sheet);
+
+                // Q8: 检测表头区域（标题行 + 列名行，最多扫描 MAX_HEADER_DEPTH 行）
+                HeaderRegion headerRegion = detectHeaderRegion(sheet, firstRow, effectiveLastRow,
+                        formatter, mergedRegionIndex);
+
+                List<String> headers;
+                int dataStartRow;
+                String tableTitle = null;
+
+                if (headerRegion.isHeaderFound()) {
+                    // 合并列名行（单行或跨行合并）
+                    headers = mergeMultiRowHeaders(sheet, headerRegion.getHeaderStartRow(),
+                            headerRegion.getHeaderDepth(), formatter, mergedRegionIndex);
+                    dataStartRow = headerRegion.getHeaderStartRow() + headerRegion.getHeaderDepth();
+
+                // LLM 表头合并：仅列名复杂时调用（多行列名 / 合并空值过多）。
+                // title 始终由代码生成（标题行 "-" 拼接，不依赖 LLM）；LLM 只负责列名整理
+                boolean needLlm = headerRegion.getHeaderDepth() >= 2
+                        || hasTooManyEmptyHeaders(headers);
+                if (llmModel != null && llmConfig != null && llmConfig.apiUrl != null && needLlm) {
+                    try {
+                        LlmHeaderResult result = resolveHeadersWithLlm(sheet,
+                                headerRegion.getHeaderStartRow() - headerRegion.getTitleRows().size(),
+                                headerRegion.getHeaderStartRow(), headerRegion.getHeaderDepth(),
+                                formatter, mergedRegionIndex, llmModel, llmConfig);
+                        if (result != null && result.getHeaders() != null && !result.getHeaders().isEmpty()) {
+                            // 剥离 LLM 误拼的标题行前缀（用真实标题行内容，确定性剥离）
+                            headers = stripCommonHeaderPrefix(result.getHeaders(), headerRegion.getTitleRows());
+                        }
+                    } catch (Exception e) {
+                        // LLM 失败不影响主流程，保留合并结果
+                        log.warn("LLM header resolution failed for sheet '{}', using merged headers: {}",
+                                sheetName, e.getMessage());
+                    }
+                }
+
+                // 标题行信息保留：代码生成 title（"-" 拼接），作为 PARAGRAPH 节点放在 TABLE 之前
+                if (!headerRegion.getTitleRows().isEmpty()) {
+                    tableTitle = String.join(" - ", headerRegion.getTitleRows());
+                }
+                } else {
+                    // 无表头：默认列名，数据从第一行开始
+                    Row firstDataRow = sheet.getRow(firstRow);
+                    headers = generateDefaultHeaders(firstDataRow, sheet);
+                    dataStartRow = firstRow;
+                }
+
+                // Q10: 提取数据行（跳过空行/隐藏行/表尾说明行）
+                List<List<String>> rows = new ArrayList<>();
+                List<String> noteRows = new ArrayList<>();
+                for (int r = dataStartRow; r <= effectiveLastRow; r++) {
+                    // Q12: 跳过隐藏行
+                    if (isRowHidden(sheet, r)) continue;
+
+                    Row row = sheet.getRow(r);
+                    if (row == null) continue;
+
+                    List<String> values = extractRowValues(row, formatter, sheet, mergedRegionIndex);
+                    if (isRowEmpty(values)) continue;
+
+                    // 表尾说明行（跨列合并导致每列值相同）→ 作为 PARAGRAPH 保留，不进表格数据
+                    if (isMergedNoteRow(values)) {
+                        noteRows.add(values.stream()
+                                .filter(v -> v != null && !v.isBlank())
+                                .findFirst().orElse(""));
+                        continue;
+                    }
+
+                    rows.add(values);
+                }
+
+                // Q6: 生成 TABLE DocNode（表格标题 PARAGRAPH 在前，表尾说明 PARAGRAPH 在后）
+                if (!rows.isEmpty()) {
+                    if (tableTitle != null && !tableTitle.isBlank()) {
+                        nodes.add(DocNode.builder()
+                                .type(DocNode.NodeType.PARAGRAPH)
+                                .content(tableTitle)
+                                .pageNumber(sheetIndex)
+                                .build());
+                    }
+                    nodes.add(DocNode.builder()
+                            .type(DocNode.NodeType.TABLE)
+                            .headers(headers)
+                            .rows(rows)
+                            .pageNumber(sheetIndex)
+                            .build());
+                    if (!noteRows.isEmpty()) {
+                        nodes.add(DocNode.builder()
+                                .type(DocNode.NodeType.PARAGRAPH)
+                                .content(String.join("\n", noteRows))
+                                .pageNumber(sheetIndex)
+                                .build());
+                    }
+                }
+
+                sheetIndex++;
+            }
+            return nodes;
+        }
+    }
+
+    /**
+     * 自动检测 Excel 格式并创建 Workbook 实例。
+     * 优先尝试 OOXML（.xlsx），失败后回退 BIFF8（.xls）。
+     * 读取全部字节后分别尝试，避免流 mark/reset 在部分读取后失效的问题。
+     */
+    private Workbook detectAndCreateWorkbook(InputStream stream) throws IOException {
         byte[] bytes = stream.readAllBytes();
         try {
-            Charset charset = detectCharset(bytes);
-            log.debug("Detected charset: {} for text file", charset.name());
+            return new XSSFWorkbook(new ByteArrayInputStream(bytes));
+        } catch (Exception xssfErr) {
+            // 非 OOXML 输入时 POI 抛出多种类型：IOException / POIXMLException /
+            // UnsupportedFileFormatException(NotOfficeXmlFileException) 等，统一捕获后回退 xls
+            // （Exception 不捕获 Error，OOM 等致命错误不受影响）
+            try {
+                return new HSSFWorkbook(new ByteArrayInputStream(bytes));
+            } catch (Exception hssfErr) {
+                // 两种格式都失败：优先选加密相关异常作为 cause（供 parseExcel 分类提示），
+                // 其余异常以 suppressed 保留完整错误链
+                Throwable cause = isEncryptedWorkbookError(hssfErr) ? hssfErr : xssfErr;
+                IOException ex = new IOException("无法识别的 Excel 格式（非 .xlsx 也非 .xls）", cause);
+                if (hssfErr != cause) ex.addSuppressed(hssfErr);
+                if (xssfErr != cause) ex.addSuppressed(xssfErr);
+                throw ex;
+            }
+        }
+    }
+
+    /**
+     * 预构建合并区域索引：按行号分组，将合并单元格查找从 O(N*M) 降为 O(1)（M7）
+     */
+    private Map<Integer, List<CellRangeAddress>> buildMergedRegionIndex(Sheet sheet) {
+        Map<Integer, List<CellRangeAddress>> index = new HashMap<>();
+        for (int i = 0; i < sheet.getNumMergedRegions(); i++) {
+            CellRangeAddress range = sheet.getMergedRegion(i);
+            for (int r = range.getFirstRow(); r <= range.getLastRow(); r++) {
+                index.computeIfAbsent(r, k -> new ArrayList<>()).add(range);
+            }
+        }
+        return index;
+    }
+
+    /**
+     * O(1) 查找：通过行号定位该行的合并区域列表，再检查列号是否在范围内（M7）
+     */
+    private CellRangeAddress findMergedRegion(int rowIdx, int colIdx,
+                                              Map<Integer, List<CellRangeAddress>> mergedRegionIndex) {
+        List<CellRangeAddress> ranges = mergedRegionIndex.get(rowIdx);
+        if (ranges == null) return null;
+        for (CellRangeAddress range : ranges) {
+            if (range.getFirstColumn() <= colIdx && colIdx <= range.getLastColumn()) {
+                return range;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * 提取一行中所有有效单元格的值。
+     * Q1: DataFormatter 按显示格式格式化；Q3: 合并单元格取左上角值；Q12: 跳过隐藏列。
+     */
+    private List<String> extractRowValues(Row row, DataFormatter formatter, Sheet sheet,
+                                          Map<Integer, List<CellRangeAddress>> mergedRegionIndex) {
+        if (row == null) return new ArrayList<>();
+        int maxCol = Math.min(row.getLastCellNum(), MAX_COLUMNS_PER_SHEET);
+        List<String> values = new ArrayList<>();
+        for (int c = 0; c < maxCol; c++) {
+            // Q12: 跳过隐藏列
+            if (isColumnHidden(sheet, c)) continue;
+
+            // Q3: 合并单元格 — O(1) 索引查找，取左上角值
+            String value = getMergedCellValue(sheet, row.getRowNum(), c, formatter, mergedRegionIndex);
+            values.add(value != null ? value.trim() : "");
+        }
+        return values;
+    }
+
+    /**
+     * 获取单元格值：合并区域取左上角值，非合并区域直接取值（Q3）
+     */
+    private String getMergedCellValue(Sheet sheet, int rowIdx, int colIdx, DataFormatter formatter,
+                                      Map<Integer, List<CellRangeAddress>> mergedRegionIndex) {
+        CellRangeAddress range = findMergedRegion(rowIdx, colIdx, mergedRegionIndex);
+        if (range != null) {
+            // 合并区域：取左上角单元格的值
+            Row topLeftRow = sheet.getRow(range.getFirstRow());
+            if (topLeftRow == null) return "";
+            Cell topLeftCell = topLeftRow.getCell(range.getFirstColumn());
+            return topLeftCell != null ? formatter.formatCellValue(topLeftCell) : "";
+        }
+        // 非合并单元格：直接取值
+        Row r = sheet.getRow(rowIdx);
+        if (r == null) return "";
+        Cell cell = r.getCell(colIdx);
+        return cell != null ? formatter.formatCellValue(cell) : "";
+    }
+
+    /**
+     * 检测表头区域（Q8 增强：支持"标题行 + 列名行"结构）。
+     *
+     * <p>真实 Excel 表格常见的表头结构：前几行是表格标题（如"附件1"、"产数高质量发展情况"、
+     * "附表1：2025年1-10月产业数字化收入完成情况"），最后一行（或跨行合并块）才是真正的列名行。
+     * 标题行特征：单元格数少（通常 1-2 列）、无数据特征；列名行特征：多列且符合 isHeaderRow，
+     * 或位于合并单元格块内。</p>
+     *
+     * @return 表头区域信息（标题行内容、列名起始行、列名行深度、是否找到列名行）
+     */
+    private HeaderRegion detectHeaderRegion(Sheet sheet, int firstRow, int lastRow, DataFormatter formatter,
+                                            Map<Integer, List<CellRangeAddress>> mergedRegionIndex) {
+        List<String> titleRows = new ArrayList<>();
+        int scanEnd = Math.min(lastRow, firstRow + MAX_HEADER_DEPTH - 1);
+        for (int r = firstRow; r <= scanEnd; r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) break;
+
+            List<String> values = extractRowValues(row, formatter, sheet, mergedRegionIndex);
+            if (isRowEmpty(values)) continue; // 跳过空行
+
+            boolean rowHasMerge = mergedRegionIndex.containsKey(r);
+            boolean prevHasMerge = mergedRegionIndex.containsKey(r - 1);
+
+            if (rowHasMerge || prevHasMerge) {
+                // 合并块内：判定为列名行（多行合并表头块）
+                if (isHeaderRow(values)) {
+                    // 计算合并块深度（后续连续满足"有合并/前一行有合并 + 表头特征"的行）
+                    int depth = 1;
+                    for (int r2 = r + 1; r2 <= scanEnd; r2++) {
+                        Row row2 = sheet.getRow(r2);
+                        if (row2 == null) break;
+                        List<String> values2 = extractRowValues(row2, formatter, sheet, mergedRegionIndex);
+                        boolean r2HasMerge = mergedRegionIndex.containsKey(r2);
+                        boolean r2PrevMerge = mergedRegionIndex.containsKey(r2 - 1);
+                        if ((r2HasMerge || r2PrevMerge) && isHeaderRow(values2)) {
+                            depth++;
+                        } else {
+                            break;
+                        }
+                    }
+                    return new HeaderRegion(titleRows, r, depth, true);
+                }
+            } else if (values.size() >= 2 && isHeaderRow(values) && nonEmptyCount(values) >= 2) {
+                // 单行列名行（无合并单元格，如 "分公司 | 本月完成（万元） | ..."）
+                // 要求至少 2 个非空单元格，避免"附件1 + 空样式列"这类标题行误判为列名行
+                return new HeaderRegion(titleRows, r, 1, true);
+            } else {
+                // 非列名行：标题行候选（如 "附件1"、"附表1：xxx"）
+                titleRows.add(String.join(" | ", values));
+            }
+        }
+        // 未找到列名行
+        return new HeaderRegion(titleRows, firstRow, 0, false);
+    }
+
+    /**
+     * 将多行表头合并为单行表头列表（Q8）。
+     * 策略：同一列的多行值用 "-" 拼接（如 "2024年" + "Q1" → "2024年-Q1"）。
+     * 相邻行值相同则跳过（垂直合并单元格取左上角值后出现的重复，如 "指标"+"指标"）。
+     */
+    private List<String> mergeMultiRowHeaders(Sheet sheet, int startRow, int depth, DataFormatter formatter,
+                                              Map<Integer, List<CellRangeAddress>> mergedRegionIndex) {
+        int colCount = getMaxColumnInHeaderRange(sheet, startRow, startRow + depth - 1);
+        List<String> mergedHeaders = new ArrayList<>();
+        for (int c = 0; c < colCount; c++) {
+            // Q12: 跳过隐藏列
+            if (isColumnHidden(sheet, c)) continue;
+
+            StringBuilder colHeader = new StringBuilder();
+            String prevValue = null;
+            for (int r = startRow; r < startRow + depth; r++) {
+                String value = getMergedCellValue(sheet, r, c, formatter, mergedRegionIndex);
+                if (value == null || value.isEmpty()) continue;
+                value = value.trim();
+                // 垂直合并重复值去重
+                if (value.equals(prevValue)) continue;
+                if (colHeader.length() > 0) colHeader.append("-");
+                colHeader.append(value);
+                prevValue = value;
+            }
+            mergedHeaders.add(colHeader.toString());
+        }
+        return mergedHeaders;
+    }
+
+    /**
+     * 获取多行表头范围内的最大列数（m6）
+     */
+    private int getMaxColumnInHeaderRange(Sheet sheet, int startRow, int endRow) {
+        int maxCol = 0;
+        for (int r = startRow; r <= endRow; r++) {
+            Row row = sheet.getRow(r);
+            if (row == null) continue;
+            maxCol = Math.max(maxCol, row.getLastCellNum());
+        }
+        return Math.min(maxCol, MAX_COLUMNS_PER_SHEET);
+    }
+
+    /**
+     * 合并表头空值占比是否超过阈值（S4: LLM 兜底触发条件）
+     */
+    private boolean hasTooManyEmptyHeaders(List<String> headers) {
+        if (headers == null || headers.isEmpty()) return false;
+        long emptyCount = headers.stream().filter(h -> h == null || h.isEmpty()).count();
+        return emptyCount > headers.size() * LLM_HEADER_EMPTY_RATIO;
+    }
+
+    /**
+     * LLM 表头合并（Q8 增强）：让 LLM 分析表头区域前几行数据，合并出完整表头。
+     *
+     * <p>输入：表头区域（标题行 + 列名行）+ 最多 2 行示例数据，超长截断。
+     * 输出：{@link LlmHeaderResult}，title 综合所有标题行内容，headers 为合并后的列名数组，
+     * 确保标题行与列名行的信息完整保留（如"附件1 / 产数高质量发展情况 / 附表1：xxx"全部并入）。</p>
+     *
+     * @param regionStartRow   表头区域起始行（含标题行）
+     * @param headerStartRow   列名起始行
+     * @param headerDepth      列名行深度（跨行合并时 > 1）
+     */
+    private LlmHeaderResult resolveHeadersWithLlm(Sheet sheet, int regionStartRow, int headerStartRow,
+                                                  int headerDepth, DataFormatter formatter,
+                                                  Map<Integer, List<CellRangeAddress>> mergedRegionIndex,
+                                                  String model, LlmConfig llmConfig) {
+        // 收集表头区域 + 最多 2 行示例数据作为上下文（超长截断）
+        StringBuilder context = new StringBuilder();
+        int lastRow = sheet.getLastRowNum();
+        int sampleRows = Math.min(regionStartRow + MAX_HEADER_DEPTH, lastRow + 1);
+        for (int r = regionStartRow; r < sampleRows; r++) {
+            List<String> values = extractRowValues(sheet.getRow(r), formatter, sheet, mergedRegionIndex);
+            String line = "Row " + r + ": " + String.join(" | ", values);
+            if (line.length() > LLM_CONTEXT_MAX_LINE) {
+                line = line.substring(0, LLM_CONTEXT_MAX_LINE) + "...";
+            }
+            context.append(line).append("\n");
+            if (context.length() > LLM_CONTEXT_MAX_TOTAL) {
+                context.setLength(LLM_CONTEXT_MAX_TOTAL);
+                context.append("\n...(已截断)");
+                break;
+            }
+        }
+
+        String prompt = """
+                你是数据表格结构分析助手。以下是 Excel 表格的表头区域数据（| 分隔列，Row N 为行号）：
+
+                %s
+
+                任务：
+                1. 前几行可能是表格标题行（如"附件1"、"产数高质量发展情况"、"附表1：xxx"），
+                   最后一行（或最后几行）才是真正的列名行，列名可能跨行合并（如"本月完成"+"（万元）"）
+                2. 将列名行合并为列名数组（跨行列名用"-"连接并整理，如"本月完成（万元）"；
+                   单元格内换行整理为单行，如"超欠产\\n（万元）"→"超欠产（万元）"）
+
+                重要约束：
+                - 只输出列名数组；禁止把标题行内容拼入任何列名
+                - 标题行内容（如"附件1"、"附表1：xxx"）不属于列名，不要出现在输出中
+                - 保留原始信息，不遗漏、不臆造、不翻译
+
+                正确示例：
+                列名行：分公司 | 本月完成（万元） | 本月进度（%）
+                → ["分公司", "本月完成（万元）", "本月进度（%）"]
+
+                错误示例（标题行被拼进列名，禁止）：
+                → ["附件1-产数高质量发展情况-附表1：...-分公司", ...]
+
+                只输出 JSON 数组，不要其他文字。
+                """.formatted(context);
+
+        log.info("[Excel-Header] Calling model={} via apiUrl={}, context={} chars",
+                model, llmConfig.apiUrl, context.length());
+        // C2: chatWithTimeout 支持流式收集 + 超时控制（30s）
+        String response = llmService.chatWithTimeout(model, prompt, llmConfig.apiUrl, llmConfig.apiKey, false, 30);
+        return parseHeaderJson(response);
+    }
+
+    /**
+     * 解析 LLM 返回的 {"title": "...", "headers": [...]} JSON。
+     * 容错：markdown 代码块包裹；兼容旧版纯数组输出（仅 headers）。
+     * 防御：剥离 LLM 误拼进列名的标题行公共前缀。
+     *
+     * @return 解析结果，解析失败返回 null
+     */
+    private LlmHeaderResult parseHeaderJson(String response) {
+        if (response == null || response.isBlank()) {
+            log.warn("LLM returned empty response for header resolution");
+            return null;
+        }
+        String json = response.trim();
+        if (json.startsWith("```")) {
+            json = json.replaceFirst("^```\\w*\\n?", "").replaceFirst("\\n?```$", "");
+        }
+        try {
+            cn.hutool.json.JSONObject obj = JSONUtil.parseObj(json);
+            String title = obj.getStr("title");
+            List<String> headers = obj.getJSONArray("headers").toList(String.class);
+            // 注：标题行前缀剥离在调用方进行（stripCommonHeaderPrefix 需要真实的 titleRows）
+            return new LlmHeaderResult(title, headers);
+        } catch (Exception e) {
+            // 兼容旧版纯数组输出：LLM 只返回了列名数组
+            try {
+                List<String> headers = JSONUtil.toList(json, String.class);
+                if (!headers.isEmpty()) {
+                    return new LlmHeaderResult(null, headers);
+                }
+            } catch (Exception ignored) {
+                // fall through
+            }
+            log.warn("Failed to parse LLM header JSON: {}", response, e);
+            return null;
+        }
+    }
+
+    /**
+     * 防御：剥离 LLM 误拼进列名的标题行公共前缀。
+     * 标题行是整表的元数据，不应出现在每个列名中（如
+     * "附件1-产数高质量发展情况-附表1：...-分公司" → "分公司"）。
+     * <p>用真实标题行内容（代码已知，非 LLM 返回）做确定性剥离：
+     * ① 标题行拼接变体（" - " / "-"）与单行标题行本身，循环剥离；
+     * ② 若仍存在长公共前缀（> 20 字符且占首元素 > 30%），整体剥离。</p>
+     */
+    static List<String> stripCommonHeaderPrefix(List<String> headers, List<String> titleRows) {
+        if (headers == null || headers.isEmpty()) return headers;
+
+        // 前缀候选：标题行拼接变体 + 单行标题行本身
+        List<String> prefixCandidates = new ArrayList<>();
+        if (titleRows != null && !titleRows.isEmpty()) {
+            prefixCandidates.add(String.join(" - ", titleRows));
+            prefixCandidates.add(String.join("-", titleRows));
+            prefixCandidates.addAll(titleRows);
+        }
+
+        List<String> result = new ArrayList<>();
+        for (String h : headers) {
+            String cleaned = h;
+            // 循环剥离：LLM 输出可能缺中间段（如"附件1-产数高质量发展情况-信用..."），需逐段剥
+            boolean changed = true;
+            while (changed) {
+                changed = false;
+                for (String p : prefixCandidates) {
+                    if (cleaned.startsWith(p) && !cleaned.equals(p)) {
+                        cleaned = cleaned.substring(p.length()).replaceFirst("^[-\\s]+", "");
+                        changed = true;
+                        break;
+                    }
+                }
+            }
+            result.add(cleaned.isEmpty() ? h : cleaned);
+        }
+
+        // 仍存在长公共前缀（LLM 可能用不同于标题行的拼接方式）→ 剥离
+        String lcp = longestCommonPrefix(result);
+        if (lcp.length() > 20 && lcp.length() > result.get(0).length() * 0.3) {
+            result.replaceAll(h -> h.startsWith(lcp)
+                    ? h.substring(lcp.length()).replaceFirst("^[-\\s]+", "") : h);
+        }
+        return result;
+    }
+
+    /** 计算字符串列表的最长公共前缀 */
+    static String longestCommonPrefix(List<String> strs) {
+        if (strs == null || strs.isEmpty()) return "";
+        String prefix = strs.get(0);
+        for (String s : strs) {
+            while (!s.startsWith(prefix)) {
+                if (prefix.isEmpty()) return "";
+                prefix = prefix.substring(0, prefix.length() - 1);
+            }
+        }
+        return prefix;
+    }
+
+    /**
+     * 无表头时生成默认列名 ["列1", "列2", ...]（过滤隐藏列，m2）
+     */
+    private List<String> generateDefaultHeaders(Row firstRow, Sheet sheet) {
+        int colCount = firstRow != null ? Math.min(firstRow.getLastCellNum(), MAX_COLUMNS_PER_SHEET) : 0;
+        List<String> headers = new ArrayList<>();
+        for (int c = 0; c < colCount; c++) {
+            if (isColumnHidden(sheet, c)) continue;
+            headers.add("列" + (headers.size() + 1));
+        }
+        return headers;
+    }
+
+    /**
+     * 判断一行提取出的所有值是否全为空（Q10: 跳过全空行）
+     */
+    private boolean isRowEmpty(List<String> values) {
+        if (values == null || values.isEmpty()) return true;
+        return values.stream().allMatch(v -> v == null || v.trim().isEmpty());
+    }
+
+    /** 统计非空单元格数量 */
+    private long nonEmptyCount(List<String> values) {
+        if (values == null) return 0;
+        return values.stream().filter(v -> v != null && !v.isBlank()).count();
+    }
+
+    /**
+     * 判断是否为"表尾说明行"：跨列合并导致每列取左上角值后全部相同，
+     * 且文本以"说明/注/备注/注释"开头（如"说明：1、24年审计号码级补收..."）。
+     * 这类行应作为 PARAGRAPH 保留，避免说明文本在每一列重复污染表格数据。
+     */
+    private boolean isMergedNoteRow(List<String> values) {
+        if (values == null || values.size() < 3) return false;
+        String first = null;
+        int nonEmptyCount = 0;
+        for (String v : values) {
+            if (v == null || v.isBlank()) continue;
+            nonEmptyCount++;
+            if (first == null) {
+                first = v.trim();
+            } else if (!v.trim().equals(first)) {
+                return false; // 该行存在不同值 → 正常数据行
+            }
+        }
+        if (nonEmptyCount < 3 || first == null) return false;
+        return first.startsWith("说明") || first.startsWith("注")
+                || first.startsWith("备注") || first.startsWith("注释");
+    }
+
+    /**
+     * 检查指定行是否隐藏（Q12，POI Row 接口 getZeroHeight() 跨格式统一检测）
+     */
+    private boolean isRowHidden(Sheet sheet, int rowIdx) {
+        Row row = sheet.getRow(rowIdx);
+        return row != null && row.getZeroHeight();
+    }
+
+    /**
+     * 检查指定列是否隐藏（Q12，POI Sheet 接口标准方法）
+     */
+    private boolean isColumnHidden(Sheet sheet, int colIdx) {
+        return sheet.isColumnHidden(colIdx);
+    }
+
+    private ParseResult parseDefault(InputStream stream, KbParseStrategy strategy, ParseOptions options) throws Exception {
+        byte[] bytes = stream.readAllBytes();
+        try {
+            Charset charset = resolveCharset(bytes, options != null ? options.getEncoding() : null);
+            log.debug("Charset for text file: {}", charset.name());
             String text = new String(bytes, charset);
             return ParseResult.builder().text(text).pages(1).build();
         } catch (Exception e) {
-            log.warn("Failed to decode with detected charset, falling back to UTF-8", e);
+            log.warn("Failed to decode with resolved charset, falling back to UTF-8", e);
             String text = new String(bytes, StandardCharsets.UTF_8);
             return ParseResult.builder().text(text).pages(1).build();
         }
+    }
+
+    /**
+     * 解析文本编码：上传向导显式指定（utf-8/gbk/shift-jis）优先，否则自动检测
+     */
+    private Charset resolveCharset(byte[] bytes, String encoding) {
+        if (encoding != null && !"auto".equalsIgnoreCase(encoding)) {
+            return switch (encoding.toLowerCase()) {
+                case "utf-8" -> StandardCharsets.UTF_8;
+                case "gbk" -> Charset.forName("GBK");
+                case "shift-jis" -> Charset.forName("Shift_JIS");
+                default -> detectCharset(bytes);
+            };
+        }
+        return detectCharset(bytes);
     }
 
     /**
@@ -618,68 +1990,106 @@ public class DocumentParserImpl implements DocumentParser {
      * 3. 视觉路：FFmpeg 均匀采样关键帧 → pHash 去重 → DeepSeek-OCR 提取文字
      * 4. 以 ASR 自然分段对齐，合并关键帧 OCR 文字和 ASR 文本为联合 chunk
      */
-    private ParseResult parseVideo(InputStream stream, String extension, KbParseStrategy strategy) throws Exception {
+    private ParseResult parseVideo(InputStream stream, String extension, KbParseStrategy strategy, ParseOptions options) throws Exception {
         log.info("Parsing video file with multimodal processing, extension: {}", extension);
 
         // 读取策略配置（统一入口，兼容新分组结构与旧平铺字段）
         ParseStrategyConfig.ParseConfig parseConfig = configResolver
                 .resolve(strategy != null ? strategy.getId() : null).getParse();
-        int keyframeInterval = parseConfig.getKeyframeIntervalSeconds() != null
-                ? parseConfig.getKeyframeIntervalSeconds() : 10;   // 默认每 10 秒采样一帧
+        // 关键帧间隔：上传向导一次性覆盖 > 策略 advanced > 默认 10s
+        int keyframeInterval = options != null && options.getKeyframeInterval() != null
+                ? options.getKeyframeInterval()
+                : (parseConfig.getKeyframeIntervalSeconds() != null
+                        ? parseConfig.getKeyframeIntervalSeconds() : 10);
         int hashThreshold = parseConfig.getKeyframeHashThreshold() != null
                 ? parseConfig.getKeyframeHashThreshold().intValue() : 10;  // 默认汉明距离阈值
-        log.info("Video parse config: keyframeInterval={}s, hashThreshold={}", keyframeInterval, hashThreshold);
+        // 视频策略：keyframe_asr（默认）/ asr_only / uniform_sample
+        String videoStrategy = options != null && options.getVideoStrategy() != null
+                ? options.getVideoStrategy() : "keyframe_asr";
+        log.info("Video parse config: videoStrategy={}, keyframeInterval={}s, hashThreshold={}",
+                videoStrategy, keyframeInterval, hashThreshold);
 
         // 读取视频流字节（因为 stream 只能读一次，需要分别传给音频和视觉两条路径）
         byte[] videoBytes = stream.readAllBytes();
 
-        // === 音频路：提取音频 → ASR ===
-        List<AsrResult.AsrSegment> asrSegments = new ArrayList<>();
-        String asrFullText = "";
-        try {
-            byte[] audioBytes = mediaExtractor.extractAudio(
-                    new java.io.ByteArrayInputStream(videoBytes), extension);
-            AsrResult asrResult = asrService.transcribe(audioBytes, "audio." + (extension != null ? extension : "mp4"));
-            asrFullText = asrResult.getText();
-            if (asrResult.getSegments() != null) {
-                asrSegments.addAll(asrResult.getSegments());
+        // 时间范围裁剪：仅解析用户指定区间（按文件名匹配）
+        byte[] parseBytes = videoBytes;
+        double[] timeRange = resolveTimeRange(options);
+        if (timeRange != null && timeRange[1] > timeRange[0]) {
+            try {
+                log.info("Cropping video to range [{}, {}]s", timeRange[0], timeRange[1]);
+                parseBytes = mediaExtractor.cropMedia(videoBytes, extension,
+                        timeRange[0], timeRange[1] - timeRange[0]);
+            } catch (Exception e) {
+                log.warn("Video crop failed, parsing full video: {}", e.getMessage());
             }
-            log.info("Video ASR completed: {} segments, {} chars", asrSegments.size(), asrFullText.length());
-        } catch (Exception e) {
-            log.error("Video ASR failed, continuing with keyframe-only mode", e);
         }
 
-        // === 视觉路：关键帧提取 → 去重 → OCR ===
-        List<KeyframeOcr> keyframeOcrList = new ArrayList<>();
-        try {
-            List<MediaExtractor.Keyframe> keyframes = mediaExtractor.extractKeyframes(
-                    new java.io.ByteArrayInputStream(videoBytes), extension, keyframeInterval);
-            log.info("Extracted {} raw keyframes from video", keyframes.size());
-
-            // 感知哈希去重
-            List<MediaExtractor.Keyframe> deduped = mediaExtractor.deduplicateByHash(keyframes, hashThreshold);
-
-            // 逐帧 OCR
-            for (MediaExtractor.Keyframe kf : deduped) {
-                try {
-                    String ocrText = ocrService.recognize(kf.getImageBytes(), "jpg");
-                    if (ocrText != null && !ocrText.isBlank()) {
-                        keyframeOcrList.add(KeyframeOcr.builder()
-                                .timestampSeconds(kf.getTimestampSeconds())
-                                .ocrText(ocrText.trim())
-                                .build());
-                    }
-                } catch (Exception e) {
-                    log.warn("OCR failed for keyframe at {}s: {}", kf.getTimestampSeconds(), e.getMessage());
+        // === 音频路：提取音频 → ASR（uniform_sample 策略跳过） ===
+        List<AsrResult.AsrSegment> asrSegments = new ArrayList<>();
+        String asrFullText = "";
+        if (!"uniform_sample".equals(videoStrategy)) {
+            try {
+                byte[] audioBytes = mediaExtractor.extractAudio(
+                        new java.io.ByteArrayInputStream(parseBytes), extension);
+                AsrResult asrResult = asrService.transcribe(audioBytes,
+                        "audio." + (extension != null ? extension : "mp4"),
+                        options != null ? options.getAsrEngine() : null,
+                        options != null ? options.getLanguage() : null);
+                asrFullText = asrResult.getText();
+                if (asrResult.getSegments() != null) {
+                    asrSegments.addAll(asrResult.getSegments());
                 }
+                log.info("Video ASR completed: {} segments, {} chars", asrSegments.size(), asrFullText.length());
+            } catch (Exception e) {
+                log.error("Video ASR failed, continuing with keyframe-only mode", e);
             }
-            log.info("Keyframe OCR completed: {} frames with text", keyframeOcrList.size());
-        } catch (Exception e) {
-            log.error("Video keyframe extraction/OCR failed, continuing with ASR-only mode", e);
+        }
+
+        // === 视觉路：关键帧提取 → 去重 → OCR（asr_only 策略跳过） ===
+        List<KeyframeOcr> keyframeOcrList = new ArrayList<>();
+        if (!"asr_only".equals(videoStrategy)) {
+            try {
+                List<MediaExtractor.Keyframe> keyframes = mediaExtractor.extractKeyframes(
+                        new java.io.ByteArrayInputStream(parseBytes), extension, keyframeInterval);
+                log.info("Extracted {} raw keyframes from video", keyframes.size());
+
+                // 感知哈希去重
+                List<MediaExtractor.Keyframe> deduped = mediaExtractor.deduplicateByHash(keyframes, hashThreshold);
+
+                // 逐帧 OCR
+                for (MediaExtractor.Keyframe kf : deduped) {
+                    try {
+                        String ocrText = ocrService.recognize(kf.getImageBytes(), "jpg",
+                                options != null ? options.getOcrEngine() : null);
+                        if (ocrText != null && !ocrText.isBlank()) {
+                            keyframeOcrList.add(KeyframeOcr.builder()
+                                    .timestampSeconds(kf.getTimestampSeconds())
+                                    .ocrText(ocrText.trim())
+                                    .build());
+                        }
+                    } catch (Exception e) {
+                        log.warn("OCR failed for keyframe at {}s: {}", kf.getTimestampSeconds(), e.getMessage());
+                    }
+                }
+                log.info("Keyframe OCR completed: {} frames with text", keyframeOcrList.size());
+            } catch (Exception e) {
+                log.error("Video keyframe extraction/OCR failed, continuing with ASR-only mode", e);
+            }
         }
 
         // === 合并两路结果 ===
-        return mergeSegmentsWithKeyframes(asrFullText, asrSegments, keyframeOcrList, strategy);
+        return mergeSegmentsWithKeyframes(asrFullText, asrSegments, keyframeOcrList, strategy, keyframeInterval);
+    }
+
+    /**
+     * 从解析选项中解析时间裁剪范围（fileName 精确匹配），无匹配返回 null
+     */
+    private double[] resolveTimeRange(ParseOptions options) {
+        if (options == null || options.getTimeRanges() == null || options.getFileName() == null) {
+            return null;
+        }
+        return options.getTimeRanges().get(options.getFileName());
     }
 
     /**
@@ -692,18 +2102,19 @@ public class DocumentParserImpl implements DocumentParser {
             String asrFullText,
             List<AsrResult.AsrSegment> asrSegments,
             List<KeyframeOcr> keyframeOcrList,
-            KbParseStrategy strategy) {
+            KbParseStrategy strategy,
+            int estimatedSegmentDuration) {
 
         List<ParseResult.ChunkTimeSegment> mergedSegments = new ArrayList<>();
 
         if (asrSegments.isEmpty()) {
-            // ASR 失败但有关键帧 OCR 结果时，以关键帧构建分段
+            // ASR 失败（或 uniform_sample 策略）但有关键帧 OCR 结果时，以关键帧构建分段
             log.info("No ASR segments, building segments from keyframes only");
             for (KeyframeOcr kf : keyframeOcrList) {
                 mergedSegments.add(ParseResult.ChunkTimeSegment.builder()
                         .text("【画面内容】\n" + kf.getOcrText())
                         .startTime(kf.getTimestampSeconds())
-                        .endTime(kf.getTimestampSeconds() + 10.0) // 估算
+                        .endTime(kf.getTimestampSeconds() + estimatedSegmentDuration) // 按采样间隔估算
                         .build());
             }
         } else if (keyframeOcrList.isEmpty()) {
@@ -802,18 +2213,33 @@ public class DocumentParserImpl implements DocumentParser {
     /**
      * 解析音频文件：直接 ASR 转文字 → 带时间戳分段
      */
-    private ParseResult parseAudio(InputStream stream, String extension, KbParseStrategy strategy) throws Exception {
+    private ParseResult parseAudio(InputStream stream, String extension, KbParseStrategy strategy, ParseOptions options) throws Exception {
         log.info("Parsing audio file, extension: {}", extension);
         byte[] audioBytes = stream.readAllBytes();
+
+        // 时间范围裁剪：仅解析用户指定区间（按文件名匹配）
+        double[] timeRange = resolveTimeRange(options);
+        if (timeRange != null && timeRange[1] > timeRange[0]) {
+            try {
+                log.info("Cropping audio to range [{}, {}]s", timeRange[0], timeRange[1]);
+                audioBytes = mediaExtractor.cropMedia(audioBytes, extension,
+                        timeRange[0], timeRange[1] - timeRange[0]);
+            } catch (Exception e) {
+                log.warn("Audio crop failed, parsing full audio: {}", e.getMessage());
+            }
+        }
+
         String filename = "audio." + (extension != null ? extension : "mp3");
-        return doAsrParse(audioBytes, filename, strategy);
+        return doAsrParse(audioBytes, filename, strategy, options);
     }
 
     /**
      * 执行 ASR 解析并构建 ParseResult
      */
-    private ParseResult doAsrParse(byte[] audioBytes, String filename, KbParseStrategy strategy) {
-        AsrResult asrResult = asrService.transcribe(audioBytes, filename);
+    private ParseResult doAsrParse(byte[] audioBytes, String filename, KbParseStrategy strategy, ParseOptions options) {
+        AsrResult asrResult = asrService.transcribe(audioBytes, filename,
+                options != null ? options.getAsrEngine() : null,
+                options != null ? options.getLanguage() : null);
 
         String fullText = asrResult.getText();
         if (strategy != null && strategy.getLlmModel() != null) {
@@ -842,10 +2268,11 @@ public class DocumentParserImpl implements DocumentParser {
     /**
      * 解析图片文件：OCR 识别文字
      */
-    private ParseResult parseImage(InputStream stream, String extension, KbParseStrategy strategy) throws Exception {
+    private ParseResult parseImage(InputStream stream, String extension, KbParseStrategy strategy, ParseOptions options) throws Exception {
         log.info("Parsing image file, extension: {}", extension);
         byte[] imageBytes = stream.readAllBytes();
-        String text = ocrService.recognize(imageBytes, extension);
+        String text = ocrService.recognize(imageBytes, extension,
+                options != null ? options.getOcrEngine() : null);
 
         if (strategy != null && strategy.getLlmModel() != null) {
             LlmConfig llmCfg = resolveLlmConfig(strategy);
@@ -917,11 +2344,33 @@ public class DocumentParserImpl implements DocumentParser {
         return new LlmConfig(null, null);
     }
 
-    /** LLM 配置内部 DTO */
+    /** LLM 配置内部 DTO（package-private 便于同包测试构造） */
     @lombok.Data
-    private static class LlmConfig {
+    static class LlmConfig {
         private final String apiUrl;
         private final String apiKey;
+    }
+
+    /** 表头区域检测结果（Q8 增强） */
+    @lombok.Data
+    private static class HeaderRegion {
+        /** 标题行内容（如 "附件1"、"附表1：xxx"），按出现顺序，空列表表示无标题行 */
+        private final List<String> titleRows;
+        /** 列名起始行号 */
+        private final int headerStartRow;
+        /** 列名行深度（跨行合并时 > 1，单行表头为 1） */
+        private final int headerDepth;
+        /** 是否找到列名行（false 表示整表无表头，走默认列名） */
+        private final boolean headerFound;
+    }
+
+    /** LLM 表头合并结果 */
+    @lombok.Data
+    private static class LlmHeaderResult {
+        /** 合并后的表格标题（综合所有标题行内容），可为 null */
+        private final String title;
+        /** 合并后的列名数组 */
+        private final List<String> headers;
     }
 
     /**

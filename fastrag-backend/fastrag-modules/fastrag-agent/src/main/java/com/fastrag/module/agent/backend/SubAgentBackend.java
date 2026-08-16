@@ -12,9 +12,27 @@ import java.util.List;
 import java.util.Map;
 
 /**
- * Backend implementation for sub-agents.
- * Sub-agents use the base context (no additional fields beyond the shared context).
- * They are typically spawned by a parent chatbot agent to perform specialized tasks.
+ * 子智能体Agent后端实现，由主聊天机器人Agent调度执行特定子任务。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>使用{@link BaseContext}作为上下文Schema，不包含额外的配置字段（与主Agent共享基础上下文）</li>
+ *   <li>不支持任何额外的能力（capabilities为空列表），功能由父Agent的工具配置决定</li>
+ *   <li>构建执行图时使用{@link BaseState}作为状态Schema</li>
+ *   <li>提供与ChatbotAgentBackend一致的后端信息查询能力</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>后端ID固定为"SubAgentBackend"，显示名称为"子智能体"</li>
+ *   <li>通常由主Agent通过SubAgentToolExecutor在运行时动态创建和调用</li>
+ *   <li>子Agent的systemPrompt、model、tools等由父Agent在创建时动态指定</li>
+ *   <li>buildGraph方法从上下文中提取配置构建AgentGraph，stateSchema使用BaseState</li>
+ * </ul></p>
+ *
+ * @see AgentBackend 后端接口定义
+ * @see SubAgentToolExecutor 子Agent工具执行器
+ * @see BaseState 子Agent运行状态基类
  */
 @Slf4j
 @Component

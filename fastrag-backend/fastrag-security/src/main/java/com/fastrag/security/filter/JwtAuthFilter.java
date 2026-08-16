@@ -1,5 +1,30 @@
 package com.fastrag.security.filter;
 
+/**
+ * JWT Bearer Token 认证过滤器，负责从请求头中提取和验证 JWT Token 并建立认证上下文。
+ *
+ * <p>核心职责：拦截所有 HTTP 请求，从 Authorization 头中提取 JWT Token，
+ * 验证有效性后将用户信息写入 Spring Security 上下文。
+ *
+ * <p>过滤链位置：在 {@link ApiTokenAuthFilter} 之后、{@code UsernamePasswordAuthenticationFilter} 之前执行。
+ *
+ * <p>处理逻辑：
+ * <ol>
+ *   <li>从 Authorization 头提取 Bearer Token</li>
+ *   <li>检查 Token 是否在 Redis 黑名单中（用户登出时将 Token 加入黑名单，通过
+ *       {@code jwt:blacklist:{token}} Key 查询，key 存在则表示已失效）</li>
+ *   <li>通过 {@link com.fastrag.security.util.JwtUtil} 解析 Token，提取 userId、username、orgId、roles、permissions</li>
+ *   <li>构建 {@link LoginUser} 认证对象和 {@link org.springframework.security.core.Authentication}，
+ *       写入 {@code SecurityContextHolder}</li>
+ * </ol>
+ *
+ * <p>特殊处理：通过重写 {@code shouldNotFilterAsyncDispatch()} 返回 true，
+ * 跳过 SSE 连接的异步 dispatch 请求的鉴权，避免 response 已 committed 时抛出 AccessDeniedException。
+ *
+ * <p>与其他模块的交互：依赖 {@link com.fastrag.security.util.JwtUtil} 进行 Token 解析；
+ * 依赖 {@link org.springframework.data.redis.core.StringRedisTemplate} 查询 Token 黑名单。
+ */
+
 import com.fastrag.security.util.JwtUtil;
 import io.jsonwebtoken.Claims;
 import jakarta.servlet.FilterChain;

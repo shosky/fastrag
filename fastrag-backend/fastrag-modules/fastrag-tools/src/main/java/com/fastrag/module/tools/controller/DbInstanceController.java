@@ -1,4 +1,26 @@
 package com.fastrag.module.tools.controller;
+
+/**
+ * 数据库实例管理控制器。
+ *
+ * <p>提供外部数据库实例的 CRUD 操作及辅助功能，用于管理和查询已注册的数据库连接。</p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>{@code GET    /api/databases} - 分页查询数据库实例列表（支持 keyword/dbType 筛选）</li>
+ *   <li>{@code GET    /api/databases/{id}} - 获取单个数据库实例详情</li>
+ *   <li>{@code POST   /api/databases} - 创建数据库实例</li>
+ *   <li>{@code PUT    /api/databases/{id}} - 更新数据库实例配置</li>
+ *   <li>{@code DELETE /api/databases/{id}} - 删除数据库实例</li>
+ *   <li>{@code GET    /api/databases/{id}/tables} - 获取数据库表列表</li>
+ *   <li>{@code POST   /api/databases/{id}/tables} - 创建数据库表</li>
+ *   <li>{@code POST   /api/databases/{id}/test-conn} - 测试数据库连接</li>
+ *   <li>{@code POST   /api/databases/{id}/query} - 执行 SQL 查询</li>
+ *   <li>{@code POST   /api/databases/{id}/sync-tables} - 同步数据库表结构</li>
+ * </ul>
+ *
+ * @see DbInstanceService
+ */
 import com.fastrag.common.response.ApiResponse; import com.fastrag.module.tools.entity.DbInstance;
 import com.fastrag.module.tools.entity.DbTable;
 import com.fastrag.module.tools.service.DbInstanceService;

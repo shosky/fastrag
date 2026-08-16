@@ -5,6 +5,12 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+/**
+ * 用户注册请求DTO。
+ *
+ * <p>封装用户注册请求的参数，包含用户名（3-64字符）、邮箱、密码（6-64字符）和邮箱验证码。
+ * 带有完整的参数校验注解。被 AuthController 的 register 接口接收。</p>
+ */
 @Data
 public class RegisterRequest {
     @NotBlank(message = "用户名不能为空")

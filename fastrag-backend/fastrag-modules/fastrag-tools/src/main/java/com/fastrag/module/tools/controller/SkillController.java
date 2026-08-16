@@ -1,5 +1,52 @@
 package com.fastrag.module.tools.controller;
 
+/**
+ * 技能（Skill）管理控制器。
+ *
+ * <p>提供技能的完整生命周期管理，包括 CRUD、文件管理、安装导入/导出、
+ * 依赖管理和分享配置等功能。技能是 Agent 可调用的能力单元，
+ * 支持 builtin（内置）和 custom（自定义）两种来源类型。</p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>{@code GET    /api/skills} - 列出所有技能（支持 keyword/category 筛选）</li>
+ *   <li>{@code GET    /api/skills/accessible} - 列出用户可访问的已启用技能</li>
+ *   <li>{@code GET    /api/skills/builtin} - 列出内置技能</li>
+ *   <li>{@code GET    /api/skills/{id}} - 获取单个技能详情</li>
+ *   <li>{@code GET    /api/skills/slug/{slug}} - 按 slug 获取技能</li>
+ *   <li>{@code POST   /api/skills} - 创建技能</li>
+ *   <li>{@code PUT    /api/skills/{id}} - 更新技能</li>
+ *   <li>{@code DELETE /api/skills/{id}} - 删除技能</li>
+ *   <li>{@code POST   /api/skills/{id}/toggle} - 切换技能启用状态</li>
+ *   <li>{@code PUT    /api/skills/{id}/dependencies} - 更新技能依赖</li>
+ *   <li>{@code PUT    /api/skills/{id}/share-config} - 更新技能分享配置</li>
+ *   <li>{@code PUT    /api/skills/{id}/enabled} - 设置技能启用状态</li>
+ *   <li>{@code GET    /api/skills/{id}/dependencies} - 获取技能依赖列表</li>
+ *   <li>{@code GET    /api/skills/{id}/scopes} - 获取技能作用域列表</li>
+ *   <li>{@code GET    /api/skills/dependency-options} - 获取依赖选项（前端下拉）</li>
+ * </ul>
+ *
+ * <h3>技能文件管理：</h3>
+ * <ul>
+ *   <li>{@code GET    /api/skills/{slug}/tree} - 获取技能文件树</li>
+ *   <li>{@code GET    /api/skills/{slug}/file} - 读取技能文件内容</li>
+ *   <li>{@code POST   /api/skills/{slug}/file} - 创建文件/目录</li>
+ *   <li>{@code PUT    /api/skills/{slug}/file} - 更新文件内容</li>
+ *   <li>{@code DELETE /api/skills/{slug}/file} - 删除文件/目录</li>
+ *   <li>{@code GET    /api/skills/{slug}/export} - 导出技能为 ZIP</li>
+ * </ul>
+ *
+ * <h3>安装草稿流水线：</h3>
+ * <ul>
+ *   <li>{@code POST   /api/skills/import/prepare} - 上传 ZIP/SKILL.md 并自动安装</li>
+ *   <li>{@code POST   /api/skills/install-drafts/{draftId}/confirm} - 确认安装草稿</li>
+ *   <li>{@code DELETE /api/skills/install-drafts/{draftId}} - 丢弃安装草稿</li>
+ * </ul>
+ *
+ * @see SkillService
+ * @see SkillFileService
+ * @see SkillDraftService
+ */
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.tools.entity.SkillInstallDraft;
 import com.fastrag.module.tools.service.SkillDraftService;

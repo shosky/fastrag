@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.embedding.EmbeddingService;
 import com.fastrag.infra.milvus.MilvusService;
 import com.fastrag.module.knowledge.chunking.ChunkData;
+import com.fastrag.module.knowledge.chunking.ParentChunkAssembler;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
 import com.fastrag.module.knowledge.entity.KbChunk;
@@ -35,6 +36,7 @@ public class StorageServiceImpl implements StorageService {
     private final KnowledgeBaseMapper kbMapper;
     private final ModelRecordMapper modelRecordMapper;
     private final SqlSessionFactory sqlSessionFactory;
+    private final ParentChunkAssembler parentChunkAssembler;
 
     /** Embedding 分批大小 */
     private static final int EMBED_BATCH_SIZE = 32;
@@ -46,6 +48,21 @@ public class StorageServiceImpl implements StorageService {
     // 注意：不使用 @Transactional，因为内部 batchInsertChunks 通过 SqlSession(BATCH) 自行管理事务
     // Spring @Transactional 与 MyBatis BATCH Executor 的事务不能混用
     public void storeChunks(String kbId, String fileId, List<ChunkData> chunks) {
+        storeChunks(kbId, fileId, chunks, -1);
+    }
+
+    @Override
+    // 注意：不使用 @Transactional，因为内部 batchInsertChunks 通过 SqlSession(BATCH) 自行管理事务
+    // Spring @Transactional 与 MyBatis BATCH Executor 的事务不能混用
+    public void storeChunks(String kbId, String fileId, List<ChunkData> chunks, int childChunkLength) {
+        storeChunks(kbId, fileId, chunks, childChunkLength, childChunkLength * 2, null);
+    }
+
+    @Override
+    // 注意：不使用 @Transactional，因为内部 batchInsertChunks 通过 SqlSession(BATCH) 自行管理事务
+    // Spring @Transactional 与 MyBatis BATCH Executor 的事务不能混用
+    public void storeChunks(String kbId, String fileId, List<ChunkData> chunks, int childChunkLength,
+                            int maxParentLength, String parentAggLevel) {
         if (chunks.isEmpty()) {
             log.warn("No chunks to store for file: {}", fileId);
             return;
@@ -82,21 +99,41 @@ public class StorageServiceImpl implements StorageService {
         }
 
         KbFile file = fileMapper.selectById(fileId);
-        List<List<Float>> allVectors = new ArrayList<>();
 
-        // 3. 分批处理：Embedding + MySQL 批量写入
+        // 3. 父子分片聚合（仅父分片模式传入 childChunkLength > 0 时启用）
+        //    父分片先落库（无向量、不进 Milvus），子分片回填 parentId 后走常规存储
+        if (childChunkLength > 0) {
+            int effectiveMaxParent = maxParentLength > 0 ? maxParentLength : childChunkLength * 2;
+            ParentChunkAssembler.AssemblyResult assembly =
+                    parentChunkAssembler.assemble(chunks, fileId, effectiveMaxParent, parentAggLevel);
+            if (assembly.hasParents()) {
+                batchInsertParents(kbId, fileId, file, assembly.parents());
+            }
+            chunks = assembly.children();
+        }
+
+        // 4. 分批处理：Embedding + MySQL 批量写入
+        List<List<Float>> allVectors = new ArrayList<>();
+        // 记录无向量的 chunk 索引（embedding 批次失败时），Milvus 插入时跳过，避免 ids/vectors 错位
+        Set<Integer> noVectorIndexes = new HashSet<>();
+
         for (int batchStart = 0; batchStart < chunks.size(); batchStart += EMBED_BATCH_SIZE) {
             int end = Math.min(batchStart + EMBED_BATCH_SIZE, chunks.size());
             List<ChunkData> batch = chunks.subList(batchStart, end);
 
-            // 3a. Embedding（每批，带指数退避重试）
+            // 4a. Embedding（每批，带指数退避重试）
             List<List<Float>> batchVectors = embedBatchWithRetry(embeddingModel, batch, apiUrl, apiKey,
                     file != null ? file.getName() : null);
             if (batchVectors != null) {
                 allVectors.addAll(batchVectors);
+            } else {
+                // 该批 embedding 失败：chunk 以纯文本存储，Milvus 不写入这批向量
+                for (int i = batchStart; i < end; i++) {
+                    noVectorIndexes.add(i);
+                }
             }
 
-            // 3b. MySQL 批量写入（使用 MyBatis BATCH Executor）
+            // 4b. MySQL 批量写入（使用 MyBatis BATCH Executor）
             long tMysql = System.currentTimeMillis();
             batchInsertChunks(kbId, fileId, file, batch, batchStart,
                     batchVectors != null && !batchVectors.isEmpty());
@@ -104,24 +141,30 @@ public class StorageServiceImpl implements StorageService {
                     System.currentTimeMillis() - tMysql);
         }
 
-        // 4. 批量写入 Milvus
+        // 5. 批量写入 Milvus（只写入有向量的 chunk，ids/indices/vectors 严格对应 chunk 索引）
         if (!allVectors.isEmpty()) {
             long tMilvus = System.currentTimeMillis();
             try {
                 List<String> ids = new ArrayList<>();
                 List<Long> indices = new ArrayList<>();
+                List<List<Float>> vectors = new ArrayList<>();
+                int vectorCursor = 0;
                 for (int i = 0; i < chunks.size(); i++) {
+                    if (noVectorIndexes.contains(i)) continue;
+                    if (vectorCursor >= allVectors.size()) break; // 防御：不应发生
                     ids.add(fileId + "_chunk_" + i);
                     indices.add((long) i);
+                    vectors.add(allVectors.get(vectorCursor++));
                 }
-                milvusService.insert(collection, ids, allVectors, kbId, fileId, indices);
-                log.info("[TIMING] Milvus insert {} vectors: {} ms", ids.size(), System.currentTimeMillis() - tMilvus);
+                milvusService.insert(collection, ids, vectors, kbId, fileId, indices);
+                log.info("[TIMING] Milvus insert {} vectors (skipped {} no-vector chunks): {} ms",
+                        ids.size(), noVectorIndexes.size(), System.currentTimeMillis() - tMilvus);
             } catch (Exception e) {
                 log.error("Milvus insert failed", e);
             }
         }
 
-        // 5. 更新文件的 chunkCount
+        // 6. 更新文件的 chunkCount（只统计子分片，父分片不计数）
         if (file != null) {
             file.setChunkCount(chunks.size());
             fileMapper.updateById(file);
@@ -210,6 +253,7 @@ public class StorageServiceImpl implements StorageService {
                 kc.setChunkType(chunk.getChunkType() != null ? chunk.getChunkType() : "text");
                 kc.setTitle(chunk.getTitle());
                 kc.setHeadingPath(chunk.getHeadingPath());
+                kc.setParentId(chunk.getParentId());
                 if (chunk.getImageKeys() != null && !chunk.getImageKeys().isEmpty()) {
                     kc.setImageKeys(JSONUtil.toJsonStr(chunk.getImageKeys()));
                 }
@@ -219,6 +263,37 @@ public class StorageServiceImpl implements StorageService {
         } catch (Exception e) {
             log.error("Batch insert failed for chunks batch starting at {}", batchStart, e);
             throw new RuntimeException("批量插入 chunk 失败", e);
+        }
+    }
+
+    /**
+     * 批量插入父分片（MyBatis BATCH 模式）。
+     * 父分片不向量化（vector_stored=0、无 embeddingId、不进 Milvus），
+     * id = {fileId}_parent_{n}，chunk_index 取首个子分片位置保证列表文档顺序。
+     */
+    private void batchInsertParents(String kbId, String fileId, KbFile file, List<ChunkData> parents) {
+        try (SqlSession sqlSession = sqlSessionFactory.openSession(ExecutorType.BATCH, false)) {
+            KbChunkMapper batchMapper = sqlSession.getMapper(KbChunkMapper.class);
+            for (ChunkData parent : parents) {
+                KbChunk kc = new KbChunk();
+                kc.setId(parent.getId());
+                kc.setKbId(kbId);
+                kc.setFileId(fileId);
+                kc.setFileName(file != null ? file.getName() : "");
+                kc.setChunkIndex(parent.getIndex());
+                kc.setContent(parent.getContent());
+                kc.setVectorStored(0);
+                kc.setChunkType("parent");
+                kc.setTitle(parent.getTitle());
+                kc.setHeadingPath(parent.getHeadingPath());
+                kc.setPageNumber(parent.getPageNumber());
+                kc.setPageRange(parent.getPageRange());
+                batchMapper.insert(kc);
+            }
+            sqlSession.commit();
+        } catch (Exception e) {
+            log.error("Batch insert parents failed for file {}", fileId, e);
+            throw new RuntimeException("批量插入父分片失败", e);
         }
     }
 

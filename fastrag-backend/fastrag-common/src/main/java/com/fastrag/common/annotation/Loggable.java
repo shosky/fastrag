@@ -3,11 +3,27 @@ package com.fastrag.common.annotation;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
 
-import java.lang.annotation.*;
+import java.lang.annotation.Documented;
+import java.lang.annotation.ElementType;
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+import java.lang.annotation.Target;
 
 /**
- * 知识库操作日志注解
- * <p>标记需要记录业务日志的 Controller 方法，由 {@code KbLogAspect} 切面自动拦截写入。
+ * 知识库操作日志注解。
+ * <p>标记需要记录业务日志的 Controller 方法，由 {@code KbLogAspect} 切面自动拦截并写入日志表。
+ *
+ * <p>核心属性：
+ * <ul>
+ *   <li>{@code category} - 日志分类，对应 {@link com.fastrag.common.enums.LogCategory}，如 operation（操作日志）、retrieval（检索日志）、publish（发布日志）</li>
+ *   <li>{@code action} - 操作动作类型，对应 {@link com.fastrag.common.enums.ActionType}，如 kb_created、file_uploaded 等</li>
+ *   <li>{@code target} - 操作目标描述，支持 SpEL 表达式（如 {@code #req.name}、{@code #p0}），留空时切面自动推断</li>
+ *   <li>{@code detail} - 日志详情描述，同样支持 SpEL 表达式</li>
+ * </ul>
+ *
+ * <p>实现机制：KbLogAspect 通过 AOP 拦截标注了 @Loggable 的方法，在方法执行后收集操作信息，
+ * 发布 {@link com.fastrag.common.event.SysAuditLogEvent} 事件，由监听器异步写入 sys_audit_log 表。
+ * 这种事件驱动设计避免了日志模块与业务模块之间的循环依赖。
  *
  * <p>使用示例：
  * <pre>

@@ -1,4 +1,24 @@
 package com.fastrag.module.publish.service.impl;
+
+/**
+ * 知识库版本发布服务实现。
+ *
+ * <p>实现 {@link PublishService} 接口，管理知识库版本的生命周期。</p>
+ *
+ * <h3>核心实现逻辑：</h3>
+ * <ul>
+ *   <li>版本列表查询：按知识库ID查询所有版本，按创建时间倒序排列</li>
+ *   <li>最新版本查询：按知识库ID获取版本号最大的记录</li>
+ *   <li>已发布版本查询：按知识库ID和 publishStatus="published" 获取唯一发布版本</li>
+ *   <li>创建版本：自动分配递增版本号（基于当前最大版本号+1），初始状态为 draft</li>
+ *   <li>状态流转：直接更新版本状态，当状态变更为 "published" 时，
+ *       自动向 {@code kb_publish_history} 表写入一条发布历史记录</li>
+ * </ul>
+ *
+ * @see PublishService
+ * @see KbVersionMapper
+ * @see KbPublishHistoryMapper
+ */
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.publish.entity.KbPublishHistory;
 import com.fastrag.module.publish.entity.KbVersion;

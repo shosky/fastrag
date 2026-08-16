@@ -10,6 +10,37 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
+/**
+ * Agent运行时上下文基类，是所有Agent后端上下文的公共父类。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>定义Agent运行时所需的全部配置字段，包括线程标识、用户标识、系统提示词、模型选择、工具列表等</li>
+ *   <li>通过{@link ConfigField}注解声明字段的元数据（类型、分类、权限、是否可配置等），用于前端配置界面的动态渲染</li>
+ *   <li>提供从Map批量填充配置的{@link #updateFromMap(Map)}方法和获取可配置项列表的{@link #getConfigurableItems(String)}方法</li>
+ *   <li>维护运行时状态数据（runtimeState）和运行时模型配置（modelConfig），供中间件在执行过程中读写</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>使用@ConfigField注解标记的持久化字段会被序列化到Agent配置JSON中保存</li>
+ *   <li>transient字段（如visibleKnowledgeBases、promptSkills、runtimeState等）仅在单次运行期间有效，不会被持久化</li>
+ *   <li>updateFromMap方法通过反射遍历类层次结构（包括父类），将Map中的键值对设置到对应字段</li>
+ *   <li>getConfigurableItems方法根据用户角色（userRole）过滤返回可配置的UI项，支持auth权限控制</li>
+ * </ul></p>
+ *
+ * <p>字段分类说明：
+ * <ul>
+ *   <li>基础标识：threadId、uid、runId、requestId</li>
+ *   <li>模型配置：model、systemPrompt、maxSteps</li>
+ *   <li>工具能力：tools、skills、mcps、databases、knowledges</li>
+ *   <li>运行时控制：summaryThreshold（摘要触发阈值）、modelRetryTimes（模型重试次数，仅管理员可配）</li>
+ * </ul></p>
+ *
+ * @see ConfigField 配置字段元数据注解
+ * @see ConfigurableItem 可配置项数据模型
+ * @see ChatBotContext 聊天机器人扩展上下文
+ */
 @Data
 public class BaseContext {
 

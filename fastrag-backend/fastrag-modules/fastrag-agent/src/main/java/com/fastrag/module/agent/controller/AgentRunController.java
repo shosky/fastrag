@@ -14,9 +14,28 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.Map;
 
 /**
- * REST controller for agent run operations.
- * Provides endpoints to create runs, retrieve run status,
- * cancel runs, stream run events via SSE, and query active runs.
+ * Agent运行管理REST控制器，提供Agent运行的生命周期管理和事件流接口。
+ *
+ * <p>提供的REST API端点：
+ * <ul>
+ *   <li>POST /runs - 创建新的Agent运行任务</li>
+ *   <li>GET /runs/{runId} - 获取指定运行的详情</li>
+ *   <li>POST /runs/{runId}/cancel - 取消正在运行的Agent任务</li>
+ *   <li>GET /runs/{runId}/events - 通过SSE（Server-Sent Events）流式推送运行事件，支持afterSeq参数断点续传</li>
+ *   <li>GET /thread/{threadId}/active_run - 获取指定会话线程中当前活跃的运行任务</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>所有接口通过@CurrentUser注解获取当前用户，进行权限校验</li>
+ *   <li>createRun创建运行后通过异步线程池执行（agentTaskExecutor），立即返回运行数据</li>
+ *   <li>streamRunEvents返回SseEmitter，客户端通过EventSource API实时接收Agent执行过程中的各类事件</li>
+ *   <li>cancelRun通过AgentRunService向运行中的任务发送取消信号</li>
+ *   <li>getActiveRun用于前端判断某个会话线程中是否已有正在执行的Agent任务，避免重复提交</li>
+ * </ul></p>
+ *
+ * @see AgentRunService Agent运行业务服务
+ * @see AgentRunCreateDTO 运行创建请求DTO
  */
 @RestController
 @RequestMapping("/api/agent")

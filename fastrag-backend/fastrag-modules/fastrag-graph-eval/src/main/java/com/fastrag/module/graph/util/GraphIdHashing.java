@@ -1,5 +1,24 @@
 package com.fastrag.module.graph.util;
 
+/**
+ * 知识图谱确定性 ID 哈希生成工具类。
+ *
+ * <p>基于 SHA-256 哈希算法为知识图谱中的实体和三元组生成确定性唯一标识符，
+ * 是图谱构建和去重机制的核心基础组件。确定性哈希保证：相同的输入始终产生相同的 ID，
+ * 从而实现跨批次、跨系统的实体和三元组去重，避免重复插入。</p>
+ *
+ * <p>ID 生成规则如下：</p>
+ * <ul>
+ *   <li>实体 ID：{@code SHA-256(kbId:normalizedName:label)}，截断前 32 个十六进制字符，
+ *       对应 {@link com.fastrag.module.graph.entity.KbGraphEntity} 的主键字段</li>
+ *   <li>三元组 ID：{@code SHA-256(kbId:sourceName:sourceLabel:relationType:targetName:targetLabel)}，
+ *       截断前 32 个十六进制字符，对应 {@link com.fastrag.module.graph.entity.KbGraphRelation} 的主键字段</li>
+ * </ul>
+ *
+ * <p>输入名称需先经过 {@link NameNormalizer} 标准化处理后再传入本工具，以确保大小写和空白差异不会产生不同 ID。
+ * 32 位截断长度在碰撞概率和可读性之间取得平衡，对于单个知识库规模的实体数量（通常万级以内）碰撞概率极低。
+ * 本类为无状态工具类，仅包含静态方法，被图谱构建和去重流程广泛调用。</p>
+ */
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;

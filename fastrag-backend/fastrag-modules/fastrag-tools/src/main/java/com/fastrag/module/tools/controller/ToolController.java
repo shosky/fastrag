@@ -1,5 +1,28 @@
 package com.fastrag.module.tools.controller;
 
+/**
+ * 自定义工具（Tool）管理控制器。
+ *
+ * <p>提供自定义 HTTP 工具的 CRUD、启用/禁用、测试代理、API 插件配置及插件导入功能。
+ * 自定义工具通过 HTTP 调用（REST API）方式对接外部服务，与 MCP 工具共同构成 Agent 的工具集。</p>
+ *
+ * <h3>REST API 端点：</h3>
+ * <ul>
+ *   <li>{@code GET    /api/tools} - 列出所有工具（支持 keyword/type 筛选）</li>
+ *   <li>{@code GET    /api/tools/{id}} - 获取单个工具详情</li>
+ *   <li>{@code POST   /api/tools} - 创建工具</li>
+ *   <li>{@code PUT    /api/tools/{id}} - 更新工具配置</li>
+ *   <li>{@code DELETE /api/tools/{id}} - 删除工具</li>
+ *   <li>{@code POST   /api/tools/{id}/toggle} - 切换工具启用状态</li>
+ *   <li>{@code POST   /api/tools/test-proxy} - 工具测试代理（转发 HTTP 请求避免 CORS）</li>
+ *   <li>{@code GET    /api/tools/{id}/api-config} - 获取工具 API 配置</li>
+ *   <li>{@code PUT    /api/tools/{id}/api-config} - 保存工具 API 配置</li>
+ *   <li>{@code POST   /api/tools/upload} - 上传插件文件</li>
+ *   <li>{@code POST   /api/tools/import-json} - JSON 批量导入插件</li>
+ * </ul>
+ *
+ * @see ToolService
+ */
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.tools.entity.ToolHttpConfig;
 import com.fastrag.module.tools.service.ToolService;

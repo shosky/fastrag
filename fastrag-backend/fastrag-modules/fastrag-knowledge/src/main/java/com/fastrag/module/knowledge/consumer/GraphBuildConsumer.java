@@ -38,15 +38,44 @@ import java.util.concurrent.atomic.*;
 import java.util.stream.Collectors;
 
 /**
- * 知识图谱构建服务 (RabbitMQ Consumer) — 升级版（参考 Yuxi 抽取管道）
+ * 知识图谱构建消费者（RabbitMQ Consumer），从文档 chunks 中提取实体和关系并写入图数据库。
  *
- * <p>从 chunks 中提取实体和关系，通过 GraphStore 写入存储。
- * 支持单文件(fileId)和全库(kbId)构建模式。
+ * <p>核心职责：
  * <ul>
- *   <li>使用确定性 ID 哈希（SHA-256）替代自增 ID</li>
- *   <li>使用 ExtractionNormalizer 进行实体去重和关系端点解析</li>
- *   <li>使用 Mention 追踪表记录实体/三元组与 Chunk 的关联</li>
- *   <li>升级 LLM 提取 Prompt，支持属性抽取和 Schema</li>
+ *   <li>监听 RabbitMQ 队列 {@code fastrag.graph-build.queue}，消费图谱构建消息</li>
+ *   <li>支持单文件（fileId/fileIds）和全库（kbId）两种构建模式，以及 full（重建）和 incremental（增量）两种模式</li>
+ *   <li>使用 LLM 对每个 chunk 进行实体和关系抽取，经 ExtractionNormalizer 规范化去重后写入 GraphStore</li>
+ *   <li>使用确定性 ID 哈希（SHA-256）替代自增 ID，保证跨批次幂等</li>
+ *   <li>使用 Mention 追踪表记录实体/三元组与 Chunk 的关联关系</li>
+ *   <li>为实体批量生成 Embedding 向量，支持图谱中的语义检索</li>
+ *   <li>构建完成后自动清理孤立实体/关系，回填缺失 embedding</li>
+ * </ul>
+ *
+ * <p>消息格式（Map）：
+ * <ul>
+ *   <li>{@code kbId} — 知识库 ID（必填）</li>
+ *   <li>{@code fileId} — 单个文件 ID（可选，兼容旧格式）</li>
+ *   <li>{@code fileIds} — 多个文件 ID 列表（可选，新格式）</li>
+ *   <li>{@code mode} — 构建模式：full（全量重建）/ incremental（增量，默认）</li>
+ * </ul>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>RabbitMQ concurrency=5，通过线程池并行处理 chunks，并发数可配（默认 max=15，按 total/3 自动调整）</li>
+ *   <li>跳过内容过短（< 50 字符）的 chunk，直接标记完成</li>
+ *   <li>LLM 提取使用自定义 Prompt 限制实体类型白名单，收敛类型爆炸问题</li>
+ *   <li>JSON 解析失败时使用正则兜底提取实体和关系</li>
+ *   <li>构建进度实时更新到 kb_graph_index 表（status、progress、entityCount、relationCount）</li>
+ *   <li>LLM 配置从文件的 parse strategy 中解析（llmModel → ModelRecord online）</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：
+ * <ul>
+ *   <li>graph 模块（{@link GraphStore}）— 实体/关系/Chunk 节点的 CRUD 操作</li>
+ *   <li>graph 模块（{@link ExtractionNormalizer}、{@link EntityTypeNormalizer}、{@link NameNormalizer}）— 实体规范化</li>
+ *   <li>ai 模块（{@link LlmService}、{@link EmbeddingService}）— LLM 调用和 Embedding 生成</li>
+ *   <li>publish 模块（{@link LogService}）— 构建日志记录</li>
+ *   <li>platform 模块（{@link ModelRecordMapper}）— 查询 LLM/Embedding 模型配置</li>
  * </ul>
  */
 @Slf4j
@@ -123,7 +152,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         }
 
         // 获取 LLM 配置（用于实体/关系提取）
-        LlmConfig llmConfig = resolveLlmConfig(fileIds);
+        LlmConfig llmConfig = resolveLlmConfig(kbId, fileIds);
         log.info("[GraphBuild] Resolved LLM config: model={}, apiUrl={}, apiKeySet={}",
                 llmConfig.getModel(),
                 llmConfig.getApiUrl() != null ? "***provided***" : "null",
@@ -154,6 +183,13 @@ public class GraphBuildConsumer implements GraphBuildHandler {
             // 查询需要处理的 chunks（仅处理未提取的）
             List<KbChunk> chunks = queryChunks(kbId, fileIds, mode);
             int total = chunks.size();
+
+            // 实体类型白名单：KB 级 schema（kg_graph_index.settings.entitySchema）优先，
+            // 其次 yml 全局配置，最后默认集合（KG-07 可配置化）
+            final Set<String> entityTypeWhitelist = resolveEntityTypeWhitelist(kbId);
+            log.info("[GraphBuild] Entity type whitelist for kb={}: {} types (schema configured={})",
+                    kbId, entityTypeWhitelist.size(), entityTypeWhitelist != EntityTypeNormalizer.DEFAULT_WHITELIST
+                            && !entityTypeWhitelist.equals(EntityTypeNormalizer.DEFAULT_WHITELIST));
 
             // 全库 chunk 统计（索引管理的 totalChunks 应为整个知识库的值，
             // 而非本次构建范围——单文件增量构建不应覆盖全库统计）
@@ -209,26 +245,34 @@ public class GraphBuildConsumer implements GraphBuildHandler {
 
                 futures.add(CompletableFuture.runAsync(() -> {
                     try {
-                        // 提取实体和关系
+                        // 提取实体和关系（KG-03/KG-06：实体带 description 与 attributes）
                         ExtractionNormalizer.ExtractionResult result = extractWithNormalization(
-                                content, llmConfig.getModel(), llmConfig.getApiUrl(), llmConfig.getApiKey());
+                                content, llmConfig.getModel(), llmConfig.getApiUrl(), llmConfig.getApiKey(), entityTypeWhitelist);
 
                         // 写入实体（使用确定性 ID；实体类型经白名单归一，收敛类型爆炸）
                         List<ExtractionNormalizer.Entity> entities = result.getEntities();
                         List<String> entityNamesForEmbed = new ArrayList<>();
+                        // 本 chunk 提取实体的 ID 映射（normalized_name -> entity_id），
+                        // 关系写入时用实体 ID 引用端点，消除"边按名称引用"的悬空/错连问题（KG-01）
+                        Map<String, String> entityIdByNormalizedName = new HashMap<>();
                         if (entities != null) {
                             for (ExtractionNormalizer.Entity entity : entities) {
                                 String normalizedName = NameNormalizer.normalize(entity.getText());
-                                String type = EntityTypeNormalizer.normalize(entity.getLabel(), resolveEntityTypeWhitelist());
+                                String type = EntityTypeNormalizer.normalize(entity.getLabel(), entityTypeWhitelist);
                                 String entityId = GraphIdHashing.entityId(kbId, normalizedName, type);
-                                graphStore.createEntity(kbId, entityId, entity.getText(), normalizedName, type);
-                                graphStore.createEntityMention(kbId, entity.getText(), chunkId);
+                                String description = entity.getDescription();
+                                String attributesJson = (entity.getAttributes() != null && !entity.getAttributes().isEmpty())
+                                        ? JSONUtil.toJsonStr(entity.getAttributes()) : null;
+                                graphStore.createEntity(kbId, entityId, entity.getText(), normalizedName, type,
+                                        description, attributesJson);
+                                graphStore.createEntityMention(kbId, entity.getText(), entityId, chunkId, chunk.getFileId());
+                                entityIdByNormalizedName.put(normalizedName, entityId);
                                 entityNamesForEmbed.add(entity.getText());
                                 entityCount.incrementAndGet();
                             }
                         }
 
-                        // 写入关系（使用确定性 ID）
+                        // 写入关系（使用确定性 ID + 端点实体 ID）
                         List<ExtractionNormalizer.Relation> relations = result.getRelations();
                         if (relations != null) {
                             for (ExtractionNormalizer.Relation rel : relations) {
@@ -236,11 +280,27 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                                 String targetName = rel.getTarget() != null ? rel.getTarget().toString() : "";
                                 if (sourceName.isEmpty() || targetName.isEmpty()) continue;
 
+                                // 自环防护（KG-05）：规范化后同名即视为自环，跳过
+                                String sourceNorm = NameNormalizer.normalize(sourceName);
+                                String targetNorm = NameNormalizer.normalize(targetName);
+                                if (sourceNorm.equals(targetNorm)) {
+                                    log.debug("[GraphBuild] Skipping self-loop relation: {} -> {}, label={}",
+                                            sourceName, targetName, rel.getLabel());
+                                    continue;
+                                }
+
                                 String tripleId = GraphIdHashing.tripleId(
                                         kbId, sourceName, "Entity", rel.getLabel(), targetName, "Entity");
                                 String relContent = sourceName + " -> " + rel.getLabel() + " -> " + targetName;
-                                graphStore.createRelation(kbId, tripleId, sourceName, targetName, rel.getLabel(), relContent);
-                                graphStore.createTripleMention(kbId, tripleId, chunkId);
+                                // 端点实体 ID：先查本 chunk 提取结果，再查库（跨 chunk 已存在实体），
+                                // 最后创建 UNKNOWN 占位实体——保证边始终引用有效实体 ID（KG-01）
+                                String sourceId = resolveRelationEndpointId(kbId, sourceName, sourceNorm,
+                                        entityIdByNormalizedName);
+                                String targetId = resolveRelationEndpointId(kbId, targetName, targetNorm,
+                                        entityIdByNormalizedName);
+                                graphStore.createRelation(kbId, tripleId, sourceId, sourceName,
+                                        targetId, targetName, rel.getLabel(), relContent);
+                                graphStore.createTripleMention(kbId, tripleId, chunkId, chunk.getFileId());
                                 relationCount.incrementAndGet();
                             }
                         }
@@ -344,14 +404,24 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     }
 
     /**
-     * 解析 LLM 配置：优先从 file 对应的 parse strategy 获取，fallback 到默认网关
+     * 解析 LLM 配置：优先从 file 对应的 parse strategy 获取，fallback 到默认网关。
+     * full 重建（无 fileIds）时回退到该知识库的任意文件解析，避免"清空后全量重建"必然失败。
      */
-    private LlmConfig resolveLlmConfig(List<String> fileIds) {
-        log.info("[GraphBuild-LlmConfig] Resolving LLM config for fileIds={}", fileIds);
+    private LlmConfig resolveLlmConfig(String kbId, List<String> fileIds) {
+        log.info("[GraphBuild-LlmConfig] Resolving LLM config for kb={}, fileIds={}", kbId, fileIds);
 
         if (fileIds == null || fileIds.isEmpty()) {
-            log.warn("[GraphBuild-LlmConfig] fileIds is null/empty, cannot resolve LLM config -> extracting from LLM will be skipped");
-            return new LlmConfig(null, null, null);
+            log.warn("[GraphBuild-LlmConfig] fileIds is null/empty, falling back to first file of kb={}", kbId);
+            KbFile anyFile = fileMapper.selectOne(
+                    new LambdaQueryWrapper<KbFile>()
+                            .eq(KbFile::getKbId, kbId)
+                            .isNull(KbFile::getDeletedAt)
+                            .last("LIMIT 1"));
+            if (anyFile == null) {
+                log.warn("[GraphBuild-LlmConfig] No file found for kb={} -> returning empty config", kbId);
+                return new LlmConfig(null, null, null);
+            }
+            fileIds = List.of(anyFile.getId());
         }
 
         // 取第一个文件对应的策略
@@ -394,6 +464,26 @@ public class GraphBuildConsumer implements GraphBuildHandler {
             log.warn("[GraphBuild-LlmConfig] File's parseStrategyId is null, no strategy associated with file");
         }
 
+        // Fallback: 查 KB 级 graphLlmModel（parse strategy 未配置 LLM 时的兜底）
+        log.info("[GraphBuild-LlmConfig] Strategy LLM not available, trying KB-level graphLlmModel for kb={}", kbId);
+        KnowledgeBase kb = kbMapper.selectById(kbId);
+        if (kb != null && kb.getGraphLlmModel() != null && !kb.getGraphLlmModel().isBlank()) {
+            String llmModel = kb.getGraphLlmModel();
+            log.info("[GraphBuild-LlmConfig] KB graphLlmModel={}, looking up ModelRecord", llmModel);
+            ModelRecord modelRecord = modelRecordMapper.selectOne(
+                    new LambdaQueryWrapper<ModelRecord>()
+                            .eq(ModelRecord::getCode, llmModel)
+                            .eq(ModelRecord::getStatus, "online")
+                            .last("LIMIT 1"));
+            if (modelRecord != null) {
+                log.info("[GraphBuild-LlmConfig] KB-level ModelRecord found: model={}, apiUrl={}",
+                        llmModel, modelRecord.getApiUrl());
+                return new LlmConfig(llmModel, modelRecord.getApiUrl(), modelRecord.getApiKeyRef());
+            } else {
+                log.warn("[GraphBuild-LlmConfig] KB-level ModelRecord NOT FOUND for code={}", llmModel);
+            }
+        }
+
         log.warn("[GraphBuild-LlmConfig] Returning empty LLM config -> graph build will skip LLM extraction");
         return new LlmConfig(null, null, null);
     }
@@ -434,9 +524,11 @@ public class GraphBuildConsumer implements GraphBuildHandler {
 
     /**
      * 从文本中提取实体和关系（调用 LLM + ExtractionNormalizer 规范化）
+     *
+     * @param whitelist 实体类型白名单（KB 级 schema 或全局配置解析结果，参与 prompt 与类型归一）
      */
     private ExtractionNormalizer.ExtractionResult extractWithNormalization(
-            String text, String llmModel, String apiUrl, String apiKey) {
+            String text, String llmModel, String apiUrl, String apiKey, Set<String> whitelist) {
         // 未配置 LLM 时跳过抽取
         if (apiUrl == null || apiUrl.isBlank()) {
             log.warn("[GraphBuild-Extract] LLM NOT CONFIGURED (apiUrl is null/blank) -> skipping entity extraction for this chunk. " +
@@ -445,7 +537,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         }
 
         String model = llmModel != null ? llmModel : "default";
-        String prompt = buildExtractionPrompt(text);
+        String prompt = buildExtractionPrompt(text, whitelist);
         log.info("[GraphBuild-Extract] Calling LLM model={} for entity extraction, text length={}", model, text.length());
 
         try {
@@ -581,20 +673,20 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     }
 
     /**
-     * 构建 LLM 提取 Prompt（强调关系提取，参考 Yuxi 经验）
+     * 构建 LLM 提取 Prompt（强调关系提取，参考 Yuxi 经验；实体附带 description 与 attributes）
      */
-    private String buildExtractionPrompt(String text) {
+    private String buildExtractionPrompt(String text, Set<String> whitelist) {
         // 保留更多文本上下文以利于关系提取
         String truncated = text.substring(0, Math.min(text.length(), 3000));
         // 类型白名单提示（限制 LLM 输出类型集合，收敛类型爆炸；取前 60 个控制 token）
-        String typeHint = EntityTypeNormalizer.DEFAULT_WHITELIST.stream().limit(60)
+        String typeHint = whitelist.stream().limit(60)
                 .collect(Collectors.joining("、"));
         return """
                 从文本中提取实体和实体间的关系，返回JSON。
 
                 先找出所有实体，再找出实体之间的明确关系。
 
-                {"entities":[{"text":"实体名称","label":"实体类型"}],"relations":[{"source":"实体名称","target":"实体名称","label":"关系类型"}]}
+                {"entities":[{"text":"实体名称","label":"实体类型","description":"一句话描述","attributes":[{"text":"属性值","label":"属性名"}]}],"relations":[{"source":"实体名称","target":"实体名称","label":"关系类型"}]}
 
                 要求：
                 - 每个关系必须连接两个文本中出现的不同实体
@@ -602,12 +694,60 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                 - 实体类型（label）必须从以下集合中选择（选择最贴切的一个，不要自造类型）：
                 """ + typeHint + """
 
+                - 每个实体给出不超过一句话的 description（没有则为空字符串）
+                - 每个实体可附带 0-5 个属性（attributes），属性是文本中与该实体直接相关的键值信息（如价格、型号、规格、要求、数量），属性值必须是文本中出现的内容
                 - 同一条关系不要重复，source/target交换视为不同
                 - 只返回JSON，无其他文字
                 - 无关系则返回 {"entities":[],"relations":[]}
 
                 文本：
                 """ + truncated;
+    }
+
+    /**
+     * 解析关系端点实体 ID（KG-01）：
+     * 1. 本 chunk 提取实体映射；2. 图库按规范化名反查（跨 chunk 已存在）；3. 创建 UNKNOWN 占位实体。
+     */
+    private String resolveRelationEndpointId(String kbId, String rawName, String normalizedName,
+                                             Map<String, String> entityIdByNormalizedName) {
+        String id = entityIdByNormalizedName.get(normalizedName);
+        if (id != null) return id;
+        id = graphStore.findEntityId(kbId, normalizedName);
+        if (id != null) return id;
+        // 端点实体在任何 chunk 都未被提取：创建 UNKNOWN 占位实体，保证边引用有效
+        String placeholderId = GraphIdHashing.entityId(kbId, normalizedName, EntityTypeNormalizer.UNKNOWN);
+        graphStore.createEntity(kbId, placeholderId, rawName, normalizedName, EntityTypeNormalizer.UNKNOWN, null, null);
+        log.debug("[GraphBuild] Created UNKNOWN placeholder entity for relation endpoint: {}", rawName);
+        return placeholderId;
+    }
+
+    /**
+     * 解析实体类型白名单（优先级：KB 级 schema 配置 → yml 全局配置 → 默认集合）。
+     *
+     * <p>KB 级 schema 存放在 kb_graph_index.settings 的 entitySchema 字段（逗号/换行分隔），
+     * 由前端图谱设置面板写入（KG-07）。未配置时回退全局逻辑。</p>
+     */
+    private Set<String> resolveEntityTypeWhitelist(String kbId) {
+        try {
+            KbGraphIndex idx = graphIndexMapper.selectById(kbId);
+            if (idx != null && idx.getSettings() != null && !idx.getSettings().isBlank()) {
+                var settings = JSONUtil.parseObj(idx.getSettings());
+                String schema = settings.getStr("entitySchema");
+                if (schema != null && !schema.isBlank()) {
+                    Set<String> types = Arrays.stream(schema.split("[,\\n]"))
+                            .map(String::trim)
+                            .filter(s -> !s.isEmpty())
+                            .collect(Collectors.toSet());
+                    if (!types.isEmpty()) {
+                        log.info("[GraphBuild] Using KB-level entity schema for kb={}: {} types", kbId, types.size());
+                        return Collections.unmodifiableSet(types);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[GraphBuild] Failed to parse KB entity schema for kb={}: {}", kbId, e.getMessage());
+        }
+        return resolveEntityTypeWhitelist();
     }
 
     /**

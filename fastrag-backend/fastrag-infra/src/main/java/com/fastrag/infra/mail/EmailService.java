@@ -1,5 +1,25 @@
 package com.fastrag.infra.mail;
 
+/**
+ * 邮件发送服务，封装基于 Spring Mail 的邮件发送能力。
+ *
+ * <p>核心职责：提供用户注册验证码和密码重置验证码的邮件发送功能。
+ * 所有发送方法均标注 {@code @Async}，通过 Spring 异步线程池执行，不阻塞业务主流程。
+ *
+ * <p>依赖的外部系统：
+ * <ul>
+ *   <li>SMTP 邮件服务器：通过 Spring {@link org.springframework.mail.javamail.JavaMailSender} 连接，
+ *       配置项来自 {@code application.yml} 中的 {@code spring.mail.*} 前缀（host、port、username、password 等）</li>
+ * </ul>
+ *
+ * <p>提供的核心能力：
+ * <ul>
+ *   <li>{@code sendRegisterCode} — 发送注册验证码邮件</li>
+ *   <li>{@code sendResetPasswordCode} — 发送密码重置验证码邮件</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：被 fastrag-iam 模块的用户认证服务调用，用于用户注册和密码找回场景。
+ */
 import lombok.RequiredArgsConstructor;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;

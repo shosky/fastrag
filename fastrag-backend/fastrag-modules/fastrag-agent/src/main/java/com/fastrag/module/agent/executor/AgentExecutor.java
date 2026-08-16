@@ -22,8 +22,19 @@ import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 import java.util.*;
 
 /**
- * @deprecated 使用 {@link AgentEngine} 替代。
- * 保留此类仅为向后兼容，后续版本将移除。
+ * Agent执行器（已废弃），早期的同步执行实现。
+ *
+ * <p>已由{@link AgentEngine}替代。保留此类仅为向后兼容，后续版本将移除。</p>
+ *
+ * <p>原核心职责：
+ * <ul>
+ *   <li>实现简单的LLM+工具调用循环（最多10轮迭代）</li>
+ *   <li>支持同步执行（execute方法）和基础流式执行（executeStream方法，仅纯文本对话无工具）</li>
+ *   <li>使用空中间件链避免循环引用问题</li>
+ * </ul></p>
+ *
+ * @deprecated 使用 {@link AgentEngine} 替代，AgentEngine支持完整的流式工具调用、中间件链和thinking提取。
+ * @see AgentEngine 替代的核心执行引擎
  */
 @Slf4j
 @Component

@@ -20,9 +20,33 @@ import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
 
 /**
- * REST controller for agent CRUD operations.
- * Provides endpoints to list, create, read, update, delete agents,
- * as well as set the default agent.
+ * Agent管理REST控制器，提供Agent的完整CRUD操作以及默认Agent设置接口。
+ *
+ * <p>提供的REST API端点：
+ * <ul>
+ *   <li>GET / - 列出当前用户可见的所有Agent（支持includeSubagents参数过滤子Agent）</li>
+ *   <li>GET /default - 获取系统默认Agent</li>
+ *   <li>POST / - 创建新Agent</li>
+ *   <li>GET /{agentId} - 获取单个Agent详情（包含完整的后端信息）</li>
+ *   <li>PUT /{agentId} - 更新Agent信息</li>
+ *   <li>DELETE /{agentId} - 删除Agent</li>
+ *   <li>POST /{agentId}/set_default - 设置指定Agent为默认Agent</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>所有接口通过@CurrentUser注解获取当前用户，进行可见性和权限校验</li>
+ *   <li>写操作（更新、删除、设置默认）需要管理权限校验（userCanManage），无权返回403</li>
+ *   <li>返回值统一使用{@link AgentSerializeVO}序列化，将Agent实体转换为前端友好的VO对象</li>
+ *   <li>agentId参数同时支持slug和ID两种方式查找</li>
+ *   <li>依赖AgentBackendManager获取后端信息，在序列化时填充后端元数据</li>
+ *   <li>使用@Loggable注解记录操作日志</li>
+ * </ul></p>
+ *
+ * @see AgentService Agent业务服务
+ * @see AgentCreateDTO 创建请求DTO
+ * @see AgentUpdateDTO 更新请求DTO
+ * @see AgentSerializeVO 序列化输出VO
  */
 @RestController
 @RequestMapping("/api/agent")

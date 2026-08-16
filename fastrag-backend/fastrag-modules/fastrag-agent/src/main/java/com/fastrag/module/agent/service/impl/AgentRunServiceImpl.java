@@ -27,6 +27,24 @@ import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
+/**
+ * AI Agent运行管理服务实现类。
+ *
+ * <p>负责Agent运行任务的生命周期管理，包括运行任务的创建、执行、状态查询、
+ * 取消、SSE实时事件推送等。运行任务记录存储在 agent_run 表中。</p>
+ *
+ * <p>核心功能：</p>
+ * <ul>
+ *   <li>createRun - 创建Agent运行任务（含幂等性检查，通过requestId防止重复创建）
+ *       ，然后异步触发执行</li>
+ *   <li>executeRunAsync - 异步执行Agent，更新运行状态和结果</li>
+ *   <li>getRun/getRunForUser - 查询运行记录</li>
+ *   <li>cancelRun - 取消运行中的任务</li>
+ *   <li>streamEvents - SSE事件流推送，轮询数据库状态</li>
+ *   <li>updateStatus/setTerminalStatus - 更新运行状态</li>
+ *   <li>createRunDirect - 直接创建运行记录（内部使用）</li>
+ * </ul>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

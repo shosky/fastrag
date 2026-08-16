@@ -6,6 +6,29 @@ import java.util.Map;
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
+
+/**
+ * 工作流管理控制器，提供工作流全生命周期管理的REST API。
+ *
+ * <p>路由前缀：/api/workflows。核心功能区域包括：
+ * <ul>
+ *   <li>工作流CRUD — 列表、详情、创建、更新、删除</li>
+ *   <li>发布管理 — 发布工作流</li>
+ *   <li>画布节点管理 — 节点的增删改查、移动位置、节点属性/扩展维度（conditions/loops/delays等）读写、单节点测试</li>
+ *   <li>执行引擎 — 触发工作流执行</li>
+ *   <li>测试用例管理 — 测试用例的增删查</li>
+ *   <li>工作流模板 — 模板的增删改查</li>
+ *   <li>调试 — 调试信息查看与配置保存</li>
+ *   <li>优化建议 — 优化建议的列表、创建、应用</li>
+ *   <li>迁移 — 工作流迁移记录管理</li>
+ *   <li>监控 — 监控数据获取</li>
+ * </ul>
+ *
+ * <p>权限控制：查看类需 workflow:edit 权限，创建需 workflow:create 权限，
+ * 删除需 workflow:delete 权限，发布需 workflow:publish 权限，执行需 workflow:run 权限。
+ * 关键操作（创建、更新、删除、发布）通过 {@link Loggable} 注解记录操作日志。
+ * 依赖 {@link WorkflowService} 实现全部业务逻辑。
+ */
 @RestController @RequestMapping("/api/workflows") @RequiredArgsConstructor
 public class WorkflowController {
     private final WorkflowService svc;

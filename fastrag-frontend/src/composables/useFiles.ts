@@ -82,17 +82,7 @@ export function useFiles(kbId: string = 'default') {
     await load()
   }
 
-  async function upload(
-    files: File[],
-    metas?: Array<{
-      name: string
-      category: KnowledgeFile['category']
-      extension: string
-      size: number
-      parseStrategyId?: string
-      parseStrategyName?: string
-    }>,
-  ) {
+  async function upload(files: File[]) {
     // 上传文件二进制
     for (let i = 0; i < files.length; i++) {
       const file = files[i]
@@ -103,10 +93,8 @@ export function useFiles(kbId: string = 'default') {
     await load()
   }
 
-  async function changeStrategy(id: string, strategyId: string, strategyName: string) {
-    await api.updateFile(kbId, id, { parseStrategyId: strategyId, parseStrategyName: strategyName })
-    await load()
-  }
+  // 策略变更已移除：绑定变更必须与重新分片原子完成（ADR-0001），
+  // 由「换策略重新分片」对话框统一走 api.reChunkFile，禁止纯元数据改绑
 
   async function createFolder(name: string, parentId?: string | null) {
     // 根级文件夹传 null（后端 buildTree 只认 null 为根节点）
@@ -169,8 +157,8 @@ export function useFiles(kbId: string = 'default') {
     copy,
     moveFileToKb,
     retry,
+    toggleGraphBuild,
     upload,
-    changeStrategy,
     createFolder,
     renameFolder,
     deleteFolder,
@@ -179,6 +167,5 @@ export function useFiles(kbId: string = 'default') {
     restore,
     permanentDelete,
     emptyBin,
-    stopAllProcessing: () => {}, // 保留接口兼容，真实场景由后端驱动
   }
 }

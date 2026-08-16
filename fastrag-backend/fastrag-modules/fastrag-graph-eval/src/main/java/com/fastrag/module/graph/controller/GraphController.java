@@ -1,5 +1,35 @@
 package com.fastrag.module.graph.controller;
 
+/**
+ * 知识图谱数据管理与可视化控制器。
+ *
+ * <p>提供知识图谱的构建、查询、可视化、检索增强等全功能REST API。
+ * 该控制器是知识图谱模块的核心入口，涵盖了从图谱构建到数据消费的完整链路。</p>
+ *
+ * <p>核心职责：</p>
+ * <ul>
+ *   <li>图谱可视化：获取图谱全量/子图数据及统计信息</li>
+ *   <li>子图查询：关键词搜索节点、获取标签列表</li>
+ *   <li>图谱构建：触发索引构建、全量/增量重建、构建状态查询</li>
+ *   <li>文件图谱管理：删除指定文件的图谱数据</li>
+ *   <li>PPR排序：基于Personalized PageRank算法，利用实体对文档chunk进行相关性排序，用于检索增强</li>
+ *   <li>图谱设置：获取和更新图谱构建参数配置</li>
+ * </ul>
+ *
+ * <p>REST API端点：</p>
+ * <ul>
+ *   <li>图谱可视化：GET /graph, GET /graph/stats</li>
+ *   <li>子图查询：GET /graph/search, GET /graph/labels</li>
+ *   <li>图谱构建：GET /graph/index, POST /graph/index/build, POST /graph/index/retry, GET /graph/index/build-status</li>
+ *   <li>文件管理：DELETE /graph/file/{fileId}</li>
+ *   <li>PPR排序：POST /graph/rank</li>
+ *   <li>设置：GET /graph/settings, PUT /graph/settings</li>
+ * </ul>
+ *
+ * <p>所有API均以 /api/kb/{kbId}/graph 为基础路径，通过kbId关联到具体知识库。</p>
+ *
+ * @see GraphService
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;

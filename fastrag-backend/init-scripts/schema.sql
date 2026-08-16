@@ -118,6 +118,7 @@ CREATE TABLE IF NOT EXISTS kb_file (
     parse_strategy_name VARCHAR(128),
     chunk_count INT DEFAULT 0,
     processing_mode VARCHAR(16) DEFAULT 'chunk' COMMENT '处理模式: chunk/qa',
+    processing_config JSON COMMENT '上传向导处理配置(引擎/语言/编码/优先级/重试/媒体)',
     enable_graph_build TINYINT DEFAULT 0 COMMENT '该文件是否构建知识图谱',
     folder_id VARCHAR(32),
     view_count BIGINT DEFAULT 0,
@@ -144,6 +145,7 @@ CREATE TABLE IF NOT EXISTS kb_chunk (
     kb_id VARCHAR(32) NOT NULL,
     file_id VARCHAR(32) NOT NULL,
     file_name VARCHAR(256),
+    parent_id VARCHAR(64) DEFAULT NULL COMMENT '父分片ID（子分片指向其所属父分片，父分片本身为 NULL）',
     chunk_index INT NOT NULL,
     content MEDIUMTEXT,
     embedding_id VARCHAR(64),
@@ -153,17 +155,21 @@ CREATE TABLE IF NOT EXISTS kb_chunk (
     page_number INT DEFAULT NULL COMMENT 'PDF 页码',
     page_range VARCHAR(16) DEFAULT NULL COMMENT '页码范围',
     image_keys JSON DEFAULT NULL COMMENT '关联图片 key',
-    chunk_type VARCHAR(16) DEFAULT 'text' COMMENT '分片类型(text/image)',
+    chunk_type VARCHAR(16) DEFAULT 'text' COMMENT '分片类型(text/image/parent)',
+    title VARCHAR(255) DEFAULT NULL COMMENT '所属最近标题',
+    heading_path VARCHAR(1024) DEFAULT NULL COMMENT '层级路径，如 第一章 > 1.1 背景',
     graph_indexed TINYINT DEFAULT 0 COMMENT '是否已完成知识图谱提取',
     extraction_result JSON DEFAULT NULL COMMENT '图谱提取结果缓存(JSON)',
     INDEX idx_kb_id (kb_id),
     INDEX idx_file_id (file_id),
+    INDEX idx_parent_id (parent_id),
     INDEX idx_graph_indexed (graph_indexed)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_parse_strategy (
     id VARCHAR(32) PRIMARY KEY,
     kb_id VARCHAR(32) NOT NULL,
+    file_id VARCHAR(32) DEFAULT NULL COMMENT '文件级绑定：非空=该文件专属自定义策略（不参与知识库级匹配与列表）',
     name VARCHAR(128) NOT NULL,
     description VARCHAR(256),
     extensions JSON,
@@ -171,11 +177,10 @@ CREATE TABLE IF NOT EXISTS kb_parse_strategy (
     is_default TINYINT DEFAULT 0,
     advanced JSON,
     llm_model VARCHAR(128),
-    vlm_model VARCHAR(128),
-    enable_graph_build TINYINT DEFAULT 0 COMMENT '该解析策略是否构建知识图谱',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    INDEX idx_kb_id (kb_id)
+    INDEX idx_kb_id (kb_id),
+    INDEX idx_kb_parse_strategy_file (file_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_qa_pair (
@@ -217,6 +222,7 @@ CREATE TABLE IF NOT EXISTS kb_graph_entity (
     original_name VARCHAR(256) COMMENT '原始名称(同name)',
     entity_type VARCHAR(64) DEFAULT 'UNKNOWN' COMMENT '实体类型/标签',
     description TEXT COMMENT '描述/属性(兼容字段)',
+    attributes TEXT COMMENT '实体属性JSON字符串([{"text":"值","label":"属性名"}])',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_kb_entity_identity (kb_id, normalized_name(255), entity_type),
     INDEX idx_kb_id (kb_id)
@@ -226,13 +232,16 @@ CREATE TABLE IF NOT EXISTS kb_graph_entity (
 CREATE TABLE IF NOT EXISTS kb_graph_relation (
     triple_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
     kb_id VARCHAR(32) NOT NULL,
+    source_id VARCHAR(64) COMMENT '源实体确定性ID(消除按名称引用的悬空/错连问题)',
     source VARCHAR(256) NOT NULL COMMENT '源实体名称',
+    target_id VARCHAR(64) COMMENT '目标实体确定性ID',
     target VARCHAR(256) NOT NULL COMMENT '目标实体名称',
     label VARCHAR(128) NOT NULL COMMENT '关系类型',
     content TEXT COMMENT '关系显示文本',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_kb_relation (kb_id, source(255), target(255), label(127)),
-    INDEX idx_kb_id (kb_id)
+    INDEX idx_kb_id (kb_id),
+    INDEX idx_kb_relation_ids (kb_id, source_id, target_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 实体提及追踪表（chunk→entity 引用关系）
@@ -1320,13 +1329,16 @@ CREATE TABLE IF NOT EXISTS db_table (
 -- ==================== 标签管理 ====================
 CREATE TABLE IF NOT EXISTS kb_tag (
     id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    tag_type_id VARCHAR(16),
     name VARCHAR(64) NOT NULL,
     color VARCHAR(16),
     description VARCHAR(256),
     usage_count INT DEFAULT 0,
     created_by VARCHAR(32),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_name (name)
+    UNIQUE KEY uk_name (name),
+    INDEX idx_kb (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_tag_relation (
@@ -1413,9 +1425,6 @@ ALTER TABLE app_config ADD COLUMN IF NOT EXISTS max_tokens INT DEFAULT 2048 COMM
 
 -- kb 表新增字段
 ALTER TABLE kb ADD COLUMN IF NOT EXISTS graph_auto_build TINYINT DEFAULT 0 COMMENT '是否自动构建知识图谱（默认关闭）';
-
--- kb_parse_strategy 表新增字段
-ALTER TABLE kb_parse_strategy ADD COLUMN IF NOT EXISTS enable_graph_build TINYINT DEFAULT 0 COMMENT '该解析策略是否构建知识图谱';
 
 -- kb_file 表新增字段
 ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS processing_mode VARCHAR(16) DEFAULT 'chunk' COMMENT '处理模式: chunk/qa';

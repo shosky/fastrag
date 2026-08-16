@@ -1,5 +1,25 @@
 package com.fastrag.module.operation.controller;
 
+/**
+ * 知识库数据分析控制器。
+ *
+ * <p>提供知识库维度的统计分析功能，包括知识库数量、文档数量、活跃文档数量、知识引用率等核心指标，
+ * 以及热门知识库排行和热门文档排行。
+ *
+ * <p>核心逻辑：
+ * <ul>
+ *     <li>基于当前登录用户的权限范围过滤数据（API Token用户不过滤，普通用户按组织+ACL过滤）</li>
+ *     <li>热门知识库按文档数量排序（TOP 5），热门文档按浏览量排序（TOP 5）</li>
+ *     <li>知识引用率 = 有分块（chunk）的文档数 / 活跃文档数</li>
+ * </ul>
+ *
+ * <p>REST API 端点：
+ * <ul>
+ *     <li>GET /api/analytics/kb - 获取知识库分析数据（指标+热门知识库+热门文档）</li>
+ * </ul>
+ *
+ * <p>依赖模块：fastrag-knowledge（KnowledgeBaseMapper、KbFileMapper）、fastrag-security（KbAccessChecker、SecurityUtil）
+ */
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.knowledge.entity.KbFile;

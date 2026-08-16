@@ -1,4 +1,21 @@
 package com.fastrag.module.publish.service.impl;
+
+/**
+ * 知识库版本审核服务实现。
+ *
+ * <p>实现 {@link ReviewService} 接口，提供知识库版本发布前的审核流程管理。</p>
+ *
+ * <h3>核心实现逻辑：</h3>
+ * <ul>
+ *   <li>审核列表：可按知识库ID过滤，按创建时间倒序排列</li>
+ *   <li>待审核查询：查询 status="pending" 的所有审核任务</li>
+ *   <li>提交审核：创建审核任务，初始状态为 pending</li>
+ *   <li>审批通过/驳回：更新审核任务状态为 approved 或 rejected，记录审核意见和审核时间</li>
+ * </ul>
+ *
+ * @see ReviewService
+ * @see KbReviewTaskMapper
+ */
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.publish.entity.KbReviewTask; import com.fastrag.module.publish.mapper.KbReviewTaskMapper;
 import com.fastrag.module.publish.service.ReviewService;

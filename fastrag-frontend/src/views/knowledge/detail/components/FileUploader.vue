@@ -27,8 +27,6 @@ export type ProcessingPriority = 'low' | 'normal' | 'high'
 
 /** Upload configuration emitted with the upload event */
 export interface UploadConfig {
-  mode: UploadMode
-  autoIndex: boolean
   parseStrategyId: string
   processingMode: 'chunk' | 'qa'
   /** 内容语言（影响 OCR/ASR/Embedding/分词） */
@@ -40,22 +38,19 @@ export interface UploadConfig {
   /** 失败重试次数 */
   retryCount: number
   engineConfig: {
+    /** OCR 引擎代码：deepseek / paddle（对应后端 ai.ocr.engines.* 配置） */
     ocrEngine: string
+    /** ASR 引擎代码：funasr / whisper（对应后端 ai.asr.engines.* 配置） */
     asrEngine: string
+    /** 视频策略：keyframe_asr / asr_only / uniform_sample */
     videoStrategy: string
+    /** 关键帧间隔（秒） */
     keyframeInterval: number
-    /** 视觉描述模型（图片 VLM） */
-    vlmModel: string
   }
   /** 音频/视频专属 */
   mediaConfig?: {
-    speakerDiarize: boolean
     /** per-file 时间裁剪范围（秒），key 为文件名 */
     timeRanges?: Record<string, { start: number; end: number }>
-  }
-  qaConfig?: {
-    llmModel: string
-    prompt: string
   }
 }
 </script>
@@ -385,7 +380,6 @@ function switchMode(mode: UploadMode) {
 }
 
 // --- Step 2: Processing config ---
-const autoIndex = ref(true)
 const processingMode = ref<'chunk' | 'qa'>('chunk')
 // 解析策略选择器（切片参数统一在解析策略中配置，此处不再重复）
 const selectedStrategyId = ref('')
@@ -397,8 +391,6 @@ const fileEncoding = ref<FileEncoding>('auto')
 const processingPriority = ref<ProcessingPriority>('normal')
 // 失败重试次数
 const retryCount = ref(2)
-// 说话人分离（音频/视频）
-const speakerDiarize = ref(false)
 
 // --- 解析策略选项（从 useParseStrategy 取） ---
 const { strategies: strategyList, load: loadStrategies } = useParseStrategy(props.kbId || 'default')
@@ -407,49 +399,23 @@ const strategyOptions = computed(() => [
   ...strategyList.value.map((s) => ({ label: `${s.name}${s.isDefault ? '（默认）' : ''}`, value: s.id })),
 ])
 
-// --- Step 2: QA config ---
-const qaConfig = ref({
-  llmModel: 'gpt-4',
-  prompt: '请从以下文本中提取问答对，每个问答对包含一个问题和一个答案。',
-})
-
-const llmModelOptions = ref<Array<{ label: string; value: string }>>([])
-
-async function loadLlmModels() {
-  try {
-    const res = await api.getModels({ purpose: 'LLM' })
-    const models = (res as any)?.list || (res as any) || []
-    llmModelOptions.value = models
-      .filter((m: any) => m.status === 'online')
-      .map((m: any) => ({ label: m.name || m.code, value: m.code || m.id }))
-    if (llmModelOptions.value.length > 0 && !llmModelOptions.value.some(o => o.value === qaConfig.value.llmModel)) {
-      qaConfig.value.llmModel = llmModelOptions.value[0].value
-    }
-  } catch {
-    llmModelOptions.value = [
-      { label: 'GPT-4', value: 'gpt-4' },
-      { label: 'GPT-3.5', value: 'gpt-3.5-turbo' },
-    ]
-  }
-}
-
 // --- Step 2: Engine config ---
 const engineConfig = ref({
-  ocrEngine: 'DeepSeek OCR',
-  asrEngine: 'FunASR',
+  ocrEngine: 'deepseek',
+  asrEngine: 'funasr',
   videoStrategy: 'keyframe_asr',
   keyframeInterval: 5,
-  vlmModel: 'disabled',
 })
 
+// 引擎值为代码（与后端 ai.ocr.engines / ai.asr.engines 配置键一致）
 const ocrEngineOptions = [
-  { label: 'DeepSeek OCR', value: 'DeepSeek OCR' },
-  { label: 'PaddleOCR', value: 'PaddleOCR' },
+  { label: 'DeepSeek OCR', value: 'deepseek' },
+  { label: 'PaddleOCR', value: 'paddle' },
 ]
 
 const asrEngineOptions = [
-  { label: 'FunASR', value: 'FunASR' },
-  { label: 'Whisper', value: 'Whisper' },
+  { label: 'FunASR', value: 'funasr' },
+  { label: 'Whisper', value: 'whisper' },
 ]
 
 const videoStrategyOptions = [
@@ -458,10 +424,11 @@ const videoStrategyOptions = [
   { label: '均匀采样', value: 'uniform_sample' as const },
 ]
 
-const vlmModelOptions = [
-  { label: '禁用（仅 OCR）', value: 'disabled' },
-  { label: 'Qwen-VL-Max', value: 'qwen-vl-max' },
-  { label: 'GPT-4o', value: 'gpt-4o' },
+// 处理优先级：MQ 暂未消费，仅「中」可选
+const priorityOptions = [
+  { label: '低（暂不支持）', value: 'low', disabled: true },
+  { label: '中', value: 'normal' },
+  { label: '高（暂不支持）', value: 'high', disabled: true },
 ]
 
 const languageOptions = [
@@ -476,12 +443,6 @@ const encodingOptions = [
   { label: 'UTF-8', value: 'utf-8' as FileEncoding },
   { label: 'GBK', value: 'gbk' as FileEncoding },
   { label: 'Shift-JIS', value: 'shift-jis' as FileEncoding },
-]
-
-const priorityOptions = [
-  { label: '低', value: 'low' as ProcessingPriority },
-  { label: '中', value: 'normal' as ProcessingPriority },
-  { label: '高', value: 'high' as ProcessingPriority },
 ]
 
 const retryOptions = [
@@ -585,34 +546,24 @@ const configSummary = computed(() => {
     : '自动匹配'
   items.push({ label: '解析策略', value: strategyName })
 
-  if (processingMode.value !== 'chunk') {
-    items.push({ label: 'LLM 模型', value: qaConfig.value.llmModel })
-  }
-
   if (hasImages.value) {
-    items.push({ label: 'OCR 引擎', value: engineConfig.value.ocrEngine })
-  }
-  if (hasImages.value && engineConfig.value.vlmModel !== 'disabled') {
-    items.push({ label: '视觉描述', value: vlmModelOptions.find(o => o.value === engineConfig.value.vlmModel)?.label || '' })
+    items.push({ label: 'OCR 引擎', value: ocrEngineOptions.find(o => o.value === engineConfig.value.ocrEngine)?.label || engineConfig.value.ocrEngine })
   }
   if (hasAudio.value || hasVideo.value) {
-    items.push({ label: 'ASR 引擎', value: engineConfig.value.asrEngine })
+    items.push({ label: 'ASR 引擎', value: asrEngineOptions.find(o => o.value === engineConfig.value.asrEngine)?.label || engineConfig.value.asrEngine })
+  }
+  if (hasVideo.value) {
+    const vs = videoStrategyOptions.find(o => o.value === engineConfig.value.videoStrategy)
+    items.push({ label: '视频策略', value: vs?.label || engineConfig.value.videoStrategy })
   }
   if (hasVideo.value) {
     items.push({ label: '视频策略', value: videoStrategyOptions.find(o => o.value === engineConfig.value.videoStrategy)?.label || '' })
-  }
-  if ((hasAudio.value || hasVideo.value) && speakerDiarize.value) {
-    items.push({ label: '说话人分离', value: '已启用' })
   }
 
   // 显示时间裁剪
   const trimmedFiles = uploadFiles.value.filter(f => f.timeRange && f.timeRange.end > f.timeRange.start)
   if (trimmedFiles.length > 0) {
     items.push({ label: '时间裁剪', value: `${trimmedFiles.length} 个文件已设置` })
-  }
-
-  if (autoIndex.value) {
-    items.push({ label: '自动入库', value: '已启用' })
   }
 
   return items
@@ -652,16 +603,13 @@ function resetState() {
   currentStep.value = 1
   uploadMode.value = 'file'
   urlInput.value = ''
-  autoIndex.value = true
   processingMode.value = 'chunk'
   selectedStrategyId.value = ''
   contentLanguage.value = 'auto'
   fileEncoding.value = 'auto'
   processingPriority.value = 'normal'
   retryCount.value = 2
-  speakerDiarize.value = false
-  engineConfig.value = { ocrEngine: 'DeepSeek OCR', asrEngine: 'FunASR', videoStrategy: 'keyframe_asr', keyframeInterval: 5, vlmModel: 'disabled' }
-  qaConfig.value = { llmModel: 'gpt-4', prompt: '请从以下文本中提取问答对，每个问答对包含一个问题和一个答案。' }
+  engineConfig.value = { ocrEngine: 'deepseek', asrEngine: 'funasr', videoStrategy: 'keyframe_asr', keyframeInterval: 5 }
   previewFileIndex.value = 0
 }
 
@@ -689,8 +637,6 @@ async function handleStartUpload() {
   const fileIds = uploadFiles.value.map(item => item.fileId).filter(Boolean) as string[]
 
   emit('upload', files, {
-    mode: uploadMode.value,
-    autoIndex: autoIndex.value,
     parseStrategyId: selectedStrategyId.value,
     processingMode: processingMode.value,
     language: contentLanguage.value,
@@ -699,8 +645,7 @@ async function handleStartUpload() {
     retryCount: retryCount.value,
     engineConfig: { ...engineConfig.value },
     fileIds,
-    ...(hasMedia ? { mediaConfig: { speakerDiarize: speakerDiarize.value, ...(Object.keys(timeRanges).length > 0 ? { timeRanges } : {}) } } : {}),
-    ...(processingMode.value === 'qa' ? { qaConfig: { ...qaConfig.value } } : {}),
+    ...(hasMedia ? { mediaConfig: { ...(Object.keys(timeRanges).length > 0 ? { timeRanges } : {}) } } : {}),
   })
 
   ElMessage.success('上传完成')
@@ -708,11 +653,10 @@ async function handleStartUpload() {
   dialogVisible.value = false
 }
 
-// 对话框打开时加载策略列表和 LLM 模型列表
+// 对话框打开时加载策略列表
 watch(dialogVisible, (val) => {
   if (val) {
     loadStrategies()
-    loadLlmModels()
   }
 })
 </script>
@@ -769,10 +713,6 @@ watch(dialogVisible, (val) => {
           @click="switchMode(mode.value as UploadMode)"
         >
           {{ mode.label }}
-        </div>
-        <div class="file-uploader__auto-index">
-          <span class="file-uploader__auto-index-label">上传后自动入库</span>
-          <el-switch v-model="autoIndex" />
         </div>
       </div>
 
@@ -979,7 +919,9 @@ watch(dialogVisible, (val) => {
             <label class="file-uploader__form-label">处理方式</label>
             <el-radio-group v-model="processingMode">
               <el-radio value="chunk">分块存储</el-radio>
-              <el-radio value="qa">问答对提取</el-radio>
+              <el-tooltip content="问答对提取功能开发中，暂不可用" placement="top">
+                <el-radio value="qa" disabled>问答对提取</el-radio>
+              </el-tooltip>
             </el-radio-group>
           </div>
 
@@ -993,8 +935,10 @@ watch(dialogVisible, (val) => {
                   :key="opt.value"
                   :label="opt.label"
                   :value="opt.value"
+                  :disabled="opt.disabled"
                 />
               </el-select>
+              <span class="file-uploader__form-hint">优先级暂未生效，仅记录配置</span>
             </div>
             <div class="file-uploader__form-item file-uploader__form-item--half">
               <label class="file-uploader__form-label">失败重试</label>
@@ -1009,27 +953,8 @@ watch(dialogVisible, (val) => {
             </div>
           </div>
 
-          <!-- QA 配置 -->
-          <template v-if="processingMode === 'qa'">
-            <div class="file-uploader__form-item">
-              <label class="file-uploader__form-label">LLM 模型</label>
-              <el-select v-model="qaConfig.llmModel" style="width: 100%">
-                <el-option
-                  v-for="opt in llmModelOptions"
-                  :key="opt.value"
-                  :label="opt.label"
-                  :value="opt.value"
-                />
-              </el-select>
-            </div>
-            <div class="file-uploader__form-item">
-              <label class="file-uploader__form-label">提取提示词</label>
-              <el-input v-model="qaConfig.prompt" type="textarea" :rows="3" placeholder="请输入提示词..." />
-            </div>
-          </template>
-
           <!-- 分块提示 -->
-          <template v-else>
+          <template v-if="processingMode === 'chunk'">
             <div class="file-uploader__form-item">
               <el-alert
                 type="info"
@@ -1055,13 +980,6 @@ watch(dialogVisible, (val) => {
               <span class="file-uploader__engine-label">OCR 引擎</span>
               <el-select v-model="engineConfig.ocrEngine" style="width: 100%">
                 <el-option v-for="opt in ocrEngineOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-              </el-select>
-            </div>
-            <!-- VLM（图片视觉理解） -->
-            <div v-if="hasImages" class="file-uploader__engine-item">
-              <span class="file-uploader__engine-label">图片视觉描述模型</span>
-              <el-select v-model="engineConfig.vlmModel" style="width: 100%">
-                <el-option v-for="opt in vlmModelOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
               </el-select>
             </div>
             <!-- ASR（音频/视频） -->
@@ -1094,15 +1012,6 @@ watch(dialogVisible, (val) => {
           音视频设置
         </div>
         <div class="file-uploader__section-content">
-          <!-- 说话人分离 -->
-          <div class="file-uploader__form-item">
-            <div class="file-uploader__switch-row">
-              <el-switch v-model="speakerDiarize" />
-              <span class="file-uploader__switch-label">说话人分离</span>
-              <span class="file-uploader__form-hint">多人录音中区分不同说话人，输出 [Speaker 1]: ... 格式</span>
-            </div>
-          </div>
-
           <!-- 时间裁剪提示 -->
           <div class="file-uploader__form-item">
             <el-alert

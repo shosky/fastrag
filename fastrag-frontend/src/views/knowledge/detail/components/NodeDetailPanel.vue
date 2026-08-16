@@ -25,6 +25,24 @@ const nodeDetails = computed(() => {
     type: props.node.type || 'entity',
   }
 })
+
+// 解析实体属性（KG-06）：后端返回 JSON 字符串或已解析数组
+const parsedAttributes = computed<{ text: string; label: string }[]>(() => {
+  const raw = props.node?.attributes
+  if (!raw) return []
+  if (Array.isArray(raw)) {
+    return raw.filter((a) => a && a.text).map((a) => ({ text: a.text, label: a.label || '' }))
+  }
+  try {
+    const arr = JSON.parse(raw)
+    if (Array.isArray(arr)) {
+      return arr.filter((a) => a && a.text).map((a) => ({ text: String(a.text), label: String(a.label || '') }))
+    }
+  } catch {
+    // 非 JSON 字符串直接忽略
+  }
+  return []
+})
 </script>
 
 <template>
@@ -69,6 +87,21 @@ const nodeDetails = computed(() => {
         <div class="node-detail__row" v-if="nodeDetails.description">
           <span class="node-detail__label">描述</span>
           <span class="node-detail__value">{{ nodeDetails.description }}</span>
+        </div>
+
+        <!-- 实体属性（KG-06）：键值对展示 -->
+        <div class="node-detail__row" v-if="parsedAttributes.length > 0">
+          <span class="node-detail__label">属性</span>
+          <div class="node-detail__attributes">
+            <div
+              v-for="(attr, idx) in parsedAttributes"
+              :key="idx"
+              class="node-detail__attribute"
+            >
+              <el-tag size="small" type="info" effect="plain">{{ attr.label || '属性' }}</el-tag>
+              <span class="node-detail__attribute-text">{{ attr.text }}</span>
+            </div>
+          </div>
         </div>
       </div>
     </div>
@@ -158,6 +191,24 @@ const nodeDetails = computed(() => {
   &__labels {
     display: flex;
     gap: $spacing-xs;
+  }
+
+  &__attributes {
+    display: flex;
+    flex-direction: column;
+    gap: $spacing-xs;
+  }
+
+  &__attribute {
+    display: flex;
+    align-items: center;
+    gap: $spacing-sm;
+
+    &-text {
+      font-size: 13px;
+      color: $text-primary;
+      word-break: break-all;
+    }
   }
 }
 

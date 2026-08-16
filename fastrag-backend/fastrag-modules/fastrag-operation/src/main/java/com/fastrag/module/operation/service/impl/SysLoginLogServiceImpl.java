@@ -11,6 +11,20 @@ import org.springframework.stereotype.Service;
 import java.time.LocalDateTime;
 import java.util.List;
 
+/**
+ * 系统登录日志服务实现类。
+ *
+ * <p>负责用户登录日志的查询和写入操作。登录日志记录用户每次登录的时间、IP、
+ * 设备信息、操作系统、浏览器和登录结果，用于安全审计和异常登录检测。
+ * 支持按用户ID和登录状态过滤查询。</p>
+ *
+ * <p>核心功能：</p>
+ * <ul>
+ *   <li>addLoginLog - 写入登录日志记录，包含用户ID、用户名、IP、设备、操作系统、
+ *       浏览器、登录状态和失败原因；写入失败仅记录warn日志，不阻断登录流程</li>
+ *   <li>list - 按用户ID和登录状态过滤查询登录日志，支持自定义limit（默认100条），按时间倒序排列</li>
+ * </ul>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

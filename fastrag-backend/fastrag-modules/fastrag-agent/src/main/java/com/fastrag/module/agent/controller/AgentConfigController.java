@@ -17,8 +17,24 @@ import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
 
 /**
- * REST controller for agent configuration operations.
- * Provides endpoints to retrieve and update agent config.
+ * Agent配置管理REST控制器，提供Agent配置的查询和更新接口。
+ *
+ * <p>提供的REST API端点：
+ * <ul>
+ *   <li>GET /{agentId}/config - 获取指定Agent的配置信息（configJson和可配置项）</li>
+ *   <li>PUT /{agentId}/config - 更新指定Agent的配置（上下文配置和分享配置）</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>通过agentId（slug或ID）查找Agent，使用@CurrentUser注解获取当前用户并校验可见性</li>
+ *   <li>配置更新时校验用户是否有管理权限（userCanManage），无权则返回403</li>
+ *   <li>PUT接口接收{@link AgentConfigDTO}，将其中的context映射为AgentUpdateDTO的configJson</li>
+ *   <li>使用@Loggable注解记录操作日志（通过fastrag-common模块的日志框架）</li>
+ * </ul></p>
+ *
+ * @see AgentService Agent业务服务
+ * @see AgentConfigDTO 配置更新请求DTO
  */
 @RestController
 @RequestMapping("/api/agent")

@@ -22,6 +22,25 @@ import java.util.stream.Stream;
 import java.util.zip.ZipEntry;
 import java.util.zip.ZipOutputStream;
 
+/**
+ * 技能文件管理服务实现类。
+ *
+ * <p>负责技能文件的管理，包括文件树查看、文件读取、文件/目录的创建、更新、删除
+ * 以及导出为ZIP包。每个技能对应dataDir/skills/{slug}目录，支持路径遍历攻击防护。</p>
+ *
+ * <p>核心功能：</p>
+ * <ul>
+ *   <li>getTree - 递归构建技能文件目录树，返回包含子节点的树形结构</li>
+ *   <li>readFile - 读取技能文件内容，包含文件元数据和内容</li>
+ *   <li>createNode - 创建目录或文件，自动创建父目录</li>
+ *   <li>updateFile - 更新文件内容</li>
+ *   <li>deleteNode - 删除文件或目录（递归删除子目录）</li>
+ *   <li>exportZip - 将技能目录打包为ZIP文件导出</li>
+ * </ul>
+ *
+ * <p>安全机制：所有文件操作前通过validateAndResolve进行路径遍历攻击检测，
+ * 确保操作目标在技能根目录内。禁止删除技能根目录本身。</p>
+ */
 @Slf4j
 @Service
 @RequiredArgsConstructor

@@ -9,12 +9,13 @@ import { useAppChatStream } from '@/composables/useAppChatStream'
 import { copyToClipboard, downloadAsDocx } from '@/utils/chatActions'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import ToolCallRenderer from '@/components/ToolCallRenderer.vue'
+import type { SourceItem } from '@/composables/useAppChatStream'
 
 // ===========================================================================
 // Types
 // ===========================================================================
 interface ToolCallItem { id: string; name: string; arguments: string; result?: { success: boolean; output: string; durationMs: number; error?: string } }
-interface ChatMessage { id?: string; role: 'user' | 'assistant' | 'system'; content: string; time?: string; streaming?: boolean; thinkingContent?: string; isThinking?: boolean; toolCalls?: ToolCallItem[]; feedback?: string }
+interface ChatMessage { id?: string; role: 'user' | 'assistant' | 'system'; content: string; time?: string; streaming?: boolean; thinkingContent?: string; isThinking?: boolean; toolCalls?: ToolCallItem[]; feedback?: string; sources?: SourceItem[]; _sourcesOpen?: boolean }
 interface Session { conversationId: string; sessionId: string; title: string; messages: ChatMessage[]; messageCount: number }
 interface AppItem { id: string; name: string; type: string }
 interface ModelOption { code: string; name: string; brand?: string }
@@ -114,7 +115,7 @@ async function loadSessionMessages(sessionId: string) {
     const res: any = await api.getAppSessionMessages(selectedAppId.value, sessionId)
     if (Array.isArray(res)) {
       const s = sessions.value.find(s => s.sessionId === sessionId)
-      if (s) { s.messages = res.map((m: any) => ({ id: m.id, role: m.role, content: m.content, thinkingContent: m.thinkingContent || undefined, toolCalls: m.toolCalls ? normalizeToolCalls(typeof m.toolCalls === 'string' ? JSON.parse(m.toolCalls) : m.toolCalls) : undefined, time: m.latencyMs ? `${(m.latencyMs/1000).toFixed(1)}s` : undefined, feedback: m.feedback || undefined })); nextTick(scrollToBottom) }
+      if (s) { s.messages = res.map((m: any) => ({ id: m.id, role: m.role, content: m.content, thinkingContent: m.thinkingContent || undefined, toolCalls: m.toolCalls ? normalizeToolCalls(typeof m.toolCalls === 'string' ? JSON.parse(m.toolCalls) : m.toolCalls) : undefined, time: m.latencyMs ? `${(m.latencyMs/1000).toFixed(1)}s` : undefined, feedback: m.feedback || undefined })); forceScrollToBottom() }
     }
   } catch {}
 }
@@ -125,7 +126,7 @@ async function createNewSession() {
     const res: any = await api.createAppSession(selectedAppId.value)
     if (res) {
       const s: Session = { conversationId: res.conversationId, sessionId: res.sessionId, title: res.title || '新对话', messages: [], messageCount: 0 }
-      sessions.value.unshift(s); activeSessionId.value = s.sessionId; nextTick(scrollToBottom)
+      sessions.value.unshift(s); activeSessionId.value = s.sessionId; forceScrollToBottom()
     }
   } catch (e: any) { ElMessage.error('创建会话失败: ' + (e?.message || '')) }
 }
@@ -135,7 +136,7 @@ function switchSession(sessionId: string) {
   activeSessionId.value = sessionId
   const s = sessions.value.find(s => s.sessionId === sessionId)
   if (s && s.messages.length === 0) loadSessionMessages(sessionId)
-  nextTick(scrollToBottom)
+  forceScrollToBottom()
 }
 
 async function deleteSession(sessionId: string) {
@@ -174,6 +175,8 @@ async function handleSend() {
   if (userCnt === 1) session.title = question.length > 30 ? question.substring(0, 30) + '...' : question
   const am: ChatMessage = { role: 'assistant', content: '', streaming: true, thinkingContent: '', isThinking: false, toolCalls: [] }
   session.messages.push(am)
+  // 发出消息后立即强制滚到底部，让用户看到自己刚发的消息和 AI 开始输出的位置
+  forceScrollToBottom()
   const mi = session.messages.length - 1, st = Date.now()
   await sendMessage(
     selectedAppId.value, question, session.sessionId,
@@ -182,7 +185,17 @@ async function handleSend() {
     (msg: string) => { session.messages[mi].content = `抱歉，AI 服务暂时不可用：${msg}`; session.messages[mi].streaming = false; session.messages[mi].isThinking = false; session.messages[mi].time = '-'; nextTick(scrollToBottom) },
     (c: string) => { session.messages[mi].thinkingContent += c; session.messages[mi].isThinking = true; nextTick(scrollToBottom) },
     (tc: any) => { if (!session.messages[mi].toolCalls) session.messages[mi].toolCalls = []; const ex = session.messages[mi].toolCalls!.find(t => t.id === tc.id); if (ex) ex.arguments = tc.arguments; else session.messages[mi].toolCalls!.push({ id: tc.id, name: tc.name, arguments: tc.arguments }); nextTick(scrollToBottom) },
-    (r: any) => { if (session.messages[mi].toolCalls) { const tc = session.messages[mi].toolCalls!.find(t => t.id === r.id); if (tc) tc.result = r } nextTick(scrollToBottom) }
+    (r: any) => { if (session.messages[mi].toolCalls) { const tc = session.messages[mi].toolCalls!.find(t => t.id === r.id); if (tc) tc.result = r } nextTick(scrollToBottom) },
+    (s: SourceItem[]) => {
+      session.messages[mi].sources = s
+      // 加载切片关联图片
+      for (const src of s) {
+        if (src.kbId && src.fileId && src.imageKeys?.length) {
+          src.imageKeys.forEach(key => loadSourceImage(src.kbId!, src.fileId!, key))
+        }
+      }
+      nextTick(scrollToBottom)
+    }
   )
 }
 
@@ -191,7 +204,63 @@ function handleStop() {
   if (s) { const lm = s.messages[s.messages.length - 1]; if (lm && lm.role === 'assistant' && lm.streaming) { lm.streaming = false; lm.time = '(已停止)' } }
 }
 
-function scrollToBottom() { if (messagesContainer.value) messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight }
+/** 跳转到知识库文件切片页并定位到命中的切片 */
+function jumpToChunk(src: SourceItem) {
+  if (!src.kbId || !src.fileId) return
+  const chunkId = `${src.fileId}_chunk_${src.chunkIndex ?? 0}`
+  router.push({ path: `/knowledge/${src.kbId}/chunks/${src.fileId}`, query: { chunkId } })
+}
+
+// ── 来源图片加载 ──
+const sourceImages = ref<Record<string, string>>({})
+
+/** 加载切片关联图片（经鉴权接口取 blob 生成 objectURL） */
+async function loadSourceImage(kbId: string, fileId: string, imageKey: string) {
+  const cacheKey = `${fileId}_${imageKey}`
+  if (sourceImages.value[cacheKey]) return
+  try {
+    const raw = localStorage.getItem('ais_token') || ''
+    const token = raw.startsWith('"') ? JSON.parse(raw) : raw
+    const resp = await fetch(`/api/kb/${kbId}/files/${fileId}/images/${imageKey}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    })
+    if (resp.ok) {
+      const blob = await resp.blob()
+      sourceImages.value[cacheKey] = URL.createObjectURL(blob)
+    }
+  } catch { /* ignore */ }
+}
+
+function sourceImageUrl(src: SourceItem, imageKey: string): string | undefined {
+  if (!src.fileId) return undefined
+  return sourceImages.value[`${src.fileId}_${imageKey}`]
+}
+
+// ── 智能滚动跟随 ──
+// 用户手动上翻查看历史时暂停自动滚动，滚回底部附近后恢复跟随
+const SCROLL_FOLLOW_THRESHOLD = 80
+const followScroll = ref(true)
+
+function updateFollowState() {
+  const el = messagesContainer.value
+  if (!el) return
+  followScroll.value = el.scrollHeight - el.scrollTop - el.clientHeight < SCROLL_FOLLOW_THRESHOLD
+}
+
+/** 输出内容时滚动到底部（仅当用户位于底部附近时跟随，避免打断上翻查看） */
+function scrollToBottom() {
+  if (!followScroll.value) return
+  const el = messagesContainer.value
+  if (el) el.scrollTop = el.scrollHeight
+}
+
+/** 强制滚动到底部（切换会话 / 发送消息时用，重置跟随状态） */
+function forceScrollToBottom() {
+  followScroll.value = true
+  nextTick(() => {
+    if (messagesContainer.value) messagesContainer.value.scrollTop = messagesContainer.value.scrollHeight
+  })
+}
 function handleKeydown(e: any) { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleSend() } }
 
 // ── 消息操作 ──
@@ -294,7 +363,7 @@ onMounted(async () => { loading.value = true; await Promise.all([loadApps(), loa
       <!-- Chat area (column: messages + input) -->
       <div class="chat-area">
         <!-- Chat Main (scrollable) -->
-        <div class="chat-main" ref="messagesContainer">
+        <div class="chat-main" ref="messagesContainer" @scroll="updateFollowState">
         <div v-if="loading" class="loading-state"><div class="spinner"><el-icon :size="24" class="is-loading"><Loading /></el-icon></div></div>
         <template v-else-if="selectedAppId && activeSession">
           <div class="chat-box">
@@ -305,6 +374,54 @@ onMounted(async () => { loading.value = true; await Promise.all([loadApps(), loa
                 <ToolCallRenderer v-if="msg.role === 'assistant' && msg.toolCalls?.length" :tool-calls="msg.toolCalls" :auto-collapse="msg.content.length > 0 && msg.thinkingContent !== undefined" />
                 <div v-if="msg.role === 'assistant'" class="msg-content markdown-body" v-html="renderMarkdown(msg.content)" />
                 <div v-else class="msg-content">{{ msg.content }}</div>
+                <!-- 知识来源 -->
+                <div v-if="msg.role === 'assistant' && msg.sources?.length" class="msg-sources">
+                  <div class="sources-header" @click="msg._sourcesOpen = !msg._sourcesOpen">
+                    <span class="sources-title">📚 知识来源（{{ msg.sources.length }}）</span>
+                    <span class="sources-toggle">{{ msg._sourcesOpen ? '收起' : '展开' }}</span>
+                  </div>
+                  <div v-if="msg._sourcesOpen" class="sources-list">
+                    <div v-for="(src, si) in msg.sources" :key="si" class="source-item">
+                      <div class="source-item-head">
+                        <span class="source-name">{{ src.fileName || '未知文件' }}</span>
+                        <div class="source-item-actions">
+                          <span v-if="src.score !== undefined" class="source-score">{{ Math.round(src.score * 100) }}%</span>
+                          <button
+                            v-if="src.content && src.content.length > 200"
+                            class="source-btn"
+                            title="查看全文"
+                            @click="src._expanded = !src._expanded"
+                          >
+                            {{ src._expanded ? '收起' : '全文' }}
+                          </button>
+                          <button
+                            v-if="src.kbId && src.fileId"
+                            class="source-btn"
+                            title="查看原文切片"
+                            @click="jumpToChunk(src)"
+                          >
+                            原文
+                          </button>
+                        </div>
+                      </div>
+                      <div v-if="src.content" class="source-content" :class="{ expanded: src._expanded }">{{ src.content }}</div>
+                      <!-- 切片关联图片 -->
+                      <div v-if="src.imageKeys?.length" class="source-images">
+                        <el-image
+                          v-for="(key, ki) in src.imageKeys"
+                          :key="ki"
+                          class="source-image"
+                          :src="sourceImageUrl(src, key)"
+                          :alt="key"
+                          :preview-src-list="[sourceImageUrl(src, key)]"
+                          preview-teleported
+                          fit="cover"
+                          loading="lazy"
+                        />
+                      </div>
+                    </div>
+                  </div>
+                </div>
                 <!-- 时间 + 操作按钮 -->
                 <div v-if="msg.time || (!msg.streaming && msg.content)" class="msg-footer">
                   <span v-if="msg.time" class="msg-time">{{ msg.time }}</span>
@@ -602,6 +719,113 @@ $shadow-lg: 0 8px 24px rgba(0,0,0,0.06);
 }
 
 .msg-content { white-space: pre-wrap; }
+
+// ── 知识来源 ──
+.msg-sources {
+  margin-top: 8px;
+  border: 1px solid $border;
+  border-radius: 8px;
+  background: $bg-hover;
+  overflow: hidden;
+}
+.sources-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  &:hover { background: rgba(0,0,0,0.03); }
+}
+.sources-title { font-weight: 600; color: $text-primary; }
+.sources-toggle { color: $text-muted; font-size: 11px; }
+.sources-list {
+  border-top: 1px solid $border;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.source-item {
+  background: $bg-card;
+  border: 1px solid $border-light;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.source-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.source-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: $primary;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+.source-item-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.source-score {
+  font-size: 11px;
+  color: $text-muted;
+  flex-shrink: 0;
+}
+.source-btn {
+  font-size: 11px;
+  padding: 0 6px;
+  border: 1px solid $border;
+  border-radius: 4px;
+  background: $bg-card;
+  color: $text-secondary;
+  cursor: pointer;
+  line-height: 1.6;
+  &:hover { border-color: $primary-light; color: $primary; }
+}
+.source-content {
+  margin-top: 3px;
+  font-size: 12px;
+  color: $text-secondary;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: pre-wrap;
+  &.expanded {
+    display: block;
+    -webkit-line-clamp: unset;
+    max-height: 240px;
+    overflow-y: auto;
+  }
+}
+.source-images {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 6px;
+}
+.source-image {
+  width: 120px;
+  height: 90px;
+  border-radius: 6px;
+  border: 1px solid $border;
+  cursor: zoom-in;
+  overflow: hidden;
+  transition: transform 0.15s ease;
+  &:hover { transform: scale(1.03); }
+  :deep(img) { width: 100%; height: 100%; }
+}
 
 .msg-footer {
   display: flex;

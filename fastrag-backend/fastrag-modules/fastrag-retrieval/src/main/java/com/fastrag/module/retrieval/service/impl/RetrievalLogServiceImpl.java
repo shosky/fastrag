@@ -18,9 +18,23 @@ import java.math.RoundingMode;
 import java.util.*;
 
 /**
- * 检索日志（按组织隔离）：
- * - 日志作为审计记录保留（删库不清理），但接口仅返回「本组织库 ∪ ACL 授权库」的日志
- * - 平台级 API Token（程序化访问）不过滤
+ * 检索日志服务实现（按组织隔离）。
+ *
+ * <p>实现 {@link RetrievalLogService} 接口，管理检索日志的记录、更新和统计分析。
+ * 日志作为审计记录长期保留，但查询接口按组织隔离，仅返回当前用户有权访问的知识库日志。</p>
+ *
+ * <h3>核心实现逻辑：</h3>
+ * <ul>
+ *   <li>日志写入：直接通过 Mapper 插入/更新，无额外过滤</li>
+ *   <li>分页查询：通过 {@link KbAccessChecker} 获取当前用户可访问的知识库ID集合，
+ *       平台级 API Token（userId 以 "api-token:" 开头）返回 null 不过滤。
+ *       指定知识库ID时，若不在可访问范围内则返回空结果（不泄露库是否存在）</li>
+ *   <li>统计分析：调用 Mapper 自定义 SQL 聚合统计（总查询数、无结果率、平均延迟、平均命中数），
+ *       以及热门查询 Top10 和无结果查询 Top10</li>
+ * </ul>
+ *
+ * @see RetrievalLogService
+ * @see KbAccessChecker
  */
 @Service
 @RequiredArgsConstructor

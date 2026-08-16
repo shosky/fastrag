@@ -1,5 +1,34 @@
 package com.fastrag.infra.minio;
 
+/**
+ * 文件存储服务，提供文件上传、下载、删除和复制的统一抽象。
+ *
+ * <p>当前实现使用本地文件系统存储（替代 MinIO 对象存储），通过配置项
+ * {@code storage.local.path}（默认 {@code ./uploads}）指定存储根目录。
+ * 接口设计与 MinIO 兼容，后续可无缝切换到 MinIO 或 S3 等对象存储服务。
+ *
+ * <p>核心职责：为知识库模块提供文件持久化能力，包括原始文件上传、下载、按前缀批量删除等。
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>使用 Java NIO Files API 操作本地文件系统</li>
+ *   <li>upload 时自动创建目标目录层级，支持同名文件覆盖</li>
+ *   <li>deleteByPrefix 通过 Files.walk 递归遍历目录树，按逆序删除文件和空目录</li>
+ *   <li>copy 方法支持跨路径文件复制，用于知识库间文件迁移场景</li>
+ * </ul>
+ *
+ * <p>提供的核心能力：
+ * <ul>
+ *   <li>{@code upload} — 上传文件（输入流写入目标路径）</li>
+ *   <li>{@code download} — 下载文件（返回输入流）</li>
+ *   <li>{@code delete} — 删除单个文件</li>
+ *   <li>{@code deleteByPrefix} — 递归删除指定前缀下的所有文件（用于文件级图谱清理）</li>
+ *   <li>{@code copy} — 复制文件到新路径</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：被知识库的文件处理服务调用，用于文档上传、文件预览和文件清理等场景。
+ */
+
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -8,9 +37,6 @@ import org.springframework.stereotype.Service;
 import java.io.*;
 import java.nio.file.*;
 
-/**
- * 文件存储服务 - 使用本地文件系统替代 MinIO
- */
 @Service
 public class MinioService {
 

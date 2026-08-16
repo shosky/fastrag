@@ -5,6 +5,12 @@ import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
 import lombok.Data;
 
+/**
+ * 密码重置请求DTO。
+ *
+ * <p>封装密码重置请求的参数，包含注册邮箱、邮箱验证码和新密码。
+ * 通过发送邮件验证码验证用户身份后重置密码。被 AuthController 的 reset-password 接口接收。</p>
+ */
 @Data
 public class ResetPasswordRequest {
     @NotBlank(message = "邮箱不能为空")

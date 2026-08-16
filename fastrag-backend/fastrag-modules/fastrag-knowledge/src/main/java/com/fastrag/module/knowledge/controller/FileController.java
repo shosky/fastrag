@@ -1,5 +1,37 @@
 package com.fastrag.module.knowledge.controller;
 
+/**
+ * 知识库文件管理控制器，提供文件上传、处理、下载、回收站等完整生命周期管理的 REST API。
+ *
+ * <p>核心职责：管理知识库中的文档文件，包括上传、解析处理、预览、下载、删除、恢复、跨知识库移动等操作，
+ * 同时管理音频切片和 PDF 图片的下载。
+ *
+ * <p>提供的 REST API 端点（基础路径 {@code /api/kb/{kbId}/files}）：
+ * <ul>
+ *   <li>{@code GET /} — 列出知识库下所有文件（viewer 权限）</li>
+ *   <li>{@code GET /deleted} — 列出回收站中的文件（viewer 权限）</li>
+ *   <li>{@code POST /} — 上传文件到知识库（可选指定 folderId），上传后自动发送摄入消息到 MQ（editor 权限）</li>
+ *   <li>{@code POST /{id}/process} — 手动触发文件解析处理，支持 chunk 和 qa 两种模式（editor 权限）</li>
+ *   <li>{@code POST /{id}/retry} — 重新处理失败的文件（editor 权限）</li>
+ *   <li>{@code PUT /{id}} — 更新文件信息（重命名、移动文件夹等）（editor 权限）</li>
+ *   <li>{@code DELETE /{id}} — 软删除文件（移入回收站）（editor 权限）</li>
+ *   <li>{@code POST /{id}/restore} — 从回收站恢复文件（editor 权限）</li>
+ *   <li>{@code DELETE /{id}/permanent} — 永久删除文件（editor 权限）</li>
+ *   <li>{@code DELETE /recycle-bin} — 清空回收站（editor 权限）</li>
+ *   <li>{@code POST /{id}/copy} — 复制文件（editor 权限）</li>
+ *   <li>{@code POST /{id}/move} — 跨知识库移动文件（editor 权限）</li>
+ *   <li>{@code GET /{id}/processing-status} — 获取文件处理状态和进度（viewer 权限）</li>
+ *   <li>{@code GET /{id}/preview} — 预览文件解析后的分块结果（viewer 权限）</li>
+ *   <li>{@code GET /{id}/download} — 下载原始文件，根据扩展名自动设置 Content-Type（viewer 权限）</li>
+ *   <li>{@code GET /{id}/segments/{chunkIndex}} — 下载音频切片文件（viewer 权限）</li>
+ *   <li>{@code GET /{id}/images/{imageKey}} — 下载 PDF 提取的页面图片（viewer 权限）</li>
+ * </ul>
+ *
+ * <p>所有文件操作通过 {@link KbAuth} 注解进行知识库级别权限校验，
+ * 并通过 {@link LogService} 记录操作日志。
+ */
+import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.KBRole;
@@ -10,6 +42,8 @@ import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.model.FileDto;
+import com.fastrag.module.knowledge.model.FileProcessRequest;
+import com.fastrag.module.knowledge.model.ParseStrategyRequest;
 import com.fastrag.module.knowledge.service.FileService;
 import com.fastrag.module.publish.service.LogService;
 import com.fastrag.security.util.SecurityUtil;
@@ -72,11 +106,11 @@ public class FileController {
     @Loggable(category = LogCategory.operation, action = ActionType.file_processed, detail = "处理文件")
     @PostMapping("/{id}/process")
     public ApiResponse<?> process(@PathVariable String kbId, @PathVariable String id,
-                                  @RequestBody(required = false) java.util.Map<String, Object> body) {
-        String mode = body != null ? (String) body.get("processingMode") : "chunk";
-        @SuppressWarnings("unchecked")
-        java.util.Map<String, Object> qaConfig = body != null ? (java.util.Map<String, Object>) body.get("qaConfig") : null;
-        svc.process(kbId, id, mode, qaConfig);
+                                  @RequestBody(required = false) FileProcessRequest req) {
+        if (req == null) {
+            req = new FileProcessRequest();
+        }
+        svc.process(kbId, id, req);
         return ApiResponse.success();
     }
 
@@ -85,6 +119,20 @@ public class FileController {
     @PostMapping("/{id}/retry")
     public ApiResponse<?> retry(@PathVariable String kbId, @PathVariable String id) {
         return ApiResponse.success(svc.retryFile(kbId, id));
+    }
+
+    @KbAuth(KBRole.editor)
+    @Loggable(category = LogCategory.operation, action = ActionType.file_retried, detail = "重新分片")
+    @PostMapping("/{id}/re-chunk")
+    public ApiResponse<?> reChunk(@PathVariable String kbId, @PathVariable String id,
+                                  @RequestBody(required = false) Map<String, Object> body) {
+        // strategyId 三态：字段缺省=沿用当前绑定；非空 id=换绑重切；空串=清除覆盖回自动匹配重切
+        String strategyId = null;
+        if (body != null && body.containsKey("strategyId")) {
+            Object v = body.get("strategyId");
+            strategyId = v == null ? "" : String.valueOf(v);
+        }
+        return ApiResponse.success(svc.reChunkFile(kbId, id, strategyId));
     }
 
     @KbAuth(KBRole.editor)
@@ -178,8 +226,30 @@ public class FileController {
     @KbAuth(KBRole.viewer)
     @GetMapping("/{id}/preview")
     public ApiResponse<?> preview(@PathVariable String kbId, @PathVariable String id,
-                                  @RequestParam(required = false) String strategyId) {
-        return ApiResponse.success(svc.previewChunks(kbId, id, strategyId));
+                                  @RequestParam(required = false) String strategyId,
+                                  @RequestParam(required = false) String customConfig) {
+        // customConfig：自定义临时策略预览（JSON：{parseMethod, advanced}），非空时优先于 strategyId
+        Map<String, Object> configMap = null;
+        if (StrUtil.isNotBlank(customConfig)) {
+            try {
+                configMap = JSONUtil.toBean(customConfig, Map.class);
+            } catch (Exception e) {
+                return ApiResponse.badRequest("customConfig 参数不是合法 JSON: " + e.getMessage());
+            }
+        }
+        return ApiResponse.success(svc.previewChunks(kbId, id, strategyId, configMap));
+    }
+
+    /**
+     * 保存文件级专属自定义策略并重新分片（ADR-0001：绑定变更与重切原子完成）。
+     * body 结构同解析策略表单：name/description/parseMethod/extensions/advanced/llmModel。
+     */
+    @KbAuth(KBRole.editor)
+    @Loggable(category = LogCategory.operation, action = ActionType.file_retried, detail = "保存文件自定义解析策略并重新分片")
+    @PostMapping("/{id}/strategy")
+    public ApiResponse<?> saveFileStrategy(@PathVariable String kbId, @PathVariable String id,
+                                           @RequestBody ParseStrategyRequest req) {
+        return ApiResponse.success(svc.saveFileStrategy(kbId, id, req));
     }
 
     @KbAuth(KBRole.viewer)

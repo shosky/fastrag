@@ -1,4 +1,23 @@
 package com.fastrag.module.knowledge.controller;
+/**
+ * QA 问答对管理控制器，提供知识库级别的问答对 CRUD REST API。
+ *
+ * <p>核心职责：
+ * 管理知识库中的 QA 问答对（KbQaPair），支持问答对的创建、查询、更新、
+ * 删除和确认操作。QA 对可用于知识问答场景中人工补充标准问答内容，确认操作
+ * 标记 QA 对为已审核状态。所有写操作需 editor 角色并记录审计日志。
+ *
+ * <p>REST 端点（基础路径 /api/kb/{kbId}/qa-pairs）：
+ * <ul>
+ *   <li>GET    /           — 查询问答对列表，可按 fileId 筛选（viewer 及以上）</li>
+ *   <li>POST   /           — 创建问答对（editor 及以上），请求体为 QaCreateRequest</li>
+ *   <li>PUT    /{id}       — 更新问答对（editor 及以上）</li>
+ *   <li>DELETE /{id}       — 删除问答对（editor 及以上）</li>
+ *   <li>POST   /{id}/confirm — 确认问答对（editor 及以上），标记为已审核</li>
+ * </ul>
+ *
+ * <p>依赖服务：QaPairService（问答对业务逻辑）、LogService（操作审计日志）。
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.KBRole;

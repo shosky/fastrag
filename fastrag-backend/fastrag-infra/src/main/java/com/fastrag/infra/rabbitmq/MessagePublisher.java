@@ -11,12 +11,34 @@ import org.springframework.stereotype.Service;
 import java.util.Map;
 
 /**
- * 消息发布服务
- * 优先通过 RabbitMQ 异步发布，失败时降级为同步直接调用
+ * 消息发布服务，封装基于 RabbitMQ 的异步消息发布能力，并提供同步降级机制。
  *
- * 注意：RabbitTemplate.convertAndSend() 默认是 fire-and-forget 模式，
- * 即使 broker 不可用也不会立即抛异常（消息被缓冲）。因此我们在发送前
- * 主动检测连接状态，不可用时直接走同步降级路径，避免文件处理卡住。
+ * <p>核心职责：将文档处理（Ingestion）和图谱构建（GraphBuild）任务以消息形式异步发布到 RabbitMQ，
+ * 由消费者异步执行，从而实现上传与处理的解耦。
+ *
+ * <p>依赖的外部系统：
+ * <ul>
+ *   <li>RabbitMQ 消息队列：通过 Spring AMQP 的 {@link RabbitTemplate} 发布消息，
+ *       Exchange 和 Queue 定义见 {@link RabbitMQConfig}</li>
+ * </ul>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>发送前主动检测 RabbitMQ 连接状态（通过 ConnectionFactory 创建临时连接验证），
+ *       避免 RabbitTemplate 的 fire-and-forget 模式导致消息被缓冲后丢失而调用方无感知</li>
+ *   <li>RabbitMQ 不可用时自动降级为同步直接调用 Handler（IngestionHandler / GraphBuildHandler），
+ *       确保即使消息队列宕机，文档处理流程仍然能够完成</li>
+ *   <li>发送失败时同样降级为同步调用，提供双重保障</li>
+ * </ul>
+ *
+ * <p>提供的核心能力：
+ * <ul>
+ *   <li>{@code publishIngestion} — 发布文档摄取消息到 {@code ingestion} routing key</li>
+ *   <li>{@code publishGraphBuild} — 发布图谱构建消息到 {@code graph-build} routing key</li>
+ * </ul>
+ *
+ * <p>与其他模块的交互：被文件上传和知识库处理服务调用，消息消费者在 fastrag-common 模块的
+ * Handler 中实现（IngestionHandler、GraphBuildHandler）。
  */
 @Service
 public class MessagePublisher {

@@ -3,14 +3,30 @@ import com.baomidou.mybatisplus.annotation.*; import com.baomidou.mybatisplus.ex
 import lombok.Data; import java.time.LocalDateTime; import java.util.List; import java.util.Map;
 
 /**
- * 技能实体 - 对应 Yuxi 的 SkillInfo 模型.
- * <p>
- * sourceType 含义:
+ * 技能（Skill）实体，对应数据库表 {@code skill}。
+ *
+ * <p>技能是 Agent 可调用的能力单元，支持 builtin（内置，随应用发布不可删除）、
+ * remote（从远程仓库安装）和 custom（用户自定义）三种来源类型。</p>
+ *
+ * <h3>核心字段：</h3>
  * <ul>
- *   <li>builtin - 内置技能，随应用发布，不可删除</li>
- *   <li>remote  - 从远程仓库安装的技能</li>
- *   <li>custom  - 用户自定义技能</li>
+ *   <li>{@code slug} - 唯一标识符（用于 URL 路由，如 "web-search-tool"）</li>
+ *   <li>{@code name} - 显示名称</li>
+ *   <li>{@code sourceType} - 来源类型：builtin / remote / custom</li>
+ *   <li>{@code content} - SKILL.md 原文内容</li>
+ *   <li>{@code contentHash} - 内容 MD5 哈希，用于内置技能同步检测</li>
+ *   <li>{@code dependencies} - 依赖的其他技能 slug 列表（JSON）</li>
+ *   <li>{@code metadata} - SKILL.md frontmatter 元数据（JSON）</li>
+ *   <li>{@code shareConfig} - 分享配置（非 DB 字段，DTO）：accessLevel / departmentIds / userUids</li>
+ *   <li>{@code isBuiltin} - 是否为内置技能（由 {@link SkillDataInitializer} 种子初始化）</li>
+ *   <li>{@code orgId} - 归属组织</li>
+ *   <li>{@code trigger} - 触发关键词</li>
+ *   <li>{@code enabled / recommended / usageCount} - 启用状态、推荐标记、使用计数</li>
  * </ul>
+ *
+ * @see SkillDependency
+ * @see SkillScope
+ * @see SkillShareConfig
  */
 @Data
 @TableName(value = "skill", autoResultMap = true)

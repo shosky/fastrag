@@ -7,20 +7,32 @@ import java.util.*;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
- * 发布与存储 Agent 运行事件.
- * <p>
- * 当前使用内存 {@link ConcurrentHashMap} 进行本地事件存储，
- * 后续可替换为 Redis pub/sub 或 Stream 实现分布式事件发布.
- * <p>
- * 事件结构:
- * <pre>
- * {
- *   "runId": "xxx",
- *   "eventType": "status" | "message" | "tool_call" | "artifact" | "subagent" | ...,
- *   "payload": { ... },
- *   "seq": timestamp
- * }
- * </pre>
+ * Agent运行事件发布与存储组件，负责记录和推送Agent执行过程中的各类事件。
+ *
+ * <p>核心职责：
+ * <ul>
+ *   <li>接收Agent执行过程中产生的各类事件（状态变更、消息、工具调用、产物输出、子Agent事件等）</li>
+ *   <li>将事件存储到内存中，供SSE事件流接口查询和推送</li>
+ *   <li>为每个事件附加序列号（seq，基于时间戳），支持客户端断点续传</li>
+ * </ul></p>
+ *
+ * <p>事件结构包含四个字段：
+ * <ul>
+ *   <li>runId - 关联的Agent运行ID</li>
+ *   <li>eventType - 事件类型（status、message、tool_call、artifact、subagent等）</li>
+ *   <li>payload - 事件负载数据，不同事件类型有不同结构</li>
+ *   <li>seq - 事件序列号（毫秒时间戳），用于客户端断点续传</li>
+ * </ul></p>
+ *
+ * <p>关键实现逻辑：
+ * <ul>
+ *   <li>当前使用ConcurrentHashMap进行本地内存存储，后续可替换为Redis pub/sub或Stream实现分布式事件发布</li>
+ *   <li>eventStore以runId为Key，每个运行维护一个同步事件列表</li>
+ *   <li>pushEvent方法线程安全，通过computeIfAbsent和synchronizedList保证并发写入安全</li>
+ *   <li>由AgentRunServiceImpl的SSE事件流接口调用getEvents方法获取事件并推送给客户端</li>
+ * </ul></p>
+ *
+ * @see com.fastrag.module.agent.service.impl.AgentRunServiceImpl 事件的使用者（SSE推送）
  */
 @Slf4j
 @Component

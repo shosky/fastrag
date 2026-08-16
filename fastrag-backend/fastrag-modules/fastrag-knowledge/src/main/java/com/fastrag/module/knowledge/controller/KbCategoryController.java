@@ -19,10 +19,31 @@ import java.time.LocalDateTime;
 import java.util.*;
 
 /**
- * 知识库分类（完全按组织隔离，所有登录用户一致，含超管/kb_admin）。
- * 可见性规则：本组织分类（org_id = 我的组织）+ 本组织知识库 count；
- * 创建强制归属自己组织；只能操作本组织分类。
- * 例外：仅平台级 API Token（程序化访问）全局可见可管理。
+ * 知识库分类管理控制器，按组织隔离提供分类的 CRUD 操作。
+ *
+ * <p>核心职责：
+ * 管理知识库分类（KbCategory），实现分类的组织级隔离与统计。所有分类数据
+ * 严格按组织隔离，不同组织的用户只能看到和操作本组织分类；仅平台级 API Token
+ * 享有全局可见和管理权限。分类列表中附带每个分类下本组织知识库的数量统计。
+ *
+ * <p>可见性与权限规则：
+ * <ul>
+ *   <li>普通登录用户（含超管/kb_admin）：仅可见和操作所属组织的分类，count 仅统计本组织知识库</li>
+ *   <li>平台级 API Token（userId 以 "api-token:" 开头）：全局可见、可创建（可指定任意组织）、可编辑和删除任意分类</li>
+ * </ul>
+ *
+ * <p>REST 端点（基础路径 /api/kb-categories）：
+ * <ul>
+ *   <li>GET    /              — 按组织查询分类列表（含知识库数量统计），API Token 返回全量</li>
+ *   <li>GET    /{id}          — 获取单个分类详情</li>
+ *   <li>GET    /{id}/usage    — 查询分类下知识库数量（口径与列表一致）</li>
+ *   <li>POST   /              — 创建分类（权限键 kb:category:create），非 API Token 强制归属自己组织</li>
+ *   <li>PUT    /{id}          — 更新分类（权限键 kb:category:edit），非 API Token 不能迁移组织归属</li>
+ *   <li>DELETE /{id}          — 删除分类（权限键 kb:category:delete），非 API Token 仅能删除本组织分类</li>
+ * </ul>
+ *
+ * <p>依赖服务：KbCategoryMapper（分类数据访问）、KnowledgeBaseMapper（知识库统计）、
+ * LogService（操作审计日志）。
  */
 @RestController @RequestMapping("/api/kb-categories") @RequiredArgsConstructor
 public class KbCategoryController {

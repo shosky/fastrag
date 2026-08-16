@@ -1,5 +1,34 @@
 package com.fastrag.security.aspect;
 
+/**
+ * 知识库权限校验切面，拦截所有标注了 {@link com.fastrag.security.annotation.KbAuth} 注解的 Controller 方法，
+ * 在方法执行前进行知识库级别的访问控制校验。
+ *
+ * <p>核心职责：实现知识库的 RBAC 权限模型，确保用户对特定知识库的操作权限满足注解声明的要求。
+ *
+ * <p>切点与增强逻辑：
+ * <ul>
+ *   <li>切点：{@code @Around("@annotation(kbAuth)")}，拦截所有标注 @KbAuth 注解的方法</li>
+ *   <li>增强类型：环绕通知（Around Advice），在目标方法执行前完成权限校验，校验失败则抛出异常阻止执行</li>
+ * </ul>
+ *
+ * <p>权限判定流程：
+ * <ol>
+ *   <li>从 Spring Security 上下文获取当前登录用户（通过 {@link com.fastrag.security.util.SecurityUtil}）</li>
+ *   <li>平台级 API Token（userId 以 "api-token:" 开头）全局放行，不经过知识库 ACL 校验</li>
+ *   <li>从请求 URI 中提取知识库 ID（解析 "/api/kb/{kbId}/..." 路径）</li>
+ *   <li>调用 {@link com.fastrag.security.service.KbAccessChecker#resolveRole} 获取用户在该知识库上的有效角色，
+ *       判定优先级：ACL 记录 > 同组织兜底 viewer > 无权限返回 null</li>
+ *   <li>比较用户实际角色层级与注解要求的最低角色层级，不足则抛出 403 Forbidden</li>
+ * </ol>
+ *
+ * <p>角色层级定义：owner(3) > editor(2) > viewer(1)。
+ *
+ * <p>与其他模块的交互：依赖 {@link com.fastrag.security.service.KbAccessChecker}（接口实现在 knowledge 模块）
+ * 执行实际的权限判定；与 fastrag-common 模块的 {@link com.fastrag.common.exception.BusinessException} 配合
+ * 返回统一的错误响应。
+ */
+
 import com.fastrag.common.enums.KBRole;
 import com.fastrag.common.exception.BusinessException;
 import com.fastrag.security.annotation.KbAuth;

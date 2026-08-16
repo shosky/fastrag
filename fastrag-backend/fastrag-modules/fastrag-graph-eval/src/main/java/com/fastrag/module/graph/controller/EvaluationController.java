@@ -1,5 +1,36 @@
 package com.fastrag.module.graph.controller;
 
+/**
+ * 知识图谱评测（Evaluation）任务管理控制器。
+ *
+ * <p>提供评测任务的创建、查询、状态监控和删除等REST API。评测任务是对知识图谱进行
+ * 自动化质量评估的执行单元，系统会基于基准测试题目，利用LLM对图谱数据进行问答式评测，
+ * 并记录每道题的评测结果，最终汇总生成评测报告。</p>
+ *
+ * <p>核心职责：</p>
+ * <ul>
+ *   <li>评测任务列表与详情查询</li>
+ *   <li>启动评测执行（支持自定义评测配置）</li>
+ *   <li>实时查询评测进度（已完成数/总数/百分比）</li>
+ *   <li>评测任务删除与清理</li>
+ *   <li>操作日志记录</li>
+ * </ul>
+ *
+ * <p>REST API端点：</p>
+ * <ul>
+ *   <li>GET /api/kb/{kbId}/evaluations - 获取评测任务列表</li>
+ *   <li>GET /api/kb/{kbId}/evaluations/{id} - 获取评测任务详情</li>
+ *   <li>GET /api/kb/{kbId}/evaluations/{id}/status - 获取评测执行进度状态</li>
+ *   <li>POST /api/kb/{kbId}/evaluations/run - 启动新的评测任务</li>
+ *   <li>DELETE /api/kb/{kbId}/evaluations/{id} - 删除指定评测任务</li>
+ * </ul>
+ *
+ * <p>依赖服务：{@link EvaluationService} 处理核心评测业务逻辑。</p>
+ *
+ * @see EvaluationService
+ * @see EvaluationConfig
+ * @see KbEvaluation
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;

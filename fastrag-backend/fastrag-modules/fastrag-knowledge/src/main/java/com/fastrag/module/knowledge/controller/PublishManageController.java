@@ -1,4 +1,31 @@
 package com.fastrag.module.knowledge.controller;
+/**
+ * 发布管理控制器，提供知识发布、撤销、发布计划及知识重置的 REST API。
+ *
+ * <p>核心职责：
+ * 管理知识库中知识的发布生命周期，包括发布知识到线上、撤销已发布知识、
+ * 创建和查询发布计划、查看策略效果、对比线上线下版本差异，以及知识重置
+ * 配置和执行。发布和重置等关键操作均记录审计日志。
+ *
+ * <p>REST 端点（基础路径 /api/kb/{kbId}）：
+ * <ul>
+ *   <li>GET    /publish/history                    — 查询发布历史记录，可按 knowledgeId 筛选（viewer）</li>
+ *   <li>POST   /publish/{knowledgeId}               — 发布指定知识（editor）</li>
+ *   <li>POST   /publish/{knowledgeId}/revoke         — 撤销已发布知识（editor）</li>
+ *   <li>POST   /publish/plans                       — 创建发布计划（editor）</li>
+ *   <li>GET    /publish/plans                       — 查询发布计划列表（viewer）</li>
+ *   <li>GET    /publish/plans/{planId}/execution    — 查询发布计划执行详情（viewer）</li>
+ *   <li>GET    /publish/strategy-effect             — 查询解析策略效果分析（viewer）</li>
+ *   <li>GET    /publish/online-version              — 查看线上版本配置，可按 knowledgeId 筛选（viewer）</li>
+ *   <li>GET    /publish/offline-version             — 查看线下版本配置，可按 knowledgeId 筛选（viewer）</li>
+ *   <li>GET    /reset-configs                       — 查询知识重置配置列表（viewer）</li>
+ *   <li>POST   /reset-configs                       — 保存知识重置配置（editor）</li>
+ *   <li>POST   /reset/{knowledgeId}                 — 执行知识重置（editor）</li>
+ *   <li>GET    /knowledge-update-logs               — 分页查询知识更新日志（viewer）</li>
+ * </ul>
+ *
+ * <p>依赖服务：PublishManageService（发布业务逻辑）、LogService（操作审计日志）。
+ */
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.KBRole;

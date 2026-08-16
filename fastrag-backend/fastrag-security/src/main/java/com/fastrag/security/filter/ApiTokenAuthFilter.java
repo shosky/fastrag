@@ -1,5 +1,28 @@
 package com.fastrag.security.filter;
 
+/**
+ * API Token 认证过滤器，处理以 {@code frag_} 前缀开头的 Bearer Token 认证。
+ *
+ * <p>核心职责：识别并验证 API Token（区别于 JWT Token），为程序化调用（如第三方集成、系统间调用）
+ * 提供认证能力。
+ *
+ * <p>过滤链位置：在 {@link JwtAuthFilter} 之前、{@code UsernamePasswordAuthenticationFilter} 之前执行。
+ * 如果请求已被其他过滤器完成认证，或 Token 不是 frag_ 前缀，则跳过交由后续过滤器处理。
+ *
+ * <p>处理逻辑：
+ * <ol>
+ *   <li>检查 SecurityContext 中是否已存在认证信息，存在则跳过</li>
+ *   <li>检查 {@link com.fastrag.common.service.ApiTokenValidator} 是否可用（iam 模块引入时才注入），
+ *       不可用则跳过</li>
+ *   <li>从 Authorization 头提取 Bearer Token，判断是否以 "frag_" 开头</li>
+ *   <li>委托 ApiTokenValidator 验证 Token 有效性并获取 tokenId</li>
+ *   <li>验证成功后创建平台级全局认证对象，principal 为 "api-token:{tokenId}"，
+ *       授予 "kb:manage" 权限，写入 SecurityContext</li>
+ * </ol>
+ *
+ * <p>与其他模块的交互：依赖 fastrag-iam 模块的 {@link com.fastrag.common.service.ApiTokenValidator}
+ * 进行 Token 验证（通过 {@code @Autowired(required = false)} 可选注入，iam 模块未引入时自动禁用）。
+ */
 import com.fastrag.common.service.ApiTokenValidator;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
@@ -18,16 +41,6 @@ import org.springframework.web.filter.OncePerRequestFilter;
 import java.io.IOException;
 import java.util.List;
 
-/**
- * API Token 认证过滤器。
- * <p>
- * 处理以 {@code frag_} 前缀开头的 Bearer Token（区别于 JWT）。
- * 当 Authorization 头携带 frag_ 开头的 token 时，委托给
- * {@link ApiTokenValidator} 验证并设置认证上下文。
- * <p>
- * 该过滤器在 {@link JwtAuthFilter} 之前执行，
- * 如果 token 不是 frag_ 开头则跳过，交给 JWT 过滤器处理。
- */
 @Slf4j
 @Component
 @RequiredArgsConstructor

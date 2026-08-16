@@ -1,5 +1,19 @@
 package com.fastrag.module.knowledge.controller;
-
+/**
+ * 知识库标签查询控制器，提供标签的全局查询接口。
+ *
+ * <p>核心职责：
+ * 对外暴露知识库标签的只读查询 API，供前端实现标签自动补全等功能。
+ * 标签列表按名称升序排列，返回完整的 KbTag 实体信息。
+ *
+ * <p>REST 端点（基础路径 /api/kb-tags）：
+ * <ul>
+ *   <li>GET /      — 查询所有标签列表，按 name 升序排列（无权限限制，需登录）</li>
+ *   <li>GET /{id}  — 获取单个标签详情</li>
+ * </ul>
+ *
+ * <p>依赖服务：KbTagMapper（标签数据访问，MyBatis-Plus）。
+ */
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.knowledge.entity.KbTag;

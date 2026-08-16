@@ -12,7 +12,6 @@ const showDialog = ref(false)
 const dialogTitle = ref('')
 const editingId = ref<string | null>(null)
 const formData = ref<any>({})
-const orgOptions = ref<any[]>([])
 
 // 分类归属：所有用户（含 kb_admin）创建的分类都归属自己组织；仅超管可编辑任意分类（含未分配）
 const isManager = computed(() => {
@@ -20,23 +19,32 @@ const isManager = computed(() => {
   return perms.includes('*')
 })
 
+// 组织树（仅超管需要，用于分配分类归属）
+const orgTreeData = ref<any[]>([])
+
 const colorPresets = ['#1890ff', '#52c41a', '#faad14', '#f56c6c', '#722ed1', '#13c2c2', '#eb2f96', '#5cdbd3']
 
 async function loadData() {
   loading.value = true
   try {
-    const res: any = await api.getKbCategories()
-    dataList.value = Array.isArray(res) ? res : (res?.list || [])
+    const catRes: any = await api.getKbCategories()
+    dataList.value = Array.isArray(catRes) ? catRes : (catRes?.list || [])
   } finally { loading.value = false }
 }
+
+async function loadOrgTree() {
+  if (!isManager.value) return
+  try {
+    const res: any = await api.getOrgTree()
+    orgTreeData.value = Array.isArray(res) ? res : (res?.list || [])
+  } catch {
+    orgTreeData.value = []
+  }
+}
+
 onMounted(() => {
   loadData()
-  // 分类按组织隔离：加载组织下拉供管理员分配归属
-  if (isManager.value) {
-    api.getOrgFlat().then((res: any) => {
-      orgOptions.value = Array.isArray(res) ? res : []
-    }).catch(() => {})
-  }
+  loadOrgTree()
 })
 
 function handleAdd() {
@@ -86,7 +94,17 @@ async function handleSave() {
 }
 
 function orgName(orgId: string): string {
-  return orgOptions.value.find((o) => o.id === orgId)?.name || (orgId ? '本组织' : '未分配')
+  if (!orgId) return '未分配'
+  function walk(nodes: any[]): string | undefined {
+    for (const node of nodes) {
+      if (node.id === orgId) return node.name
+      if (node.children) {
+        const found = walk(node.children)
+        if (found) return found
+      }
+    }
+  }
+  return walk(orgTreeData.value) || '本组织'
 }
 </script>
 
@@ -135,14 +153,14 @@ function orgName(orgId: string): string {
           <el-input v-model="formData.description" placeholder="请输入分类描述" />
         </el-form-item>
         <el-form-item v-if="isManager" label="所属组织" required>
-          <el-select v-model="formData.orgId" placeholder="请选择所属组织" style="width: 100%">
-            <el-option
-              v-for="org in orgOptions"
-              :key="org.id"
-              :label="org.name"
-              :value="org.id"
-            />
-          </el-select>
+          <el-tree-select
+            v-model="formData.orgId"
+            :data="orgTreeData"
+            :props="{ label: 'name', value: 'id', children: 'children' }"
+            placeholder="请选择所属组织"
+            check-strictly
+            style="width: 100%"
+          />
         </el-form-item>
         <el-form-item v-else label="所属组织">
           <el-tag type="info">{{ orgName(formData.orgId) }}</el-tag>

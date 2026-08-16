@@ -6,6 +6,24 @@ import java.util.Map;
 import com.fastrag.common.annotation.Loggable;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
+
+/**
+ * 应用管理控制器，提供应用全生命周期管理的REST API。
+ *
+ * <p>路由前缀：/api/apps。核心端点包括：
+ * <ul>
+ *   <li>GET / — 按关键字和标签筛选应用列表</li>
+ *   <li>GET /{id} — 获取应用详情</li>
+ *   <li>POST / — 创建新应用（需 app:create 权限，带操作日志记录）</li>
+ *   <li>PUT /{id} — 更新应用信息（需 app:edit 权限，带操作日志记录）</li>
+ *   <li>DELETE /{id} — 删除应用（需 app:delete 权限，带操作日志记录）</li>
+ *   <li>GET /templates — 获取应用模板列表</li>
+ *   <li>POST /{id}/run — 同步运行应用（传入query执行对话）</li>
+ * </ul>
+ *
+ * <p>创建、更新、删除操作通过 {@link Loggable} 注解记录操作日志。
+ * 依赖 {@link AppService} 实现所有业务逻辑。
+ */
 @RestController @RequestMapping("/api/apps") @RequiredArgsConstructor
 public class AppController {
     private final AppService svc;
