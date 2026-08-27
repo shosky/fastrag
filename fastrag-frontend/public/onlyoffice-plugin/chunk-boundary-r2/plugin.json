@@ -1,0 +1,15 @@
+{
+  "name": "ChunkBoundary",
+  "guid": "asc.{FB71C2D3-9A64-4F0E-B18E-C1A71097E201}",
+  "version": "1.1.0",
+  "minServerVersion": "7.4",
+  "variations": [
+    {
+      "EditorsSupport": ["word", "cell", "slide"],
+      "isViewer": true,
+      "isVisual": false,
+      "initDataType": "none",
+      "url": "index.html"
+    }
+  ]
+}

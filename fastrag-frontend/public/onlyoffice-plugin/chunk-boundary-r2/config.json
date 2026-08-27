@@ -1,0 +1,16 @@
+{
+    "name": "ChunkBoundary",
+    "guid": "asc.{FB71C2D3-9A64-4F0E-B18E-C1A71097E201}",
+    "version": "1.2.0",
+    "baseUrl": "",
+
+    "variations": [
+        {
+            "description": "FastRAG 选区桥（后台）",
+            "url": "index.html",
+            "EditorsSupport": ["word", "cell", "slide"],
+            "isViewer": true,
+            "isVisual": false
+        }
+    ]
+}

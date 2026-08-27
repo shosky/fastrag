@@ -48,6 +48,14 @@ public class FeedbackServiceImpl implements FeedbackService {
         }
     }
 
+    /** 反馈统计/聚合查询基础条件（kbId 过滤 + 组织隔离） */
+    private QueryWrapper<UserFeedback> baseFbWrapper(String kbId) {
+        var w = new QueryWrapper<UserFeedback>();
+        if (kbId != null && !kbId.isEmpty()) w.eq("kb_id", kbId);
+        applyOrgScope(w);
+        return w;
+    }
+
     @Override public PageResult<UserFeedback> page(String kbId,String feedback,String status,int page,int pageSize) {
         var w=new LambdaQueryWrapper<UserFeedback>();
         if(kbId!=null&&!kbId.isEmpty()) w.eq(UserFeedback::getKbId,kbId);
@@ -87,26 +95,45 @@ public class FeedbackServiceImpl implements FeedbackService {
         mapper.updateById(fb); return fb;
     }
     @Override public Map<String,Object> statistics(String kbId) {
-        var w=new LambdaQueryWrapper<UserFeedback>();
-        if(kbId!=null&&!kbId.isEmpty()) w.eq(UserFeedback::getKbId,kbId);
-        applyOrgScope(w);
-        List<UserFeedback> all=mapper.selectList(w);
         Map<String,Object> result=new LinkedHashMap<>();
-        result.put("total",all.size());
+
+        // 单行聚合：总数/点赞数/已解决数/评分（SQL 聚合，避免全表加载）
+        Map<String,Object> agg=mapper.selectMaps(
+            baseFbWrapper(kbId).select(
+                "COUNT(*) as total",
+                "SUM(CASE WHEN feedback='like' THEN 1 ELSE 0 END) as likes",
+                "SUM(CASE WHEN status='resolved' THEN 1 ELSE 0 END) as resolved",
+                "SUM(score) as score_sum",
+                "SUM(CASE WHEN score>0 THEN 1 ELSE 0 END) as score_cnt"
+            )
+        ).stream().findFirst().orElse(new HashMap<>());
+        long total=((Number)agg.getOrDefault("total",0)).longValue();
+        long likeCount=((Number)agg.getOrDefault("likes",0)).longValue();
+        long resolvedCount=((Number)agg.getOrDefault("resolved",0)).longValue();
+        double scoreSum=((Number)agg.getOrDefault("score_sum",0)).doubleValue();
+        long scoreCnt=((Number)agg.getOrDefault("score_cnt",0)).longValue();
+
+        result.put("total",total);
+        result.put("satisfactionRate",total==0?0.0:Math.round(likeCount*10000.0/total)/100.0);
+        result.put("resolvedRate",total==0?0.0:Math.round(resolvedCount*10000.0/total)/100.0);
+        result.put("avgScore",scoreCnt==0?0.0:Math.round(scoreSum*100.0/scoreCnt)/100.0);
+
+        // 按反馈类型分组
         Map<String,Long> byType=new LinkedHashMap<>();
-        Map<String,Long> byStatus=new LinkedHashMap<>();
-        long likeCount=0,scoreSum=0,scoreCnt=0;
-        for(var fb:all){
-            byType.merge(fb.getFeedback()!=null?fb.getFeedback():"unknown",1L,Long::sum);
-            byStatus.merge(fb.getStatus()!=null?fb.getStatus():"pending",1L,Long::sum);
-            if("like".equals(fb.getFeedback())) likeCount++;
-            if(fb.getScore()!=null&&fb.getScore()>0){ scoreSum+=fb.getScore(); scoreCnt++; }
+        for(var row:mapper.selectMaps(baseFbWrapper(kbId).select("feedback, COUNT(*) as cnt").groupBy("feedback"))){
+            String key=row.get("feedback")!=null?(String)row.get("feedback"):"unknown";
+            byType.put(key,((Number)row.get("cnt")).longValue());
         }
         result.put("byType",byType);
+
+        // 按处理状态分组
+        Map<String,Long> byStatus=new LinkedHashMap<>();
+        for(var row:mapper.selectMaps(baseFbWrapper(kbId).select("status, COUNT(*) as cnt").groupBy("status"))){
+            String key=row.get("status")!=null?(String)row.get("status"):"pending";
+            byStatus.put(key,((Number)row.get("cnt")).longValue());
+        }
         result.put("byStatus",byStatus);
-        result.put("satisfactionRate",all.isEmpty()?0.0:Math.round(likeCount*10000.0/all.size())/100.0);
-        result.put("avgScore",scoreCnt==0?0.0:Math.round(scoreSum*100.0/scoreCnt)/100.0);
-        result.put("resolvedRate",all.isEmpty()?0.0:Math.round(byStatus.getOrDefault("resolved",0L)*10000.0/all.size())/100.0);
+
         return result;
     }
 
@@ -212,6 +239,19 @@ public class FeedbackServiceImpl implements FeedbackService {
         List<Map<String,Object>> appRows=mapper.selectMaps(
             appQ.groupBy("app_id").orderByDesc("cnt")
         );
+        // 批量查询应用名称（避免循环内 N+1 查询）
+        Set<String> appIds=appRows.stream()
+                .map(r->(String)r.get("app_id"))
+                .collect(Collectors.toSet());
+        Map<String,String> appNameMap=new HashMap<>();
+        if(!appIds.isEmpty()){
+            for(App app:appMapper.selectBatchIds(appIds)){
+                if(app!=null&&app.getId()!=null&&app.getName()!=null){
+                    appNameMap.put(app.getId(),app.getName());
+                }
+            }
+        }
+
         List<Map<String,Object>> appRanking=new ArrayList<>();
         int rank=0;
         for(var row:appRows){
@@ -221,12 +261,8 @@ public class FeedbackServiceImpl implements FeedbackService {
             long likes=((Number)row.get("likes")).longValue();
             double sat=cnt==0?0:Math.round(likes*10000.0/cnt)/100.0;
 
-            // 查询应用名称
-            String appName=appId;
-            try{
-                App app=appMapper.selectById(appId);
-                if(app!=null&&app.getName()!=null) appName=app.getName();
-            }catch(Exception ignored){}
+            // 应用名称（查不到时回退为 appId）
+            String appName=appNameMap.getOrDefault(appId,appId);
 
             Map<String,Object> item=new LinkedHashMap<>();
             item.put("rank",rank);

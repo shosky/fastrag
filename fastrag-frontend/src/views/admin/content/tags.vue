@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+import type { KbTag } from '@/types/knowledge'
 
 const activeGroup = ref('')
 const searchKeyword = ref('')
@@ -17,6 +18,20 @@ const groupForm = ref({ name: '' })
 const tagGroups = ref<any[]>([])
 const tagList = ref<any[]>([])
 
+// ===== 标签维度：通用标签(dict) / 知识库标签(kb_tag) 分册四 =====
+const dimension = ref<'dict' | 'kb'>('dict')
+const kbTags = ref<KbTag[]>([])
+const kbLoading = ref(false)
+const showKbTagDialog = ref(false)
+const kbTagEditingId = ref<string | null>(null)
+const kbTagForm = ref({ kbId: '', name: '', color: '#409EFF', tagTypeId: '', description: '' })
+const kbOptions = ref<any[]>([])
+const tagTypeOptions = [
+  { label: '文档分类', value: 'T1' },
+  { label: '优先级', value: 'T2' },
+  { label: '状态', value: 'T3' },
+]
+
 async function loadTags() {
   loading.value = true
   try {
@@ -31,7 +46,26 @@ async function loadTags() {
   }
 }
 
-onMounted(loadTags)
+async function loadKbTags() {
+  kbLoading.value = true
+  try {
+    const res: any = await api.getAllKbTags()
+    kbTags.value = res || []
+  } finally {
+    kbLoading.value = false
+  }
+}
+
+async function loadKbOptions() {
+  try {
+    const res: any = await api.getKnowledgeBases({ page: 1, pageSize: 100 })
+    kbOptions.value = res?.list || res || []
+  } catch {
+    kbOptions.value = []
+  }
+}
+
+onMounted(() => { loadTags(); loadKbTags(); loadKbOptions() })
 
 function handleAddTag() {
   dialogTitle.value = '新增标签'
@@ -87,11 +121,76 @@ async function handleSaveGroup() {
   await loadTags()
   ElMessage.success('保存成功')
 }
+
+// ===== 知识库标签 CRUD =====
+function handleAddKbTag() {
+  kbTagEditingId.value = null
+  kbTagForm.value = { kbId: '', name: '', color: '#409EFF', tagTypeId: '', description: '' }
+  showKbTagDialog.value = true
+}
+
+function handleEditKbTag(tag: KbTag) {
+  kbTagEditingId.value = tag.id
+  kbTagForm.value = {
+    kbId: tag.kbId,
+    name: tag.name,
+    color: tag.color || '#409EFF',
+    tagTypeId: tag.tagTypeId || '',
+    description: tag.description || '',
+  }
+  showKbTagDialog.value = true
+}
+
+async function handleSaveKbTag() {
+  if (!kbTagForm.value.name) {
+    ElMessage.warning('请输入标签名称')
+    return
+  }
+  const payload = {
+    name: kbTagForm.value.name,
+    color: kbTagForm.value.color,
+    tagTypeId: kbTagForm.value.tagTypeId || undefined,
+    description: kbTagForm.value.description,
+  }
+  if (kbTagEditingId.value) {
+    await api.updateKbTag(kbTagEditingId.value, payload)
+  } else {
+    if (!kbTagForm.value.kbId) {
+      ElMessage.warning('请选择归属知识库')
+      return
+    }
+    await api.createKbTag({ kbId: kbTagForm.value.kbId, ...payload })
+  }
+  showKbTagDialog.value = false
+  await loadKbTags()
+  ElMessage.success('保存成功')
+}
+
+async function handleDeleteKbTag(tag: KbTag) {
+  const tip = (tag.usageCount || 0) > 0
+    ? `该标签当前被 ${tag.usageCount} 个目标引用，删除需先移除这些引用。确定继续？`
+    : '是否删除该知识库标签？'
+  try {
+    await ElMessageBox.confirm(tip, '删除确认', { type: 'warning' })
+    await api.deleteKbTag(tag.id)
+    await loadKbTags()
+    ElMessage.success('删除成功')
+  } catch {}
+}
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
-    <div class="tag-layout">
+    <div class="tag-dimension">
+      <el-radio-group v-model="dimension">
+        <el-radio-button value="dict">通用标签</el-radio-button>
+        <el-radio-button value="kb">知识库标签</el-radio-button>
+      </el-radio-group>
+      <span class="tag-dimension__desc">知识库标签用于文件打标与检索过滤（分册四），归属各知识库。</span>
+    </div>
+
+    <!-- ============ 通用标签（dict 维度） ============ -->
+    <div v-if="dimension === 'dict'" class="tag-layout">
       <div class="tag-sidebar">
         <div class="sidebar-header">
           <span>标签组</span>
@@ -134,6 +233,36 @@ async function handleSaveGroup() {
       </div>
     </div>
 
+    <!-- ============ 知识库标签（kb_tag 维度, 分册四） ============ -->
+    <div v-else class="kb-tag-content" v-loading="kbLoading">
+      <div class="section-header">
+        <div class="section-title">知识库标签管理</div>
+        <el-button type="primary" @click="handleAddKbTag">新增标签</el-button>
+      </div>
+      <el-table :data="kbTags" stripe>
+        <el-table-column label="标签名称" min-width="140">
+          <template #default="{ row }">
+            <el-tag :color="row.color || '#409EFF'" style="color: #fff; border: none">{{ row.name }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="归属知识库" prop="kbId" width="120" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">
+            {{ ({ T1: '文档分类', T2: '优先级', T3: '状态' } as Record<string, string>)[row.tagTypeId] || '-' }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="usageCount" label="引用数" width="80" align="center" />
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="handleEditKbTag(row as KbTag)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="handleDeleteKbTag(row as KbTag)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!kbTags.length && !kbLoading" description="暂无知识库标签" />
+    </div>
+
     <el-dialog v-model="showTagDialog" :title="dialogTitle" width="400px">
       <el-form label-width="80px">
         <el-form-item label="标签类型">
@@ -168,6 +297,35 @@ async function handleSaveGroup() {
       <template #footer>
         <el-button @click="showGroupDialog = false">取消</el-button>
         <el-button type="primary" @click="handleSaveGroup">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 知识库标签新增/编辑（分册四） -->
+    <el-dialog v-model="showKbTagDialog" :title="kbTagEditingId ? '编辑知识库标签' : '新增知识库标签'" width="480px">
+      <el-form label-width="80px">
+        <el-form-item label="归属知识库" required>
+          <el-select v-model="kbTagForm.kbId" style="width: 100%" :disabled="!!kbTagEditingId" placeholder="选择知识库">
+            <el-option v-for="kb in kbOptions" :key="kb.id" :label="kb.name" :value="kb.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="标签名称" required>
+          <el-input v-model="kbTagForm.name" placeholder="请输入标签名称" />
+        </el-form-item>
+        <el-form-item label="颜色">
+          <el-color-picker v-model="kbTagForm.color" />
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="kbTagForm.tagTypeId" clearable placeholder="选择标签类型" style="width: 100%">
+            <el-option v-for="t in tagTypeOptions" :key="t.value" :label="t.label" :value="t.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="描述">
+          <el-input v-model="kbTagForm.description" placeholder="标签描述" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showKbTagDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveKbTag">确定</el-button>
       </template>
     </el-dialog>
   </div>
@@ -222,5 +380,23 @@ async function handleSaveGroup() {
   align-items: center;
   justify-content: space-between;
   margin-bottom: $spacing-base;
+}
+
+.tag-dimension {
+  display: flex;
+  align-items: center;
+  gap: $spacing-base;
+  margin-bottom: $spacing-base;
+
+  &__desc {
+    font-size: 12px;
+    color: $text-secondary;
+  }
+}
+
+.kb-tag-content {
+  background: $bg-white;
+  border-radius: $radius-base;
+  padding: $spacing-lg;
 }
 </style>

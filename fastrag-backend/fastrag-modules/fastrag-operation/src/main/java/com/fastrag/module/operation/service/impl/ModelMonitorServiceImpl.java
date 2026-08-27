@@ -36,7 +36,7 @@ public class ModelMonitorServiceImpl implements ModelMonitorService {
         if (user != null && !user.getUserId().startsWith("api-token:")) {
             String orgId = user.getOrgId();
             if (orgId != null && !orgId.isEmpty()) {
-                return " AND org_id =  + orgId + ";
+                return " AND org_id = '" + orgId + "'";
             }
             return " AND 1=0";
         }
@@ -143,37 +143,20 @@ public class ModelMonitorServiceImpl implements ModelMonitorService {
         }
 
         // ===== 4. 模型调用统计（分页） =====
-        // 先按 model_id 分组统计
+        // 按 model_id 分组统计，关键字筛选与分页全部下沉到 SQL（避免全量聚合到内存）
         boolean hasKeyword = keyword != null && !keyword.isEmpty();
-        List<Map<String, Object>> allModelStats = mapper.selectMaps(
-                new QueryWrapper<ModelCallLog>()
-                        .select("model_id, COUNT(*) as calls, SUM(tokens) as tokens, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as fails")
-                        .apply(timeCond + orgCond())
-                        .groupBy("model_id")
-                        .orderByDesc("tokens")
-        );
-
-        // 筛选
-        List<Map<String, Object>> filtered = allModelStats;
+        var statsWrapper = new QueryWrapper<ModelCallLog>()
+                .select("model_id, COUNT(*) as calls, SUM(tokens) as tokens, SUM(CASE WHEN status='failed' THEN 1 ELSE 0 END) as fails")
+                .apply(timeCond + orgCond())
+                .groupBy("model_id")
+                .orderByDesc("tokens");
         if (hasKeyword) {
-            String kw = keyword.toLowerCase();
-            filtered = allModelStats.stream()
-                    .filter(r -> {
-                        String mid = (String) r.get("model_id");
-                        return mid != null && mid.toLowerCase().contains(kw);
-                    })
-                    .collect(Collectors.toList());
+            statsWrapper.like("model_id", keyword);
         }
+        Page<Map<String, Object>> statsPage = mapper.selectMapsPage(new Page<>(page, pageSize), statsWrapper);
+        long total = statsPage.getTotal();
 
-        long total = filtered.size();
-        int fromIndex = (page - 1) * pageSize;
-        int toIndex = Math.min(fromIndex + pageSize, filtered.size());
-        List<Map<String, Object>> pageRows = filtered.subList(
-                Math.min(fromIndex, filtered.size()),
-                Math.min(toIndex, filtered.size())
-        );
-
-        List<ModelMonitorData.ModelStatsItem> statsItems = pageRows.stream()
+        List<ModelMonitorData.ModelStatsItem> statsItems = statsPage.getRecords().stream()
                 .map(r -> {
                     String modelId = (String) r.get("model_id");
                     long calls = ((Number) r.get("calls")).longValue();
@@ -190,7 +173,7 @@ public class ModelMonitorServiceImpl implements ModelMonitorService {
                 })
                 .collect(Collectors.toList());
 
-        PageResult<ModelMonitorData.ModelStatsItem> statsPage =
+        PageResult<ModelMonitorData.ModelStatsItem> statsPageResult =
                 PageResult.of(statsItems, total, page, pageSize);
 
         // ===== 组装返回 =====
@@ -198,7 +181,7 @@ public class ModelMonitorServiceImpl implements ModelMonitorService {
                 .metrics(metrics)
                 .distribution(distribution)
                 .topApps(topApps)
-                .stats(statsPage)
+                .stats(statsPageResult)
                 .build();
     }
 

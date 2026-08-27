@@ -1,0 +1,19 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <title>ChunkBoundary</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- 精简为选区监视器：选中/三击/复制后这里实时显示捕获字数 -->
+  <div class="plugin-status" id="sel-status">选区监听运行中…<br /><span style="font-size:11px;color:#909399">在文档中框选 / 三击 / 复制即可捕获</span></div>
+
+  <!-- OO 插件 SDK 引导：与编辑器握手、挂载 window.Asc.plugin。
+       注意：用绝对地址指向前端 Vite —— docserver 对 /7.4.1-36/ 版本化静态资源有
+       启动时快照/长缓存语义，bind-mount 热更新会读到旧文件；Vite public 资源 no-cache。
+       （TODO 生产部署：把插件随镜像打包或改 nginx no-cache 规则后可改回相对路径） -->
+  <script src="v1/plugins.js"></script>
+  <script src="plugin.js"></script>
+</body>
+</html>

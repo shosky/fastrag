@@ -491,6 +491,50 @@ public class MediaExtractor {
     }
 
     /**
+     * 提取 PDF 内容图片的渲染位置盒（供 AI 分片「原件渲染」可视化画 image 框）。
+     * <p>复用 {@link #collectImageBoxes(PDPage)} 的 CTM 位置采集与页眉/页脚/装饰尺寸过滤规则；
+     * 不做颜色过滤与频次去重（需逐图解码/哈希，可视化场景容忍个别装饰图多画一个框）。
+     * 同一图片多处绘制时每个出现位置各产出一个盒。</p>
+     * <p>坐标已从用户空间（y 向上）转换为<b>顶左原点（y 向下、单位 pt）</b>，与前端 pdf.js overlay 一致。</p>
+     */
+    public List<PdfImageBox> extractContentImageBoxes(org.apache.pdfbox.pdmodel.PDDocument doc) {
+        List<PdfImageBox> result = new ArrayList<>();
+        try {
+            for (int pageNum = 0; pageNum < doc.getNumberOfPages(); pageNum++) {
+                org.apache.pdfbox.pdmodel.PDPage page = doc.getPage(pageNum);
+                org.apache.pdfbox.pdmodel.common.PDRectangle pageBox = page.getMediaBox();
+                float pageH = pageBox.getHeight();
+                double pageArea = (double) pageBox.getWidth() * pageH;
+
+                Map<String, List<float[]>> boxesByName = collectImageBoxes(page);
+                org.apache.pdfbox.pdmodel.PDResources resources = page.getResources();
+                for (var name : resources.getXObjectNames()) {
+                    var xobject = resources.getXObject(name);
+                    if (!(xobject instanceof org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject image)) {
+                        continue;
+                    }
+                    if (ImageFilter.isDecorativeBySize(image.getWidth(), image.getHeight())) continue;
+                    double imgArea = (double) image.getWidth() * image.getHeight();
+                    if (imgArea / pageArea < 0.01) continue;
+                    List<float[]> boxes = boxesByName.get(name.getName());
+                    if (boxes == null || isInHeaderFooterZone(boxes, pageH, imgArea, pageArea)) continue;
+                    for (float[] b : boxes) {
+                        // [minX,minY,maxX,maxY]（y 向上）→ 顶左原点 [x,y,w,h]（y 向下）
+                        result.add(new PdfImageBox(pageNum + 1, b[0], pageH - b[3], b[2] - b[0], b[3] - b[1]));
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("Failed to collect content image boxes: {}", e.getMessage());
+        }
+        return result;
+    }
+
+    /** PDF 内容图片渲染位置盒（顶左原点、pt，page 为 1-based 页码） */
+    public record PdfImageBox(int page, float x, float y, float width, float height) {
+    }
+
+    /**
      * 采集页面内嵌图片的渲染位置（页面用户空间坐标，y 轴向上，单位 pt），
      * 按图片 XObject 名称分组（同一图片多处绘制会有多个位置）。
      * <p>通过遍历页面 content stream 的 Do 操作符与 CTM 矩阵计算边界框，

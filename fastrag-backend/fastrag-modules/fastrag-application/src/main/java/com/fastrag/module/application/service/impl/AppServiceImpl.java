@@ -1,6 +1,7 @@
 package com.fastrag.module.application.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.llm.LlmService;
 import com.fastrag.ai.model.ChatMessage;
@@ -13,6 +14,8 @@ import com.fastrag.module.application.dto.AppSessionDTO;
 import com.fastrag.module.application.entity.*;
 import com.fastrag.module.application.mapper.*;
 import com.fastrag.module.application.service.AppService;
+import com.fastrag.module.knowledge.entity.KnowledgeBase;
+import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.platform.entity.ModelRecord;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import com.fastrag.module.retrieval.model.RetrievalRequest;
@@ -45,6 +48,7 @@ public class AppServiceImpl implements AppService {
     private final AppConversationMessageMapper convMsgMapper;
     private final AppKbBindingMapper kbBindingMapper;
     private final AppBasicConfigMapper basicConfigMapper;
+    private final KnowledgeBaseMapper kbMapper;
     private final ModelRecordMapper modelRecordMapper;
     private final AppToolBindingMapper toolBindingMapper;
     private final AppSkillBindingMapper skillBindingMapper;
@@ -676,12 +680,9 @@ public class AppServiceImpl implements AppService {
                 RetrievalRequest req = new RetrievalRequest();
                 req.setKnowledgeId(binding.getKbId());
                 req.setQuery(query);
-                // 设置默认检索配置：top 5，混合模式
-                RetrievalRequest.RetrievalConfig config = new RetrievalRequest.RetrievalConfig();
-                config.setTopK(5);
-                config.setMode("hybrid");
-                config.setSimilarityThreshold(0.3);
-                req.setConfig(config);
+                // 透传 KB 保存的检索配置（如上下文组装策略 parent_chunk/window/auto），
+                // 避免 App 会话检索退化为 concat。App 侧仅设置对话所需的基本预算（top 5）。
+                req.setConfig(buildRetrievalConfig(binding));
 
                 List<SearchResultItem> results = retrievalService.search(req);
                 for (SearchResultItem item : results) {
@@ -707,6 +708,45 @@ public class AppServiceImpl implements AppService {
         }
         ctx.setRagContext(context.length() > 0 ? context.toString() : null);
         return ctx;
+    }
+
+    /**
+     * 构建 App 会话检索的 RetrievalConfig：以 KB 保存的检索配置为基底，
+     * 仅覆盖 App 对话所需的基本预算（topK=5）。
+     *
+     * <p>优先级与 {@code RetrievalServiceImpl.loadAndMergeConfig} 一致：请求参数 &gt; KB 保存配置 &gt; 系统默认。
+     * 因此这里把 KB 保存的配置（含 contextAssemblyStrategy 等）解析出来，
+     * 只设置 topK，其余字段交检索服务按「请求参数 > KB 配置 > 系统默认」合并——
+     * 这样知识库配置的上下文组装策略（auto/parent_chunk/window）在 App 会话检索中同样生效，
+     * 而不是退化为默认 concat。</p>
+     */
+    private RetrievalRequest.RetrievalConfig buildRetrievalConfig(AppKbBinding binding) {
+        RetrievalRequest.RetrievalConfig config = new RetrievalRequest.RetrievalConfig();
+        // App 对话的上下文预算：top 5（避免注入 prompt 的参考资料过多）
+        config.setTopK(5);
+        try {
+            KnowledgeBase kb = kbMapper.selectById(binding.getKbId());
+            if (kb != null && StrUtil.isNotBlank(kb.getRetrievalConfig())) {
+                RetrievalRequest.RetrievalConfig saved =
+                        JSONUtil.toBean(kb.getRetrievalConfig(), RetrievalRequest.RetrievalConfig.class);
+                if (saved != null) {
+                    // 仅当 KB 配置里设置了这些语义增强/组装策略时才透传，
+                    // 其余字段保持默认（由检索服务合并系统默认值）
+                    config.setContextAssemblyStrategy(saved.getContextAssemblyStrategy());
+                    config.setEnableClauseRecall(saved.getEnableClauseRecall());
+                    config.setContextWindowSize(saved.getContextWindowSize());
+                    config.setMaxContextTokens(saved.getMaxContextTokens());
+                    config.setEnableRerank(saved.getEnableRerank());
+                    config.setRerankModel(saved.getRerankModel());
+                    config.setEnableMultiQuery(saved.getEnableMultiQuery());
+                    config.setEnableSynonymExpansion(saved.getEnableSynonymExpansion());
+                }
+            }
+        } catch (Exception e) {
+            log.warn("[AppChat] Failed to load KB retrieval config for kbId={}, use defaults: {}",
+                    binding.getKbId(), e.getMessage());
+        }
+        return config;
     }
 
     /** RAG 检索结果：拼接进 system prompt 的上下文 + 供前端展示的知识来源列表 */

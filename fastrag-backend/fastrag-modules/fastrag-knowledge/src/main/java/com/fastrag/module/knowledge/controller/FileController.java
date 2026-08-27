@@ -41,9 +41,12 @@ import com.fastrag.security.annotation.KbAuth;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
+import com.fastrag.module.knowledge.model.FileBatchTagRequest;
 import com.fastrag.module.knowledge.model.FileDto;
+import com.fastrag.module.knowledge.model.FileMetadataUpdateRequest;
 import com.fastrag.module.knowledge.model.FileProcessRequest;
 import com.fastrag.module.knowledge.model.ParseStrategyRequest;
+import com.fastrag.module.knowledge.service.FileMetadataService;
 import com.fastrag.module.knowledge.service.FileService;
 import com.fastrag.module.publish.service.LogService;
 import com.fastrag.security.util.SecurityUtil;
@@ -60,6 +63,7 @@ import org.springframework.web.multipart.MultipartFile;
 import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
+import java.util.List;
 import java.util.Map;
 
 @RestController
@@ -71,6 +75,7 @@ public class FileController {
     private final MinioService minioService;
     private final KbFileMapper fileMapper;
     private final LogService logService;
+    private final FileMetadataService metadataService;
 
     @KbAuth(KBRole.viewer)
     @GetMapping
@@ -128,11 +133,67 @@ public class FileController {
                                   @RequestBody(required = false) Map<String, Object> body) {
         // strategyId 三态：字段缺省=沿用当前绑定；非空 id=换绑重切；空串=清除覆盖回自动匹配重切
         String strategyId = null;
-        if (body != null && body.containsKey("strategyId")) {
-            Object v = body.get("strategyId");
-            strategyId = v == null ? "" : String.valueOf(v);
+        String presetStrategy = null;
+        if (body != null) {
+            if (body.containsKey("strategyId")) {
+                Object v = body.get("strategyId");
+                strategyId = v == null ? "" : String.valueOf(v);
+            }
+            // presetStrategy（如 "structure_aware"）：仅当未显式传 strategyId 时生效，
+            // 由服务端自动确保文件绑定该策略（「按结构分片」一键入口）
+            if (body.containsKey("presetStrategy")) {
+                Object v = body.get("presetStrategy");
+                presetStrategy = v == null ? null : String.valueOf(v);
+            }
         }
-        return ApiResponse.success(svc.reChunkFile(kbId, id, strategyId));
+        return ApiResponse.success(svc.reChunkFile(kbId, id, strategyId, presetStrategy));
+    }
+
+    /**
+     * 获取已解析文件的 Markdown 全文。
+     * 数据由 IngestionConsumer 在解析完成后按约定路径 {kbId}/{fileId}/parsed.md 落盘到 MinIO。
+     * 文件不存在或尚未生成（音视频/图片/未处理文档）时返回 markdown_not_ready。
+     */
+    @KbAuth(KBRole.viewer)
+    @GetMapping("/{fileId}/markdown")
+    public ApiResponse<?> getMarkdown(@PathVariable String kbId, @PathVariable String fileId) {
+        String key = kbId + "/" + fileId + "/parsed.md";
+        try (InputStream is = minioService.download(key)) {
+            String md = new String(is.readAllBytes(), StandardCharsets.UTF_8);
+            return ApiResponse.success(md);
+        } catch (Exception e) {
+            return ApiResponse.error(404,
+                    "Markdown 尚未生成。请重新上传该文档，或确认文件为文档类（doc/docx/pdf/pptx/xlsx/txt/md 等）。");
+        }
+    }
+
+    /**
+     * 保存已解析文件的 Markdown 全文（写入 MinIO 约定路径）。
+     * 可选 {@code rechunk=true} 在保存后触发重新分片（沿用现有 re-chunk 底层能力）。
+     */
+    @KbAuth(KBRole.editor)
+    @Loggable(category = LogCategory.operation, action = ActionType.file_updated, detail = "保存文件 Markdown 全文")
+    @PutMapping("/{fileId}/markdown")
+    public ApiResponse<?> saveMarkdown(@PathVariable String kbId, @PathVariable String fileId,
+                                       @RequestParam(name = "rechunk", defaultValue = "false") boolean rechunk,
+                                       @RequestBody String markdown) {
+        if (markdown == null) markdown = "";
+        String key = kbId + "/" + fileId + "/parsed.md";
+        try (java.io.ByteArrayInputStream in = new java.io.ByteArrayInputStream(
+                markdown.getBytes(StandardCharsets.UTF_8))) {
+            minioService.upload(key, in, "text/markdown");
+        } catch (Exception e) {
+            return ApiResponse.error(500, "Markdown 保存失败：" + e.getMessage());
+        }
+        if (rechunk) {
+            try {
+                svc.reChunkFile(kbId, fileId, null);
+            } catch (Exception e) {
+                return ApiResponse.error(500,
+                        "Markdown 已保存，但触发重新分片失败：" + e.getMessage());
+            }
+        }
+        return ApiResponse.success();
     }
 
     @KbAuth(KBRole.editor)
@@ -154,6 +215,69 @@ public class FileController {
             log.error("Failed to log file update", e);
         }
         return ApiResponse.success(result);
+    }
+
+    // ==================== 文件元数据管理（分册四 rag-file-metadata-management.md） ====================
+
+    /**
+     * 查看文件元数据（固定字段 + 标签 + 自定义属性 + 状态）。验收项 A1。
+     */
+    @KbAuth(KBRole.viewer)
+    @GetMapping("/{id}/metadata")
+    public ApiResponse<?> metadata(@PathVariable String kbId, @PathVariable String id) {
+        return ApiResponse.success(metadataService.getMetadata(kbId, id));
+    }
+
+    /**
+     * 全量更新文件元数据（固定字段 + 自定义属性取值）；写入即视为人工校订（revised/manual），
+     * 事务内回填 kb_chunk 冗余列。标签走独立 PUT /{id}/tags。验收项 A2/A7。
+     */
+    @KbAuth(KBRole.editor)
+    @Loggable(category = LogCategory.operation, action = ActionType.file_updated, detail = "更新文件元数据")
+    @PutMapping("/{id}/metadata")
+    public ApiResponse<?> updateMetadata(@PathVariable String kbId, @PathVariable String id,
+                                         @RequestBody FileMetadataUpdateRequest req) {
+        return ApiResponse.success(metadataService.updateMetadata(kbId, id, req));
+    }
+
+    /**
+     * 替换式设置单文件标签（body: {tagIds:[...]}）。验收项 A3。
+     */
+    @KbAuth(KBRole.editor)
+    @Loggable(category = LogCategory.operation, action = ActionType.file_updated, detail = "更新文件标签")
+    @PutMapping("/{id}/tags")
+    public ApiResponse<?> setTags(@PathVariable String kbId, @PathVariable String id,
+                                  @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<String> tagIds = body != null && body.get("tagIds") instanceof List
+                ? (List<String>) body.get("tagIds") : List.of();
+        metadataService.setFileTags(kbId, id, tagIds);
+        return ApiResponse.success();
+    }
+
+    /**
+     * 批量打标（增量加/删一批文件的标签）。验收项 A4。
+     */
+    @KbAuth(KBRole.editor)
+    @Loggable(category = LogCategory.operation, action = ActionType.file_updated, detail = "批量打标")
+    @PostMapping("/batch-tags")
+    public ApiResponse<?> batchTags(@PathVariable String kbId, @RequestBody FileBatchTagRequest req) {
+        return ApiResponse.success(metadataService.batchSetTags(kbId, req));
+    }
+
+    /**
+     * 存量文件元数据补抽（规则抽取；仅覆盖 none/partial，force=true 强制重抽，失败置 partial）。验收项 A8。
+     */
+    @KbAuth(KBRole.editor)
+    @Loggable(category = LogCategory.operation, action = ActionType.file_updated, detail = "存量元数据补抽")
+    @PostMapping("/metadata/extract")
+    public ApiResponse<?> extractMetadata(@PathVariable String kbId,
+                                          @RequestBody(required = false) Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<String> fileIds = body != null && body.get("fileIds") instanceof List
+                ? (List<String>) body.get("fileIds") : List.of();
+        boolean force = body != null && Boolean.TRUE.equals(body.get("force"));
+        return ApiResponse.success(metadataService.extractMetadata(kbId, fileIds, force));
     }
 
     @KbAuth(KBRole.editor)

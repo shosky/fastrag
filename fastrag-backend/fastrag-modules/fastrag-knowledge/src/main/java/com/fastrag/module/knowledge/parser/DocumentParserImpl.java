@@ -188,8 +188,15 @@ public class DocumentParserImpl implements DocumentParser {
                 fullText = enhanceWithLlm(fullText, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
             }
 
+            // 结构化：把纯文本 + [PAGE_BREAK:n] 转成 DocNode，再经 MarkdownSerializer 产出 markdown，
+            // 与 docx/pptx/xlsx 对齐（见 docs/design/parsed-markdown.md ADR-2）。
+            // 这使 PDF 也拥有 heading 上下文、表格/图片引用、markdown 分片能力。
+            List<DocNode> pdfNodes = buildPdfDocNodes(fullText, pageTitles);
+            String markdown = markdownSerializer.serialize(pdfNodes);
+
             return ParseResult.builder()
-                    .text(fullText)
+                    .text(markdown)
+                    .nodes(pdfNodes)
                     .pages(totalPages)
                     .pageTitles(pageTitles)
                     .build();
@@ -226,6 +233,60 @@ public class DocumentParserImpl implements DocumentParser {
         long digitTokens = java.util.Arrays.stream(t.split("\\s+"))
                 .filter(w -> w.matches(".*\\d.*")).count();
         return digitTokens < 3;
+    }
+
+    /**
+     * 把 PDF 解析出的"纯文本 + [PAGE_BREAK:n]"转换为结构化 DocNode 列表：
+     * - [PAGE_BREAK:n] 作为分页边界（不产出节点，MarkdownSerializer 对 PAGE_BREAK 输出空串）；
+     * - 每页首个非空段若匹配该页最近标题（pageTitles），先产一个 HEADING 节点（level=2）；
+     * - 余下文本按空行分段为 PARAGRAPH 节点，保留 pageNumber。
+     *
+     * <p>见 docs/design/parsed-markdown.md ADR-2：让 PDF 与 docx/pptx/xlsx 输出同一中间表征。</p>
+     */
+    private List<DocNode> buildPdfDocNodes(String fullText, Map<Integer, String> pageTitles) {
+        List<DocNode> nodes = new ArrayList<>();
+        if (fullText == null || fullText.isEmpty()) return nodes;
+
+        String[] pages = fullText.split("\\[PAGE_BREAK:\\d+\\]");
+        for (int i = 0; i < pages.length; i++) {
+            String pageText = pages[i] == null ? "" : pages[i].trim();
+            if (pageText.isEmpty()) continue;
+
+            String pageTitle = (pageTitles != null) ? pageTitles.get(i + 1) : null;
+            boolean titleEmitted = false;
+
+            String[] paragraphs = pageText.split("\\n\\s*\\n");
+            for (String p : paragraphs) {
+                String trimmed = p.trim();
+                if (trimmed.isEmpty()) continue;
+
+                if (!titleEmitted && pageTitle != null && trimmed.equals(pageTitle)) {
+                    nodes.add(DocNode.builder()
+                            .type(DocNode.NodeType.HEADING)
+                            .level(2)
+                            .title(pageTitle)
+                            .pageNumber(i)
+                            .build());
+                    titleEmitted = true;
+                    continue;
+                }
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.PARAGRAPH)
+                        .content(trimmed)
+                        .pageNumber(i)
+                        .build());
+            }
+            // 该页没有能与标题精确匹配的段落，仍单独落一个 HEADING 以保留章节上下文
+            if (!titleEmitted && pageTitle != null) {
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.HEADING)
+                        .level(2)
+                        .title(pageTitle)
+                        .pageNumber(i)
+                        .build());
+            }
+        }
+        return nodes;
     }
 
     private ParseResult parseDocx(InputStream stream, KbParseStrategy strategy) throws Exception {
@@ -887,7 +948,7 @@ public class DocumentParserImpl implements DocumentParser {
                         .level(1)
                         .title(slideTitle != null && !slideTitle.isBlank()
                                 ? slideTitle : "第 " + (slideIndex + 1) + " 页")
-                        .pageNumber(slideIndex)
+                        .pageNumber(slideIndex + 1)
                         .build());
 
                 // 遍历 shapes（递归处理组形状）
@@ -933,13 +994,13 @@ public class DocumentParserImpl implements DocumentParser {
                             .type(DocNode.NodeType.HEADING)
                             .level(1)
                             .title(text)
-                            .pageNumber(slideIndex)
+                            .pageNumber(slideIndex + 1)
                             .build());
                 } else {
                     nodes.add(DocNode.builder()
                             .type(DocNode.NodeType.PARAGRAPH)
                             .content(text)
-                            .pageNumber(slideIndex)
+                            .pageNumber(slideIndex + 1)
                             .build());
                 }
             } else if (shape instanceof XSLFTable table) {
@@ -964,7 +1025,7 @@ public class DocumentParserImpl implements DocumentParser {
                         .type(DocNode.NodeType.IMAGE)
                         .imageKey(imageKey)
                         .imageCaption("图片")
-                        .pageNumber(slideIndex)
+                        .pageNumber(slideIndex + 1)
                         .build());
                 images.add(ParseResult.ParseImage.builder()
                         .imageKey(imageKey)
@@ -973,7 +1034,7 @@ public class DocumentParserImpl implements DocumentParser {
                         .width(w)
                         .height(h)
                         .context("第 " + (slideIndex + 1) + " 页")
-                        .pageNumber(slideIndex)
+                        .pageNumber(slideIndex + 1)
                         .build());
             } else if (shape instanceof XSLFGroupShape group) {
                 // 组形状：递归
@@ -1079,7 +1140,7 @@ public class DocumentParserImpl implements DocumentParser {
                         .level(1)
                         .title(slideTitle != null && !slideTitle.isBlank()
                                 ? slideTitle : "第 " + (slideIndex + 1) + " 页")
-                        .pageNumber(slideIndex)
+                        .pageNumber(slideIndex + 1)
                         .build());
 
                 parsePptLegacyShapes(slide, nodes, images, slideIndex, skippedDecorative);
@@ -1127,13 +1188,13 @@ public class DocumentParserImpl implements DocumentParser {
                             .type(DocNode.NodeType.HEADING)
                             .level(1)
                             .title(text)
-                            .pageNumber(slideIndex)
+                            .pageNumber(slideIndex + 1)
                             .build());
                 } else {
                     nodes.add(DocNode.builder()
                             .type(DocNode.NodeType.PARAGRAPH)
                             .content(text)
-                            .pageNumber(slideIndex)
+                            .pageNumber(slideIndex + 1)
                             .build());
                 }
             } else if (shape instanceof org.apache.poi.hslf.usermodel.HSLFPictureShape pic) {
@@ -1163,7 +1224,7 @@ public class DocumentParserImpl implements DocumentParser {
                         .type(DocNode.NodeType.IMAGE)
                         .imageKey(imageKey)
                         .imageCaption("图片")
-                        .pageNumber(slideIndex)
+                        .pageNumber(slideIndex + 1)
                         .build());
                 images.add(ParseResult.ParseImage.builder()
                         .imageKey(imageKey)
@@ -1172,7 +1233,7 @@ public class DocumentParserImpl implements DocumentParser {
                         .width(w)
                         .height(h)
                         .context("第 " + (slideIndex + 1) + " 页")
-                        .pageNumber(slideIndex)
+                        .pageNumber(slideIndex + 1)
                         .build());
             } else if (shape instanceof ShapeContainer<?, ?> group) {
                 // 组形状：递归
@@ -1208,7 +1269,7 @@ public class DocumentParserImpl implements DocumentParser {
                 .type(DocNode.NodeType.TABLE)
                 .headers(headers)
                 .rows(rows)
-                .pageNumber(slideIndex)
+                .pageNumber(slideIndex + 1)
                 .build();
     }
 
@@ -1340,7 +1401,7 @@ public class DocumentParserImpl implements DocumentParser {
                         .type(DocNode.NodeType.HEADING)
                         .level(1)
                         .title(sheetName)
-                        .pageNumber(sheetIndex)
+                        .pageNumber(sheetIndex + 1)
                         .build());
 
                 // Q10: 有效行范围
@@ -1436,20 +1497,20 @@ public class DocumentParserImpl implements DocumentParser {
                         nodes.add(DocNode.builder()
                                 .type(DocNode.NodeType.PARAGRAPH)
                                 .content(tableTitle)
-                                .pageNumber(sheetIndex)
+                                .pageNumber(sheetIndex + 1)
                                 .build());
                     }
                     nodes.add(DocNode.builder()
                             .type(DocNode.NodeType.TABLE)
                             .headers(headers)
                             .rows(rows)
-                            .pageNumber(sheetIndex)
+                            .pageNumber(sheetIndex + 1)
                             .build());
                     if (!noteRows.isEmpty()) {
                         nodes.add(DocNode.builder()
                                 .type(DocNode.NodeType.PARAGRAPH)
                                 .content(String.join("\n", noteRows))
-                                .pageNumber(sheetIndex)
+                                .pageNumber(sheetIndex + 1)
                                 .build());
                     }
                 }

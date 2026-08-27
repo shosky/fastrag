@@ -4,6 +4,8 @@ import { nextTick, onBeforeUnmount, watch } from 'vue'
 import { ArrowLeft, Download, Search, Edit, Grid, ArrowDown, ArrowUp, ArrowRight, Delete, Upload, Setting, VideoPlay, VideoPause, Plus } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+import type { AttrDef } from '@/types/knowledge'
+import FileMetadataEditor from './components/FileMetadataEditor.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -44,14 +46,14 @@ const fileInfo = ref({
   id: fileId,
   name: `文件_${fileId.slice(-6)}`,
   category: routeCategory as 'video' | 'audio' | 'document' | 'image',
-  extension: '.pdf',
+  extension: '',
   size: 0,
   chunkCount: 0,
-  strategy: 'General',
+  strategy: '',
   parseStrategyName: '',
-  chunkSize: 2000,
-  overlapSize: 100,
-  embeddingModel: 'text-embedding-v4',
+  chunkSize: 0,
+  overlapSize: 0,
+  embeddingModel: '',
   url: '',
   createdAt: '',
   updatedAt: '',
@@ -65,7 +67,7 @@ async function loadFileInfo() {
     const file = files.find((f: any) => f.id === fileId)
     if (file) {
       fileInfo.value.name = file.name || fileInfo.value.name
-      fileInfo.value.extension = file.extension || fileInfo.value.extension
+      fileInfo.value.extension = file.extension || ''
       fileInfo.value.size = file.size || fileInfo.value.size
       fileInfo.value.chunkCount = file.chunkCount || fileInfo.value.chunkCount
       fileInfo.value.url = file.url || ''
@@ -73,15 +75,74 @@ async function loadFileInfo() {
       fileInfo.value.parseStrategyName = file.parseStrategyName || ''
       fileInfo.value.createdAt = file.createdAt || fileInfo.value.createdAt
       fileInfo.value.updatedAt = file.updatedAt || fileInfo.value.updatedAt
+      // 读取真实解析策略高级配置（分块大小/重叠/策略），嵌入模型在 KB 级配置
+      const adv = file.parseStrategyAdvanced
+      const chunkCfg = adv?.chunk
+      if (chunkCfg) {
+        fileInfo.value.strategy = chunkCfg.strategy || ''
+        fileInfo.value.chunkSize = typeof chunkCfg.chunkLength === 'number' ? chunkCfg.chunkLength : 0
+        fileInfo.value.overlapSize = typeof chunkCfg.overlap === 'number' ? chunkCfg.overlap : 0
+        if (chunkCfg.embeddingModel) fileInfo.value.embeddingModel = chunkCfg.embeddingModel
+      }
+      // 嵌入模型优先取知识库配置（kb.embedding_model 是向量化的真源）
+      try {
+        const kbRes: any = await api.getKnowledgeBaseDetail(kbId)
+        if (kbRes?.embeddingModel) fileInfo.value.embeddingModel = kbRes.embeddingModel
+      } catch {
+        // 忽略：获取 KB 详情失败则沿用现状
+      }
     }
   } catch {
     // ignore
   }
 }
 
+// --- 文件元数据只读摘要（编辑后刷新；显示在侧栏最底部） ---
+const metadataEditVisible = ref(false)
+const fileMeta = ref<{ attrSchema: AttrDef[]; values: Record<string, unknown> }>({ attrSchema: [], values: {} })
+
+async function loadFileMeta() {
+  try {
+    const res: any = await api.getFileMetadata(kbId, fileId)
+    const meta = res || {}
+    fileMeta.value = {
+      attrSchema: meta.attrSchema || [],
+      values: meta.values || {},
+    }
+  } catch {
+    fileMeta.value = { attrSchema: [], values: {} }
+  }
+}
+
+function openMetaEdit() {
+  metadataEditVisible.value = true
+}
+
+function onMetaSavedFromDialog() {
+  loadFileMeta()
+  metadataEditVisible.value = false
+}
+
+function metaDisplayValue(def: AttrDef): string {
+  const v = fileMeta.value.values?.[def.name]
+  if (v === undefined || v === null) return '未填'
+  if (Array.isArray(v)) return (v as string[]).join('、')
+  if (def.type === 'region') {
+    const s = String(v).trim()
+    if (!s) return '未填'
+    if (s.startsWith('[')) {
+      try { return (JSON.parse(s) as string[]).join('、') } catch { return s }
+    }
+    return s
+  }
+  const str = String(v)
+  return str.trim() ? str : '未填'
+}
+
 loadFileInfo().then(() => {
   loadImage()
   loadMedia()
+  loadFileMeta()
   if (isQaMode.value) {
     loadQaPairs()
   }
@@ -185,8 +246,12 @@ function onVideoEnded() {
   mediaCurrentTime.value = 0
 }
 
-// --- Markdown 内容 ---
-const markdownContent = ref('')
+// --- Markdown 内容（解析阶段落盘的完整 markdown，与分页的 chunks 完全解耦） ---
+const originalMarkdown = ref('')
+const markdownLoading = ref(false)
+const markdownNotReady = ref(false)
+const markdownLastSavedAt = ref(0)
+const markdownSaveRechunk = ref(false)
 
 // --- 图片预览 URL（带 token 加载） ---
 const imageUrl = ref('')
@@ -224,14 +289,10 @@ async function loadChunks() {
     const res: any = await api.getChunks(kbId, { fileId, page: currentPage.value, pageSize: pageSize.value })
     const list = res?.list || res || []
     totalChunks.value = res?.total || 0
+    // 全文件聚合统计（后端返回，区别于当前分页）
+    fileParentCount.value = res?.parentCount ?? 0
+    fileTokenTotal.value = res?.tokenTotal ?? 0
     chunks.value = (list || []).map((mc: any, i: number) => mapChunk(mc, i))
-    // 生成 markdown 内容（如果 chunk 有 headingPath 则在内容前加层级路径注释）
-    if (chunks.value.length > 0) {
-      markdownContent.value = chunks.value.map((c) => {
-        const header = c.headingPath ? `> ${c.headingPath}\n\n` : ''
-        return header + c.content
-      }).join('\n\n---\n\n')
-    }
     // 有定位目标时滚动高亮（当前页未命中则翻到目标所在页）
     if (targetChunkId.value) locateTargetChunk()
   } catch {
@@ -407,20 +468,11 @@ const selectedChunk = ref<Chunk | null>(null)
 // --- Computed ---
 const chunkCount = computed(() => totalChunks.value || chunks.value.length)
 
-const parentChunkCount = computed(() => chunks.value.length)
-
-const totalTokens = computed(() => {
-  let total = 0
-  chunks.value.forEach(c => {
-    total += c.metadata.tokenCount
-    if (c.children) {
-      c.children.forEach(child => {
-        total += child.metadata.tokenCount
-      })
-    }
-  })
-  return total
-})
+// 全文件聚合（后端返回 parentCount/tokenTotal，不复用当前分页）
+const fileParentCount = ref(0)
+const fileTokenTotal = ref(0)
+const parentChunkCount = computed(() => fileParentCount.value)
+const totalTokens = computed(() => fileTokenTotal.value)
 
 const filteredChunks = computed(() => {
   if (!searchQuery.value) return chunks.value
@@ -637,13 +689,58 @@ function getCategoryIcon(category: string): string {
   return icons[category] || '📄'
 }
 
-// --- Markdown methods ---
-function saveMarkdownEdit() {
-  ElMessage.success('Markdown 内容已保存')
+// --- Markdown methods（解析阶段落盘的完整 markdown，GET/PUT 走接口） ---
+async function loadOriginalMarkdown() {
+  if (!fileId) return
+  markdownLoading.value = true
+  markdownNotReady.value = false
+  try {
+    const md = await api.getKbMarkdown(kbId, fileId)
+    originalMarkdown.value = md ?? ''
+  } catch (e: any) {
+    // 后端以 404 表示"markdown 尚未生成"（音视频/图片/未处理文档）
+    if (e?.response?.data?.code === 404) {
+      markdownNotReady.value = true
+      originalMarkdown.value = ''
+    } else {
+      ElMessage.warning(e?.message || '加载 Markdown 失败')
+      originalMarkdown.value = ''
+    }
+  } finally {
+    markdownLoading.value = false
+  }
+}
+
+// 切到 Markdown 标签时按需懒加载；保存后再切回不重拉，避免覆盖编辑内容
+watch(() => activeTab.value, (tab) => {
+  if (tab === 'markdown' && !originalMarkdown.value && !markdownLastSavedAt.value) {
+    loadOriginalMarkdown()
+  }
+})
+
+async function saveMarkdownEdit(rechunk = false) {
+  if (markdownLoading.value) return
+  markdownLoading.value = true
+  try {
+    await api.saveKbMarkdown(kbId, fileId, originalMarkdown.value, { rechunk })
+    markdownLastSavedAt.value = Date.now()
+    ElMessage.success(rechunk ? 'Markdown 已保存，已提交重新分片' : 'Markdown 已保存')
+    if (rechunk) {
+      // 编辑影响分片结果，切回 chunks 标签并刷新以展示新分片
+      activeTab.value = 'chunks'
+      await loadChunks()
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '保存失败')
+  } finally {
+    markdownLoading.value = false
+  }
 }
 
 function copyMarkdown() {
-  navigator.clipboard.writeText(markdownContent.value).then(() => {
+  const text = originalMarkdown.value || ''
+  if (!text) { ElMessage.warning('当前没有 Markdown 可复制'); return }
+  navigator.clipboard.writeText(text).then(() => {
     ElMessage.success('已复制到剪贴板')
   }).catch(() => {
     ElMessage.info('复制失败，请手动复制')
@@ -651,11 +748,14 @@ function copyMarkdown() {
 }
 
 function exportMarkdown() {
-  const blob = new Blob([markdownContent.value], { type: 'text/markdown' })
+  const text = originalMarkdown.value || ''
+  if (!text) { ElMessage.warning('当前没有 Markdown 可导出'); return }
+  const blob = new Blob([text], { type: 'text/markdown' })
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')
+  const baseName = fileInfo.value?.name ? fileInfo.value.name.replace(/\.[^/.]+$/, '') : 'document'
   a.href = url
-  a.download = `${fileInfo.value.name.replace(/\.[^/.]+$/, '')}.md`
+  a.download = `${baseName}.md`
   a.click()
   URL.revokeObjectURL(url)
   ElMessage.success('导出成功')
@@ -978,19 +1078,32 @@ onBeforeUnmount(() => {
               <div class="chunks-page__markdown-toolbar">
                 <span class="chunks-page__markdown-title">Markdown 编辑器</span>
                 <div class="chunks-page__markdown-toolbar-right">
-                  <el-button size="small" @click="copyMarkdown">复制</el-button>
-                  <el-button size="small" @click="exportMarkdown">导出</el-button>
-                  <el-button type="primary" size="small" @click="saveMarkdownEdit">保存</el-button>
+                  <el-button size="small" :disabled="markdownNotReady || markdownLoading" @click="copyMarkdown">复制</el-button>
+                  <el-button size="small" :disabled="markdownNotReady || markdownLoading" @click="exportMarkdown">导出</el-button>
+                  <el-checkbox v-model="markdownSaveRechunk" size="small" :disabled="markdownNotReady" style="margin-right: 8px">
+                    保存并重新分片
+                  </el-checkbox>
+                  <el-tooltip content="重新分片会基于新的 Markdown 重建全部切片与向量，耗时较长" placement="top">
+                    <el-button type="primary" size="small" :loading="markdownLoading"
+                               :disabled="markdownNotReady"
+                               @click="saveMarkdownEdit(markdownSaveRechunk)">保存</el-button>
+                  </el-tooltip>
                 </div>
               </div>
 
               <!-- Markdown editor -->
               <div class="chunks-page__markdown-editor">
+                <el-empty
+                  v-if="markdownNotReady"
+                  description="该文件没有 Markdown（仅 doc/docx/pdf/pptx/xlsx/txt/md 等文档类会生成）。请重新上传该文档触发解析。"
+                />
                 <el-input
-                  v-model="markdownContent"
+                  v-else
+                  v-model="originalMarkdown"
                   type="textarea"
                   :rows="20"
-                  placeholder="编辑 Markdown 内容..."
+                  :disabled="markdownLoading"
+                  placeholder="文档解析生成的 Markdown 全文，可编辑保存"
                   class="chunks-page__markdown-textarea"
                 />
               </div>
@@ -1128,10 +1241,13 @@ onBeforeUnmount(() => {
           <div class="chunks-page__metadata" :class="{ 'is-collapsed': metadataCollapsed }">
             <div class="chunks-page__metadata-header" @click="metadataCollapsed = !metadataCollapsed">
               <span class="chunks-page__metadata-title">元数据信息</span>
-              <el-icon>
-                <ArrowUp v-if="!metadataCollapsed" />
-                <ArrowDown v-else />
-              </el-icon>
+              <div class="chunks-page__metadata-header-actions" @click.stop>
+                <el-button :icon="Edit" link size="small" title="编辑元数据" @click="openMetaEdit" />
+                <el-icon>
+                  <ArrowUp v-if="!metadataCollapsed" />
+                  <ArrowDown v-else />
+                </el-icon>
+              </div>
             </div>
 
             <div v-show="!metadataCollapsed" class="chunks-page__metadata-body">
@@ -1143,7 +1259,7 @@ onBeforeUnmount(() => {
                 </div>
                 <div class="chunks-page__metadata-item">
                   <span class="chunks-page__metadata-label">文件类型</span>
-                  <span class="chunks-page__metadata-value">{{ fileInfo.extension }}</span>
+                  <span class="chunks-page__metadata-value">{{ fileInfo.extension || '—' }}</span>
                 </div>
                 <div class="chunks-page__metadata-item">
                   <span class="chunks-page__metadata-label">文件大小</span>
@@ -1164,7 +1280,7 @@ onBeforeUnmount(() => {
                   <span class="chunks-page__metadata-value">{{ parentChunkCount }}</span>
                 </div>
                 <div class="chunks-page__metadata-item">
-                  <span class="chunks-page__metadata-label">总 Token</span>
+                  <span class="chunks-page__metadata-label">总字符数</span>
                   <span class="chunks-page__metadata-value">{{ totalTokens.toLocaleString() }}</span>
                 </div>
               </div>
@@ -1175,19 +1291,19 @@ onBeforeUnmount(() => {
               <div class="chunks-page__metadata-section">
                 <div class="chunks-page__metadata-item">
                   <span class="chunks-page__metadata-label">分块策略</span>
-                  <span class="chunks-page__metadata-value">{{ fileInfo.parseStrategyName || fileInfo.strategy }}</span>
+                  <span class="chunks-page__metadata-value">{{ fileInfo.parseStrategyName || fileInfo.strategy || '未配置' }}</span>
                 </div>
                 <div class="chunks-page__metadata-item">
                   <span class="chunks-page__metadata-label">分块大小</span>
-                  <span class="chunks-page__metadata-value">{{ fileInfo.chunkSize }}</span>
+                  <span class="chunks-page__metadata-value">{{ fileInfo.chunkSize || '未配置' }}</span>
                 </div>
                 <div class="chunks-page__metadata-item">
                   <span class="chunks-page__metadata-label">重叠大小</span>
-                  <span class="chunks-page__metadata-value">{{ fileInfo.overlapSize }}</span>
+                  <span class="chunks-page__metadata-value">{{ fileInfo.overlapSize ?? '未配置' }}</span>
                 </div>
                 <div class="chunks-page__metadata-item">
                   <span class="chunks-page__metadata-label">嵌入模型</span>
-                  <span class="chunks-page__metadata-value">{{ fileInfo.embeddingModel }}</span>
+                  <span class="chunks-page__metadata-value">{{ fileInfo.embeddingModel || '未配置' }}</span>
                 </div>
               </div>
 
@@ -1225,6 +1341,18 @@ onBeforeUnmount(() => {
                   <div class="chunks-page__metadata-item">
                     <span class="chunks-page__metadata-label">父分片</span>
                     <span class="chunks-page__metadata-value">{{ selectedChunk.parentId || '无' }}</span>
+                  </div>
+                </div>
+              </template>
+
+              <!-- 文件元数据只读摘要（置于侧栏最底部，编辑后刷新） -->
+              <template v-if="fileMeta.attrSchema.length">
+                <el-divider />
+                <h5 class="chunks-page__metadata-subtitle">文件元数据</h5>
+                <div class="chunks-page__metadata-section">
+                  <div v-for="def in fileMeta.attrSchema" :key="def.name" class="chunks-page__metadata-item">
+                    <span class="chunks-page__metadata-label">{{ def.label || def.name }}</span>
+                    <span class="chunks-page__metadata-value">{{ metaDisplayValue(def) }}</span>
                   </div>
                 </div>
               </template>
@@ -1539,6 +1667,11 @@ onBeforeUnmount(() => {
         </div>
       </template>
     </el-dialog>
+
+    <!-- 编辑文件元数据（点击「元数据信息」标题右侧编辑图标打开） -->
+    <el-dialog v-model="metadataEditVisible" title="编辑文件元数据" width="620px" :close-on-click-modal="false">
+      <FileMetadataEditor :kb-id="kbId" :file-id="fileId" @saved="onMetaSavedFromDialog" />
+    </el-dialog>
   </div>
 </template>
 
@@ -1706,6 +1839,13 @@ onBeforeUnmount(() => {
       writing-mode: vertical-rl;
       text-orientation: mixed;
     }
+  }
+
+  &__metadata-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
   }
 
   &__metadata-body {

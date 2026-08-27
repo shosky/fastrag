@@ -99,6 +99,7 @@ public class BenchmarkGenerationHelper {
             }
 
             List<KbBenchmarkQuestion> entities = new ArrayList<>();
+            boolean crossBoundary = Boolean.TRUE.equals(config.getCrossBoundary());
             for (int i = 0; i < questions.size(); i++) {
                 Map<String, Object> q = questions.get(i);
                 KbBenchmarkQuestion question = new KbBenchmarkQuestion();
@@ -106,6 +107,7 @@ public class BenchmarkGenerationHelper {
                 question.setQuestionIndex(i);
                 question.setQuestion((String) q.get("question"));
                 question.setGoldAnswer((String) q.get("goldAnswer"));
+                question.setCrossBoundary(crossBoundary ? 1 : 0);
                 Object goldChunks = q.get("goldChunks");
                 if (goldChunks instanceof List) {
                     question.setGoldChunks(JSONUtil.toJsonStr(goldChunks));
@@ -233,18 +235,27 @@ public class BenchmarkGenerationHelper {
                     content.substring(0, Math.min(content.length(), 500))));
         }
 
-        return String.format("""
+        // 跨界切断测试集：要求答案横跨两个相邻片段（模拟分片边界切断的语义）
+        boolean crossBoundary = Boolean.TRUE.equals(config.getCrossBoundary());
+        String requirement = crossBoundary ? """
+                基于以下知识库文档片段，生成 %d 个"跨界完整度"测试问答对。
+                要求：
+                1. 每个问题的答案都必须横跨两个编号相邻的文档片段才能完整回答
+                   （如 [文档片段3] 与 [文档片段4]：答案要点分布在相邻两个片段中，
+                   单个片段无法回答完整——这正是分片边界切断的场景）
+                2. 问题要具体、有明确答案
+                3. 答案要从相邻的两个片段中能找到依据
+                4. goldChunks 必须同时填入这两个相邻片段括号中的完整 id（必须 2 个 id）
+                """ : """
                 基于以下知识库文档片段，生成 %d 个有意义的问答对。
                 要求：
                 1. 问题要具体、有明确答案
                 2. 答案要从提供的文档片段中能找到依据
                 3. goldChunks 填入对应文档片段括号中的完整 id（如 ["abc123_chunk_0", "def456_chunk_1"]）
+                """;
 
-                文档片段：
-                %s
-
-                返回JSON数组：[{"question":"问题","goldAnswer":"标准答案","goldChunks":["文档id"]}]
-                """, questionCount, context);
+        return String.format(requirement + "文档片段：\n%s\n\n返回JSON数组：[{\"question\":\"问题\",\"goldAnswer\":\"标准答案\",\"goldChunks\":[\"文档id\"]}]",
+                questionCount, context);
     }
 
     private String buildGraphPrompt(String kbId, int questionCount) {

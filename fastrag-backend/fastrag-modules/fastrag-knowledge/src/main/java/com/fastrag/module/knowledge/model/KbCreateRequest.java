@@ -27,4 +27,6 @@ public class KbCreateRequest {
     private List<String> tags;
     private Object fileTypeConfig;
     private Object retrievalConfig;
+    /** KB 级自定义属性定义（customAttrs 复活：JSON 数组或结构化列表，落库 kb.custom_attr_schema） */
+    private Object customAttrSchema;
 }

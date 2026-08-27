@@ -31,3 +31,19 @@ NUL
 
 uploads
 docs
+# OnlyOffice 运行时/构建产物（插件源码保留，预压缩与运行时目录不入库）
+fastrag-frontend/public/onlyoffice-plugin/**/*.gz
+docker-data/onlyoffice/logs/
+docker-data/onlyoffice/lib/
+.hub-tags.json
+
+# 环境配置与会话产物
+.env
+.zcode/
+
+# OnlyOffice 运行时密钥/状态
+docker-data/onlyoffice/data/
+
+# pnpm 误生成（项目使用 npm）
+fastrag-frontend/pnpm-lock.yaml
+fastrag-frontend/pnpm-workspace.yaml

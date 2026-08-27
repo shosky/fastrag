@@ -313,10 +313,34 @@ public class EvaluationExecutionHelper {
                 judgeReason = (String) ruleResult.get("reason");
             }
 
+            // ========== 3.5 跨界题：上下文完整度（原始命中 vs 父块扩展）==========
+            // 仅对 crossBoundary 题目计算：把标准答案拆为要点，判断检索上下文能支撑的比例
+            //（≈ Ragas context_recall），原始上下文 vs 父块扩展上下文对比可量化扩展收益
+            BigDecimal completeRaw = null;
+            BigDecimal completeExt = null;
+            if (Integer.valueOf(1).equals(question.getCrossBoundary())) {
+                try {
+                    completeRaw = judgeContextCompleteness(index, llmModel,
+                            buildContext(topChunks, 600), question.getGoldAnswer());
+                    List<Map<String, Object>> extChunks = extendWithParents(topChunks);
+                    completeExt = judgeContextCompleteness(index, llmModel,
+                            buildContext(extChunks, 1200), question.getGoldAnswer());
+                    log.info("[Evaluation] Q{} cross-boundary completeness: raw={}, parentExt={}",
+                            index + 1, completeRaw, completeExt);
+                } catch (Exception e) {
+                    log.warn("[Evaluation] Q{} cross-boundary completeness failed: {}", index + 1, e.getMessage());
+                }
+            }
+
             // ========== 4. 构建检索指标字符串 ==========
             String retrievalMetrics = String.format(
                     "R@1 %d.%03d  R@3 %d.%03d  R@5 %d.%03d  R@10 %d.%03d",
                     r1 ? 1 : 0, 0, r3 ? 1 : 0, 0, r5 ? 1 : 0, 0, r10 ? 1 : 0, 0);
+            if (completeRaw != null || completeExt != null) {
+                retrievalMetrics += String.format("  COMPLETE %.3f -> %.3f",
+                        completeRaw != null ? completeRaw.doubleValue() : -1.0,
+                        completeExt != null ? completeExt.doubleValue() : -1.0);
+            }
 
             // ========== 5. 构建结果 ==========
             KbEvaluationResult result = new KbEvaluationResult();
@@ -330,6 +354,8 @@ public class EvaluationExecutionHelper {
             result.setRecallAt3(BigDecimal.valueOf(r3 ? 1 : 0));
             result.setRecallAt5(BigDecimal.valueOf(r5 ? 1 : 0));
             result.setRecallAt10(BigDecimal.valueOf(r10 ? 1 : 0));
+            result.setContextCompleteness(completeRaw);
+            result.setContextCompletenessExtended(completeExt);
 
             return new QuestionResult(result, r1, r3, r5, r10, isCorrect, generatedAnswer);
 
@@ -498,7 +524,7 @@ public class EvaluationExecutionHelper {
                 fulltextQuery.append("+").append(keywords[i]).append("*");
             }
             return jdbcTemplate.queryForList(
-                    "SELECT id, file_id, chunk_index, content FROM kb_chunk " +
+                    "SELECT id, file_id, chunk_index, content, parent_id FROM kb_chunk " +
                     "WHERE kb_id = ? AND MATCH(content) AGAINST(? IN BOOLEAN MODE) " +
                     "ORDER BY chunk_index ASC LIMIT ?",
                     kbId, fulltextQuery.toString(), topK);
@@ -517,7 +543,7 @@ public class EvaluationExecutionHelper {
         where.append(")");
 
         return jdbcTemplate.queryForList(
-                "SELECT id, file_id, chunk_index, content FROM kb_chunk " + where +
+                "SELECT id, file_id, chunk_index, content, parent_id FROM kb_chunk " + where +
                 " ORDER BY chunk_index ASC LIMIT ?",
                 params.toArray(new Object[0]));
     }
@@ -663,16 +689,111 @@ public class EvaluationExecutionHelper {
     }
 
     private String buildContext(List<Map<String, Object>> chunks) {
+        return buildContext(chunks, 300);
+    }
+
+    private String buildContext(List<Map<String, Object>> chunks, int chunkMaxLen) {
         StringBuilder sb = new StringBuilder();
         for (int i = 0; i < chunks.size(); i++) {
             Map<String, Object> chunk = chunks.get(i);
             String content = (String) chunk.get("content");
             if (content != null) {
                 sb.append(String.format("[%d] %s\n\n", i + 1,
-                        content.length() > 300 ? content.substring(0, 300) + "..." : content));
+                        content.length() > chunkMaxLen ? content.substring(0, chunkMaxLen) + "..." : content));
             }
         }
         return sb.toString().trim();
+    }
+
+    /**
+     * 将命中子分片放大为父分片（按 parent_id 查 kb_chunk 父块全文），
+     * 无 parent_id / 父块缺失时保持子分片自身。用于对比"原始命中"与"父块扩展"
+     * 两种上下文对跨界切断问题的召回完整度。
+     */
+    private List<Map<String, Object>> extendWithParents(List<Map<String, Object>> chunks) {
+        List<Map<String, Object>> extended = new ArrayList<>();
+        for (Map<String, Object> chunk : chunks) {
+            Map<String, Object> base = new HashMap<>(chunk);
+            Object parentId = chunk.get("parent_id");
+            if (parentId != null && !parentId.toString().isBlank()) {
+                try {
+                    List<Map<String, Object>> parents = jdbcTemplate.queryForList(
+                            "SELECT id, content, parent_id FROM kb_chunk WHERE id = ? LIMIT 1",
+                            parentId.toString());
+                    if (!parents.isEmpty() && parents.get(0).get("content") != null) {
+                        base.put("content", parents.get(0).get("content"));
+                        base.put("parent_id", parents.get(0).get("parent_id"));
+                    }
+                } catch (Exception e) {
+                    log.warn("[Evaluation] extendWithParents failed for parentId={}: {}",
+                            parentId, e.getMessage());
+                }
+            }
+            extended.add(base);
+        }
+        return extended;
+    }
+
+    /**
+     * 上下文完整度（≈ Ragas context_recall）：标准答案拆为要点，LLM 判断
+     * 检索上下文能支撑的比例（0~1）。LLM 失败/解析失败 → 规则兜底（关键词命中比例）。
+     */
+    private BigDecimal judgeContextCompleteness(int index, String model,
+                                                String context, String goldAnswer) {
+        if (context == null || context.isBlank()
+                || goldAnswer == null || goldAnswer.isBlank()) {
+            return null;
+        }
+        if (context.length() > 8000) {
+            context = context.substring(0, 8000) + "...";
+        }
+        String prompt = String.format("""
+                将标准答案拆分为若干要点，逐条判断给定的检索上下文能否支撑该要点。
+                只判断"上下文中是否包含该要点的依据"，不要基于上下文之外的知识补全。
+                严格JSON：{"supported": 2, "total": 4}
+
+                标准答案：
+                %s
+                检索上下文：
+                %s
+                """, goldAnswer, context);
+
+        try {
+            ModelApi modelApi = resolveModelApi(model);
+            String response = (modelApi != null)
+                    ? llmService.chat(model, prompt, modelApi.apiUrl, modelApi.apiKey)
+                    : llmService.chat(model, prompt);
+            String json = response.trim().replaceAll("```json?", "").replaceAll("```", "").trim();
+            var obj = cn.hutool.json.JSONUtil.parseObj(json);
+            int total = obj.getInt("total", obj.getInt("t", -1));
+            int supported = obj.getInt("supported", obj.getInt("s", -1));
+            if (total > 0 && supported >= 0) {
+                double ratio = Math.max(0.0, Math.min(1.0, (double) supported / total));
+                return BigDecimal.valueOf(ratio);
+            }
+        } catch (Exception e) {
+            log.warn("[Evaluation] Q{} completeness LLM failed: {}", index + 1, e.getMessage());
+        }
+        // 规则兜底：标准答案 2~4 字关键词在上下文中的命中比例
+        return ruleBasedCompleteness(goldAnswer, context);
+    }
+
+    /** 规则完整度兜底：标准答案关键词在上下文中的命中比例；无关键词时返回 null */
+    private BigDecimal ruleBasedCompleteness(String goldAnswer, String context) {
+        try {
+            Pattern kw = Pattern.compile("[\\u4e00-\\u9fa5]{2,4}");
+            Matcher m = kw.matcher(goldAnswer);
+            Set<String> keys = new HashSet<>();
+            while (m.find()) keys.add(m.group());
+            if (keys.isEmpty()) return null;
+            int hit = 0;
+            for (String k : keys) {
+                if (context.contains(k)) hit++;
+            }
+            return BigDecimal.valueOf(Math.max(0.0, Math.min(1.0, (double) hit / keys.size())));
+        } catch (Exception e) {
+            return null;
+        }
     }
 
     // ==================== 按 ID 批量获取 Chunk ====================
@@ -686,7 +807,7 @@ public class EvaluationExecutionHelper {
         params.addAll(ids);
 
         return jdbcTemplate.queryForList(
-                "SELECT id, file_id, chunk_index, content FROM kb_chunk " +
+                "SELECT id, file_id, chunk_index, content, parent_id FROM kb_chunk " +
                 "WHERE kb_id = ? AND id IN (" + placeholders + ")",
                 params.toArray());
     }

@@ -130,29 +130,6 @@ watch(() => loginTab.value, (val) => {
 
 onUnmounted(() => stopPolling())
 
-const features = [
-  {
-    icon: 'multimodal',
-    title: '多模态知识处理',
-    desc: '文档、图片、音视频统一解析，OCR 识别、语音转写、关键帧提取一步到位',
-  },
-  {
-    icon: 'rag',
-    title: 'RAG 智能检索',
-    desc: '向量检索 + 查询增强 + 重排序多级管线，毫秒级精准召回',
-  },
-  {
-    icon: 'graph',
-    title: 'LLM 知识图谱',
-    desc: '自动抽取实体关系构建图谱，图谱查询扩展让检索更具深度',
-  },
-  {
-    icon: 'workflow',
-    title: '可视化应用编排',
-    desc: 'Workflow 工作流 + Agent 框架 + MCP 工具集成，拖拽构建 AI 应用',
-  },
-]
-
 const formatCountdown = computed(() => {
   const min = Math.floor(qrCountdown.value / 60)
   const sec = qrCountdown.value % 60
@@ -169,95 +146,20 @@ const formatCountdown = computed(() => {
       <div class="login-brand__grid" />
 
       <div class="login-brand__inner">
-        <div class="login-brand__illustration">
-          <svg viewBox="0 0 520 280" fill="none" xmlns="http://www.w3.org/2000/svg">
-            <line x1="260" y1="110" x2="120" y2="50" stroke="rgba(255,255,255,0.18)" stroke-width="1.5" />
-            <line x1="260" y1="110" x2="400" y2="45" stroke="rgba(255,255,255,0.18)" stroke-width="1.5" />
-            <line x1="260" y1="110" x2="100" y2="180" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" />
-            <line x1="260" y1="110" x2="420" y2="175" stroke="rgba(255,255,255,0.15)" stroke-width="1.5" />
-            <line x1="260" y1="110" x2="260" y2="240" stroke="rgba(255,255,255,0.20)" stroke-width="2" />
-            <line x1="120" y1="50" x2="55" y2="120" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-            <line x1="120" y1="50" x2="180" y2="15" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-            <line x1="400" y1="45" x2="465" y2="110" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-            <line x1="400" y1="45" x2="345" y2="10" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-            <line x1="100" y1="180" x2="45" y2="245" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-            <line x1="100" y1="180" x2="165" y2="250" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-            <line x1="420" y1="175" x2="475" y2="245" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-            <line x1="420" y1="175" x2="355" y2="250" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-            <line x1="260" y1="240" x2="165" y2="250" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-            <line x1="260" y1="240" x2="355" y2="250" stroke="rgba(255,255,255,0.08)" stroke-width="1" />
-            <line x1="120" y1="50" x2="100" y2="180" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="4 4" />
-            <line x1="400" y1="45" x2="420" y2="175" stroke="rgba(255,255,255,0.06)" stroke-width="1" stroke-dasharray="4 4" />
-            <circle cx="260" cy="110" r="22" fill="rgba(99,180,255,0.12)" stroke="rgba(99,180,255,0.4)" stroke-width="1">
-              <animate attributeName="r" values="22;70;22" dur="4s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="260" cy="110" r="14" fill="rgba(99,180,255,0.18)" stroke="rgba(99,180,255,0.6)" stroke-width="1.5">
-              <animate attributeName="r" values="14;38;14" dur="4s" begin="0.5s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="260" cy="110" r="6" fill="#63b4ff" />
-            <circle cx="120" cy="50" r="12" fill="rgba(130,120,255,0.15)" stroke="rgba(130,120,255,0.4)" stroke-width="1">
-              <animate attributeName="r" values="12;36;12" dur="5s" begin="0.3s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="120" cy="50" r="4.5" fill="#8278ff" />
-            <circle cx="400" cy="45" r="12" fill="rgba(130,120,255,0.15)" stroke="rgba(130,120,255,0.4)" stroke-width="1">
-              <animate attributeName="r" values="12;36;12" dur="5s" begin="1s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="400" cy="45" r="4.5" fill="#8278ff" />
-            <circle cx="100" cy="180" r="10" fill="rgba(99,180,255,0.12)" stroke="rgba(99,180,255,0.35)" stroke-width="1" />
-            <circle cx="100" cy="180" r="3.5" fill="#63b4ff" />
-            <circle cx="420" cy="175" r="10" fill="rgba(99,180,255,0.12)" stroke="rgba(99,180,255,0.35)" stroke-width="1" />
-            <circle cx="420" cy="175" r="3.5" fill="#63b4ff" />
-            <circle cx="260" cy="240" r="9" fill="rgba(130,120,255,0.12)" stroke="rgba(130,120,255,0.35)" stroke-width="1" />
-            <circle cx="260" cy="240" r="3" fill="#8278ff" />
-            <circle cx="55" cy="120" r="6" fill="rgba(130,120,255,0.10)" stroke="rgba(130,120,255,0.25)" stroke-width="1" />
-            <circle cx="55" cy="120" r="2" fill="#8278ff" />
-            <circle cx="180" cy="15" r="5" fill="rgba(99,180,255,0.08)" stroke="rgba(99,180,255,0.2)" stroke-width="1" />
-            <circle cx="180" cy="15" r="1.5" fill="#63b4ff" />
-            <circle cx="465" cy="110" r="6" fill="rgba(130,120,255,0.10)" stroke="rgba(130,120,255,0.25)" stroke-width="1" />
-            <circle cx="465" cy="110" r="2" fill="#8278ff" />
-            <circle cx="345" cy="10" r="5" fill="rgba(99,180,255,0.08)" stroke="rgba(99,180,255,0.2)" stroke-width="1" />
-            <circle cx="345" cy="10" r="1.5" fill="#63b4ff" />
-            <circle cx="45" cy="245" r="5" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
-            <circle cx="45" cy="245" r="1.5" fill="rgba(255,255,255,0.4)" />
-            <circle cx="165" cy="250" r="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-            <circle cx="165" cy="250" r="1.5" fill="rgba(255,255,255,0.35)" />
-            <circle cx="355" cy="250" r="4" fill="rgba(255,255,255,0.05)" stroke="rgba(255,255,255,0.10)" stroke-width="1" />
-            <circle cx="355" cy="250" r="1.5" fill="rgba(255,255,255,0.35)" />
-            <circle cx="475" cy="245" r="5" fill="rgba(255,255,255,0.06)" stroke="rgba(255,255,255,0.12)" stroke-width="1" />
-            <circle cx="475" cy="245" r="1.5" fill="rgba(255,255,255,0.4)" />
-            <circle cx="30" cy="35" r="2" fill="rgba(255,255,255,0.12)">
-              <animate attributeName="opacity" values="0.12;1;0.12" dur="6s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="490" cy="25" r="1.5" fill="rgba(255,255,255,0.10)">
-              <animate attributeName="opacity" values="0.10;1;0.10" dur="5s" begin="1s" repeatCount="indefinite" />
-            </circle>
-            <circle cx="260" cy="5" r="1.5" fill="rgba(255,255,255,0.08)">
-              <animate attributeName="opacity" values="0.08;1;0.08" dur="7s" begin="2s" repeatCount="indefinite" />
-            </circle>
-          </svg>
-        </div>
-
-        <div class="login-brand__features">
-          <div v-for="item in features" :key="item.icon" class="login-brand__feature">
-            <div class="login-brand__feature-icon">
-              <svg v-if="item.icon === 'multimodal'" viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
-                <path d="M4 3a2 2 0 00-2 2v1h16V5a2 2 0 00-2-2H4z" />
-                <path fill-rule="evenodd" d="M18 8H2v7a2 2 0 002 2h12a2 2 0 002-2V8zM4.5 11.5a1 1 0 113 0 1 1 0 01-3 0zm5.5-1a1 1 0 100 2h1a1 1 0 100-2h-1z" clip-rule="evenodd" />
-              </svg>
-              <svg v-else-if="item.icon === 'rag'" viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
-                <path fill-rule="evenodd" d="M8 4a4 4 0 100 8 4 4 0 000-8zM2 8a6 6 0 1110.89 3.476l4.817 4.817a1 1 0 01-1.414 1.414l-4.816-4.816A6 6 0 012 8z" clip-rule="evenodd" />
-              </svg>
-              <svg v-else-if="item.icon === 'graph'" viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
-                <path d="M13 6a3 3 0 11-6 0 3 3 0 016 0zM18 8a2 2 0 11-4 0 2 2 0 014 0zM14 15a2 2 0 11-4 0 2 2 0 014 0zM6 15a2 2 0 11-4 0 2 2 0 014 0zM16 11.2V9.4a1 1 0 10-2 0v1.8a3.2 3.2 0 010 5.6v1.8a1 1 0 102 0v-1.8a3.2 3.2 0 000-5.6zM6 11.2V9.4a1 1 0 10-2 0v1.8a3.2 3.2 0 010 5.6v1.8a1 1 0 102 0v-1.8a3.2 3.2 0 000-5.6z" />
-              </svg>
-              <svg v-else viewBox="0 0 20 20" fill="currentColor" width="20" height="20">
-                <path d="M5 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2H5zM5 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2H5zM13 3a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2V5a2 2 0 00-2-2h-2zM13 11a2 2 0 00-2 2v2a2 2 0 002 2h2a2 2 0 002-2v-2a2 2 0 00-2-2h-2z" />
-              </svg>
-            </div>
-            <div class="login-brand__feature-body">
-              <span class="login-brand__feature-title">{{ item.title }}</span>
-              <span class="login-brand__feature-desc">{{ item.desc }}</span>
-            </div>
+        <span class="login-brand__tag">✦ 企业级 RAG 平台</span>
+        <h2 class="login-brand__title">连接知识，<br>释放 AI 的无限可能</h2>
+        <p class="login-brand__desc">
+          多模态知识处理 · 智能检索增强生成 · 知识图谱驱动，让企业知识资产真正流动起来。
+        </p>
+        <div class="login-brand__stats">
+          <div class="login-brand__stat">
+            <b>10M+</b><span>知识片段</span>
+          </div>
+          <div class="login-brand__stat">
+            <b>99.9%</b><span>检索准确率</span>
+          </div>
+          <div class="login-brand__stat">
+            <b>24/7</b><span>稳定服务</span>
           </div>
         </div>
       </div>
@@ -463,28 +365,29 @@ $brand-bg-end: #0e3a6e;
 
   &__inner {
     position: relative; z-index: 2;
-    display: flex; flex-direction: column; align-items: center;
-    max-width: 520px; width: 100%; margin-top: -4vh;
+    display: flex; flex-direction: column; align-items: flex-start;
+    max-width: 480px; width: 100%;
   }
 
-  &__illustration { width: 100%; max-width: 480px; margin-bottom: 28px; svg { width: 100%; height: auto; filter: drop-shadow(0 4px 32px rgba(99, 180, 255, 0.10)); } }
-
-  &__features { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; width: 100%; max-width: 480px; }
-
-  &__feature {
-    display: flex; flex-direction: column; align-items: flex-start; gap: 12px;
-    padding: 20px 18px 18px; border-radius: 12px;
-    background: rgba(255, 255, 255, 0.06); border: 1px solid rgba(255, 255, 255, 0.10);
-    backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
-    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 4px 16px rgba(0, 0, 0, 0.10);
-    transition: all 0.3s ease;
-    &:hover { background: rgba(255, 255, 255, 0.10); border-color: rgba(255, 255, 255, 0.18); transform: translateY(-2px); }
+  &__tag {
+    display: inline-flex; align-items: center;
+    width: fit-content; padding: 6px 16px; margin-bottom: 28px;
+    border-radius: 999px; font-size: 13px; letter-spacing: 0.5px;
+    color: rgba(255, 255, 255, 0.85);
+    background: rgba(255, 255, 255, 0.10); border: 1px solid rgba(255, 255, 255, 0.14);
+    backdrop-filter: blur(4px); -webkit-backdrop-filter: blur(4px);
   }
 
-  &__feature-icon { flex-shrink: 0; display: flex; align-items: center; justify-content: center; width: 40px; height: 40px; border-radius: 10px; background: rgba(99, 180, 255, 0.12); color: rgba(99, 180, 255, 0.90); }
-  &__feature-body { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-  &__feature-title { font-size: 14px; font-weight: 600; color: rgba(255, 255, 255, 0.92); letter-spacing: 0.3px; }
-  &__feature-desc { font-size: 12px; line-height: 1.6; color: rgba(255, 255, 255, 0.65); }
+  &__title { font-size: 34px; font-weight: 800; line-height: 1.3; color: #ffffff; letter-spacing: 0.5px; }
+
+  &__desc { margin-top: 18px; font-size: 15px; line-height: 1.8; color: rgba(255, 255, 255, 0.70); }
+
+  &__stats { display: flex; gap: 40px; margin-top: 48px; }
+
+  &__stat {
+    b { display: block; font-size: 26px; font-weight: 700; color: #ffffff; }
+    span { display: block; margin-top: 4px; font-size: 13px; color: rgba(255, 255, 255, 0.60); }
+  }
 }
 
 // ============================================================
@@ -621,7 +524,7 @@ $brand-bg-end: #0e3a6e;
 // Responsive Design
 // ============================================================
 @media screen and (max-width: 1024px) {
-  .login-brand { width: 45%; min-width: 340px; padding: 32px; &__inner { max-width: 360px; margin-top: -2vh; } &__illustration { max-width: 340px; margin-bottom: 20px; } &__features { max-width: 340px; gap: 10px; } &__feature { padding: 16px 14px; } &__feature-desc { font-size: 11px; } }
+  .login-brand { width: 45%; min-width: 340px; padding: 32px; &__inner { max-width: 340px; } &__title { font-size: 26px; } &__desc { font-size: 14px; } &__stats { gap: 24px; margin-top: 32px; } &__stat b { font-size: 22px; } }
 }
 
 @media screen and (max-width: 768px) {

@@ -25,6 +25,7 @@ package com.fastrag.module.knowledge.entity;
  * </ul>
  */
 import com.baomidou.mybatisplus.annotation.*;
+import java.time.LocalDate;
 import lombok.Data;
 
 @Data
@@ -48,10 +49,16 @@ public class KbChunk {
     private String pageRange;         // 页码范围 "3-4"
     private String imageKeys;         // JSON 数组 ["page_1_img_0.png"]
     private String chunkType;         // "text" | "image" | "parent"，默认 "text"
+    private String origin;            // "auto"(管线自动分片) | "manual"(用户手动创建，重分片时保留)，默认 "auto"
 
     // 结构感知分片（新增）
     private String title;               // 所属最近标题
     private String headingPath;         // 层级路径 "第一章 > 1.1 背景"
+
+    // 元数据冗余列（分册四：检索过滤/排序锚定 chunk，避免 JOIN；入库/元数据变更时回填）
+    private String region;             // 地域（冗余自 kb_file.region）
+    private LocalDate publishDate;     // 发文日期（冗余自 kb_file.publish_date）
+    private String docLevel;           // 发文层级（冗余自 kb_file.doc_level）
 
     // 知识图谱相关
     /** 是否已完成知识图谱提取（0=未提取，1=已提取） */

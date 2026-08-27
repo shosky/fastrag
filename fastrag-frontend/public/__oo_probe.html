@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="zh">
+<head><meta charset="utf-8"><title>OO plugin probe</title></head>
+<body>
+<div id="ph" style="width:1100px;height:760px;border:1px solid #ccc"></div>
+<script src="http://127.0.0.1:8082/web-apps/apps/api/documents/api.js"></script>
+<script>
+  // 无头探针宿主页：最小化复现 AiChunkPanel 的 OnlyOffice 打开路径 + 插件 autostart。
+  // 判定信号：插件脚本第一行 console.log('[OO] plugin script executed (top)') 是否被捕获。
+  // mirror=1：完全复刻后端 buildEditorConfig 字段形态（type/customization/宽高/稳定 key）
+  const qs = new URLSearchParams(location.search)
+  const kbId = qs.get('kbId')
+  const fileId = qs.get('fileId')
+  const token = qs.get('token')
+  const mirror = qs.get('mirror') === '1'
+
+  // 转发所有 postMessage（插件→宿主通道验证用）
+  window.addEventListener('message', (e) => {
+    console.log('[HOST-MSG]', JSON.stringify(e.data))
+  })
+  // 中继频道接收（插件 8082 -> relay iframe(3000) -> 本页）
+  try {
+    const bc = new BroadcastChannel('fastrag-oo-selection')
+    bc.onmessage = (e) => console.log('[RELAY-MSG]', JSON.stringify(e.data))
+  } catch (e) {
+    console.log('[PROBE] BroadcastChannel 不可用')
+  }
+
+  async function sha256Hex(s) {
+    const buf = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(s))
+    return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, '0')).join('')
+  }
+
+  const docBase = 'http://host.docker.internal:8081'
+  let cfg
+
+  ;(async function main() {
+    const stableKey = await sha256Hex(fileId + '-probe-stable')
+    cfg = {
+      document: {
+        fileType: 'docx',
+        key: mirror ? stableKey : 'probe-' + Date.now(),
+        title: 'probe.docx',
+        url:
+          `${docBase}/api/kb/${kbId}/files/${fileId}/onlyoffice/raw?token=${token}` +
+          (mirror ? `&key=${stableKey}` : ''),
+        permissions:
+          mirror
+            ? { edit: true, download: true, print: true, copy: true }
+            : { edit: true, print: true, copy: true, download: true },
+      },
+      documentType: 'word',
+      ...(mirror ? { type: 'word', width: '100%', height: '100%' } : {}),
+      editorConfig: {
+        callbackUrl: `${docBase}/api/kb/${kbId}/files/${fileId}/onlyoffice/callback`,
+        mode: 'edit',
+        user: mirror
+          ? { id: '2088000000000000001', name: 'probeUser' }
+          : { id: 'probe', name: 'probe' },
+        lang: mirror ? 'zh-CN' : 'zh',
+        customization: mirror
+          ? { autosave: true, forcesave: true, compactHeader: true, toolbar: true }
+          : { autosave: false, forcesave: false, compactHeader: true, compactToolbar: true },
+      },
+    }
+
+    const guid = qs.get('guid') || ''
+    if (guid) {
+      cfg.editorConfig.plugins = { autostart: [guid] }
+      console.log('[PROBE] plugins config =', JSON.stringify(cfg.editorConfig.plugins))
+    }
+
+    try {
+      window.__docEditor = new DocsAPI.DocEditor('ph', cfg)
+      console.log('[PROBE] DocEditor created')
+    } catch (e) {
+      console.log('[PROBE][FATAL] DocEditor ctor failed:', e && e.message)
+    }
+  })()
+</script>
+</body>
+</html>

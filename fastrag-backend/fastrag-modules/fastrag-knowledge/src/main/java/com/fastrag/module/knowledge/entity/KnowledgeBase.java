@@ -53,6 +53,8 @@ public class KnowledgeBase {
     private String splitMode;
     private Integer graphAutoBuild; // 是否自动构建知识图谱，默认 0（关闭）
     private String graphLlmModel;  // 知识图谱构建用 LLM 模型（fallback）
+    /** KB 级自定义属性定义（customAttrs 复活落库）：JSON 数组串，如 [{"name":"文种","type":"select","options":["通知","办法"],"required":true}] */
+    private String customAttrSchema;
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

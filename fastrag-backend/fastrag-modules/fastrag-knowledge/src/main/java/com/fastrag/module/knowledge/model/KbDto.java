@@ -35,4 +35,6 @@ public class KbDto {
     private Long totalSize;
     private Object fileTypeConfig;
     private Object retrievalConfig;
+    /** KB 级自定义属性定义（customAttrs 复活：JSON 数组串或结构化列表，前端据此渲染文件元数据表单） */
+    private Object customAttrSchema;
 }

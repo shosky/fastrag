@@ -1,6 +1,8 @@
 import request from '@/utils/request'
 import type { GraphData, GraphStats, PprRankItem } from '@/types/evaluation'
-import type { GraphExpansionResult, ParseStrategy, ParseStrategyForm, ParseStrategyMeta } from '@/types/knowledge'
+import type { AiChunkApplyPayload, GraphExpansionResult, ParseStrategy, ParseStrategyForm, ParseStrategyMeta, KnowledgeBase } from '@/types/knowledge'
+import type { ChatSession, UserFeedback, FeedbackOverview, FeedbackStatistics } from '@/types/feedback'
+import type { ModelMonitorOverview } from '@/types/monitor'
 
 // ===========================================================================
 // 首页 API
@@ -70,7 +72,7 @@ export async function pollWechatQrStatus(scene: string) {
 // ===========================================================================
 
 export async function getKnowledgeBases(params?: { keyword?: string; category?: string; page?: number; pageSize?: number }) {
-  return request.get('/kb', { params })
+  return request.get<unknown, { list: KnowledgeBase[]; total: number }>('/kb', { params })
 }
 
 export async function getKnowledgeBaseCategories() {
@@ -89,8 +91,22 @@ export async function deleteKbCategory(id: string) {
   return request.delete(`/kb-categories/${id}`)
 }
 
-export async function getAllKbTags() {
-  return request.get('/kb-tags')
+export async function getAllKbTags(kbId?: string) {
+  return request.get('/kb-tags', { params: { kbId } })
+}
+
+// ===========================================================================
+// 知识库标签 CRUD（分册四：KbTagController 写端点激活）
+// ===========================================================================
+
+export async function createKbTag(data: { kbId: string; name: string; color?: string; description?: string; tagTypeId?: string }) {
+  return request.post('/kb-tags', data)
+}
+export async function updateKbTag(id: string, data: { name?: string; color?: string; description?: string; tagTypeId?: string }) {
+  return request.put(`/kb-tags/${id}`, data)
+}
+export async function deleteKbTag(id: string) {
+  return request.delete(`/kb-tags/${id}`)
 }
 
 export async function getKnowledgeBaseDetail(id: string) {
@@ -206,6 +222,74 @@ export async function downloadFile(kbId: string, fileId: string) {
 }
 
 // ===========================================================================
+// AI分片 API（预览 + OCR + 语义分片 + 结构级跨页合并）
+// ===========================================================================
+
+/** AI分片 同步预览：chunk=false 仅返回段落对齐模型（渲染左侧原件，不触发 LLM 分片）；chunk=true 含自动分片结果（SSE 不可用时兜底） */
+export async function aiChunkPreview(kbId: string, fileId: string, chunk = false) {
+  return request.post(`/kb/${kbId}/files/${fileId}/ai-chunk-preview`, null, { params: { chunk } })
+}
+
+/** AI分片 应用：提交用户确认的分片列表；后端尊重边界只做向量化与落库（不重新切分、不重新解析原文件） */
+export async function aiChunkApply(kbId: string, fileId: string, payload: AiChunkApplyPayload) {
+  return request.post(`/kb/${kbId}/files/${fileId}/ai-chunk-apply`, payload)
+}
+
+/**
+ * AI分片 SSE 流地址（GET {id}/ai-chunk/stream）。供 fetch + ReadableStream 使用（fetch 不走
+ * axios baseURL，故此处含 /api 前缀；事件协议见设计文档 §7.2）。
+ */
+export function aiChunkStreamUrl(kbId: string, fileId: string) {
+  return `/api/kb/${kbId}/files/${fileId}/ai-chunk/stream`
+}
+
+/**
+ * 版面分析 SSE 流地址（GET {id}/ai-chunk/layout）。layout 事件逐页推送内容块
+ * （类型 + 归一化 bbox），done 收尾；MinIO 缓存命中时一次全量推送。
+ */
+export function aiChunkLayoutStreamUrl(kbId: string, fileId: string) {
+  return `/api/kb/${kbId}/files/${fileId}/ai-chunk/layout`
+}
+
+// ===========================================================================
+// 文件元数据管理 API（分册四 rag-file-metadata-management.md）
+// ===========================================================================
+
+/** 查看文件元数据（固定字段 + 标签 + 自定义属性 + 状态） */
+export async function getFileMetadata(kbId: string, fileId: string) {
+  return request.get(`/kb/${kbId}/files/${fileId}/metadata`)
+}
+
+/** 全量更新文件元数据（schema 驱动：values 按字段名提交，检索感知字段自动投影；写入即视为人工校订 revised/manual） */
+export async function updateFileMetadata(
+  kbId: string,
+  fileId: string,
+  data: {
+    values: Record<string, unknown>
+  },
+) {
+  return request.put(`/kb/${kbId}/files/${fileId}/metadata`, data)
+}
+
+/** 替换式设置单文件标签 */
+export async function setFileTags(kbId: string, fileId: string, tagIds: string[]) {
+  return request.put(`/kb/${kbId}/files/${fileId}/tags`, { tagIds })
+}
+
+/** 批量打标（增量加/删） */
+export async function batchSetFileTags(
+  kbId: string,
+  data: { fileIds: string[]; addTagIds?: string[]; removeTagIds?: string[] },
+) {
+  return request.post(`/kb/${kbId}/files/batch-tags`, data)
+}
+
+/** 存量文件元数据补抽（规则抽取；仅覆盖 none/partial，force=true 强制重抽） */
+export async function extractFileMetadata(kbId: string, fileIds: string[], force = false) {
+  return request.post(`/kb/${kbId}/files/metadata/extract`, { fileIds, force })
+}
+
+// ===========================================================================
 // 文件夹 API
 // ===========================================================================
 
@@ -237,6 +321,26 @@ export async function fetchFolderName(kbId: string, folderId: string): Promise<s
 
 export async function getChunks(kbId: string, params?: { fileId?: string; page?: number; pageSize?: number }) {
   return request.get(`/kb/${kbId}/chunks`, { params })
+}
+
+// ===========================================================================
+// 文件 Markdown 全文 API（解析阶段落盘的完整 markdown，供分片管理页读写）
+// ===========================================================================
+
+export async function getKbMarkdown(kbId: string, fileId: string): Promise<string> {
+  return request.get(`/kb/${kbId}/files/${fileId}/markdown`)
+}
+
+export async function saveKbMarkdown(
+  kbId: string,
+  fileId: string,
+  markdown: string,
+  options?: { rechunk?: boolean },
+) {
+  return request.put(`/kb/${kbId}/files/${fileId}/markdown`, markdown, {
+    params: { rechunk: options?.rechunk ?? false },
+    headers: { 'Content-Type': 'text/markdown; charset=utf-8' },
+  })
 }
 
 export async function fetchChunkCount(kbId: string): Promise<number> {
@@ -274,9 +378,26 @@ export async function batchDeleteChunks(kbId: string, ids: string[]) {
 /**
  * 重新分片：删除旧分片与向量后重跑 解析→分片→向量化。
  * @param config.strategyId 三态：缺省=沿用当前绑定；非空 id=换绑重切；空串=清除覆盖回自动匹配重切
+ * @param config.presetStrategy 预设策略 key（如 structure_aware）：仅当未传 strategyId 时生效，
+ *   由服务端自动确保文件绑定该策略（「按结构分片」一键入口）
  */
-export async function reChunkFile(kbId: string, fileId: string, config?: { strategyId?: string }) {
+export async function reChunkFile(kbId: string, fileId: string, config?: { strategyId?: string; presetStrategy?: string }) {
   return request.post(`/kb/${kbId}/files/${fileId}/re-chunk`, config)
+}
+
+// ===========================================================================
+// OnlyOffice Document Server API
+// ===========================================================================
+
+import type { OnlyOfficeConfig } from '@/types/onlyoffice'
+
+/**
+ * 拉取 OnlyOffice 编辑器配置（已签名）。
+ * viewer 角色 → config.editorConfig.mode = 'view'
+ * editor 角色 → config.editorConfig.mode = 'edit'（保存触发重分片）
+ */
+export async function getOnlyOfficeConfig(kbId: string, fileId: string): Promise<OnlyOfficeConfig> {
+  return request.get(`/kb/${kbId}/files/${fileId}/onlyoffice/config`)
 }
 
 // ===========================================================================
@@ -301,6 +422,21 @@ export async function deleteQaPair(kbId: string, id: string) {
 
 export async function confirmQaPair(kbId: string, id: string) {
   return request.post(`/kb/${kbId}/qa-pairs/${id}/confirm`)
+}
+
+// 下载问答对导入模板
+export async function downloadQaImportTemplate(kbId: string) {
+  return request.get(`/kb/${kbId}/qa-pairs/import-template`, { responseType: 'blob' })
+}
+
+// 批量导入问答对 Excel
+export async function importQaPairs(kbId: string, file: File, overwrite: boolean) {
+  const formData = new FormData()
+  formData.append('file', file)
+  formData.append('overwrite', String(overwrite))
+  return request.post(`/kb/${kbId}/qa-pairs/import`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' }
+  })
 }
 
 // ===========================================================================
@@ -1239,11 +1375,11 @@ export async function submitFeedback(data: Record<string, unknown>) {
 // ===========================================================================
 
 export async function getFeedbackPage(params?: { kbId?: string; feedback?: string; status?: string; page?: number; pageSize?: number }) {
-  return request.get('/feedback', { params })
+  return request.get<unknown, { list: UserFeedback[]; total: number }>('/feedback', { params })
 }
 
 export async function getFeedbackStatistics(kbId?: string) {
-  return request.get('/feedback/statistics', { params: { kbId } })
+  return request.get<unknown, FeedbackStatistics>('/feedback/statistics', { params: { kbId } })
 }
 
 export async function updateFeedback(id: number | string, data: Record<string, unknown>) {
@@ -1259,11 +1395,11 @@ export async function replyFeedback(id: number | string, data: { reply: string; 
 }
 
 export async function getFeedbackOverview(kbId?: string) {
-  return request.get('/feedback/overview', { params: { kbId } })
+  return request.get<unknown, FeedbackOverview>('/feedback/overview', { params: { kbId } })
 }
 
 export async function getChatSessions(params?: { keyword?: string; userId?: string; page?: number; pageSize?: number }) {
-  return request.get('/chat-sessions', { params })
+  return request.get<unknown, { list: ChatSession[]; total: number }>('/chat-sessions', { params })
 }
 
 // ===========================================================================
@@ -1816,7 +1952,7 @@ export async function deleteModelPreset(id: string) {
 // ===========================================================================
 
 export async function getModelMonitorOverview(params?: { timeRange?: number; keyword?: string; page?: number; pageSize?: number }) {
-  return request.get('/monitor/model/overview', { params })
+  return request.get<unknown, ModelMonitorOverview>('/monitor/model/overview', { params })
 }
 
 export async function getKnowledgeUpdateLogs(kbId: string, page?: number, pageSize?: number) {

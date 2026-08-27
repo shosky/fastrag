@@ -1,6 +1,7 @@
 package com.fastrag.module.knowledge.consumer;
 
 import com.fastrag.common.handler.IngestionHandler;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.ocr.OcrService;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.infra.rabbitmq.MessagePublisher;
@@ -9,8 +10,10 @@ import com.fastrag.common.enums.LogCategory;
 import com.fastrag.module.knowledge.chunking.ChunkData;
 import com.fastrag.module.knowledge.chunking.ChunkingService;
 import com.fastrag.module.knowledge.config.StrategyConfigResolver;
+import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
+import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.knowledge.model.FileProcessRequest;
@@ -21,6 +24,7 @@ import com.fastrag.module.knowledge.parser.MediaExtractor;
 import com.fastrag.module.knowledge.parser.ParseOptions;
 import com.fastrag.module.knowledge.parser.ParseResult;
 import com.fastrag.module.knowledge.storage.StorageService;
+import com.fastrag.module.knowledge.service.MarkdownService;
 import com.fastrag.module.publish.service.LogService;
 import com.fastrag.module.platform.entity.SysNotification;
 import com.fastrag.module.platform.mapper.SysNotificationMapper;
@@ -93,6 +97,7 @@ public class IngestionConsumer implements IngestionHandler {
     private final ChunkingService chunkingService;
     private final StorageService storageService;
     private final KbFileMapper fileMapper;
+    private final KbChunkMapper chunkMapper;
     private final KnowledgeBaseMapper kbMapper;
     private final LogService logService;
     private final SysNotificationMapper notificationMapper;
@@ -100,6 +105,7 @@ public class IngestionConsumer implements IngestionHandler {
     private final OcrService ocrService;
     private final StrategyConfigResolver configResolver;
     private final ObjectProvider<MessagePublisher> messagePublisherProvider;
+    private final MarkdownService markdownService;
 
     private static final Set<String> AUDIO_EXTENSIONS = Set.of("mp3", "wav", "m4a", "aac", "ogg", "flac", "wma");
 
@@ -440,6 +446,11 @@ public class IngestionConsumer implements IngestionHandler {
                 log.info("[TIMING] storeChunks complete: {} ms, {} chunks",
                         System.currentTimeMillis() - t3, chunks.size());
 
+                // 5.5 重分片保留 manual 分片对账：把保留的手动分片 chunkIndex 重排到自动分片之后，
+                //     并修正 chunkCount（storeChunks 只统计本次写入的 auto 数量）。
+                //     全新上传无 manual 分片时为无操作（单次查询开销）
+                reconcileManualChunks(kbId, fileId);
+
             // 6. 记录更新日志
             long t4 = System.currentTimeMillis();
             try {
@@ -495,6 +506,8 @@ public class IngestionConsumer implements IngestionHandler {
             }
 
             // 8. 更新状态为 completed
+            // (Markdown 落盘在状态推进前执行，失败仅告警、不阻断主流程)
+            markdownService.persistParsedMarkdown(kbId, fileId, extension, parseResult);
             updateStatus(fileId, "completed", 100, "done");
 
             long tTotal = System.currentTimeMillis() - tStart;
@@ -716,6 +729,46 @@ public class IngestionConsumer implements IngestionHandler {
             }
         } catch (Exception e) {
             log.error("Failed to update file status: {}", fileId, e);
+        }
+    }
+
+    /**
+     * 重分片保留 manual 分片后的对账：
+     * <ol>
+     *   <li>把保留的手动分片（origin=manual）chunkIndex 重排到本次生成的自动分片之后，
+     *       避免与管线从 0 重新编号的 auto 索引交错、列表排序错乱</li>
+     *   <li>将 file.chunkCount 修正为 auto + manual（storeChunks 只统计本次写入的 auto 数量）</li>
+     * </ol>
+     * 全新上传（无 manual 分片）时为空操作，仅一次查询开销。
+     */
+    private void reconcileManualChunks(String kbId, String fileId) {
+        try {
+            List<KbChunk> manualChunks = chunkMapper.selectList(new LambdaQueryWrapper<KbChunk>()
+                    .eq(KbChunk::getKbId, kbId)
+                    .eq(KbChunk::getFileId, fileId)
+                    .eq(KbChunk::getOrigin, "manual")
+                    .orderByAsc(KbChunk::getChunkIndex));
+            if (manualChunks.isEmpty()) return;
+
+            long autoCount = chunkMapper.selectCount(new LambdaQueryWrapper<KbChunk>()
+                    .eq(KbChunk::getKbId, kbId)
+                    .eq(KbChunk::getFileId, fileId)
+                    .and(w -> w.isNull(KbChunk::getOrigin).or().ne(KbChunk::getOrigin, "manual"))
+                    .ne(KbChunk::getChunkType, "parent"));
+            int base = (int) autoCount;
+            for (int i = 0; i < manualChunks.size(); i++) {
+                manualChunks.get(i).setChunkIndex(base + i);
+                chunkMapper.updateById(manualChunks.get(i));
+            }
+            KbFile file = fileMapper.selectById(fileId);
+            if (file != null) {
+                file.setChunkCount((int) (autoCount + manualChunks.size()));
+                fileMapper.updateById(file);
+            }
+            log.info("[ReChunk] Reconciled {} manual chunks for file {}: indices [{},{}], chunkCount={}",
+                    manualChunks.size(), fileId, base, base + manualChunks.size() - 1, autoCount + manualChunks.size());
+        } catch (Exception e) {
+            log.warn("[ReChunk] Failed to reconcile manual chunks for file {}: {}", fileId, e.getMessage());
         }
     }
 

@@ -40,4 +40,12 @@ public class KbEvaluationResult {
     @TableField("recall_at_3") private BigDecimal recallAt3;
     @TableField("recall_at_5") private BigDecimal recallAt5;
     @TableField("recall_at_10") private BigDecimal recallAt10;
+
+    /**
+     * 上下文完整度（跨界题）：标准答案拆分为要点后，原始命中上下文能支撑的比例（0~1）。
+     * 对应 Ragas context_recall 思路，衡量"被切断内容是否被召回"。
+     */
+    @TableField("context_completeness") private BigDecimal contextCompleteness;
+    /** 上下文完整度（父块扩展）：命中子分片放大为父分片后的上下文完整度，与原始值对比可量化扩展收益 */
+    @TableField("context_completeness_extended") private BigDecimal contextCompletenessExtended;
 }

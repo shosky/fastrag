@@ -96,6 +96,91 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
         return r;
     }
 
+    // ==================== 多查询改写（Multi-Query）====================
+
+    /**
+     * 多查询改写：LLM 生成 N-1 个语义互补的变体查询，配原查询做多路召回。
+     *
+     * <p>背景：分片边界切断的内容可能只被某一表述的查询命中，改写变体（同义词、
+     * 缩写、换视角、原文措辞倾向）能提升漏召的找回概率。变体仅用于召回，
+     * 不改动用户原始查询的日志与展示。</p>
+     *
+     * <p>降级链：LLM 调用失败 / 解析空 → 返回单元素 [原查询]（等价不启用）。</p>
+     */
+    @Override
+    public List<String> expandQueries(String query, int count, String model, String kbId) {
+        if (query == null || query.isBlank()) {
+            return List.of(query);
+        }
+        int target = Math.max(1, Math.min(5, count > 0 ? count : 3));
+        if (target <= 1) {
+            return List.of(query);
+        }
+
+        // 解析模型配置（与 NER 解析一致；default 或查不到记录时走默认网关）
+        String llmModel = (model != null && !model.isBlank()) ? model : "default";
+        String apiUrl = null;
+        String apiKey = null;
+        ModelRecord modelRecord = null;
+        if (!"default".equals(llmModel)) {
+            modelRecord = modelRecordMapper.selectOne(
+                    new LambdaQueryWrapper<ModelRecord>()
+                            .eq(ModelRecord::getCode, llmModel)
+                            .eq(ModelRecord::getStatus, "online")
+                            .last("LIMIT 1"));
+        }
+        if (modelRecord != null) {
+            apiUrl = modelRecord.getApiUrl();
+            apiKey = modelRecord.getApiKeyRef();
+            log.info("[MultiQuery] Resolved model '{}' -> apiUrl={}", llmModel, apiUrl);
+        } else if (!"default".equals(llmModel)) {
+            log.warn("[MultiQuery] Model '{}' not found in model table or offline, use default gateway", llmModel);
+        }
+
+        String prompt = """
+                你是一名知识库检索专家。请将用户查询改写成 %d 个不同角度但语义相关的变体查询，
+                用于提高知识库召回率（分片边界可能切断内容，需要不同表述互补命中）。
+
+                要求：
+                1. 每个变体替换说法：同义表达、缩写/全称、换视角、补细节方向，不要与原查询逐字相同
+                2. 偏向"知识库原文中可能出现的措辞"，兼顾词面与语义召回
+                3. 每行一个变体，不要编号、不要引号、不要解释性文字
+                4. 变体保持与原查询同样的意图与主题
+
+                原查询：
+                %s
+                """.formatted(target - 1, query);
+
+        try {
+            String response = llmService.chat(llmModel, prompt, apiUrl, apiKey);
+            Set<String> variants = new LinkedHashSet<>();
+            variants.add(query);
+            for (String line : response.split("\\r?\\n")) {
+                String v = line.trim()
+                        .replaceAll("^\\s*\\d+[.、)]\\s*", "")
+                        .replaceAll("^[\"']|[\"']$", "")
+                        .trim();
+                if (v.isEmpty() || v.equals(query) || v.length() < 2 || v.length() > 100) {
+                    continue;
+                }
+                variants.add(v);
+                if (variants.size() >= target) {
+                    break;
+                }
+            }
+            if (variants.size() >= 2) {
+                List<String> result = new ArrayList<>(variants);
+                log.info("[MultiQuery] query='{}' -> {} variants: {}", query,
+                        result.size(), String.join(" | ", result));
+                return result.size() > target ? result.subList(0, target) : result;
+            }
+            log.warn("[MultiQuery] LLM returned no usable variants for query='{}', fallback to original", query);
+        } catch (Exception e) {
+            log.warn("[MultiQuery] LLM expansion failed, fallback to original query: {}", e.getMessage());
+        }
+        return List.of(query);
+    }
+
     // ==================== NER + 图谱扩展 ====================
 
     /**

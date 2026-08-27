@@ -99,7 +99,7 @@ class PptxExtractionProbeTest {
         assertEquals("pptx_img_0.png", img.getImageKey());
         assertTrue(img.getData().length > 0);
         assertEquals("第 1 页", img.getContext());
-        assertEquals(0, img.getPageNumber()); // slide 序号
+        assertEquals(1, img.getPageNumber()); // slide 序号（1-based，与 OO scrollToPage 对齐）
         // anchor 尺寸已提取（供 ImageFilter 过滤装饰性小图）
         assertEquals(400, img.getWidth());
         assertEquals(300, img.getHeight());

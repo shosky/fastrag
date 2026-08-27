@@ -14,6 +14,8 @@ package com.fastrag.module.graph.entity;
  *   <li>{@code goldChunks} - 标准检索chunk标识（JSON格式），用于计算Recall@K等检索指标</li>
  *   <li>{@code goldAnswer} - 标准答案文本，用于对比LLM生成答案的准确率</li>
  *   <li>{@code questionIndex} - 题目序号，标识题目在基准测试中的顺序</li>
+ *   <li>{@code crossBoundary} - 跨界切断标志（0/1）：1=标准答案横跨两个相邻 chunk，
+ *       专门用于验证"切分边界切断后，检索增强手段能否把内容完整召回"</li>
  * </ul>
  *
  * <p>在评测执行时，系统会逐题查询LLM获取生成答案，然后与goldAnswer对比计算准确率。</p>
@@ -31,4 +33,6 @@ public class KbBenchmarkQuestion {
     @TableId(type = IdType.AUTO) private Long id;
     private String benchmarkId, question, goldChunks, goldAnswer;
     private Integer questionIndex;
+    /** 跨界切断标志：1 = 答案跨多个相邻 chunk（评测召回完整度专用） */
+    private Integer crossBoundary;
 }

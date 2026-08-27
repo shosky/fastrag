@@ -251,9 +251,17 @@ public class StorageServiceImpl implements StorageService {
                 kc.setPageNumber(chunk.getPageNumber());
                 kc.setPageRange(chunk.getPageRange());
                 kc.setChunkType(chunk.getChunkType() != null ? chunk.getChunkType() : "text");
+                // 管线生成的分片均为自动分片（origin=auto）；manual 由 ChunkServiceImpl.create 显式标记
+                kc.setOrigin("auto");
                 kc.setTitle(chunk.getTitle());
                 kc.setHeadingPath(chunk.getHeadingPath());
                 kc.setParentId(chunk.getParentId());
+                // 元数据冗余回填（分册四：入库时把文件级元数据冗余到 chunk，检索过滤/排序直接消费）
+                if (file != null) {
+                    kc.setRegion(file.getRegion());
+                    kc.setPublishDate(file.getPublishDate());
+                    kc.setDocLevel(file.getDocLevel());
+                }
                 if (chunk.getImageKeys() != null && !chunk.getImageKeys().isEmpty()) {
                     kc.setImageKeys(JSONUtil.toJsonStr(chunk.getImageKeys()));
                 }
@@ -288,6 +296,12 @@ public class StorageServiceImpl implements StorageService {
                 kc.setHeadingPath(parent.getHeadingPath());
                 kc.setPageNumber(parent.getPageNumber());
                 kc.setPageRange(parent.getPageRange());
+                // 元数据冗余回填（同 batchInsertChunks）
+                if (file != null) {
+                    kc.setRegion(file.getRegion());
+                    kc.setPublishDate(file.getPublishDate());
+                    kc.setDocLevel(file.getDocLevel());
+                }
                 batchMapper.insert(kc);
             }
             sqlSession.commit();

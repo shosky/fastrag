@@ -19,11 +19,15 @@ import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
 import com.fastrag.module.knowledge.entity.KbQaPair;
+import com.fastrag.module.knowledge.entity.KbTag;
+import com.fastrag.module.knowledge.entity.KbTagRelation;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
 import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
 import com.fastrag.module.knowledge.mapper.KbQaPairMapper;
+import com.fastrag.module.knowledge.mapper.KbTagMapper;
+import com.fastrag.module.knowledge.mapper.KbTagRelationMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.knowledge.model.FileDto;
 import com.fastrag.module.knowledge.model.FileProcessRequest;
@@ -87,26 +91,28 @@ public class FileServiceImpl implements FileService {
     private final GraphService graphService;
     private final ParseStrategyService parseStrategyService;
     private final StrategyConfigResolver configResolver;
+    private final KbTagMapper tagMapper;
+    private final KbTagRelationMapper tagRelationMapper;
 
     @Override
     public List<FileDto> list(String kbId) {
         // 过滤已删除的文件
-        return fileMapper.selectList(new LambdaQueryWrapper<KbFile>()
+        List<KbFile> files = fileMapper.selectList(new LambdaQueryWrapper<KbFile>()
                 .eq(KbFile::getKbId, kbId)
                 .isNull(KbFile::getDeletedAt)
-                .orderByDesc(KbFile::getCreatedAt))
-                .stream().map(this::toDto).collect(Collectors.toList());
+                .orderByDesc(KbFile::getCreatedAt));
+        return toDtoList(files, kbId);
     }
 
     @Override
     public List<FileDto> listDeleted(String kbId) {
         // 查询已删除的文件需要绕过逻辑删除
         // 使用自定义 SQL 或直接查询
-        return fileMapper.selectList(new LambdaQueryWrapper<KbFile>()
+        List<KbFile> files = fileMapper.selectList(new LambdaQueryWrapper<KbFile>()
                 .eq(KbFile::getKbId, kbId)
                 .isNotNull(KbFile::getDeletedAt)
-                .orderByDesc(KbFile::getDeletedAt))
-                .stream().map(this::toDto).collect(Collectors.toList());
+                .orderByDesc(KbFile::getDeletedAt));
+        return toDtoList(files, kbId);
     }
 
     @Override
@@ -256,6 +262,57 @@ public class FileServiceImpl implements FileService {
         return 0;
     }
 
+    /**
+     * 替换文件的原始二进制内容（用于 OnlyOffice 编辑后回调保存）。
+     *
+     * <p>行为：
+     * <ol>
+     *   <li>读 fileId 反查 {@link KbFile#getName()}/{@link KbFile#getExtension()}，
+     *       保证路径仍为 {@code {kbId}/{fileId}/{name}}，与 {@link #upload} 保持一致</li>
+     *   <li>覆盖 MinIO 上 {@link KbFile#getObjectKey()} 指向的对象</li>
+     *   <li>更新 {@code size} 与 {@code updatedAt}（后续重分片链路读取 updatedAt 决定 document.key）</li>
+     * </ol>
+     *
+     * <p>不修改 file.status——由调用方决定（OnlyOffice 走完整 reChunkFile 触发 MQ）。
+     *
+     * @return 更新后的 {@link KbFile}，失败时抛出 RuntimeException
+     */
+    public KbFile replaceOriginalFile(String kbId, String fileId, byte[] newBytes, String contentType) {
+        if (newBytes == null || newBytes.length == 0) {
+            throw new IllegalArgumentException("Cannot replace file with empty bytes");
+        }
+        KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
+                .eq(KbFile::getId, fileId)
+                .eq(KbFile::getKbId, kbId));
+        if (f == null) {
+            throw new RuntimeException("File not found: " + fileId);
+        }
+        if (f.getDeletedAt() != null) {
+            throw new RuntimeException("File is in recycle bin, cannot replace: " + fileId);
+        }
+
+        String objectKey = f.getObjectKey();
+        try {
+            minioService.delete(objectKey);  // 先删再传，避免 MinIO 路径冲突
+        } catch (Exception ignore) {
+            // 旧文件可能已不存在（幂等）
+        }
+        try (ByteArrayInputStream in = new ByteArrayInputStream(newBytes)) {
+            String ct = contentType != null ? contentType
+                    : "application/vnd.openxmlformats-officedocument." + (f.getExtension() == null ? "octet-stream" : f.getExtension());
+            minioService.upload(objectKey, in, ct);
+        } catch (Exception e) {
+            throw new RuntimeException("Failed to upload replaced file to storage: " + e.getMessage(), e);
+        }
+
+        f.setSize((long) newBytes.length);
+        f.setUpdatedAt(LocalDateTime.now());
+        fileMapper.updateById(f);
+        log.info("[ReplaceFile] File {} replaced: newBytes={}, objectKey={}",
+                fileId, newBytes.length, objectKey);
+        return f;
+    }
+
     @Override
     public FileDto retryFile(String kbId, String fileId) {
         KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
@@ -305,6 +362,11 @@ public class FileServiceImpl implements FileService {
      */
     @Override
     public FileDto reChunkFile(String kbId, String fileId, String strategyId) {
+        return reChunkFile(kbId, fileId, strategyId, null);
+    }
+
+    @Override
+    public FileDto reChunkFile(String kbId, String fileId, String strategyId, String presetStrategy) {
         KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
                 .eq(KbFile::getId, fileId)
                 .eq(KbFile::getKbId, kbId));
@@ -319,6 +381,20 @@ public class FileServiceImpl implements FileService {
         }
         if ("qa".equals(f.getProcessingMode())) {
             throw BusinessException.badRequest("QA 模式文件不支持重新分片（QA 对不受分片策略影响）");
+        }
+
+        // 预设策略（如 structure_aware）：未显式换绑时，自动确保文件绑定目标策略。
+        // 结果走下方统一的换绑校验路径（合法化 + 绑定），语义与显式 strategyId 一致
+        if (strategyId == null && presetStrategy != null && !presetStrategy.isBlank()) {
+            String presetId = resolvePresetStrategy(kbId, fileId, f.getParseStrategyId(), presetStrategy.trim());
+            if (presetId != null) {
+                log.info("[ReChunk] presetStrategy={} resolved to strategy id={} for file={}",
+                        presetStrategy, presetId, fileId);
+                strategyId = presetId;
+            } else {
+                log.warn("[ReChunk] presetStrategy={} could not be resolved, keeping current binding for file={}",
+                        presetStrategy, fileId);
+            }
         }
 
         log.info("Re-chunking file: {}, kbId: {}, currentStatus: {}, strategyOverride: {}",
@@ -342,18 +418,34 @@ public class FileServiceImpl implements FileService {
             }
         }
 
-        // 1. 清理旧分片与向量
+        // 1. 清理旧分片与向量（保留 manual 手动分片：用户手工分片不随自动重分片清空）
+        // 1a. 先收集将被删除的 auto 分片的 embeddingId，Milvus 按 ID 选择性删除
+        //     （manual 分片向量内容未变，原地保留，避免全量 deleteByFileId 清掉后无向量可检索）
+        List<KbChunk> autoChunks = chunkMapper.selectList(new LambdaQueryWrapper<KbChunk>()
+                .eq(KbChunk::getKbId, kbId)
+                .eq(KbChunk::getFileId, fileId)
+                .and(w -> w.isNull(KbChunk::getOrigin).or().ne(KbChunk::getOrigin, "manual")));
+        List<String> autoEmbeddingIds = autoChunks.stream()
+                .map(KbChunk::getEmbeddingId)
+                .filter(StrUtil::isNotBlank)
+                .collect(Collectors.toList());
         int chunkDeleted = chunkMapper.delete(new LambdaQueryWrapper<KbChunk>()
                 .eq(KbChunk::getKbId, kbId)
-                .eq(KbChunk::getFileId, fileId));
-        log.info("[ReChunk] Deleted {} old chunks for file: {}", chunkDeleted, fileId);
+                .eq(KbChunk::getFileId, fileId)
+                .and(w -> w.isNull(KbChunk::getOrigin).or().ne(KbChunk::getOrigin, "manual")));
+        log.info("[ReChunk] Deleted {} auto chunks (manual kept) for file: {}", chunkDeleted, fileId);
 
         String collection = "kb_" + kbId.replace("-", "_");
-        try {
-            milvusService.deleteByFileId(collection, fileId);
-            log.info("[ReChunk] Milvus vectors cleaned for file: {}", fileId);
-        } catch (Exception e) {
-            log.warn("[ReChunk] Milvus cleanup failed for file {}: {}", fileId, e.getMessage());
+        if (!autoEmbeddingIds.isEmpty()) {
+            try {
+                milvusService.deleteByIds(collection, autoEmbeddingIds);
+                log.info("[ReChunk] Milvus vectors cleaned for {} auto chunks of file: {}",
+                        autoEmbeddingIds.size(), fileId);
+            } catch (Exception e) {
+                log.warn("[ReChunk] Milvus cleanup failed for file {}: {}", fileId, e.getMessage());
+            }
+        } else {
+            log.info("[ReChunk] No auto chunk vectors to clean for file: {}", fileId);
         }
         try {
             graphService.deleteFileGraph(kbId, fileId);
@@ -362,7 +454,22 @@ public class FileServiceImpl implements FileService {
             log.warn("[ReChunk] Graph cleanup failed for file {}: {}", fileId, e.getMessage());
         }
 
+        // 1b. 重置保留的 manual 分片 graphIndexed=0：deleteFileGraph 已清空文件图谱，
+        //     增量图谱构建按 graphIndexed != 1 从 kb_chunk 表全量重建（auto + manual）
+        try {
+            chunkMapper.update(null, new LambdaUpdateWrapper<KbChunk>()
+                    .eq(KbChunk::getKbId, kbId)
+                    .eq(KbChunk::getFileId, fileId)
+                    .eq(KbChunk::getOrigin, "manual")
+                    .set(KbChunk::getGraphIndexed, 0)
+                    .set(KbChunk::getExtractionResult, null));
+            log.info("[ReChunk] Reset manual chunks graphIndexed for file: {}", fileId);
+        } catch (Exception e) {
+            log.warn("[ReChunk] Failed to reset manual graphIndexed for file {}: {}", fileId, e.getMessage());
+        }
+
         // 2. 重置文件状态，走标准 process 流程（重新解析 + 分片 + 向量化，触发 RabbitMQ；复用原引擎配置）
+        //    chunkCount 由流水线 storeChunks 写入 auto 数量，IngestionConsumer 在完成后按 auto+manual 对账修正
         f.setStatus("pending");
         f.setProgress(0);
         f.setStage("");
@@ -372,6 +479,72 @@ public class FileServiceImpl implements FileService {
 
         log.info("File re-chunk initiated: {}, mode: {}", fileId, f.getProcessingMode());
         return toDto(f);
+    }
+
+    /**
+     * 解析预设分片策略（如 {@code structure_aware}）：
+     * <ol>
+     *   <li>当前绑定策略已生效为该策略 → 直接返回其 id（不动）</li>
+     *   <li>KB 内已有策略生效为该策略（kb 级优先，其次本文件专属）→ 返回其 id</li>
+     *   <li>均无 → 创建本文件的<b>文件级</b>预设策略并返回其 id</li>
+     * </ol>
+     *
+     * <p>创建为文件级（file_id=文件）而非 KB 级：KB 级策略会进入 resolveStrategy 的
+     * 扩展名自动匹配候选（FileServiceImpl.resolveStrategy），可能改变其他文件的分片行为；
+     * 文件级策略不出现在自动匹配中，仅绑定本文件。若用户在策略管理中已配置结构分片策略，
+     * 第 2 步会直接复用。</p>
+     */
+    private String resolvePresetStrategy(String kbId, String fileId, String currentBoundId, String presetKey) {
+        // 1. 当前绑定已生效
+        if (StrUtil.isNotBlank(currentBoundId)) {
+            KbParseStrategy bound = strategyMapper.selectById(currentBoundId);
+            if (bound != null) {
+                try {
+                    if (presetKey.equals(configResolver.resolve(bound).getChunk().getStrategy())) {
+                        return currentBoundId;
+                    }
+                } catch (Exception e) {
+                    log.warn("[ReChunk] Failed to resolve current bound strategy {}: {}", currentBoundId, e.getMessage());
+                }
+            }
+        }
+        // 2. KB 内已有策略生效为目标策略
+        List<KbParseStrategy> candidates = strategyMapper.selectList(new LambdaQueryWrapper<KbParseStrategy>()
+                .eq(KbParseStrategy::getKbId, kbId)
+                .and(w -> w.isNull(KbParseStrategy::getFileId)
+                        .or().eq(KbParseStrategy::getFileId, fileId)));
+        for (KbParseStrategy s : candidates) {
+            try {
+                if (presetKey.equals(configResolver.resolve(s).getChunk().getStrategy())) {
+                    return s.getId();
+                }
+            } catch (Exception e) {
+                log.warn("[ReChunk] Failed to resolve strategy {}: {}", s.getId(), e.getMessage());
+            }
+        }
+        // 3. 创建文件级预设策略
+        KbParseStrategy preset = new KbParseStrategy();
+        preset.setKbId(kbId);
+        preset.setFileId(fileId);
+        preset.setName(presetLabel(presetKey));
+        preset.setDescription("按文档结构自动分片（系统预设，一键触发）");
+        preset.setExtensions("[\".docx\",\".doc\",\".pptx\",\".ppt\",\".xlsx\",\".xls\",\".pdf\",\".txt\",\".md\",\".markdown\",\".csv\",\".html\",\".htm\",\".rtf\",\".xml\"]");
+        preset.setParseMethod("default");
+        preset.setIsDefault(0);
+        preset.setAdvanced(JSONUtil.toJsonStr(java.util.Map.of("chunk", java.util.Map.of("strategy", presetKey))));
+        strategyMapper.insert(preset);
+        log.info("[ReChunk] Created file-level preset strategy {} ({}) for file {}", preset.getId(), presetKey, fileId);
+        return preset.getId();
+    }
+
+    /** 预设策略 key → 展示名（未知 key 原样返回） */
+    private String presetLabel(String presetKey) {
+        return switch (presetKey) {
+            case "structure_aware" -> "按结构分片";
+            case "rule_fixed" -> "固定长度分片";
+            case "semantic" -> "语义分片";
+            default -> presetKey;
+        };
     }
 
     /**
@@ -538,6 +711,15 @@ public class FileServiceImpl implements FileService {
         c.setStatus("pending");
         c.setProgress(0);
         c.setChunkCount(0);
+        // 复制携带业务元数据（分册四：复制文件的元数据随文件一起复制，便于同批文档批量打标/检索过滤）
+        c.setRegion(s.getRegion());
+        c.setPublishDate(s.getPublishDate());
+        c.setDocLevel(s.getDocLevel());
+        c.setIssuer(s.getIssuer());
+        c.setDocNumber(s.getDocNumber());
+        c.setMetadataStatus(s.getMetadataStatus());
+        c.setMetadataSource(s.getMetadataSource());
+        c.setCustomAttrs(s.getCustomAttrs());
         fileMapper.insert(c);
         return toDto(c);
     }
@@ -803,6 +985,12 @@ public class FileServiceImpl implements FileService {
         d.setDeletedAt(f.getDeletedAt());
         d.setCreatedAt(f.getCreatedAt());
         d.setUpdatedAt(f.getUpdatedAt());
+        // 元数据摘要（分册四：列表列渲染 / 检索过滤展示用，完整字段走 GET .../metadata）
+        d.setRegion(f.getRegion());
+        d.setPublishDate(f.getPublishDate());
+        d.setDocLevel(f.getDocLevel());
+        d.setMetadataStatus(f.getMetadataStatus());
+        d.setMetadataSource(f.getMetadataSource());
         // 解析策略 ID + 名称 + 高级配置（分片策略设置对话框据此回填；含文件级专属策略）
         d.setParseStrategyId(f.getParseStrategyId());
         if (f.getParseStrategyId() != null) {
@@ -819,5 +1007,34 @@ public class FileServiceImpl implements FileService {
             }
         }
         return d;
+    }
+
+    /** 批量转 DTO 并一次性加载标签名（避免对每个文件 N+1 查询） */
+    private List<FileDto> toDtoList(List<KbFile> files, String kbId) {
+        List<FileDto> list = files.stream().map(this::toDto).collect(Collectors.toList());
+        if (list.isEmpty()) return list;
+        // 批量查 relation（targetType='file'）→ 批查 tag → 组装 fileId → tagNames
+        List<String> fileIds = list.stream().map(FileDto::getId).collect(Collectors.toList());
+        List<KbTagRelation> rels = tagRelationMapper.selectList(new LambdaQueryWrapper<KbTagRelation>()
+                .eq(KbTagRelation::getTargetType, "file")
+                .in(KbTagRelation::getTargetId, fileIds));
+        if (rels.isEmpty()) {
+            list.forEach(d -> d.setTags(new ArrayList<>()));
+            return list;
+        }
+        List<String> tagIds = rels.stream().map(KbTagRelation::getTagId).distinct().collect(Collectors.toList());
+        Map<String, KbTag> tagMap = tagMapper.selectBatchIds(tagIds).stream()
+                .collect(Collectors.toMap(KbTag::getId, t -> t));
+        Map<String, List<String>> fileTagNames = new HashMap<>();
+        for (KbTagRelation rel : rels) {
+            KbTag tag = tagMap.get(rel.getTagId());
+            if (tag != null) {
+                fileTagNames.computeIfAbsent(rel.getTargetId(), k -> new ArrayList<>()).add(tag.getName());
+            }
+        }
+        for (FileDto d : list) {
+            d.setTags(fileTagNames.getOrDefault(d.getId(), new ArrayList<>()));
+        }
+        return list;
     }
 }

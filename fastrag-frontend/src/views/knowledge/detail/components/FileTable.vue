@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import type { KnowledgeFile, FileCategory, ProcessStatus, ParseStrategy } from '@/types/knowledge'
 import { FILE_CATEGORY_ICONS, formatFileSize, formatDuration } from '@/types/knowledge'
-import { Refresh, Search, MoreFilled, View, Download, RefreshRight, Delete, Grid, Rank, Edit, Document, Setting } from '@element-plus/icons-vue'
+import { Refresh, Search, MoreFilled, View, Download, RefreshRight, Delete, Grid, Rank, Edit, Document, Setting, MagicStick } from '@element-plus/icons-vue'
 import { usePagination } from '@/composables/usePagination'
 import ProcessStatusBar from './ProcessStatusBar.vue'
 
@@ -24,7 +24,10 @@ const emit = defineEmits<{
   (e: 'move', file: KnowledgeFile): void
   (e: 'rename', file: KnowledgeFile): void
   (e: 'copy', file: KnowledgeFile): void
+  (e: 'metadata', file: KnowledgeFile): void
   (e: 'changeStrategy', file: KnowledgeFile): void
+  (e: 'aiChunk', file: KnowledgeFile): void
+  (e: 'editOffice', file: KnowledgeFile): void
   (e: 'toggleGraphBuild', file: KnowledgeFile, enabled: boolean): void
   (e: 'enterFolder', folderId: string): void
   (e: 'renameFolder', folderId: string, label: string): void
@@ -152,9 +155,9 @@ function isDefaultStrategy(file: KnowledgeFile): boolean {
   return def ? file.parseStrategyId === def.id : false
 }
 
-// Handle table selection change
-function handleSelectionChange(selectedFiles: KnowledgeFile[]) {
-  emit('selectionChange', selectedFiles)
+// Handle table selection change（表格行可能含 FolderRow，但 selectable 已禁用文件夹，实际选中皆为文件）
+function handleSelectionChange(selectedFiles: any[]) {
+  emit('selectionChange', selectedFiles as KnowledgeFile[])
 }
 
 // Handle file name click - navigate to chunk management
@@ -170,7 +173,7 @@ function handleRefresh() {
 }
 
 // Handle dropdown command
-type Command = 'preview' | 'manageChunks' | 'download' | 'retry' | 'delete' | 'move' | 'rename' | 'copy'
+type Command = 'preview' | 'manageChunks' | 'download' | 'retry' | 'delete' | 'move' | 'rename' | 'copy' | 'metadata' | 'aiChunk' | 'editOffice'
 function handleCommand(command: Command, file: KnowledgeFile) {
   switch (command) {
     case 'preview': emit('preview', file); break
@@ -181,7 +184,27 @@ function handleCommand(command: Command, file: KnowledgeFile) {
     case 'move': emit('move', file); break
     case 'rename': emit('rename', file); break
     case 'copy': emit('copy', file); break
+    case 'metadata': emit('metadata', file); break
+    case 'aiChunk': emit('aiChunk', file); break
+    case 'editOffice': emit('editOffice', file); break
   }
+}
+
+// AI分片：文档类 word/ppt/pdf 可用；processing 置灰（disabled），failed 亦可进入（可作重处理途径）
+const AI_CHUNK_EXTS = ['.pdf', '.doc', '.docx', '.ppt', '.pptx']
+function showAiChunk(file: KnowledgeFile): boolean {
+  if (file.category !== 'document') return false
+  const ext = '.' + (file.extension || file.name.split('.').pop() || '').toLowerCase()
+  return AI_CHUNK_EXTS.includes(ext)
+}
+
+// OnlyOffice 在线编辑：仅 OO 支持的扩展名 + completed/pending 状态可编辑
+const OFFICE_EDIT_EXTS = ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']
+function showOfficeEdit(file: KnowledgeFile): boolean {
+  if (file.category !== 'document') return false
+  if (file.deletedAt) return false
+  const ext = '.' + (file.extension || file.name.split('.').pop() || '').toLowerCase()
+  return OFFICE_EDIT_EXTS.includes(ext) && file.status !== 'processing'
 }
 
 // 换策略入口：QA 模式文件不受分片策略影响，处理中/回收站文件由对话框内守卫与后端兜底
@@ -423,6 +446,21 @@ function handleFolderCommand(cmd: string, folder: FolderRow) {
                   预览
                 </el-dropdown-item>
                 <el-dropdown-item
+                  v-if="showOfficeEdit(row as KnowledgeFile)"
+                  command="editOffice"
+                  :icon="Edit"
+                >
+                  在线编辑 (OnlyOffice)
+                </el-dropdown-item>
+                <el-dropdown-item
+                  v-if="showAiChunk(row as KnowledgeFile)"
+                  command="aiChunk"
+                  :icon="MagicStick"
+                  :disabled="(row as KnowledgeFile).status === 'processing'"
+                >
+                  AI分片
+                </el-dropdown-item>
+                <el-dropdown-item
                   v-if="row.status === 'completed'"
                   command="manageChunks"
                   :icon="Grid"
@@ -438,6 +476,9 @@ function handleFolderCommand(cmd: string, folder: FolderRow) {
                 </el-dropdown-item>
                 <el-dropdown-item command="copy" :icon="Document">
                   复制
+                </el-dropdown-item>
+                <el-dropdown-item command="metadata" :icon="Edit">
+                  元数据
                 </el-dropdown-item>
                 <el-dropdown-item command="move" :icon="Rank">
                   移动
@@ -466,7 +507,7 @@ function handleFolderCommand(cmd: string, folder: FolderRow) {
       <el-pagination
         v-model:current-page="currentPage"
         v-model:page-size="pageSize"
-        layout="total, prev, pager, next, sizes"
+        layout="total, sizes, prev, pager, next, jumper"
         :total="total"
         :page-sizes="[10, 20, 50, 100]"
         @current-change="handleCurrentChange"

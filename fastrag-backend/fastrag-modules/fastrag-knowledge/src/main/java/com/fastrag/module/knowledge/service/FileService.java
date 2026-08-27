@@ -1,5 +1,6 @@
 package com.fastrag.module.knowledge.service;
 
+import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.model.FileDto;
 import com.fastrag.module.knowledge.model.FileProcessRequest;
 import com.fastrag.module.knowledge.model.ParseStrategyRequest;
@@ -52,6 +53,13 @@ public interface FileService {
      * 见 ADR-0001（策略绑定变更必须与重新分片原子完成）。
      */
     FileDto reChunkFile(String kbId, String fileId, String strategyId);
+
+    /**
+     * 重新分片（带预设策略）。{@code presetStrategy} 为分片策略 key（如 {@code structure_aware}），
+     * 仅当未显式传 {@code strategyId} 时生效：自动确保文件绑定该策略——已有则复用，
+     * 无则创建文件级预设策略并绑定。用于「按结构分片」等一键预设入口。
+     */
+    FileDto reChunkFile(String kbId, String fileId, String strategyId, String presetStrategy);
     FileDto moveToKb(String sourceKbId, String fileId, String targetKbId, String targetFolderId);
 
     /**
@@ -59,4 +67,13 @@ public interface FileService {
      * 保存为绑定 file_id 的隐藏策略（不出现在策略管理列表），随后按该策略重切。
      */
     FileDto saveFileStrategy(String kbId, String fileId, ParseStrategyRequest req);
+
+    /**
+     * 替换文件原始二进制（用于 OnlyOffice 编辑后回调保存）。
+     * 行为：覆盖 MinIO 上 {@link KbFile#getObjectKey()} 指向的对象，更新 size / updatedAt。
+     * 不修改 file.status，由调用方决定后续是否触发重分片。
+     *
+     * @return 更新后的 {@link KbFile}
+     */
+    KbFile replaceOriginalFile(String kbId, String fileId, byte[] newBytes, String contentType);
 }

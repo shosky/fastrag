@@ -1,19 +1,35 @@
 <script setup lang="ts">
-import { ref, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import * as api from '@/api'
 import { usePagination } from '@/composables/usePagination'
+import type {
+  ChatSession,
+  UserFeedback,
+  FeedbackOverview,
+  FeedbackMetrics,
+  FeedbackStatistics,
+} from '@/types/feedback'
+import MetricCards from './components/MetricCards.vue'
+import RankList from './components/RankList.vue'
+import WordCloud from './components/WordCloud.vue'
+
+// ========== 工具 ==========
+function formatTime(ts?: string): string {
+  if (!ts) return '-'
+  return ts.replace('T', ' ').substring(0, 19)
+}
 
 // ========== 总览 Tab ==========
 const activeTab = ref('overview')
-const overviewData = ref<any>({})
+const overviewData = ref<Partial<FeedbackOverview>>({})
 const overviewLoading = ref(false)
 
 async function loadOverview() {
   overviewLoading.value = true
   try {
-    const res: any = await api.getFeedbackOverview(feedbackSearch.value.kbId || undefined)
+    const res = await api.getFeedbackOverview(feedbackSearch.value.kbId || undefined)
     overviewData.value = res || {}
   } catch {
     overviewData.value = {}
@@ -22,7 +38,7 @@ async function loadOverview() {
   }
 }
 
-const metrics = [
+const metrics: { label: string; key: keyof FeedbackMetrics; suffix?: string }[] = [
   { label: '累计问答量', key: 'totalQaCount' },
   { label: '累计反馈量', key: 'totalFeedbackCount' },
   { label: '反馈满意度', key: 'satisfactionRate', suffix: '%' },
@@ -30,24 +46,31 @@ const metrics = [
   { label: '未解决问题占比', key: 'unresolvedRate', suffix: '%' },
 ]
 
+const metricItems = computed(() =>
+  metrics.map((m) => ({
+    label: m.label,
+    value: overviewData.value?.metrics?.[m.key] ?? '—',
+    suffix: m.suffix,
+  }))
+)
+
 // ========== 问答明细 Tab ==========
 const qaDetailSearch = ref({ question: '', user: '' })
-const qaData = ref<any[]>([])
-const qaTotal = ref(0)
+const qaData = ref<ChatSession[]>([])
 const qaLoading = ref(false)
 
 const {
   currentPage: qaPage,
   pageSize: qaPageSize,
-  total: qaTotalRef,
-  handleCurrentChange: handleQaPageChange,
-  handleSizeChange: handleQaSizeChange,
+  total: qaTotal,
+  handleCurrentChange: onQaPageChange,
+  handleSizeChange: onQaSizeChange,
 } = usePagination(10)
 
 async function loadQaDetails() {
   qaLoading.value = true
   try {
-    const res: any = await api.getChatSessions({
+    const res = await api.getChatSessions({
       keyword: qaDetailSearch.value.question || undefined,
       userId: qaDetailSearch.value.user || undefined,
       page: qaPage.value,
@@ -55,13 +78,24 @@ async function loadQaDetails() {
     })
     qaData.value = res?.list || []
     qaTotal.value = res?.total || 0
-    qaTotalRef.value = qaTotal.value
   } catch {
     qaData.value = []
     qaTotal.value = 0
   } finally {
     qaLoading.value = false
   }
+}
+
+/** 事件驱动：页码变化时重新拉取（同时更新 composable 状态） */
+function handleQaPageChange(page: number) {
+  onQaPageChange(page)
+  loadQaDetails()
+}
+
+/** 事件驱动：每页条数变化时重置到第一页并拉取 */
+function handleQaSizeChange(size: number) {
+  onQaSizeChange(size)
+  loadQaDetails()
 }
 
 function handleQaSearch() {
@@ -76,32 +110,44 @@ function handleQaReset() {
 }
 
 const showDetailDialog = ref(false)
-const currentDetail = ref<any>(null)
+const currentDetail = ref<ChatSession | null>(null)
 
-function handleViewDetail(detail: any) {
+function handleViewDetail(detail: ChatSession) {
   currentDetail.value = detail
   showDetailDialog.value = true
 }
 
 // ========== 反馈明细 Tab ==========
 const feedbackSearch = ref({ kbId: '', feedback: '', status: '' })
-const feedbacks = ref<any[]>([])
-const feedbackTotal = ref(0)
+const feedbacks = ref<UserFeedback[]>([])
 const feedbackLoading = ref(false)
-const feedbackStats = ref<any>({})
+const feedbackStats = ref<Partial<FeedbackStatistics>>({})
+const kbOptions = ref<{ id: string; name: string }[]>([])
 
 const {
   currentPage: fbPage,
   pageSize: fbPageSize,
-  total: fbTotalRef,
-  handleCurrentChange: handleFbPageChange,
-  handleSizeChange: handleFbSizeChange,
+  total: fbTotal,
+  handleCurrentChange: onFbPageChange,
+  handleSizeChange: onFbSizeChange,
 } = usePagination(10)
+
+async function loadKbOptions() {
+  try {
+    const res = await api.getKnowledgeBases({ page: 1, pageSize: 999 })
+    kbOptions.value = (res?.list || []).map((kb) => ({
+      id: String(kb.id),
+      name: kb.name || kb.id,
+    }))
+  } catch {
+    // ignore：选择器无选项时保持兜底
+  }
+}
 
 async function loadFeedbacks() {
   feedbackLoading.value = true
   try {
-    const res: any = await api.getFeedbackPage({
+    const res = await api.getFeedbackPage({
       kbId: feedbackSearch.value.kbId || undefined,
       feedback: feedbackSearch.value.feedback || undefined,
       status: feedbackSearch.value.status || undefined,
@@ -109,27 +155,48 @@ async function loadFeedbacks() {
       pageSize: fbPageSize.value,
     })
     feedbacks.value = res?.list || []
-    feedbackTotal.value = res?.total || 0
-    fbTotalRef.value = feedbackTotal.value
+    fbTotal.value = res?.total || 0
+  } catch {
+    feedbacks.value = []
+    fbTotal.value = 0
   } finally {
     feedbackLoading.value = false
   }
 }
 
 async function loadFeedbackStats() {
-  const res: any = await api.getFeedbackStatistics(feedbackSearch.value.kbId || undefined)
-  feedbackStats.value = res || {}
+  try {
+    const res = await api.getFeedbackStatistics(feedbackSearch.value.kbId || undefined)
+    feedbackStats.value = res || {}
+  } catch {
+    feedbackStats.value = {}
+  }
 }
 
 function resetFeedbackSearch() {
   feedbackSearch.value = { kbId: '', feedback: '', status: '' }
   fbPage.value = 1
   loadFeedbacks()
+  loadFeedbackStats()
   loadOverview()
 }
 
 function handleFbSearch() {
   fbPage.value = 1
+  loadFeedbacks()
+  loadFeedbackStats()
+  loadOverview()
+}
+
+/** 事件驱动：页码变化时重新拉取（同时更新 composable 状态） */
+function handleFbPageChange(page: number) {
+  onFbPageChange(page)
+  loadFeedbacks()
+}
+
+/** 事件驱动：每页条数变化时重置到第一页并拉取 */
+function handleFbSizeChange(size: number) {
+  onFbSizeChange(size)
   loadFeedbacks()
 }
 
@@ -137,7 +204,7 @@ function handleFbSearch() {
 const showReplyDialog = ref(false)
 const replyForm = ref({ id: 0, reply: '' })
 
-function handleProcessFeedback(row: any) {
+function handleProcessFeedback(row: UserFeedback) {
   replyForm.value = { id: row.id, reply: row.reply || '' }
   showReplyDialog.value = true
 }
@@ -147,16 +214,22 @@ async function handleReplySubmit() {
     ElMessage.warning('请输入回复内容')
     return
   }
-  await api.replyFeedback(replyForm.value.id, { reply: replyForm.value.reply, operator: 'admin' })
-  showReplyDialog.value = false
-  ElMessage.success('回复成功')
-  await loadFeedbacks()
-  await loadFeedbackStats()
+  try {
+    await api.replyFeedback(replyForm.value.id, { reply: replyForm.value.reply, operator: 'admin' })
+    showReplyDialog.value = false
+    ElMessage.success('回复成功')
+    await loadFeedbacks()
+    await loadFeedbackStats()
+  } catch {
+    ElMessage.error('回复失败，请重试')
+  }
 }
 
 // 新增/编辑反馈
 const showFeedbackFormDialog = ref(false)
-const feedbackForm = ref({ id: '', kbId: '', query: '', feedback: 'like', comment: '', score: 5 })
+const feedbackForm = ref<{ id: number | string; kbId: string; query: string; feedback: string; comment: string; score: number }>({
+  id: '', kbId: '', query: '', feedback: 'like', comment: '', score: 5,
+})
 const isEditingFeedback = ref(false)
 
 function handleAddFeedback() {
@@ -165,7 +238,7 @@ function handleAddFeedback() {
   showFeedbackFormDialog.value = true
 }
 
-function handleEditFeedback(row: any) {
+function handleEditFeedback(row: UserFeedback) {
   isEditingFeedback.value = true
   feedbackForm.value = {
     id: row.id, kbId: row.kbId || '', query: row.query || '',
@@ -197,7 +270,7 @@ async function handleSaveFeedback() {
   } catch { ElMessage.error('操作失败') }
 }
 
-async function handleDeleteFeedback(row: any) {
+async function handleDeleteFeedback(row: UserFeedback) {
   try {
     await ElMessageBox.confirm('确定删除该反馈记录？', '删除确认', { type: 'warning' })
     await api.deleteFeedback(row.id)
@@ -207,8 +280,8 @@ async function handleDeleteFeedback(row: any) {
   } catch {}
 }
 
-// ========== AI 优化建议 ==========
-function handleGenerateAISuggestion() {
+// ========== 优化建议（基于统计指标的规则建议，非 AI 生成） ==========
+function handleGenerateSuggestion() {
   const m = overviewData.value?.metrics
   if (!m) { ElMessage.info('请先加载数据'); return }
   const suggestions: string[] = []
@@ -218,12 +291,13 @@ function handleGenerateAISuggestion() {
   if (!suggestions.length) suggestions.push('当前运营状态良好，暂无优化建议')
   ElMessageBox.alert(
     suggestions.map(s => `• ${s}`).join('<br>'),
-    'AI 优化建议',
+    '规则优化建议',
     { dangerouslyUseHTMLString: true, confirmButtonText: '知道了' }
   )
 }
 
 onMounted(() => {
+  loadKbOptions()
   loadOverview()
   loadFeedbacks()
   loadFeedbackStats()
@@ -240,62 +314,46 @@ watch(activeTab, (tab) => {
     <el-tabs v-model="activeTab">
       <!-- ========== 总览 Tab ========== -->
       <el-tab-pane label="总览" name="overview">
-        <div class="metric-cards">
-          <div v-for="m in metrics" :key="m.label" class="metric-card">
-            <div class="metric-label">{{ m.label }}</div>
-            <div class="metric-value">
-              {{ overviewData?.metrics?.[m.key] ?? '—' }}{{ m.suffix || '' }}
-            </div>
-          </div>
-        </div>
+        <div v-loading="overviewLoading">
+          <MetricCards :items="metricItems" :columns="5" />
 
-        <div class="overview-grid">
-          <div class="card-panel">
-            <div class="section-title">问题分类分析</div>
-            <div v-if="overviewData?.questionCategories?.length">
-              <div v-for="cat in overviewData.questionCategories" :key="cat.name" class="category-item">
-                <div class="cat-header">
-                  <span>{{ cat.name }}</span>
-                  <span>{{ cat.count }} ({{ cat.percentage }}%)</span>
+          <div class="overview-grid">
+            <div class="card-panel">
+              <div class="section-title">问题分类分析</div>
+              <div v-if="overviewData?.questionCategories?.length">
+                <div v-for="cat in overviewData.questionCategories" :key="cat.name" class="category-item">
+                  <div class="cat-header">
+                    <span>{{ cat.name }}</span>
+                    <span>{{ cat.count }} ({{ cat.percentage }}%)</span>
+                  </div>
+                  <el-progress :percentage="cat.percentage" :show-text="false" />
                 </div>
-                <el-progress :percentage="cat.percentage" :show-text="false" />
               </div>
+              <el-empty v-else description="暂无分类数据" :image-size="50" />
             </div>
-            <el-empty v-else description="暂无分类数据" :image-size="50" />
-          </div>
 
-          <div class="card-panel">
-            <div class="section-title">高频问题词云</div>
-            <div v-if="overviewData?.hotKeywords?.length" class="word-cloud">
-              <span
-                v-for="q in overviewData.hotKeywords"
-                :key="q.word"
-                class="word"
-                :style="{ fontSize: 12 + Math.min(q.count / 5, 28) + 'px' }"
-              >
-                {{ q.word }}
-              </span>
+            <div class="card-panel">
+              <div class="section-title">高频问题词云</div>
+              <WordCloud v-if="overviewData?.hotKeywords?.length" :words="overviewData.hotKeywords" />
+              <el-empty v-else description="暂无词云数据" :image-size="50" />
             </div>
-            <el-empty v-else description="暂无词云数据" :image-size="50" />
-          </div>
 
-          <div class="card-panel">
-            <div class="section-title">应用满意度排行</div>
-            <div v-if="overviewData?.appSatisfactionRanking?.length">
-              <div v-for="app in overviewData.appSatisfactionRanking" :key="app.rank" class="rank-item">
-                <span class="rank" :class="{ 'top-3': app.rank <= 3 }">{{ app.rank }}</span>
-                <span class="name">{{ app.name }}</span>
-                <span class="satisfaction">{{ app.satisfaction }}%</span>
-                <span class="count">{{ app.feedbackCount }} 条</span>
-              </div>
+            <div class="card-panel">
+              <div class="section-title">应用满意度排行</div>
+              <RankList v-if="overviewData?.appSatisfactionRanking?.length" :items="overviewData.appSatisfactionRanking">
+                <template #default="{ item }">
+                  <span class="satisfaction">{{ item.satisfaction }}%</span>
+                  <span class="count">{{ item.feedbackCount }} 条</span>
+                </template>
+              </RankList>
+              <el-empty v-else description="暂无排行数据" :image-size="50" />
             </div>
-            <el-empty v-else description="暂无排行数据" :image-size="50" />
-          </div>
 
-          <div class="card-panel">
-            <div class="section-title">AI 优化建议</div>
-            <el-button type="primary" @click="handleGenerateAISuggestion">生成AI优化建议</el-button>
-            <p class="ai-tip">点击按钮根据当前统计数据生成优化方向和运营建议</p>
+            <div class="card-panel">
+              <div class="section-title">规则优化建议</div>
+              <el-button type="primary" @click="handleGenerateSuggestion">生成优化建议</el-button>
+              <p class="ai-tip">基于满意度、反馈率、未解决率等统计指标按预设规则生成，非 AI 生成</p>
+            </div>
           </div>
         </div>
       </el-tab-pane>
@@ -305,22 +363,24 @@ watch(activeTab, (tab) => {
         <div class="card-panel">
           <div class="filter-bar">
             <el-input v-model="qaDetailSearch.question" placeholder="问题描述" clearable style="width: 200px" />
-            <el-input v-model="qaDetailSearch.user" placeholder="用户名称" clearable style="width: 200px" />
+            <el-input v-model="qaDetailSearch.user" placeholder="用户ID" clearable style="width: 200px" />
             <el-button type="primary" @click="handleQaSearch">查询</el-button>
             <el-button @click="handleQaReset">重置</el-button>
           </div>
           <el-table :data="qaData" stripe v-loading="qaLoading">
             <el-table-column prop="query" label="问题描述" show-overflow-tooltip />
             <el-table-column prop="userId" label="用户" width="120" />
-            <el-table-column prop="createdAt" label="时间" width="180" />
+            <el-table-column label="时间" width="180">
+              <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="100">
               <template #default="{ row }">
-                <el-button link type="primary" @click="handleViewDetail(row)">查看详情</el-button>
+                <el-button link type="primary" @click="handleViewDetail(row as ChatSession)">查看详情</el-button>
               </template>
             </el-table-column>
           </el-table>
           <el-empty v-if="!qaLoading && qaData.length === 0" description="暂无数据" :image-size="60" />
-          <div v-if="qaTotal > qaPageSize" class="qa__pagination">
+          <div class="feedback__qa-pagination">
             <el-pagination
               v-model:current-page="qaPage"
               v-model:page-size="qaPageSize"
@@ -350,7 +410,9 @@ watch(activeTab, (tab) => {
             <div class="stat-item"><span class="stat-label">待处理</span><span class="stat-val">{{ (feedbackStats.byStatus && feedbackStats.byStatus.pending) || 0 }}</span></div>
           </div>
           <div class="filter-bar">
-            <el-input v-model="feedbackSearch.kbId" placeholder="知识库ID" clearable style="width: 150px" />
+            <el-select v-model="feedbackSearch.kbId" placeholder="知识库" clearable filterable style="width: 180px">
+              <el-option v-for="kb in kbOptions" :key="kb.id" :label="kb.name" :value="kb.id" />
+            </el-select>
             <el-select v-model="feedbackSearch.feedback" placeholder="反馈类型" clearable style="width: 120px">
               <el-option label="赞" value="like" />
               <el-option label="踩" value="dislike" />
@@ -387,21 +449,22 @@ watch(activeTab, (tab) => {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="createdAt" label="时间" width="160" />
+            <el-table-column label="时间" width="160">
+              <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="200">
               <template #default="{ row }">
-                <el-button link size="small" @click="handleEditFeedback(row)">编辑</el-button>
-                <el-button link type="primary" size="small" @click="handleProcessFeedback(row)">回复</el-button>
-                <el-button link type="danger" size="small" @click="handleDeleteFeedback(row)">删除</el-button>
+                <el-button link size="small" @click="handleEditFeedback(row as UserFeedback)">编辑</el-button>
+                <el-button link type="primary" size="small" @click="handleProcessFeedback(row as UserFeedback)">回复</el-button>
+                <el-button link type="danger" size="small" @click="handleDeleteFeedback(row as UserFeedback)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
-          <div class="feedback__pagination">
+          <div class="feedback__list-pagination">
             <el-pagination
-              v-if="feedbackTotal > 0"
               v-model:current-page="fbPage"
               v-model:page-size="fbPageSize"
-              :total="feedbackTotal"
+              :total="fbTotal"
               :page-sizes="[10, 20, 50, 100]"
               layout="total, sizes, prev, pager, next, jumper"
               @current-change="handleFbPageChange"
@@ -420,7 +483,7 @@ watch(activeTab, (tab) => {
         <p v-if="currentDetail.model"><strong>模型：</strong>{{ currentDetail.model }}</p>
         <p v-if="currentDetail.duration"><strong>耗时：</strong>{{ currentDetail.duration }}ms</p>
         <p v-if="currentDetail.tokens"><strong>Token 消耗：</strong>{{ currentDetail.tokens }}</p>
-        <p><strong>时间：</strong>{{ currentDetail.createdAt }}</p>
+        <p><strong>时间：</strong>{{ formatTime(currentDetail.createdAt) }}</p>
       </div>
     </el-dialog>
 
@@ -450,8 +513,10 @@ watch(activeTab, (tab) => {
         <el-form-item label="评分">
           <el-rate v-model="feedbackForm.score" :max="5" />
         </el-form-item>
-        <el-form-item label="知识库ID" v-if="!isEditingFeedback">
-          <el-input v-model="feedbackForm.kbId" placeholder="选填" />
+        <el-form-item label="知识库" v-if="!isEditingFeedback">
+          <el-select v-model="feedbackForm.kbId" placeholder="选填" clearable filterable style="width: 200px">
+            <el-option v-for="kb in kbOptions" :key="kb.id" :label="kb.name" :value="kb.id" />
+          </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -465,66 +530,18 @@ watch(activeTab, (tab) => {
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
 
-.metric-cards {
-  display: grid;
-  grid-template-columns: repeat(5, 1fr);
-  gap: $spacing-base;
-  margin-bottom: $spacing-base;
-}
-
-.metric-card {
-  background: $bg-white;
-  border-radius: $radius-base;
-  padding: $spacing-lg;
-  .metric-label { font-size: 13px; color: $text-secondary; margin-bottom: $spacing-sm; }
-  .metric-value { font-size: 24px; font-weight: 700; }
-}
-
 .overview-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: $spacing-base;
 }
 
-.section-title { font-size: 15px; font-weight: 600; margin-bottom: $spacing-base; }
-
 .category-item {
   margin-bottom: $spacing-base;
   .cat-header { display: flex; justify-content: space-between; font-size: 13px; margin-bottom: $spacing-xs; }
 }
 
-.word-cloud {
-  display: flex;
-  flex-wrap: wrap;
-  gap: $spacing-sm;
-  align-items: center;
-  justify-content: center;
-  padding: $spacing-lg;
-  .word { color: $color-primary; cursor: pointer; &:hover { color: $color-success; } }
-}
-
-.rank-item {
-  display: flex;
-  align-items: center;
-  gap: $spacing-base;
-  padding: $spacing-sm 0;
-  border-bottom: 1px solid $border-extra-light;
-  .rank {
-    width: 24px; height: 24px; border-radius: 50%; background: $border-lighter;
-    display: flex; align-items: center; justify-content: center;
-    font-size: 12px; font-weight: 600; color: $text-secondary;
-    &.top-3 { background: $color-primary; color: #fff; }
-  }
-  .name { flex: 1; font-size: 13px; }
-  .satisfaction { font-weight: 600; color: $color-success; }
-  .count { font-size: 12px; color: $text-secondary; }
-}
-
 .ai-tip { font-size: 12px; color: $text-secondary; margin-top: $spacing-sm; }
-
-.section-header {
-  display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base;
-}
 
 .stats-row {
   display: flex; gap: $spacing-lg; margin-bottom: $spacing-base; padding: $spacing-base; background: $bg-white; border-radius: $radius-base;
@@ -533,18 +550,13 @@ watch(activeTab, (tab) => {
   .stat-val { font-size: 20px; font-weight: 700; }
 }
 
-.filter-bar {
-  display: flex; gap: $spacing-sm; margin-bottom: $spacing-base; flex-wrap: wrap;
-}
+// RankList 插槽附加字段（排行行内样式）
+.satisfaction { font-weight: 600; color: $color-success; }
+.count { font-size: 12px; color: $text-secondary; }
 
-// 分页 BEM 风格 — 遵循 AGENTS.md 规范
-.feedback__pagination {
-  display: flex;
-  justify-content: flex-end;
-  margin-top: 16px;
-}
-
-.qa__pagination {
+// 分页 BEM 风格 — 遵循 AGENTS.md 规范（同页两个分页块共享样式）
+.feedback__qa-pagination,
+.feedback__list-pagination {
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;

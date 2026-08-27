@@ -439,4 +439,136 @@ class RetrievalServiceImplTest {
         assertTrue(contents.contains("向量路内容"));
         assertTrue(contents.contains("全文路内容"));
     }
+
+    // ========================================================================
+    //  P0 线A：上下文 auto 自动降级链 + 条款/标题线索召回（分册一）
+    // ========================================================================
+
+    /** auto 默认策略：命中子分片（parentId 非空）时返回父块全文（L1 parent_chunk） */
+    @Test
+    void search_contextAuto_parentAssembled() {
+        RetrievalRequest.RetrievalConfig cfg = cfg();
+        cfg.setMode("fulltext");
+        cfg.setTopK(10);
+        cfg.setContextAssemblyStrategy("auto");
+
+        // 主检索命中 f1/index1，且该 chunk 是父子分片的子片（parentId 指向父块）
+        KbChunk child = chunkWithIndex("c1", "f1", 1, "子分片内容");
+        child.setParentId("f1_parent_0");
+        child.setChunkType("text");
+        when(chunkMapper.fulltextSearch(eq("kb1"), anyString(), anyInt()))
+                .thenReturn(List.of(child));
+        when(fileMapper.selectById("f1")).thenReturn(activeFile("f1"));
+        // 父块查询返回完整条款上下文
+        when(chunkMapper.selectById("f1_parent_0")).thenReturn(
+                chunkWithIndex("f1_parent_0", "f1", 0, "【完整父块】本办法所称电力业务许可，包括：\n(一)发电许可\n(二)输电许可\n(三)售电许可"));
+
+        List<SearchResultItem> results = service.search(req("kb1", "电力业务许可包括哪些", cfg));
+
+        assertEquals(1, results.size());
+        assertTrue(results.get(0).getContent().contains("完整父块"),
+                "auto 策略下命中子分片应返回父块完整上下文");
+        assertEquals("parent", results.get(0).getChunkType());
+    }
+
+    /** auto 默认策略：无父块（单层分片）时降级 window 取邻居（L2） */
+    @Test
+    void search_contextAuto_noParent_usesWindowNeighbors() {
+        RetrievalRequest.RetrievalConfig cfg = cfg();
+        cfg.setMode("fulltext");
+        cfg.setTopK(10);
+        cfg.setContextAssemblyStrategy("auto");
+        cfg.setContextWindowSize(1);
+
+        // 命中块无 parentId（单层分片）→ L2 window
+        when(chunkMapper.fulltextSearch(eq("kb1"), anyString(), anyInt()))
+                .thenReturn(List.of(chunkWithIndex("c1", "f1", 1, "命中内容1")));
+        when(fileMapper.selectById("f1")).thenReturn(activeFile("f1"));
+        when(chunkMapper.selectByFileId("f1")).thenReturn(List.of(
+                chunkWithIndex("c0", "f1", 0, "邻居0"),
+                chunkWithIndex("c1", "f1", 1, "命中内容1"),
+                chunkWithIndex("c2", "f1", 2, "邻居2"),
+                chunkWithIndex("c3", "f1", 3, "邻居3")));
+
+        List<SearchResultItem> results = service.search(req("kb1", "测试", cfg));
+
+        assertTrue(results.stream().anyMatch(r -> "邻居0".equals(r.getContent())), "L2 window 应带回前邻居");
+        assertTrue(results.stream().anyMatch(r -> "邻居2".equals(r.getContent())), "L2 window 应带回后邻居");
+        assertTrue(results.stream().noneMatch(r -> "邻居3".equals(r.getContent())), "windowSize=1 不应带回 2 跳外邻居");
+    }
+
+    /** auto 默认策略：无法定位文件（无 fileId）时降级 concat 返回自身（L3） */
+    @Test
+    void search_contextAuto_noFileId_fallsBackToConcat() {
+        RetrievalRequest.RetrievalConfig cfg = cfg();
+        cfg.setMode("fulltext");
+        cfg.setTopK(10);
+        cfg.setContextAssemblyStrategy("auto");
+        cfg.setEnableGraphExpand(false); // 关闭图谱，避免额外通道干扰
+        cfg.setEnableKeywordMatch(false); // 关闭 QA，避免额外通道干扰
+
+        // 命中块 fileId 为 null（如父文档组装产出的纯内容条目），无法取邻居
+        KbChunk noFile = chunkWithIndex("c1", null, 0, "无文件内容");
+        when(chunkMapper.fulltextSearch(eq("kb1"), anyString(), anyInt()))
+                .thenReturn(List.of(noFile));
+
+        List<SearchResultItem> results = service.search(req("kb1", "测试", cfg));
+
+        assertEquals(1, results.size());
+        assertEquals("无文件内容", results.get(0).getContent(), "无法定位文件时应原样返回自身");
+    }
+
+    /** 条款线索召回：query 含"第三条"时，条款锚点 + 相邻条款进入结果（enableClauseRecall 默认开） */
+    @Test
+    void search_clauseRecall_clauseMention_recallsAnchorsAndNeighbors() {
+        RetrievalRequest.RetrievalConfig cfg = cfg();
+        cfg.setMode("fulltext");
+        cfg.setTopK(10);
+        cfg.setEnableClauseRecall(true);
+        cfg.setClauseWindowSize(1);
+        cfg.setEnableGraphExpand(false);
+
+        when(chunkMapper.fulltextSearch(eq("kb1"), anyString(), anyInt()))
+                .thenReturn(List.of(chunk("c1", "f1", "条款相关内容")));
+        when(fileMapper.selectById("f1")).thenReturn(activeFile("f1"));
+
+        // 条款锚点：含"第三条"的 chunk
+        KbChunk anchor = chunkWithIndex("ca", "f2", 2, "第三条 电力业务许可的适用范围");
+        anchor.setKbId("kb1");
+        // 条款锚点 LIKE 查询
+        when(chunkMapper.selectList(any())).thenReturn(List.of(anchor));
+        when(chunkMapper.selectByFileId("f2")).thenReturn(List.of(
+                chunkWithIndex("cn1", "f2", 1, "第二条 定义"),
+                chunkWithIndex("ca", "f2", 2, "第三条 电力业务许可的适用范围"),
+                chunkWithIndex("cn3", "f2", 3, "第四条 申请材料")));
+        when(fileMapper.selectById("f2")).thenReturn(activeFile("f2"));
+
+        List<SearchResultItem> results = service.search(req("kb1", "第三条的适用范围是什么", cfg));
+
+        assertTrue(results.stream().anyMatch(r -> r.getContent().contains("第三条")),
+                "条款锚点应被召回");
+        assertTrue(results.stream().anyMatch(r -> r.getContent().contains("第二条")),
+                "条款锚点前驱（clauseWindowSize=1）应被召回");
+        assertTrue(results.stream().anyMatch(r -> r.getContent().contains("第四条")),
+                "条款锚点后继（clauseWindowSize=1）应被召回");
+    }
+
+    /** 条款线索召回显式关闭时，不触发条款/标题召回（回归） */
+    @Test
+    void search_clauseRecall_disabled_skipsClauseRecall() {
+        RetrievalRequest.RetrievalConfig cfg = cfg();
+        cfg.setMode("fulltext");
+        cfg.setTopK(10);
+        cfg.setEnableClauseRecall(false);
+        cfg.setEnableGraphExpand(false);
+        cfg.setEnableKeywordMatch(false);
+
+        when(chunkMapper.fulltextSearch(eq("kb1"), anyString(), anyInt()))
+                .thenReturn(List.of(chunk("c1", "f1", "普通内容")));
+        when(fileMapper.selectById("f1")).thenReturn(activeFile("f1"));
+
+        List<SearchResultItem> results = service.search(req("kb1", "第三条", cfg));
+
+        assertEquals(1, results.size(), "关闭条款召回时不应增加召回项");
+    }
 }

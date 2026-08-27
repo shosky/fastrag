@@ -1,0 +1,28 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>OO plugin relay</title>
+<body>
+<script>
+  // 选区中继：插件页(8082 源) -> 本 iframe(3000 源, 由插件注入) -> BroadcastChannel -> 宿主页面(3000)。
+  // BroadcastChannel 按源隔离：只有与本页同源的宿主能收到，因此必须在 3000 源上创建频道。
+  let bc = null
+  try {
+    bc = new BroadcastChannel('fastrag-oo-selection')
+    console.log('[OO-RELAY] channel ready')
+    bc.postMessage({ type: 'oo-bridge-ready' })
+  } catch (e) {
+    console.log('[OO-RELAY] BroadcastChannel unavailable:', e && e.message)
+  }
+  window.addEventListener('message', (e) => {
+    const d = e && e.data
+    if (d && (d.type === 'oo-selection' || d.type === 'oo-selection-ping' || d.type === 'oo-bridge-ready')) {
+      try {
+        if (bc) bc.postMessage(d)
+      } catch (err) {
+        // ignore
+      }
+    }
+  })
+</script>
+</body>
+</html>

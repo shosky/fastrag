@@ -1,0 +1,59 @@
+{
+  "services": {
+    "CoAuthoring": {
+      "sql": {
+        "type": "postgres",
+        "dbHost": "localhost",
+        "dbPort": 5432,
+        "dbName": "onlyoffice",
+        "dbUser": "onlyoffice",
+        "dbPass": "onlyoffice"
+      },
+      "token": {
+        "enable": {
+          "request": {
+            "inbox": false,
+            "outbox": false
+          },
+          "browser": false
+        },
+        "inbox": {
+          "header": "Authorization",
+          "inBody": true
+        },
+        "outbox": {
+          "header": "Authorization",
+          "inBody": true
+        }
+      },
+      "secret": {
+        "inbox": {
+          "string": "fastrag-onlyoffice-dev-secret-change-me"
+        },
+        "outbox": {
+          "string": "fastrag-onlyoffice-dev-secret-change-me"
+        },
+        "session": {
+          "string": "fastrag-onlyoffice-dev-secret-change-me"
+        }
+      },
+      "plugins": { "autostart": ["asc.{FB71C2D3-9A64-4F0E-B18E-C1A71097E201}"] },"request-filtering-agent": {
+        "allowPrivateIPAddress": true,
+        "allowIPAddressList": [
+          "host.docker.internal",
+          "192.168.65.254",
+          "172.17.0.0/16",
+          "127.0.0.1"
+        ]
+      }
+    }
+  },
+  "rabbitmq": {
+    "url": "amqp://guest:guest@localhost"
+  },
+  "storage": {
+    "fs": {
+      "secretString": "7bNvZgjrPNs5sXRL2cRp"
+    }
+  }
+}

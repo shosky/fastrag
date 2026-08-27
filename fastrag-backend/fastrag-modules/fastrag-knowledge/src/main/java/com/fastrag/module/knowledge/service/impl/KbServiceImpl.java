@@ -23,6 +23,7 @@ import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.knowledge.model.KbCreateRequest;
 import com.fastrag.module.knowledge.model.KbDto;
 import com.fastrag.module.knowledge.service.KbService;
+import com.fastrag.module.knowledge.service.TagRelationHelper;
 import com.fastrag.security.filter.LoginUser;
 import com.fastrag.security.service.KbAccessChecker;
 import com.fastrag.security.service.KbAclService;
@@ -50,6 +51,7 @@ public class KbServiceImpl implements KbService {
     private final KbQaPairMapper qaPairMapper;
     private final KbAclService aclService;
     private final KbAccessChecker accessChecker;
+    private final TagRelationHelper tagRelationHelper;
 
     /** 仅平台级 API Token（程序化访问）全局可见；所有登录用户（含超管/kb_admin）按本组织 ∪ ACL 过滤 */
     private boolean isPlatformAdmin(LoginUser user) {
@@ -120,6 +122,10 @@ public class KbServiceImpl implements KbService {
         e.setOrgId(SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getOrgId() : null);
         e.setUsedSize(0L);
         e.setTotalSize(0L);
+        // 自定义属性 schema 落库（customAttrs 复活；非法 JSON 留空由 toDto 容错）
+        if (req.getCustomAttrSchema() != null) {
+            e.setCustomAttrSchema(JSONUtil.toJsonStr(req.getCustomAttrSchema()));
+        }
         // 类型跟随共享设置：指定人共享(private)→personal，全局/部门→team
         e.setType("private".equals(e.getPermission()) ? "personal" : "team");
         mapper.insert(e);
@@ -155,6 +161,9 @@ public class KbServiceImpl implements KbService {
         if (req.getRetrievalConfig() != null) e.setRetrievalConfig(JSONUtil.toJsonStr(req.getRetrievalConfig()));
         if (req.getGraphAutoBuild() != null) e.setGraphAutoBuild(req.getGraphAutoBuild() ? 1 : 0);
         if (req.getGraphLlmModel() != null) e.setGraphLlmModel(req.getGraphLlmModel());
+        if (req.getCustomAttrSchema() != null) {
+            e.setCustomAttrSchema(JSONUtil.toJsonStr(req.getCustomAttrSchema()));
+        }
         mapper.updateById(e);
 
         // 同步标签实体
@@ -207,7 +216,23 @@ public class KbServiceImpl implements KbService {
                 log.warn("[KB Delete] QA pair cleanup failed for file {}: {}", fileId, e.getMessage());
             }
         }
-        // 2. 删除该 KB 下所有文件记录（含已软删除的）
+        // 2. 清理该 KB 下的全部标签关联（KB 级 + 文件级）并校正 usage_count（分册四：标签维护闭环）
+        List<String> fileIds = files.stream().map(KbFile::getId).collect(Collectors.toList());
+        List<KbTagRelation> kbRels = kbTagRelationMapper.selectList(new LambdaQueryWrapper<KbTagRelation>()
+                .eq(KbTagRelation::getTargetType, "kb")
+                .eq(KbTagRelation::getTargetId, id));
+        List<KbTagRelation> fileRels = fileIds.isEmpty() ? new ArrayList<>() : kbTagRelationMapper.selectList(
+                new LambdaQueryWrapper<KbTagRelation>()
+                        .eq(KbTagRelation::getTargetType, "file")
+                        .in(KbTagRelation::getTargetId, fileIds));
+        for (KbTagRelation rel : kbRels) {
+            tagRelationHelper.removeTag(TagRelationHelper.TARGET_KB, id, rel.getTagId());
+        }
+        for (KbTagRelation rel : fileRels) {
+            tagRelationHelper.removeTag(TagRelationHelper.TARGET_FILE, rel.getTargetId(), rel.getTagId());
+        }
+
+        // 删除该 KB 下的所有文件记录（含已软删除的）
         fileMapper.delete(new LambdaQueryWrapper<KbFile>().eq(KbFile::getKbId, id));
         // 3. 删除 KB 本身
         mapper.deleteById(id);
@@ -317,6 +342,7 @@ public class KbServiceImpl implements KbService {
         d.setGraphLlmModel(e.getGraphLlmModel());
         d.setFileTypeConfig(StrUtil.isNotBlank(e.getFileTypeConfig()) ? JSONUtil.parse(e.getFileTypeConfig()) : null);
         d.setRetrievalConfig(StrUtil.isNotBlank(e.getRetrievalConfig()) ? JSONUtil.parse(e.getRetrievalConfig()) : null);
+        d.setCustomAttrSchema(StrUtil.isNotBlank(e.getCustomAttrSchema()) ? JSONUtil.parse(e.getCustomAttrSchema()) : null);
         return d;
     }
 }

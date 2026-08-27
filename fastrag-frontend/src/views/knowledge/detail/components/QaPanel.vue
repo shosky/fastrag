@@ -4,17 +4,22 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 import { getFiles } from '@/mock/files'
 import type { QaPair } from '@/types/knowledge'
+import { usePagination } from '@/composables/usePagination'
+import QaImportDialog from './QaImportDialog.vue'
 
 const props = defineProps<{ kbId: string }>()
 
 const loading = ref(false)
 const dataList = ref<QaPair[]>([])
-const total = ref(0)
-const currentPage = ref(1)
-const pageSize = ref(10)
 const searchKeyword = ref('')
 const filterStatus = ref('')
 const filterSource = ref('')
+
+// 分页（使用统一 composable）
+const { currentPage, pageSize, total, handleCurrentChange, handleSizeChange, reset } = usePagination(10)
+
+// 导入对话框
+const showImportDialog = ref(false)
 
 // 对话框
 const showDialog = ref(false)
@@ -47,6 +52,7 @@ const filteredList = computed(() => {
   }
   if (filterStatus.value) list = list.filter(q => q.status === filterStatus.value)
   if (filterSource.value) list = list.filter(q => q.source === filterSource.value)
+
   total.value = list.length
   const start = (currentPage.value - 1) * pageSize.value
   return list.slice(start, start + pageSize.value)
@@ -59,6 +65,7 @@ async function loadData() {
     const list = res?.list || res || []
     dataList.value = list
     total.value = res?.total ?? list.length
+    reset()
   } finally { loading.value = false }
 }
 onMounted(loadData)
@@ -96,8 +103,6 @@ async function handleSave() {
   if (!formData.value.question) { ElMessage.warning('请输入问题'); return }
   if (!formData.value.answer) { ElMessage.warning('请输入答案'); return }
   try {
-    const keywords = formData.value.keywords ? formData.value.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : []
-    const similarQuestions = formData.value.similarQuestions ? formData.value.similarQuestions.split(',').map((s: string) => s.trim()).filter(Boolean) : []
     if (editingId.value) {
       await api.updateQaPair(props.kbId, editingId.value, {
         question: formData.value.question,
@@ -117,16 +122,27 @@ async function handleSave() {
 }
 
 function handleSearch() { currentPage.value = 1 }
-function handlePageChange(p: number) { currentPage.value = p }
-function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1 }
 </script>
 
 <template>
   <div v-loading="loading">
     <div class="section-header">
       <div class="section-title">问答对管理</div>
-      <el-button type="primary" size="small" @click="handleAdd">手动添加</el-button>
+      <div class="header-actions">
+        <el-button size="small" @click="showImportDialog = true">
+          <el-icon class="el-icon--left"><Upload /></el-icon>
+          导入 Excel
+        </el-button>
+        <el-button type="primary" size="small" @click="handleAdd">手动添加</el-button>
+      </div>
     </div>
+
+    <!-- 导入对话框 -->
+    <QaImportDialog
+      v-model:visible="showImportDialog"
+      :kb-id="kbId"
+      @success="loadData"
+    />
 
     <!-- 筛选栏 -->
     <div class="filter-bar">
@@ -165,10 +181,17 @@ function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1
       </el-table-column>
     </el-table>
 
-    <div class="table-footer" v-if="total > pageSize">
-      <el-pagination v-model:current-page="currentPage" v-model:page-size="pageSize" :total="total"
-        :page-sizes="[10, 20, 50]" layout="total, sizes, prev, pager, next"
-        @current-change="handlePageChange" @size-change="handleSizeChange" />
+    <!-- 分页（规范格式） -->
+    <div class="qa-panel__pagination" v-if="total > pageSize">
+      <el-pagination
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="total"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="handleCurrentChange"
+        @size-change="handleSizeChange"
+      />
     </div>
 
     <!-- 新增/编辑对话框 -->
@@ -236,3 +259,33 @@ function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1
     </el-dialog>
   </div>
 </template>
+
+<style scoped lang="scss">
+.section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  .section-title {
+    font-size: 15px;
+    font-weight: 600;
+  }
+  .header-actions {
+    display: flex;
+    gap: 8px;
+  }
+}
+
+.filter-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+}
+
+.qa-panel__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+</style>

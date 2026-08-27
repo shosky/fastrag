@@ -163,6 +163,57 @@ services:
       - fastrag-net
     restart: unless-stopped
 
+  # ==================== OnlyOffice Document Server ====================
+  # 在线渲染 / 编辑 Office 文档（docx/xlsx/pptx），供 FastRAG 后端回调落盘
+  onlyoffice-docserver:
+    # 2026-08-27 升级 7.4 → 8.3.3：修复插件 autostart 竞态 + 验证后台型插件支持。
+    # 回滚开关：注释下行、放开注释的 7.4 行即可（数据卷/挂载完全兼容）
+    image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/onlyoffice/documentserver:8.3.3
+    # image: swr.cn-north-4.myhuaweicloud.com/ddn-k8s/docker.io/onlyoffice/documentserver:7.4
+    container_name: fastrag-onlyoffice
+    ports:
+      - "8082:80"     # 公开端口：浏览器 iframe + FastRAG → OO
+      - "8000:8000"   # 内部端口：FastRAG 服务端拉取 OO 保存后的文件（payload.url 默认指向 8000）
+    environment:
+      # JWT 已在挂载的 local.json 中禁用（token.enable.*=false），生产环境改回 true 并同步
+      # fastrag-backend 的 onlyoffice.jwt-secret / onlyoffice.jwt-enabled
+      - JWT_SECRET=${ONLYOFFICE_JWT_SECRET:-fastrag-onlyoffice-dev-secret-change-me}
+      - JWT_ENABLED=false
+      - JWT_IN_BODY=true
+      # 关键：nginx secure_link 防盗链密钥，必须与挂载的 local.json 中
+      # storage.fs.secretString 完全一致，否则浏览器拉取 /cache/files 转换后文档时报 403
+      # （入口脚本缺省时每次启动随机生成，与 local.json 脱节）
+      - SECURE_LINK_SECRET=7bNvZgjrPNs5sXRL2cRp
+      # 关闭 example 应用，欢迎页由 Document Server 自带
+      - USE_UNAUTHORIZED_SSL=false
+    volumes:
+      - ./docker-data/onlyoffice/logs:/var/log/onlyoffice
+      - ./docker-data/onlyoffice/data:/var/www/onlyoffice/Data
+      - ./docker-data/onlyoffice/lib:/var/lib/onlyoffice
+      # 关键：SSRF 防护放行（converter 下载 FastRAG 原文件时走 host.docker.internal=私有 IP，
+      # 不放行会报 "DNS lookup ... is not allowed. Because, It is private IP address"）
+      - ./docker-data/onlyoffice/config/local.json:/etc/onlyoffice/documentserver/local.json
+      # FastRAG 插件（选区桥/分片边界）：放入服务端 sdkjs-plugins 目录，
+      # Document Server 扫描该目录自动生成 /7.4.x-y/plugins.json 清单并托管插件。
+      # ⚠ 目录名含 -v3 是刻意的：旧路径的清单曾被浏览器以一年期缓存钉死（见 nginx 覆盖片段），
+      #   改名可让所有客户端强制拉到新配置；插件「文件」本身已由下方 nginx 片段改为 no-cache
+      - ./fastrag-frontend/public/onlyoffice-plugin/chunk-boundary-r2:/var/www/onlyoffice/documentserver/sdkjs-plugins/fastrag-chunk-boundary-v6
+      # nginx 覆盖片段：插件资源 no-cache（文件名 ds-a-* 保证排序先于 ds-docservice 的 365d 缓存规则）
+      - ./docker-data/onlyoffice/nginx/ds-a-fastrag-nocache.conf:/etc/nginx/includes/ds-a-fastrag-nocache.conf:ro
+    # Windows / Mac Docker Desktop 自动支持 host.docker.internal；
+    # Linux 需自行将宿主机 IP 加入 extra_hosts（host-gateway 已被 docker compose 识别）
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost/healthcheck || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 6
+      start_period: 60s
+    networks:
+      - fastrag-net
+    restart: unless-stopped
+
 volumes:
   mysql-data:
   redis-data:

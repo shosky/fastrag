@@ -16,6 +16,62 @@ export interface KnowledgeBase {
   graphAutoBuild?: number
   /** 知识图谱构建用 LLM 模型（parse strategy 未配置时的 fallback） */
   graphLlmModel?: string
+  /** KB 级自定义属性定义（customAttrs 复活，分册四；前端据此渲染文件元数据表单） */
+  customAttrSchema?: AttrDef[]
+}
+
+/** 自定义属性定义（AttrDef，分册四 schema 驱动；KB customAttrSchema 的单个字段） */
+export interface AttrDef {
+  /** 字段名（值映射 key；region/publishDate/docLevel 为检索感知保留名） */
+  name: string
+  /** 展示名 */
+  label?: string
+  /** text | number | select | date | boolean | region（地域多值） */
+  type: 'text' | 'number' | 'select' | 'date' | 'boolean' | 'region'
+  options?: string[]
+  required?: boolean
+  description?: string
+  /** 是否检索感知：命中保留名(region/publishDate/docLevel)时投影到强类型列供检索过滤/排序 */
+  searchable?: boolean
+  builtin?: boolean
+  defaultValue?: unknown
+}
+
+/** 文档发文层级（与后端 docLevel 枚举对齐） */
+export type DocLevel = 'national' | 'provincial' | 'municipal' | 'county' | 'unknown'
+
+/** 文件标签聚合视图（分册四 L2 标签） */
+export interface FileTagVO {
+  id: string
+  name: string
+  color?: string
+  tagTypeId?: string
+}
+
+/** 文件元数据 VO（GET /kb/:kbId/files/:id/metadata 返回，分册四 schema 驱动） */
+export interface FileMetadata {
+  fileId: string
+  fileName: string
+  /** 字段定义（KB schema，决定渲染哪些字段） */
+  attrSchema: AttrDef[]
+  /** 该文件全部字段取值：key = AttrDef.name（含检索感知字段投影值与普通字段值） */
+  values: Record<string, unknown>
+  metadataStatus?: 'none' | 'partial' | 'full' | 'revised'
+  metadataSource?: 'manual' | 'auto' | 'mixed'
+  tags: FileTagVO[]
+}
+
+/** 知识库标签（kb_tag 表实体） */
+export interface KbTag {
+  id: string
+  kbId: string
+  tagTypeId?: string
+  name: string
+  color?: string
+  description?: string
+  usageCount?: number
+  createdBy?: string
+  createdAt?: string
 }
 
 /** 文档信息 */
@@ -60,6 +116,8 @@ export interface KnowledgeBaseForm {
   graphLlmModel?: string
   fileTypeConfig: FileTypeConfig
   retrievalConfig: RetrievalSettingConfig
+  /** KB 级自定义属性定义（customAttrs 复活，分册四） */
+  customAttrSchema?: AttrDef[]
 }
 
 /** 检索设置配置 */
@@ -98,6 +156,12 @@ export interface RetrievalSettingConfig {
   enableGraphExpand?: boolean
   /** 关键词匹配：用户输入命中问答对触发关键词时优先返回 QA 结果 */
   enableKeywordMatch?: boolean
+  /** 多查询改写（Multi-Query）：LLM 改写 N 个变体查询分别召回后 RRF 融合，弥补分片切断导致的漏召（默认关） */
+  enableMultiQuery?: boolean
+  /** 多查询变体数量（含原查询，2~5，默认 3） */
+  multiQueryCount?: number
+  /** 多查询改写所用 LLM 模型 code（空 = 系统默认） */
+  multiQueryModel?: string
 
   // ===== 多路召回（可选，默认关闭）=====
   /** 是否启用多路召回（关闭则只走单一 mode 通道） */
@@ -245,6 +309,14 @@ export interface KnowledgeFile {
   deletedAt?: string
   createdAt: string
   updatedAt: string
+
+  // ===== 元数据摘要（分册四，列表列渲染；完整字段走 GET .../metadata） =====
+  region?: string
+  publishDate?: string
+  docLevel?: DocLevel
+  metadataStatus?: 'none' | 'partial' | 'full' | 'revised'
+  metadataSource?: 'manual' | 'auto' | 'mixed'
+  tags?: string[]
 }
 
 /** 检索配置（向后兼容别名，统一使用 RetrievalSettingConfig） */
@@ -576,4 +648,119 @@ export interface QaPair {
   source: QaSource
   status: QaStatus
   createdAt: string
+}
+
+// ==================== 问答对导入相关类型 ====================
+
+/** 单行导入结果 */
+export interface ImportRowResult {
+  rowNumber: number
+  question: string
+  status: 'success' | 'skipped' | 'failed'
+  reason: string | null
+  answer?: string | null
+  category?: string | null
+  keywords?: string | null
+  priority?: number | null
+  qaStatus?: string | null
+  normalizedQuestion?: string | null
+}
+
+/** 问答对批量导入结果 */
+export interface QaImportResult {
+  totalRows: number
+  successCount: number
+  failCount: number
+  details: ImportRowResult[]
+}
+
+// ==================== AI分片（预览 + OCR + 语义分片 + 结构级跨页合并）====================
+
+/** 段落类型（驱动左侧段落锚点与右侧 Markdown 块渲染） */
+export type AiChunkParagraphType = 'paragraph' | 'heading' | 'table' | 'code' | 'list' | 'image' | 'caption'
+
+/** 段落对齐模型的一个段落（parsed.json 的 paragraph 元素；AI分片 的单一事实源） */
+export interface AiChunkParagraph {
+  id: string
+  /** 文档内顺序 */
+  order: number
+  type: AiChunkParagraphType
+  /** 段落文本：table 为制表符分隔；code 为代码/JSON；heading 为标题行 */
+  text: string
+  /** 首次出现页（1-based；PPTX 记录 slide 序号） */
+  page: number
+  /** 全部出现页（跨页合并块为多页，如 [15,16]；后端 parsed.json 字段） */
+  pages?: number[]
+  /** 图片段落：MinIO 图片 key（前端按 {kbId}/{fileId}/images/{key} 渲染） */
+  imageKey?: string
+  /** 段落文字块坐标（每页一个盒；归一化 0~1 顶左原点；跨页合并块多页多个），前端 pdf.js overlay 据此画分块边界 */
+  rects?: Array<{ page: number; x: number; y: number; width: number; height: number }>
+  /** 跨页合并后的页码范围，如 "15-16"；未跨页时为 "N" */
+  pageRange: string
+  /** PPTX 用：所在 slide 索引 */
+  slide?: number | null
+  /** PDF 用：页面矩形坐标（前端 pdf.js 坐标 overlay）；非 PDF 可为 null */
+  rect?: { x: number; y: number; w: number; h: number } | null
+  /** 章节层级路径，如 "5.8" */
+  headingPath?: string
+  /** 所属语义分片 id（分片后回填） */
+  chunkId?: string
+  /** 相对合并后全文的偏移（供分片映射） */
+  charStart?: number
+  charEnd?: number
+  /** 是否跨页合并块 */
+  crossPage?: boolean
+  /** 是否被人工编辑过（校对标记；编辑后与原文不一致属预期） */
+  edited?: boolean
+}
+
+/** AI分片 产出的一个语义分片 */
+export interface AiChunk {
+  id: string
+  index: number
+  content: string
+  /** 该分片覆盖的 paragraphId 范围 */
+  paragraphIdRange: string[]
+  pageRange?: string
+}
+
+/** 版面分析块（VLM 逐页识别；原件渲染分块画框的数据源，MinIO layout.json 缓存） */
+export interface AiChunkLayoutBlock {
+  /** 页码（1-based） */
+  page: number
+  /** title|text|table|image|code|formula|caption */
+  type: 'title' | 'text' | 'table' | 'image' | 'code' | 'formula' | 'caption'
+  /** 归一化 0~1，顶左原点（框随页宽百分比缩放） */
+  x: number
+  y: number
+  width: number
+  height: number
+  /** 块内文字摘要（与段落互含匹配，驱动 hover 联动） */
+  text?: string
+}
+
+/** AI分片 解析结果（ai-chunk-preview / SSE done 事件返回） */
+export interface AiChunkResult {
+  file: { id: string; name: string; extension: string; kbId: string }
+  document: { type: string; pages: number; slides?: number | null; ocrPages?: number[]; mergedBlocks: number }
+  paragraphs: AiChunkParagraph[]
+  /** PDF 内容图片渲染位置（归一化 0~1；原件可视化兜底数据，不参与段落对齐模型） */
+  imageBoxes?: Array<{ page: number; x: number; y: number; width: number; height: number }>
+  /** 版面分析块（缓存命中时随预览返回；未命中由前端走 SSE /ai-chunk/layout 按需生成） */
+  layoutBlocks?: AiChunkLayoutBlock[]
+  chunks: AiChunk[]
+  /** 合并后的 Markdown（parsed.md 同源） */
+  markdown: string
+}
+
+/** AI分片 应用请求体（尊重用户确认的分片边界：后端只向量化落库，不重新切分） */
+export interface AiChunkApplyPayload {
+  chunks: Array<{
+    /** 该分片覆盖的段落 id（回填 parsed.json 的 chunkId 与审计追溯） */
+    paragraphIds: string[]
+    /** 该分片最终文本（可能经用户编辑） */
+    text: string
+    /** auto=自动分片（LLM/Embedding）| manual=手动选中 */
+    source: 'auto' | 'manual'
+  }>
 }

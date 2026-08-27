@@ -148,6 +148,26 @@ wechat:
     app-id: ${WECHAT_APP_ID:}
     app-secret: ${WECHAT_APP_SECRET:}
 
+# OnlyOffice Document Server（在线渲染 / 编辑 Office 文档）
+# 关闭时回退到前端 mammoth / xlsx / pptx-preview 渲染（FilePreviewDialog 内置兼容）
+# 本地默认开启，prod 部署通过环境变量 ONLYOFFICE_ENABLED=false 关闭
+onlyoffice:
+  enabled: ${ONLYOFFICE_ENABLED:true}
+  # 浏览器 / FastRAG 服务端 → OO 的 URL（OO 容器映射到宿主 8082）
+  url: ${ONLYOFFICE_URL:http://localhost:8082}
+  # FastRAG → OO 拉取保存后文件时的 base URL；与 url 同源即可
+  internal-url: ${ONLYOFFICE_INTERNAL_URL:http://localhost:8082}
+  # 与 OnlyOffice Document Server JWT_SECRET 同步；服务端签名 + 验签共用
+  jwt-secret: ${ONLYOFFICE_JWT_SECRET:fastrag-onlyoffice-dev-secret-change-me}
+  # 与 OO 容器 token.enable 保持同步：false 时 config 不签名 / callback 跳过 token 校验
+  # （OO 禁用 JWT 后回调 body 不再携带 token 字段；document.key 校验仍保留）
+  # 本地开发默认关闭（OO 容器 local.json 已设 token.enable.*=false）；生产环境设 true
+  jwt-enabled: ${ONLYOFFICE_JWT_ENABLED:false}
+  # OO 容器 → FastRAG 原始文件 / 回调写入 时的 base URL
+  # 容器视角：宿主服务用 host.docker.internal（同机 FastRAG）；若 FastRAG 也在容器内则改成 http://fastrag-app:8081
+  callback-base-url: ${ONLYOFFICE_CALLBACK_BASE_URL:http://host.docker.internal:8081}
+  storage-base-url: ${ONLYOFFICE_STORAGE_BASE_URL:http://host.docker.internal:8081}
+
 # Actuator 配置
 management:
   health:

@@ -16,8 +16,8 @@ const {
   currentPage,
   pageSize,
   total,
-  handleCurrentChange,
-  handleSizeChange,
+  handleCurrentChange: onPageChange,
+  handleSizeChange: onSizeChange,
 } = usePagination(20)
 
 function formatTime(ts: string): string {
@@ -54,6 +54,18 @@ watch(filterCategory, () => {
   currentPage.value = 1
   loadLogs()
 })
+
+/** 事件驱动：页码变化时重新拉取（同时更新 composable 状态） */
+function handleCurrentChange(page: number) {
+  onPageChange(page)
+  loadLogs()
+}
+
+/** 事件驱动：每页条数变化时重置到第一页并拉取 */
+function handleSizeChange(size: number) {
+  onSizeChange(size)
+  loadLogs()
+}
 
 async function handleSearch() {
   currentPage.value = 1

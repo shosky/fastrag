@@ -129,6 +129,14 @@ const keywordWeight = computed(() => (1 - (localConfig.value.semanticWeight ?? 0
       <span class="retrieval-form__suffix">术语库同义词扩展查询</span>
     </el-form-item>
 
+    <el-form-item label="多查询改写">
+      <el-switch :model-value="localConfig.enableMultiQuery ?? false" @change="(v: any) => updateBool('enableMultiQuery', v)" />
+      <template v-if="localConfig.enableMultiQuery">
+        <el-input-number :model-value="localConfig.multiQueryCount ?? 3" :min="2" :max="5" style="margin-left: 12px" @change="(v: number | undefined) => updateNum('multiQueryCount', v)" />
+        <span class="retrieval-form__suffix">LLM 改写 N 个变体查询分别召回后融合，弥补分片切断漏召（延迟更高）</span>
+      </template>
+    </el-form-item>
+
     <!-- ===== 重排序 ===== -->
     <el-divider content-position="left">重排序</el-divider>
 

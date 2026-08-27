@@ -5,6 +5,8 @@ import mammoth from 'mammoth'
 import * as XLSX from 'xlsx'
 import { init as initPptx } from 'pptx-preview'
 import { storage } from '@/utils/storage'
+import { isOfficeFile } from '@/config'
+import { Document, Promotion } from '@element-plus/icons-vue'
 
 const props = defineProps<{
   visible: boolean
@@ -15,6 +17,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
   (e: 'download', file: KnowledgeFile): void
+  /** 文件是 Office 类型（且 OnlyOffice 可用）时通知父组件打开 OnlyOfficeEditorDialog */
+  (e: 'open-office', file: KnowledgeFile): void
 }>()
 
 // Two-way binding for el-dialog v-model
@@ -86,6 +90,13 @@ function handleDownload() {
   }
 }
 
+/** 触发父组件打开 OnlyOfficeEditorDialog（仅 OO 支持的文件扩展名） */
+function openOfficeEditor() {
+  if (!props.file) return
+  emit('open-office', props.file)
+  emit('update:visible', false)
+}
+
 /** 在新窗口打开（用于 PDF 等） */
 function openInNewTab() {
   if (props.file?.url) {
@@ -152,6 +163,15 @@ async function loadOfficeContent() {
   officeError.value = ''
   officeLoading.value = true
 
+  // OnlyOffice 启用时：仅显示"在线编辑"入口按钮，不在预览弹窗中拉文件
+  // （编辑器需独立 fullscreen 弹窗，详见 OnlyOfficeEditorDialog）
+  const extName = '.' + props.file.name.split('.').pop()?.toLowerCase()
+  if (isOfficeFile(props.file.name)) {
+    officeLoading.value = false
+    officeError.value = ''
+    return
+  }
+
   try {
     const token = storage.get('token')
     const response = await fetch(props.file.url, {
@@ -163,8 +183,6 @@ async function loadOfficeContent() {
       return
     }
     const arrayBuffer = await response.arrayBuffer()
-
-    const ext = '.' + props.file.name.split('.').pop()?.toLowerCase()
 
     if (ext === '.docx' || ext === '.doc') {
       const result = await mammoth.convertToHtml({ arrayBuffer })
@@ -290,28 +308,48 @@ watch(
         @close="handleClose"
       />
 
-      <!-- Office document preview (docx/xlsx/pptx via client-side libraries) -->
+      <!-- Office document preview (docx/xlsx/pptx via client-side libraries, or OnlyOffice launcher) -->
       <div v-else-if="previewType === 'office'" class="file-preview-dialog__office-wrapper">
-        <div v-if="officeLoading" class="file-preview-dialog__office-loading">
-          <el-empty description="正在加载 Office 文档…" :image-size="80" />
-        </div>
-        <div v-else-if="officeError" class="file-preview-dialog__office-error">
-          <el-empty :description="officeError" :image-size="80" />
-          <div class="file-preview-dialog__office-actions">
-            <el-button type="primary" @click="handleDownload">下载文件</el-button>
+        <el-empty v-if="isOfficeFile(file?.name || '')" description="Office 文件请使用 OnlyOffice 在线打开" :image-size="80">
+          <template #image>
+            <el-icon :size="56" color="#409eff"><Document /></el-icon>
+          </template>
+          <template #description>
+            <div style="line-height:1.7">
+              <p style="margin:0 0 6px 0;color:#303133;font-weight:600">{{ file?.name }}</p>
+              <p style="margin:0;color:#909399;font-size:13px">
+                OnlyOffice 支持选中文字 / 编辑保存自动重分片
+              </p>
+            </div>
+          </template>
+          <el-button type="primary" size="default" @click="openOfficeEditor">
+            <el-icon><Promotion /></el-icon>
+            <span>使用 OnlyOffice 打开</span>
+          </el-button>
+          <el-button size="default" @click="handleDownload">下载文件</el-button>
+        </el-empty>
+        <template v-else>
+          <div v-if="officeLoading" class="file-preview-dialog__office-loading">
+            <el-empty description="正在加载 Office 文档…" :image-size="80" />
           </div>
-        </div>
-        <!-- PPTX slides rendered by pptx-preview -->
-        <div v-else-if="isPptx" ref="officePptxRef" class="file-preview-dialog__office-pptx" />
-        <!-- DOCX / XLSX rendered HTML -->
-        <div v-else-if="officeHtml" class="file-preview-dialog__office-html" v-html="officeHtml" />
-        <!-- Fallback -->
-        <div v-else class="file-preview-dialog__office-error">
-          <el-empty description="Office 文件预览加载失败" :image-size="80" />
-          <div class="file-preview-dialog__office-actions">
-            <el-button type="primary" @click="handleDownload">下载文件</el-button>
+          <div v-else-if="officeError" class="file-preview-dialog__office-error">
+            <el-empty :description="officeError" :image-size="80" />
+            <div class="file-preview-dialog__office-actions">
+              <el-button type="primary" @click="handleDownload">下载文件</el-button>
+            </div>
           </div>
-        </div>
+          <!-- PPTX slides rendered by pptx-preview -->
+          <div v-else-if="isPptx" ref="officePptxRef" class="file-preview-dialog__office-pptx" />
+          <!-- DOCX / XLSX rendered HTML -->
+          <div v-else-if="officeHtml" class="file-preview-dialog__office-html" v-html="officeHtml" />
+          <!-- Fallback -->
+          <div v-else class="file-preview-dialog__office-error">
+            <el-empty description="Office 文件预览加载失败" :image-size="80" />
+            <div class="file-preview-dialog__office-actions">
+              <el-button type="primary" @click="handleDownload">下载文件</el-button>
+            </div>
+          </div>
+        </template>
       </div>
 
       <!-- PDF preview: iframe embed + 新窗口/下载 fallback -->

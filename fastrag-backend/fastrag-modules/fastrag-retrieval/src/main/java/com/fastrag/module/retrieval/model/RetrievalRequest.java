@@ -43,6 +43,9 @@ public class RetrievalRequest {
         private String nerModel;                  // NER 提取模型
         private Boolean enableSynonymExpansion;   // 同义词联想
         private Boolean enableKeywordMatch;       // 关键词匹配：命中问答对时优先返回
+        private Boolean enableMultiQuery;         // 多查询改写召回（LLM 生成 N 个变体查询分别召回后 RRF 融合，默认关闭）
+        private Integer multiQueryCount;          // 多查询变体数量（含原查询，2~5，默认 3）
+        private String multiQueryModel;           // 多查询改写所用 LLM 模型 code（空 = 系统默认网关）
 
         // ===== 多路召回（可选，默认关闭）=====
         private Boolean enableMultiRetrieval;      // 是否启用多路召回
@@ -66,9 +69,13 @@ public class RetrievalRequest {
         private Double mmrLambda;                  // MMR lambda 参数 (0=多样性, 1=相关性)
 
         // ===== 上下文组装 =====
-        private String contextAssemblyStrategy;    // concat / parent_document / window
+        private String contextAssemblyStrategy;    // concat / parent_chunk / parent_document / window / auto
         private Integer contextWindowSize;         // 窗口模式：前后 N 个 chunk
         private Integer maxContextTokens;          // context 最大 token 数
         private String contextOrder;               // relevance / document_order
+        // ===== 条款/标题线索召回（政策文件条款交叉引用场景）=====
+        private Boolean enableClauseRecall;        // 条款/标题线索召回开关（默认 true；仅咨询含条款号或命中标题时触发）
+        private Integer clauseWindowSize;          // 条款联动召回：条款号命中 chunk 前后联动半径（按 chunkIndex）
+        private Integer clauseRecallCount;         // 标题线索召回数量（无条款号时按标题/headingPath LIKE）
     }
 }

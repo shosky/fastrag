@@ -68,6 +68,11 @@ public class SecurityConfig {
                 "/api/auth/wechat/login", "/api/auth/wechat/qr-confirm"
             ).permitAll()
 
+                // OnlyOffice Document Server 服务端回调 / 文件拉取（走 OO 自签 JWT 校验，
+                // 不能复用 user JWT 因为服务端是 OO 容器无法携带前端 token）
+                .requestMatchers("/api/kb/*/files/*/onlyoffice/raw",
+                                 "/api/kb/*/files/*/onlyoffice/callback").permitAll()
+
                 .requestMatchers("/swagger-ui/**", "/v3/api-docs/**", "/actuator/**").permitAll()
                 .requestMatchers("/api/**").authenticated()
                 .anyRequest().permitAll()

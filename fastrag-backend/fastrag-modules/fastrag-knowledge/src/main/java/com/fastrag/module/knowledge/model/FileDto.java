@@ -1,7 +1,9 @@
 package com.fastrag.module.knowledge.model;
 
 import lombok.Data;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -21,4 +23,12 @@ public class FileDto {
     private Long size;
     private Integer progress, duration, pages, chunkCount;
     private LocalDateTime deletedAt, createdAt, updatedAt;
+
+    // ===== 元数据摘要（分册四：列表列渲染 / 检索过滤展示用，完整字段走 GET .../metadata） =====
+    private String region;          // 地域（可多值 JSON 数组串）
+    private LocalDate publishDate;  // 发文日期
+    private String docLevel;        // 发文层级
+    private String metadataStatus;  // none/partial/full/revised
+    private String metadataSource;  // manual/auto/mixed
+    private List<String> tags;      // 文件标签名列表（用于列表标签列展示）
 }

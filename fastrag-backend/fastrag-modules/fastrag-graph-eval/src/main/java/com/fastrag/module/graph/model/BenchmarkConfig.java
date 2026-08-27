@@ -35,4 +35,9 @@ public class BenchmarkConfig {
     private String llmModel;
     /** 候选文档片段数量（默认 5，vector 模式使用） */
     private Integer candidateChunkCount = 5;
+    /**
+     * 跨界切断测试集：true 时生成的题目要求"答案横跨两个相邻文档片段"（模拟分片边界
+     * 切断语义），goldChunks 同时落在两个片段上，用于评测检索增强手段的召回完整度。
+     */
+    private Boolean crossBoundary = false;
 }

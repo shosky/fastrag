@@ -51,8 +51,12 @@ public class ChunkServiceImpl implements ChunkService {
                 .eq(KbChunk::getChunkType, "parent");
         if (fileId != null && !fileId.isBlank()) parentW.eq(KbChunk::getFileId, fileId);
         long parentCount = mapper.selectCount(parentW);
+        // 整文件叶分片字符总数（全文件聚合，供管理页"总 Token"；排除父分片避免重复统计）
+        long tokenTotal = mapper.sumLeafCharLength(kbId, fileId);
 
         var result = new HashMap<String, Object>();
+        result.put("parentCount", parentCount);
+        result.put("tokenTotal", tokenTotal);
         if (parentCount > 0) {
             var w = new LambdaQueryWrapper<KbChunk>()
                     .eq(KbChunk::getKbId, kbId)
@@ -137,8 +141,10 @@ public class ChunkServiceImpl implements ChunkService {
             newChunkIndex = mapper.selectMaxChunkIndex(fileId) + 1;
         }
 
-        // 生成 ID
-        String chunkId = fileId + "_chunk_" + newChunkIndex;
+        // 生成 ID：手动分片用独立 ID 段 {fileId}_manual_{n}，避免与管线自动分片
+        // 的 {fileId}_chunk_{index} 撞车（重分片保留 manual 时新 auto 会从 index 0 重新编号）
+        int manualSeq = mapper.selectMaxManualSeq(fileId) + 1;
+        String chunkId = fileId + "_manual_" + manualSeq;
 
         // 创建实体
         KbChunk chunk = new KbChunk();
@@ -153,6 +159,8 @@ public class ChunkServiceImpl implements ChunkService {
         chunk.setEndTime(req.getEndTime());
         chunk.setPageNumber(req.getPageNumber());
         chunk.setChunkType(req.getChunkType() != null ? req.getChunkType() : "text");
+        // 本端点创建的分片均为用户手动创建：重分片/AI 分片应用时保留
+        chunk.setOrigin("manual");
 
         // 生成向量
         List<List<Float>> vectors = generateEmbeddings(kbId, List.of(req.getContent()));
@@ -393,6 +401,12 @@ public class ChunkServiceImpl implements ChunkService {
                         .orderByAsc(KbChunk::getChunkIndex));
         for (KbChunk c : affectedChunks) {
             int newIndex = c.getChunkIndex() + shift;
+            // 手动分片：ID 段固定为 {fileId}_manual_{n}，索引位移不重建 ID/向量/图谱（保持稳定）
+            if ("manual".equals(c.getOrigin())) {
+                c.setChunkIndex(newIndex);
+                mapper.updateById(c);
+                continue;
+            }
             // 更新 ID（因为 ID 包含 chunkIndex）
             String newId = c.getFileId() + "_chunk_" + newIndex;
             // 先删除旧记录再插入（因为 ID 是主键且为 INPUT 类型）

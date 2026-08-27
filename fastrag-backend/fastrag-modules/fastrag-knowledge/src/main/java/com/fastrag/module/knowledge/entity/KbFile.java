@@ -33,6 +33,7 @@ package com.fastrag.module.knowledge.entity;
  */
 import com.baomidou.mybatisplus.annotation.*;
 import lombok.Data;
+import java.time.LocalDate;
 import java.time.LocalDateTime;
 
 @Data
@@ -59,7 +60,26 @@ public class KbFile {
     private Integer enableGraphBuild; // 该文件是否构建知识图谱，默认 0
     private String folderId;
     private Long viewCount;
+    // ===== 业务元数据（文档级，分册四 rag-file-metadata-management.md） =====
+    private String region;         // 地域（省/市，多值 JSON 数组串，如 ["湖南省","长沙"]）
+    private LocalDate publishDate; // 发文日期
+    private String docLevel;       // 发文层级: national / provincial / municipal / county / unknown
+    private String issuer;         // 发文机关
+    private String docNumber;      // 文号（如 发改价格〔2024〕123号）
+    private String metadataStatus; // 元数据状态: none/partial/full/revised（未抽取/部分/完整/人工校订）
+    private String customAttrs;    // 自定义属性取值（JSON KV，schema 见 kb.custom_attr_schema）
+    private String metadataSource; // 填充来源: manual/auto/mixed
     private LocalDateTime deletedAt;
+
+    /**
+     * Markdown 全文对象键（运行时由 IngestionConsumer 在解析完成后写入 MinIO，
+     * 约定路径 {kbId}/{fileId}/parsed.md）。
+     *
+     * <p>本字段为 transient，未映射到 kb_file 表（不依赖 DDL 迁移，见
+     * docs/design/parsed-markdown.md ADR-1）。前端/接口通过 MinIO 路径约定直接定位对象，
+     * 本字段仅作 Java 层可读性说明，供后续若加列时一行去掉 transient 即可。</p>
+     */
+    private transient String markdownObjectKey;
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
     @TableField(fill = FieldFill.INSERT_UPDATE)

@@ -64,7 +64,10 @@ import java.util.stream.Collectors;
  *       与主检索结果 RRF 融合（不将实体名拼入 query 避免稀释 embedding）</li>
  *   <li>Phase 4 - 后处理：Rerank 模型重排、LLM 重排、MMR 多样性控制（可选）</li>
  *   <li>Phase 6 - 上下文组装：支持 concat（直接拼接）、parent_document（父文档整篇）、
- *       window（前后 N 个 chunk 窗口）三种策略</li>
+ *       window（前后 N 个 chunk 窗口）、parent_chunk（父分片放大）四种策略，
+ *       以及 <b>auto</b>（默认）：自动降级链 parent_chunk → window → concat，
+ *       命中小片时自动带回父块/窗口完整上下文，弥补分片切断导致的回答不完整；
+ *       另含条款/标题线索召回（enableClauseRecall）补救政策条款交叉引用</li>
  *   <li>Phase 7 - 配置加载与合并：优先级为 请求参数 &gt; 知识库保存配置 &gt; 系统默认值</li>
  * </ol>
  *
@@ -158,7 +161,10 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
 
         // ---- Phase 2 + Phase 5: 核心检索 ----
-        List<SearchResultItem> results = executeSearch(kbId, query, config);
+        // Multi-Query：LLM 改写 N 个变体查询分别召回后 RRF 融合（弥补分片切断导致的单一查询漏召）
+        List<SearchResultItem> results = Boolean.TRUE.equals(config.getEnableMultiQuery())
+                ? multiQuerySearch(kbId, query, config)
+                : executeSearch(kbId, query, config);
 
         // ---- 图谱通道（方案 A）：固定参与一路图谱召回，与主检索结果 RRF 融合 ----
         // 不再把实体名/关系标签拼入 query 再向量化（避免稀释 embedding），
@@ -175,7 +181,21 @@ public class RetrievalServiceImpl implements RetrievalService {
             }
         }
 
+        // ---- 条款/标题线索召回：政策文件条款交叉引用（"详见第三条"）定向召回 ----
+        // 仅在 query 含条款号或命中标题时触发；命中结果与主检索 RRF 融合，补救条款关联的召回
+        if (Boolean.TRUE.equals(config.getEnableClauseRecall())) {
+            int clauseCount = config.getClauseRecallCount() != null ? config.getClauseRecallCount() : 3;
+            List<SearchResultItem> clauseHits = safeSearch(() -> clauseRecall(kbId, query, config, clauseCount));
+            if (!clauseHits.isEmpty()) {
+                log.info("[Retrieval] Clause recall: {} clause/title results fused via RRF for kb={}, query='{}'",
+                        clauseHits.size(), kbId, query);
+                results = rrfFusionMulti(List.of(results, clauseHits), config.getTopK() * 2);
+            }
+        }
+
         // ---- Phase 4: 后处理（重排序 / MMR）----
+        // 组装后重排模式（parent_chunk / window / auto）下，Rerank 延后到上下文组装后执行，
+        // 避免被切断的块因单块向量得分低而进不了 rerank 视野
         results = postProcess(results, query, config, kbId);
 
         // 按内容去重：同一 content 只保留相似度最高的一条
@@ -183,6 +203,14 @@ public class RetrievalServiceImpl implements RetrievalService {
 
         // ---- Phase 6: 上下文组装 ----
         results = assembleContext(results, config);
+
+        // ---- P1: 扩展上下文后再重排（rerank 输入 = 组装后的完整父块/窗口上下文）----
+        if (rerankAfterAssembly(config)) {
+            int before = results.size();
+            results = rerankResults(results, query, config, kbId);
+            log.info("[Retrieval] Rerank after assembly: {} -> {} items (strategy={})",
+                    before, results.size(), config.getContextAssemblyStrategy());
+        }
 
         // ---- 关键词匹配：命中问答对时 QA 结果优先返回 ----
         if (Boolean.TRUE.equals(config.getEnableKeywordMatch())) {
@@ -320,6 +348,16 @@ public class RetrievalServiceImpl implements RetrievalService {
         config.setGraphRecallCount(5);
         // 关键词匹配默认开启：命中问答对时优先返回（请求/KB 配置可显式关闭）
         config.setEnableKeywordMatch(true);
+        // 多查询改写默认关闭（每查询多 N 次 LLM 改写 + N-1 路召回，延迟更高，需显式开启）
+        config.setEnableMultiQuery(false);
+        config.setMultiQueryCount(3);
+        // 上下文组装默认 auto：自动降级链（parent_chunk → window → concat），
+        // 命中小片时优先带回父块/窗口完整上下文，弥补分片切断导致的回答不完整
+        config.setContextAssemblyStrategy("auto");
+        // 条款/标题线索召回默认开启：仅当 query 含条款号（政策文件交叉引用）或命中标题时触发
+        config.setEnableClauseRecall(true);
+        config.setClauseWindowSize(3);
+        config.setClauseRecallCount(3);
     }
 
     /** 将 source 中的非 null 字段复制到 target */
@@ -340,6 +378,11 @@ public class RetrievalServiceImpl implements RetrievalService {
         if (source.getEnableQueryRewrite() != null) target.setEnableQueryRewrite(source.getEnableQueryRewrite());
         if (source.getEnableSynonymExpansion() != null) target.setEnableSynonymExpansion(source.getEnableSynonymExpansion());
         if (source.getEnableKeywordMatch() != null) target.setEnableKeywordMatch(source.getEnableKeywordMatch());
+
+        // 多查询改写
+        if (source.getEnableMultiQuery() != null) target.setEnableMultiQuery(source.getEnableMultiQuery());
+        if (source.getMultiQueryCount() != null) target.setMultiQueryCount(source.getMultiQueryCount());
+        if (source.getMultiQueryModel() != null) target.setMultiQueryModel(source.getMultiQueryModel());
 
         // 多路召回
         if (source.getEnableMultiRetrieval() != null) target.setEnableMultiRetrieval(source.getEnableMultiRetrieval());
@@ -365,6 +408,11 @@ public class RetrievalServiceImpl implements RetrievalService {
         if (source.getContextWindowSize() != null) target.setContextWindowSize(source.getContextWindowSize());
         if (source.getMaxContextTokens() != null) target.setMaxContextTokens(source.getMaxContextTokens());
         if (source.getContextOrder() != null) target.setContextOrder(source.getContextOrder());
+
+        // 条款/标题线索召回
+        if (source.getEnableClauseRecall() != null) target.setEnableClauseRecall(source.getEnableClauseRecall());
+        if (source.getClauseWindowSize() != null) target.setClauseWindowSize(source.getClauseWindowSize());
+        if (source.getClauseRecallCount() != null) target.setClauseRecallCount(source.getClauseRecallCount());
     }
 
     // ========================================================================
@@ -440,6 +488,61 @@ public class RetrievalServiceImpl implements RetrievalService {
             case "fulltext" -> fulltextSearch(kbId, query, config);
             default -> hybridSearch(kbId, query, config);
         };
+    }
+
+    /**
+     * Multi-Query 检索：LLM 改写 N 个语义互补的变体查询（含原查询），
+     * 每个变体独立走完整召回通道，最后按 chunk RRF 融合。
+     *
+     * <p>作用：分片边界切断会让被切掉的那一半语义"换一种表述"后才可能命中，
+     * 多变体召回 + RRF 融合是最直接的兜底手段（对标 LangChain MultiQueryRetriever）。</p>
+     *
+     * <p>降级：改写失败 / 只有一个变体时退化为单查询 executeSearch，不改变现有行为。</p>
+     */
+    private List<SearchResultItem> multiQuerySearch(String kbId, String query,
+                                                     RetrievalRequest.RetrievalConfig config) {
+        int target = config.getMultiQueryCount() != null ? config.getMultiQueryCount() : 3;
+        List<String> queries;
+        try {
+            queries = queryEnhanceService.expandQueries(query, target, config.getMultiQueryModel(), kbId);
+        } catch (Exception e) {
+            log.warn("[MultiQuery] Expand failed for kb={}, fallback to single query: {}", kbId, e.getMessage());
+            queries = List.of(query);
+        }
+        if (queries.size() < 2) {
+            return executeSearch(kbId, query, config);
+        }
+
+        // 每个变体独立召回（safeSearch：单路失败不拖垮整体）
+        List<List<SearchResultItem>> channels = new ArrayList<>();
+        for (String q : queries) {
+            channels.add(safeSearch(() -> executeSearch(kbId, q, config)));
+        }
+        // 融合数上浮（topK*3 且至少 50），供后续 graph 融合 / rerank 裁剪
+        int fusedTopK = Math.max(config.getTopK() * 3, 50);
+        List<SearchResultItem> fused = rrfFusionMulti(channels, fusedTopK);
+
+        log.info("[MultiQuery] kb={}, query='{}', variants={}, fused={}",
+                kbId, query, queries.size(), fused.size());
+        return fused;
+    }
+
+    /**
+     * 是否采用"组装后重排"：仅在启用 Rerank 且上下文策略为 parent_chunk / window / auto 时生效。
+     *
+     * <p>这几类策略会把命中的子分片放大为父块/窗口上下文——被切分切断的部分此时已回到
+     * content 中，rerank 输入是组装后的完整上下文，才能把"整体语义"排到前面。
+     * auto 策略可能内部放大（L1/L2），因此同样纳入。</p>
+     */
+    private boolean rerankAfterAssembly(RetrievalRequest.RetrievalConfig config) {
+        if (!Boolean.TRUE.equals(config.getEnableRerank())
+                || config.getRerankModel() == null || config.getRerankModel().isBlank()) {
+            return false;
+        }
+        String strategy = config.getContextAssemblyStrategy();
+        return "parent_chunk".equals(strategy)
+                || "window".equals(strategy)
+                || "auto".equals(strategy);
     }
 
     // ========================================================================
@@ -747,6 +850,152 @@ public class RetrievalServiceImpl implements RetrievalService {
     }
 
     // ========================================================================
+    //  条款/标题线索召回（政策文件条款交叉引用场景）
+    // ========================================================================
+
+    /**
+     * 条款提及正则：匹配"第三条/第3条/第二十一条/第二章/第5款"等
+     * 支持中文数字与阿拉伯数字（条款常用二者混排）
+     */
+    private static final Pattern CLAUSE_PATTERN =
+            Pattern.compile("第\\s*([0-9]+|[一二三四五六七八九十百千万]+)\\s*([条款章节款项])");
+
+    /**
+     * 条款/标题线索召回：补救"政策条款交叉引用"在纯向量召回下的漏召。
+     *
+     * <p>两条线索：</p>
+     * <ol>
+     *   <li><b>条款号联动</b>：query 含"第X条"等提及 → 以条款号为锚，
+     *       用条款号 LIKE 召回所在 chunk，并向其前后取 clauseWindowSize 个相邻 chunk（条款上下文在同一章节内邻近）</li>
+     *   <li><b>标题线索</b>：query 的 token 命中 chunk.title / heading_path（如"电价""补贴"章节标题），
+     *       政策文件查询常以章节标题措辞提问，向量反而容易漏</li>
+     * </ol>
+     *
+     * <p>返回结果参与 search() 主流程 RRF 融合（不改变现有主召回）。</p>
+     */
+    private List<SearchResultItem> clauseRecall(String kbId, String query,
+                                                 RetrievalRequest.RetrievalConfig config, int count) {
+        if (query == null || query.isBlank()) return Collections.emptyList();
+        int window = config.getClauseWindowSize() != null ? config.getClauseWindowSize() : 3;
+
+        // 1. 提取条款提及（"第X条"等）
+        List<String> clauseMentions = new ArrayList<>();
+        Matcher m = CLAUSE_PATTERN.matcher(query);
+        while (m.find()) {
+            clauseMentions.add(m.group().replace(" ", "")); // 去内部空格，"第 3 条"→"第3条"
+        }
+
+        Set<String> seenKeys = new HashSet<>();
+        List<SearchResultItem> clauseHits = new ArrayList<>();
+
+        // 2. 条款号联动召回
+        for (String mention : clauseMentions) {
+            try {
+                // 条款号 LIKE 匹配：content 首段出现"第X条"的 chunk（条款锚点）
+                List<KbChunk> anchors = chunkMapper.selectList(
+                        new LambdaQueryWrapper<KbChunk>()
+                                .eq(KbChunk::getKbId, kbId)
+                                .ne(KbChunk::getChunkType, "parent")
+                                .like(KbChunk::getContent, mention)
+                                .last("LIMIT " + Math.max(count * 3, 30)));
+                for (KbChunk anchor : anchors) {
+                    if (anchor.getFileId() != null && isFileDeleted(kbId, anchor.getFileId())) continue;
+                    // 锚点 chunk 本身
+                    addClauseHit(clauseHits, seenKeys, anchor, 0.9, "clause");
+                    // 向锚点前后取 clauseWindowSize 个相邻 chunk（条款上下文在同一章节内邻近）
+                    List<KbChunk> fileChunks = chunkMapper.selectByFileId(anchor.getFileId());
+                    int pos = -1;
+                    for (int i = 0; i < fileChunks.size(); i++) {
+                        if (fileChunks.get(i).getChunkIndex() != null
+                                && anchor.getChunkIndex() != null
+                                && fileChunks.get(i).getChunkIndex().intValue() == anchor.getChunkIndex()) {
+                            pos = i;
+                            break;
+                        }
+                    }
+                    if (pos >= 0) {
+                        int start = Math.max(0, pos - window);
+                        int end = Math.min(fileChunks.size(), pos + window + 1);
+                        for (int i = start; i < end; i++) {
+                            if (i == pos) continue; // 锚点已加
+                            KbChunk neighbor = fileChunks.get(i);
+                            if (neighbor.getFileId() != null && isFileDeleted(kbId, neighbor.getFileId())) continue;
+                            double decay = 0.9 - 0.2 * Math.abs(i - pos);
+                            addClauseHit(clauseHits, seenKeys, neighbor, Math.max(decay, 0.3), "clause_neighbor");
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[ClauseRecall] Anchor recall failed for mention='{}': {}", mention, e.getMessage());
+            }
+        }
+
+        // 3. 标题线索召回：无条款号且未命中条款锚点时，退化为按标题/headingPath 召回
+        //    （条款号已产生足够结果的情形则跳过，避免重复堆叠）
+        if (clauseHits.isEmpty()) {
+            List<String> tokens = tokenizeQuery(query);
+            // 无可用 token（长度 < 2）时跳过，避免空条件包装器
+            boolean hasToken = false;
+            for (String t : tokens) {
+                if (t.length() >= 2) {
+                    hasToken = true;
+                    break;
+                }
+            }
+            List<String> usableTokens = hasToken ? tokens : Collections.emptyList();
+            if (!usableTokens.isEmpty()) {
+                try {
+                    List<KbChunk> titleHits = chunkMapper.selectList(
+                            new LambdaQueryWrapper<KbChunk>()
+                                    .eq(KbChunk::getKbId, kbId)
+                                    .ne(KbChunk::getChunkType, "parent")
+                                    .and(w -> {
+                                        boolean first = true;
+                                        for (String t : usableTokens) {
+                                            if (t.length() < 2) continue;
+                                            if (!first) w.or();
+                                            w.like(KbChunk::getTitle, t).or().like(KbChunk::getHeadingPath, t);
+                                            first = false;
+                                        }
+                                    })
+                                    .last("LIMIT " + Math.max(count * 3, 30)));
+                    for (int i = 0; i < titleHits.size(); i++) {
+                        KbChunk c = titleHits.get(i);
+                        // 仅保留标题/路径命中、但 content 未命中 query token 的 chunk（与主召回互补）
+                        if (c.getFileId() != null && isFileDeleted(kbId, c.getFileId())) continue;
+                        if (containsAny(c.getContent(), usableTokens)) continue;
+                        double score = 0.85 - 0.1 * (i / 5); // 降序粗排
+                        addClauseHit(clauseHits, seenKeys, c, score, "title");
+                        if (clauseHits.size() >= count) break;
+                    }
+                } catch (Exception e) {
+                    log.warn("[ClauseRecall] Title recall failed for kbId={}: {}", kbId, e.getMessage());
+                }
+            }
+        }
+
+        return clauseHits;
+    }
+
+    /** 检查文本是否包含任一 token（内容与标题的互补判断） */
+    private boolean containsAny(String text, List<String> tokens) {
+        if (text == null) return false;
+        for (String t : tokens) {
+            if (t.length() >= 2 && text.contains(t)) return true;
+        }
+        return false;
+    }
+
+    /** 追加条款线索命中项（按 fileId+chunkIndex 去重，避免与主召回重复） */
+    private void addClauseHit(List<SearchResultItem> hits, Set<String> seenKeys,
+                              KbChunk chunk, double similarity, String channel) {
+        String key = (chunk.getFileId() == null ? "" : chunk.getFileId())
+                + "_" + (chunk.getChunkIndex() == null ? 0 : chunk.getChunkIndex());
+        if (!seenKeys.add(key)) return;
+        hits.add(buildResultItem(chunk, similarity, 1.0 - similarity, "mysql", channel));
+    }
+
+    // ========================================================================
     //  融合策略
     // ========================================================================
 
@@ -848,8 +1097,10 @@ public class RetrievalServiceImpl implements RetrievalService {
                                                  RetrievalRequest.RetrievalConfig config, String kbId) {
         if (results.isEmpty()) return results;
 
-        // Rerank 模型重排
-        if (Boolean.TRUE.equals(config.getEnableRerank()) && config.getRerankModel() != null) {
+        // Rerank 模型重排：组装后重排模式（parent_chunk / window）下跳过前置重排，
+        // 由 search() 在上下文组装完成后再对扩展后的 content 执行
+        if (!rerankAfterAssembly(config)
+                && Boolean.TRUE.equals(config.getEnableRerank()) && config.getRerankModel() != null) {
             results = rerankResults(results, query, config, kbId);
         }
 
@@ -1019,8 +1270,96 @@ public class RetrievalServiceImpl implements RetrievalService {
             case "parent_chunk" -> assembleParentChunk(results);
             case "parent_document" -> assembleParentDocument(results);
             case "window" -> assembleWindow(results, config);
+            case "auto" -> assembleAuto(results, config);
             default -> results;
         };
+    }
+
+    /**
+     * 上下文自动降级链（auto 策略，P0 默认）：
+     * 对每个命中的 chunk 依次尝试"召回小片 → 返回大片"，逐级降级：
+     * <ol>
+     *   <li><b>L1 parent_chunk</b>：命中子分片（parentId 非空）且父块存在且在 token 预算内 → 返回父块全文；</li>
+     *   <li><b>L2 window</b>：无父块或父块超预算 → 取命中 chunk 前后 N 个邻居；</li>
+     *   <li><b>L3 concat</b>：无法定位文件/邻居 → 降级返回自身。</li>
+     * </ol>
+     *
+     * <p>目的：政策文件切片切断了条款上下文，默认路径（App 检索）也要能自动带回
+     * 被切断的"另一半"，而不需要每 KB 显式配置 parent_chunk/window。</p>
+     */
+    private List<SearchResultItem> assembleAuto(List<SearchResultItem> results,
+                                                 RetrievalRequest.RetrievalConfig config) {
+        int tokenBudget = config.getMaxContextTokens() != null ? config.getMaxContextTokens() : 0;
+
+        List<SearchResultItem> assembled = new ArrayList<>();
+        // 无法走 L1 的命中块统一进入 L2（窗口）一次性组装，复用 assembleWindow 的全局去重与 token 预算
+        List<SearchResultItem> windowCandidates = new ArrayList<>();
+        // 按 (fileId, chunkIndex) 去重：同一命中块只处理一次（多路召回可能重复）
+        Set<String> seen = new HashSet<>();
+        for (SearchResultItem hit : results) {
+            String dedupKey = (hit.getFileId() == null ? "" : hit.getFileId())
+                    + "_" + hit.getChunkIndex();
+            if (!seen.add(dedupKey)) {
+                continue;
+            }
+
+            // L1：优先父块放大（parent_chunk）
+            if (hit.getParentId() != null && !hit.getParentId().isBlank()) {
+                KbChunk parent = chunkMapper.selectById(hit.getParentId());
+                if (parent != null && parent.getContent() != null && !parent.getContent().isBlank()
+                        && (tokenBudget <= 0 || estimateTokens(parent.getContent()) <= tokenBudget)) {
+                    assembled.add(buildParentItem(hit, parent));
+                    log.debug("[ContextAuto] L1 parent_chunk: fileId={} chunkIndex={} -> parent={}",
+                            hit.getFileId(), hit.getChunkIndex(), hit.getParentId());
+                    continue;
+                }
+                if (parent == null) {
+                    log.warn("[ContextAuto] Parent not found for parentId={}, fallback L2 window", hit.getParentId());
+                } else {
+                    log.warn("[ContextAuto] Parent too large for token budget (budget={} tokens), fallback L2 window",
+                            tokenBudget);
+                }
+            }
+
+            // L2/L3：无父块放大时进入窗口候选；无法定位文件的最后降级 concat
+            if (hit.getFileId() == null || hit.getFileId().isBlank()) {
+                log.debug("[ContextAuto] L3 concat fallback: no file location for chunkIndex={}", hit.getChunkIndex());
+                assembled.add(hit);
+            } else {
+                windowCandidates.add(hit);
+            }
+        }
+
+        // L2：窗口候选一次性组装（assembleWindow 内部按距离由近及远、全局去重、token 预算裁剪）
+        if (!windowCandidates.isEmpty()) {
+            List<SearchResultItem> windowed = assembleWindow(windowCandidates, config);
+            log.debug("[ContextAuto] L2 window: {} hits -> {} windowed items", windowCandidates.size(), windowed.size());
+            assembled.addAll(windowed);
+        }
+
+        return assembled;
+    }
+
+    /** 构建父分片上下文条目（与 assembleParentChunk 的父块替换逻辑一致） */
+    private SearchResultItem buildParentItem(SearchResultItem hit, KbChunk parent) {
+        SearchResultItem item = new SearchResultItem();
+        item.setIndex(hit.getIndex());
+        item.setContent(parent.getContent());
+        item.setFileId(hit.getFileId());
+        item.setChunkIndex(hit.getChunkIndex());   // 保留命中的子分片位置
+        item.setParentId(hit.getParentId());
+        item.setSimilarity(hit.getSimilarity());
+        item.setDistance(hit.getDistance());
+        item.setSource(hit.getSource());
+        item.setChannel(hit.getChannel());
+        item.setChunkType("parent");
+        String content = parent.getContent();
+        if (content.length() > 200) {
+            item.setPreviewSnippet(content.substring(0, 200) + "...");
+        } else {
+            item.setPreviewSnippet(content);
+        }
+        return item;
     }
 
     /**
@@ -1094,16 +1433,22 @@ public class RetrievalServiceImpl implements RetrievalService {
     }
 
     /**
-     * 窗口模式：对命中的 chunk，获取其前后 N 个 chunk
+     * 窗口模式：对命中的 chunk，获取其前后 N 个 chunk。
+     *
+     * <p>token 预算（maxContextTokens）：配置时生效。命中块始终保留（保主召回），
+     * 邻居块按离命中块的距离由近及远累积，超出预算的邻居丢弃——被切分切断的"另一半"
+     * 在最近邻范围内优先进入上下文，避免无限扩展把上下文撑爆。</p>
      */
     private List<SearchResultItem> assembleWindow(List<SearchResultItem> results,
                                                     RetrievalRequest.RetrievalConfig config) {
         int windowSize = config.getContextWindowSize() != null ? config.getContextWindowSize() : 2;
         String order = config.getContextOrder() != null ? config.getContextOrder() : "relevance";
+        int tokenBudget = config.getMaxContextTokens() != null ? config.getMaxContextTokens() : 0;
 
         // 对命中的 chunk 按 (fileId, chunkIndex) 找到其邻居
         Set<String> seenChunks = new HashSet<>();
         List<SearchResultItem> windowed = new ArrayList<>();
+        int consumedTokens = 0;
 
         for (SearchResultItem hit : results) {
             String fileId = hit.getFileId();
@@ -1129,17 +1474,38 @@ public class RetrievalServiceImpl implements RetrievalService {
                 continue;
             }
 
-            // 前后 windowSize 个 chunk
+            // 前后 windowSize 个 chunk，按离命中块的距离由近及远加入：
+            // dist=0 命中块（始终保留，不受预算约束）；dist=1..windowSize 邻居（受预算约束，优先左侧）
             int start = Math.max(0, pos - windowSize);
             int end = Math.min(fileChunks.size(), pos + windowSize + 1);
-            for (int i = start; i < end; i++) {
-                KbChunk chunk = fileChunks.get(i);
-                if (seenChunks.add(chunk.getId())) {
-                    SearchResultItem item = buildResultItem(chunk,
-                            hit.getSimilarity() * (1 - 0.1 * Math.abs(i - pos)),
-                            0.0, hit.getSource(), hit.getChannel());
-                    windowed.add(item);
+            for (int dist = 0; dist <= windowSize; dist++) {
+                if (dist == 0) {
+                    KbChunk hitChunk = fileChunks.get(pos);
+                    if (seenChunks.add(hitChunk.getId())) {
+                        consumedTokens += estimateTokens(hitChunk.getContent());
+                        windowed.add(buildResultItem(hitChunk, hit.getSimilarity(),
+                                0.0, hit.getSource(), hit.getChannel()));
+                    }
+                    continue;
                 }
+                // 邻居超预算：跳过该邻居并停止本层扩展（预算全局累积，后续命中块仍保留）
+                boolean budgetHit = false;
+                for (int offset : new int[]{-dist, dist}) {
+                    int i = pos + offset;
+                    if (i < start || i >= end) continue;
+                    KbChunk chunk = fileChunks.get(i);
+                    if (!seenChunks.add(chunk.getId())) continue;
+                    int estTokens = estimateTokens(chunk.getContent());
+                    if (tokenBudget > 0 && consumedTokens + estTokens > tokenBudget) {
+                        budgetHit = true;
+                        break;
+                    }
+                    consumedTokens += estTokens;
+                    windowed.add(buildResultItem(chunk,
+                            hit.getSimilarity() * (1 - 0.1 * dist),
+                            0.0, hit.getSource(), hit.getChannel()));
+                }
+                if (budgetHit) break;
             }
         }
 
@@ -1267,6 +1633,25 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
         double denom = Math.sqrt(n1) * Math.sqrt(n2);
         return denom == 0 ? 0 : dot / denom;
+    }
+
+    /**
+     * 文本 token 粗估（用于上下文组装预算裁剪，不追求精确）：
+     * 中文/全角字符按 1 token 计，其余字符按 4 字符 ≈ 1 token。
+     */
+    private static int estimateTokens(String text) {
+        if (text == null || text.isEmpty()) return 0;
+        int cjk = 0;
+        for (int i = 0; i < text.length(); i++) {
+            char c = text.charAt(i);
+            if ((c >= '\u4e00' && c <= '\u9fff')
+                    || (c >= '\u3000' && c <= '\u303f')
+                    || (c >= '\uff00' && c <= '\uffef')) {
+                cjk++;
+            }
+        }
+        int other = Math.max(0, text.length() - cjk);
+        return cjk + (int) Math.ceil(other / 4.0);
     }
 
     /** 按内容去重：同一 content 只保留相似度最高的一条 */

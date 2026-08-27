@@ -97,6 +97,7 @@ CREATE TABLE IF NOT EXISTS kb (
     parse_mode VARCHAR(16) DEFAULT 'auto',
     split_mode VARCHAR(16) DEFAULT 'auto',
     graph_auto_build TINYINT DEFAULT 0 COMMENT '是否自动构建知识图谱（默认关闭）',
+    custom_attr_schema JSON DEFAULT NULL COMMENT 'KB 级自定义属性定义（customAttrs 复活落库）',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -122,11 +123,22 @@ CREATE TABLE IF NOT EXISTS kb_file (
     enable_graph_build TINYINT DEFAULT 0 COMMENT '该文件是否构建知识图谱',
     folder_id VARCHAR(32),
     view_count BIGINT DEFAULT 0,
+    region VARCHAR(64) DEFAULT NULL COMMENT '地域（省/市，可多值 JSON 数组，如 ["湖南省","长沙"]）',
+    publish_date DATE DEFAULT NULL COMMENT '发文日期',
+    doc_level VARCHAR(16) DEFAULT NULL COMMENT '发文层级: national/provincial/municipal/county/unknown',
+    issuer VARCHAR(128) DEFAULT NULL COMMENT '发文机关',
+    doc_number VARCHAR(64) DEFAULT NULL COMMENT '文号（如 发改价格〔2024〕123号）',
+    metadata_status VARCHAR(16) DEFAULT 'none' COMMENT '元数据状态: none/partial/full/revised',
+    custom_attrs JSON DEFAULT NULL COMMENT '自定义属性取值（KV, schema 见 kb 表）',
+    metadata_source VARCHAR(16) DEFAULT NULL COMMENT '填充来源: manual/auto/mixed',
     deleted_at DATETIME,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_kb_id (kb_id),
-    INDEX idx_deleted_at (deleted_at)
+    INDEX idx_deleted_at (deleted_at),
+    INDEX idx_kb_file_region (region),
+    INDEX idx_kb_file_doc_level (doc_level),
+    INDEX idx_kb_file_publish_date (publish_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_folder (
@@ -156,14 +168,21 @@ CREATE TABLE IF NOT EXISTS kb_chunk (
     page_range VARCHAR(16) DEFAULT NULL COMMENT '页码范围',
     image_keys JSON DEFAULT NULL COMMENT '关联图片 key',
     chunk_type VARCHAR(16) DEFAULT 'text' COMMENT '分片类型(text/image/parent)',
+    origin VARCHAR(16) NOT NULL DEFAULT 'auto' COMMENT '分片来源(auto=管线自动分片/manual=用户手动创建，重分片时保留 manual)',
     title VARCHAR(255) DEFAULT NULL COMMENT '所属最近标题',
     heading_path VARCHAR(1024) DEFAULT NULL COMMENT '层级路径，如 第一章 > 1.1 背景',
     graph_indexed TINYINT DEFAULT 0 COMMENT '是否已完成知识图谱提取',
     extraction_result JSON DEFAULT NULL COMMENT '图谱提取结果缓存(JSON)',
+    region VARCHAR(64) DEFAULT NULL COMMENT '地域（冗余自 kb_file.region，入库时回填）',
+    publish_date DATE DEFAULT NULL COMMENT '发文日期（冗余自 kb_file.publish_date）',
+    doc_level VARCHAR(16) DEFAULT NULL COMMENT '发文层级（冗余自 kb_file.doc_level）',
     INDEX idx_kb_id (kb_id),
     INDEX idx_file_id (file_id),
     INDEX idx_parent_id (parent_id),
-    INDEX idx_graph_indexed (graph_indexed)
+    INDEX idx_graph_indexed (graph_indexed),
+    INDEX idx_kb_chunk_region (region),
+    INDEX idx_kb_chunk_doc_level (doc_level),
+    INDEX idx_kb_chunk_publish_date (publish_date)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_parse_strategy (
@@ -1429,6 +1448,24 @@ ALTER TABLE kb ADD COLUMN IF NOT EXISTS graph_auto_build TINYINT DEFAULT 0 COMME
 -- kb_file 表新增字段
 ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS processing_mode VARCHAR(16) DEFAULT 'chunk' COMMENT '处理模式: chunk/qa';
 ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS enable_graph_build TINYINT DEFAULT 0 COMMENT '该文件是否构建知识图谱';
+
+-- 文档元数据管理（分册四）：文件级业务元数据 + 管理侧扩展
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS region VARCHAR(64) DEFAULT NULL COMMENT '地域（省/市，可多值 JSON 数组，如 ["湖南省","长沙"]）';
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS publish_date DATE DEFAULT NULL COMMENT '发文日期';
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS doc_level VARCHAR(16) DEFAULT NULL COMMENT '发文层级: national/provincial/municipal/county/unknown';
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS issuer VARCHAR(128) DEFAULT NULL COMMENT '发文机关';
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS doc_number VARCHAR(64) DEFAULT NULL COMMENT '文号（如 发改价格〔2024〕123号）';
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS metadata_status VARCHAR(16) DEFAULT 'none' COMMENT '元数据状态: none/partial/full/revised';
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS custom_attrs JSON DEFAULT NULL COMMENT '自定义属性取值（KV, schema 见 kb 表）';
+ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS metadata_source VARCHAR(16) DEFAULT NULL COMMENT '填充来源: manual/auto/mixed';
+
+-- kb 自定义属性 schema（customAttrs 复活落库）
+ALTER TABLE kb ADD COLUMN IF NOT EXISTS custom_attr_schema JSON DEFAULT NULL COMMENT 'KB 级自定义属性定义（customAttrs 复活落库）';
+
+-- kb_chunk 元数据冗余列（检索过滤锚定 chunk，避免 JOIN）
+ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS region VARCHAR(64) DEFAULT NULL COMMENT '地域（冗余自 kb_file.region，入库时回填）';
+ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS publish_date DATE DEFAULT NULL COMMENT '发文日期（冗余自 kb_file.publish_date）';
+ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS doc_level VARCHAR(16) DEFAULT NULL COMMENT '发文层级（冗余自 kb_file.doc_level）';
 
 -- kb_graph_index 表新增字段
 ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS settings TEXT COMMENT '索引配置(JSON)';

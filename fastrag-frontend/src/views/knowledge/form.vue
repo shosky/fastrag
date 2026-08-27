@@ -4,7 +4,7 @@ import { useRouter } from 'vue-router'
 import type { FormInstance, FormRules } from 'element-plus'
 import { ElMessage } from 'element-plus'
 import { CircleCheck, InfoFilled, Search, Monitor, OfficeBuilding, User, Setting, Share, Document, DataLine } from '@element-plus/icons-vue'
-import type { KnowledgeBase, KnowledgeBaseForm, FileTypeConfig, RetrievalSettingConfig } from '@/types/knowledge'
+import type { KnowledgeBase, KnowledgeBaseForm, FileTypeConfig, RetrievalSettingConfig, AttrDef } from '@/types/knowledge'
 import RetrievalSettingPanel from './detail/components/RetrievalSettingPanel.vue'
 import * as api from '@/api'
 import { useUserStore } from '@/stores/user'
@@ -101,8 +101,20 @@ function defaultFileTypeConfig(): FileTypeConfig {
 
 const fileTypeConfig = reactive<FileTypeConfig>(defaultFileTypeConfig())
 
-// --------------- 自定义属性 ---------------
-const customAttrs = ref<{ name: string; type: string; description: string; required: boolean }[]>([])
+// --------------- 元数据字段定义（分册四 schema 驱动：原"自定义属性"升级） ---------------
+// 类型：text / number / select / date / boolean / region（地域多值）；select 需提供 options（逗号分隔编辑）
+interface CustomAttrItem {
+  name: string
+  label: string
+  type: string
+  description: string
+  required: boolean
+  /** 是否检索感知（勾选后，name 为 region/publishDate/docLevel 时投影到强类型列供检索过滤/排序） */
+  searchable: boolean
+  /** select 类型的候选选项（前端以逗号分隔字符串编辑，提交时转数组） */
+  options?: string
+}
+const customAttrs = ref<CustomAttrItem[]>([])
 
 // --------------- 解析策略模板（从接口加载） ---------------
 const strategyTemplates = ref<{ key: string; name: string; description: string; extensions: string[]; parseMethod: string }[]>([])
@@ -276,6 +288,22 @@ watch(
       if (extended.graphLlmModel) form.graphLlmModel = extended.graphLlmModel
       if (extended.fileTypeConfig) Object.assign(fileTypeConfig, extended.fileTypeConfig)
       if (extended.retrievalConfig) Object.assign(form.retrievalConfig, extended.retrievalConfig)
+
+      // 自定义属性 schema 回填（分册四 customAttrs 复活）
+      const schema = (data as any).customAttrSchema
+      if (Array.isArray(schema)) {
+        customAttrs.value = schema.map((a: any) => ({
+          name: a.name || '',
+          label: a.label || '',
+          type: a.type || 'text',
+          description: a.description || '',
+          required: !!a.required,
+          searchable: !!a.searchable,
+          options: Array.isArray(a.options) ? a.options.join(',') : '',
+        }))
+      } else {
+        customAttrs.value = []
+      }
 
       // 编辑模式：从现有 ACL 还原共享设置，而不是根据 permission 字段猜
       await hydrateShareFromAcl(data.id)
@@ -540,6 +568,20 @@ async function handleSubmit() {
       ...form,
       fileTypeConfig: { ...fileTypeConfig },
       retrievalConfig: { ...form.retrievalConfig },
+      // 元数据字段 schema（分册四 schema 驱动：过滤空字段名，select 规整 options）
+      customAttrSchema: customAttrs.value
+        .filter((a) => a.name.trim())
+        .map((a) => ({
+          name: a.name.trim(),
+          label: a.label.trim() || a.name.trim(),
+          type: a.type,
+          description: a.description,
+          required: a.required,
+          searchable: a.type === 'region' || a.searchable,
+          options: a.type === 'select'
+            ? (a.options || '').split(/[,，]/).map((o) => o.trim()).filter(Boolean)
+            : undefined,
+        })) as AttrDef[],
     })
   } finally {
     submitting.value = false
@@ -970,21 +1012,29 @@ function goToParseStrategy() {
               </div>
             </el-form-item>
 
-            <!-- 自定义属性 -->
-            <el-divider content-position="left">自定义属性</el-divider>
+            <!-- 自定义属性：元数据字段定义（schema 驱动，分册四） -->
+            <el-divider content-position="left">元数据字段</el-divider>
             <div class="custom-attrs">
-              <div v-for="(attr, idx) in customAttrs" :key="idx" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center">
-                <el-input v-model="attr.name" placeholder="属性名" style="width: 150px" />
-                <el-select v-model="attr.type" style="width: 120px">
-                  <el-option label="文本" value="text" /><el-option label="数字" value="number" />
-                  <el-option label="下拉" value="select" /><el-option label="日期" value="date" />
+              <div v-for="(attr, idx) in customAttrs" :key="idx" style="display: flex; gap: 8px; margin-bottom: 8px; align-items: center; flex-wrap: wrap">
+                <el-input v-model="attr.name" placeholder="字段名(key)" style="width: 120px" />
+                <el-input v-model="attr.label" placeholder="显示名" style="width: 110px" />
+                <el-select v-model="attr.type" style="width: 96px">
+                  <el-option label="文本" value="text" />
+                  <el-option label="数字" value="number" />
+                  <el-option label="下拉" value="select" />
+                  <el-option label="日期" value="date" />
+                  <el-option label="布尔" value="boolean" />
+                  <el-option label="地域" value="region" />
                 </el-select>
-                <el-input v-model="attr.description" placeholder="描述" style="flex: 1" />
+                <el-input v-if="attr.type === 'select'" v-model="attr.options" placeholder="选项，用逗号分隔" style="width: 180px" />
+                <el-input v-model="attr.description" placeholder="描述" style="flex: 1; min-width: 110px" />
                 <el-checkbox v-model="attr.required">必填</el-checkbox>
+                <el-tooltip content="检索感知：region/publishDate/docLevel 会投影到强类型列，供检索过滤/排序" placement="top">
+                  <el-checkbox v-model="attr.searchable" :disabled="attr.type === 'region'">检索</el-checkbox>
+                </el-tooltip>
                 <el-button link type="danger" @click="customAttrs.splice(idx, 1)">删除</el-button>
               </div>
-              <el-button size="small" @click="customAttrs.push({ name: '', type: 'text', description: '', required: false })">添加属性</el-button>
-              <p class="parse-strategy-desc">定义知识条目的自定义元数据字段，可用于分类筛选和检索增强。</p>
+              <el-button size="small" @click="customAttrs.push({ name: '', label: '', type: 'text', description: '', required: false, searchable: false, options: '' })">添加字段</el-button>
             </div>
           </el-form>
         </el-tab-pane>
@@ -1086,7 +1136,7 @@ function goToParseStrategy() {
           <el-tree-select
             v-model="newCategoryOrg"
             :data="orgTreeData"
-            :props="{ label: 'name', value: 'id', children: 'children' }"
+            :props="{ label: 'name', value: 'id', children: 'children' } as any"
             placeholder="请选择所属组织"
             check-strictly
             style="width: 100%"

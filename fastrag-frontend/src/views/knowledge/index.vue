@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuth } from '@/composables/useAuth'
 import { useUserStore } from '@/stores/user'
+import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
 
 const router = useRouter()
@@ -14,6 +15,15 @@ const selectedCategory = ref('')
 const showTagPanel = ref(false)
 const selectedTags = ref<string[]>([])
 const loading = ref(false)
+
+// 分页（前端分页：数据一次性拉全，过滤后按页展示）
+const {
+  currentPage,
+  pageSize,
+  total,
+  handleCurrentChange,
+  handleSizeChange,
+} = usePagination(12)
 
 // 分类
 const categories = ref<any[]>([])
@@ -64,8 +74,15 @@ const filteredKBs = computed(() => {
   return list
 })
 
+// 当前页展示的知识库（前端分页切片）
+const pagedKBs = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredKBs.value.slice(start, start + pageSize.value)
+})
+
 function handleCategoryClick(id: string) {
   selectedCategory.value = selectedCategory.value === id ? '' : id
+  currentPage.value = 1
 }
 
 function handleTagToggle(tag: string) {
@@ -75,6 +92,7 @@ function handleTagToggle(tag: string) {
   } else {
     selectedTags.value.push(tag)
   }
+  currentPage.value = 1
 }
 
 function goToDetail(id: string) {
@@ -84,6 +102,13 @@ function goToDetail(id: string) {
 function goToCreate() {
   router.push('/knowledge/create')
 }
+
+// 切换 Tab / 输入搜索词时回到第一页
+watch(activeTab, () => { currentPage.value = 1 })
+watch(searchKeyword, () => { currentPage.value = 1 })
+
+// 数据源变化时同步总条数（前端分页：total = 过滤后的列表长度）
+watch(filteredKBs, (list) => { total.value = list.length }, { immediate: true })
 </script>
 
 <template>
@@ -154,7 +179,7 @@ function goToCreate() {
         <!-- 知识库卡片列表 -->
         <div class="kb-grid">
           <div
-            v-for="kb in filteredKBs"
+            v-for="kb in pagedKBs"
             :key="kb.id"
             class="kb-card"
             @click="goToDetail(kb.id)"
@@ -185,6 +210,19 @@ function goToCreate() {
         </div>
 
         <el-empty v-if="!filteredKBs.length && !loading" description="暂无知识库" />
+
+        <!-- 分页：前端分页，仅数据超过一页时显示 -->
+        <div v-if="filteredKBs.length > pageSize" class="knowledge-list__pagination">
+          <el-pagination
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :total="total"
+            :page-sizes="[12, 24, 48, 96]"
+            layout="total, sizes, prev, pager, next, jumper"
+            @current-change="handleCurrentChange"
+            @size-change="handleSizeChange"
+          />
+        </div>
       </div>
     </div>
   </div>
@@ -254,6 +292,12 @@ function goToCreate() {
 
 .knowledge-content {
   flex: 1;
+}
+
+.knowledge-list__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 .tag-panel {

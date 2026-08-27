@@ -8,12 +8,17 @@ import FileTable from './FileTable.vue'
 import FileUploader from './FileUploader.vue'
 import type { UploadConfig } from './FileUploader.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
+import AiChunkPanel from './AiChunkPanel.vue'
+import OnlyOfficeEditorDialog from './OnlyOfficeEditorDialog.vue'
 import ChunkManagementPanel from './ChunkManagementPanel.vue'
 import MoveFileDialog from './MoveFileDialog.vue'
 import RenameFileDialog from './RenameFileDialog.vue'
 import RecycleBinDialog from './RecycleBinDialog.vue'
 import StrategyChangeDialog from './StrategyChangeDialog.vue'
+import FileMetadataDialog from './FileMetadataDialog.vue'
+import type { KbTag } from '@/types/knowledge'
 import { useFiles } from '@/composables/useFiles'
+import { isOfficeFile } from '@/config'
 import { useParseStrategy } from '@/composables/useParseStrategy'
 
 // --- 状态轮询 ---
@@ -295,7 +300,7 @@ function handlePreview(file: KnowledgeFile) {
 async function handleDownload(file: KnowledgeFile) {
   try {
     const response = await api.downloadFile(kbId, file.id)
-    const blob = new Blob([response])
+    const blob = new Blob([response as any])
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -372,7 +377,7 @@ async function handleBulkExport() {
     for (const file of selectedFiles.value) {
       try {
         const response = await api.downloadFile(kbId, file.id)
-        const blob = new Blob([response])
+        const blob = new Blob([response as any])
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url
@@ -442,6 +447,56 @@ function handleRecycleEmpty() {
 const previewVisible = ref(false)
 const previewFile = ref<KnowledgeFile | null>(null)
 
+// --- AI分片（预览 + OCR + 语义分片 + 结构级跨页合并） ---
+const aiChunkVisible = ref(false)
+const aiChunkFile = ref<KnowledgeFile | null>(null)
+
+function handleAiChunk(file: KnowledgeFile) {
+  aiChunkFile.value = file
+  aiChunkVisible.value = true
+}
+
+// ---- OnlyOffice 编辑器弹窗 ----
+const onlyOfficeVisible = ref(false)
+const onlyOfficeFile = ref<KnowledgeFile | null>(null)
+const focusChunkId = ref<string | null>(null)
+
+/** 打开 OnlyOffice 编辑器（FileTable / FilePreviewDialog 都可调用） */
+function openOnlyOffice(file: KnowledgeFile) {
+  if (!isOfficeFile(file.name)) {
+    ElMessage.warning(`OnlyOffice 不支持该文件类型: ${file.extension}`)
+    return
+  }
+  onlyOfficeFile.value = file
+  focusChunkId.value = null
+  onlyOfficeVisible.value = true
+}
+
+/** AiChunkPanel chunk-click 回调：把 OO 编辑器打开并跳转到 chunk 对应页 */
+function handleChunkClickInOffice(chunk: { id: string; index: number; pageNumber?: number; title?: string }) {
+  // 若 AI 分片弹窗里的当前文件是 Office 类型，直接打开 OO
+  const sourceFile = aiChunkFile.value
+  if (sourceFile && isOfficeFile(sourceFile.name)) {
+    onlyOfficeFile.value = sourceFile
+    focusChunkId.value = chunk.id
+    onlyOfficeVisible.value = true
+  } else {
+    ElMessage.info('当前文件不是 Office 类型，请用对应的渲染器查看')
+  }
+}
+
+/** OO 选区创建 chunk 后，刷新 AI 分片弹窗的数据（无需重新打开） */
+function handleSelectionChunkCreated() {
+  // AiChunkPanel 内部使用 api.getChunks 拉数据；此处无需主动刷新，
+  // 因为手动创建的 chunk 在 AiChunkPanel 的「应用」流程中才会落库。
+  // 简单提示即可。
+  ElMessage.success('分片已创建')
+}
+
+function handleAiChunkApplied() {
+  load()
+}
+
 // --- Chunk management panel ---
 const chunkPanelVisible = ref(false)
 const chunkPanelFile = ref<KnowledgeFile | null>(null)
@@ -493,6 +548,57 @@ function handleRename(file: KnowledgeFile) {
 function handleRenameConfirm(fileId: string, newName: string) {
   rename(fileId, newName)
   ElMessage.success('文件已重命名')
+}
+
+// --- 文件元数据（分册四：固定字段 + 标签 + 自定义属性编辑弹窗） ---
+const metadataDialogVisible = ref(false)
+const metadataFile = ref<KnowledgeFile | null>(null)
+
+function handleMetadata(file: KnowledgeFile) {
+  metadataFile.value = file
+  metadataDialogVisible.value = true
+}
+
+function handleMetadataSaved() {
+  load()
+}
+
+// --- 批量打标（分册四） ---
+const batchTagVisible = ref(false)
+const batchTagAdd = ref<string[]>([])
+const batchTagRemove = ref<string[]>([])
+const allKbTags = ref<KbTag[]>([])
+
+async function handleBatchTag() {
+  if (selectedFiles.value.length === 0) return
+  batchTagAdd.value = []
+  batchTagRemove.value = []
+  batchTagVisible.value = true
+  try {
+    const res: any = await api.getAllKbTags(kbId)
+    allKbTags.value = res || []
+  } catch {
+    allKbTags.value = []
+  }
+}
+
+async function handleBatchTagConfirm() {
+  if (batchTagAdd.value.length === 0 && batchTagRemove.value.length === 0) {
+    ElMessage.warning('请选择要增加或移除的标签')
+    return
+  }
+  try {
+    await api.batchSetFileTags(kbId, {
+      fileIds: selectedFiles.value.map((f) => f.id),
+      addTagIds: batchTagAdd.value,
+      removeTagIds: batchTagRemove.value,
+    })
+    batchTagVisible.value = false
+    ElMessage.success(`已完成 ${selectedFiles.value.length} 个文件的批量打标`)
+    await load()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '批量打标失败')
+  }
 }
 
 // --- Copy file ---
@@ -567,7 +673,7 @@ onBeforeUnmount(() => {
               </el-breadcrumb-item>
               <el-breadcrumb-item
                 v-for="crumb in breadcrumbs"
-                :key="crumb.id"
+                :key="String(crumb.id ?? crumb.label)"
                 @click="navigateToFolder(crumb.id)"
               >
                 {{ crumb.label }}
@@ -579,6 +685,7 @@ onBeforeUnmount(() => {
           <div v-if="selectedFiles.length > 0" class="file-manager__bulk-actions">
             <span class="file-manager__bulk-count">已选 {{ selectedFiles.length }} 项</span>
             <el-button :icon="Rank" size="small" @click="handleBulkMove">批量移动</el-button>
+            <el-button size="small" @click="handleBatchTag">批量打标</el-button>
             <el-button :icon="Delete" size="small" type="danger" @click="handleBulkDelete">批量删除</el-button>
             <el-button size="small" @click="handleBulkExport">导出</el-button>
           </div>
@@ -600,8 +707,11 @@ onBeforeUnmount(() => {
           @move="handleMove"
           @rename="handleRename"
           @copy="handleCopy"
+          @metadata="handleMetadata"
           @selection-change="handleSelectionChange"
           @change-strategy="handleChangeStrategy"
+          @ai-chunk="handleAiChunk"
+          @edit-office="openOnlyOffice"
           @toggle-graph-build="handleToggleGraphBuild"
           @enter-folder="enterFolder"
           @rename-folder="handleFolderRename"
@@ -626,6 +736,25 @@ onBeforeUnmount(() => {
       :file="previewFile"
       :kb-id="kbId"
       @download="handleDownload"
+      @open-office="openOnlyOffice"
+    />
+
+    <!-- AI分片（预览 + OCR + 语义分片 + 结构级跨页合并） -->
+    <AiChunkPanel
+      v-model="aiChunkVisible"
+      :file="aiChunkFile"
+      :kb-id="kbId"
+      @applied="handleAiChunkApplied"
+      @chunk-click="handleChunkClickInOffice"
+    />
+
+    <!-- OnlyOffice 在线编辑弹窗（office 文件 / OO 服务启用时可用） -->
+    <OnlyOfficeEditorDialog
+      v-model="onlyOfficeVisible"
+      :file="onlyOfficeFile"
+      :kb-id="kbId"
+      :focus-chunk-id="focusChunkId"
+      @chunk-created="handleSelectionChunkCreated"
     />
 
     <!-- Chunk management panel -->
@@ -703,6 +832,35 @@ onBeforeUnmount(() => {
       @permanent-delete="handleRecyclePermanentDelete"
       @empty="handleRecycleEmpty"
     />
+
+    <!-- 文件元数据编辑（分册四：固定字段 + 标签 + 自定义属性） -->
+    <FileMetadataDialog
+      v-model:visible="metadataDialogVisible"
+      :file="metadataFile"
+      :kb-id="kbId"
+      @saved="handleMetadataSaved"
+    />
+
+    <!-- 批量打标（分册四） -->
+    <el-dialog v-model="batchTagVisible" title="批量打标" width="480px" :close-on-click-modal="false">
+      <el-form label-width="80px">
+        <el-form-item label="增加标签">
+          <el-select v-model="batchTagAdd" multiple filterable clearable placeholder="选择要增加的标签" style="width: 100%">
+            <el-option v-for="tag in allKbTags" :key="tag.id" :label="tag.name" :value="tag.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="移除标签">
+          <el-select v-model="batchTagRemove" multiple filterable clearable placeholder="选择要移除的标签" style="width: 100%">
+            <el-option v-for="tag in allKbTags" :key="tag.id" :label="tag.name" :value="tag.id" />
+          </el-select>
+        </el-form-item>
+        <p class="file-manager__batch-tag-hint">将对已选 {{ selectedFiles.length }} 个文件统一增加/移除标签（同一标签同时存在时以增加优先）。</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchTagVisible = false">取消</el-button>
+        <el-button type="primary" @click="handleBatchTagConfirm">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -785,6 +943,12 @@ onBeforeUnmount(() => {
     font-size: 13px;
     color: $color-primary;
     font-weight: 500;
+  }
+
+  &__batch-tag-hint {
+    margin: 0;
+    font-size: 12px;
+    color: $text-secondary;
   }
 }
 </style>
