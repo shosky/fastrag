@@ -91,12 +91,29 @@ public class OcrService {
         String mimeType = getMimeType(extension);
         String dataUrl = "data:" + mimeType + ";base64," + base64;
 
+        // DeepSeek-OCR 是任务式专用模型：只认训练时的固定 prompt（Free OCR. / Convert the document
+        // to markdown.），对自由指令式 prompt 会返回空 content（completion_tokens=0，HF #89 / vLLM
+        // recipes 证实）。其余通用 VL 模型继续用指令式 prompt 保证页眉脚/印章等定制要求。
+        String ocrPrompt = model != null && model.toLowerCase().contains("deepseek-ocr")
+                ? "Convert the document to markdown."
+                : """
+                        你是文档 OCR 引擎。请逐字转录图片中的全部文字内容：
+                        1. 只输出图片中实际存在的文字，按阅读顺序（从上到下、从左到右）；
+                        2. 禁止任何描述、解释、总结或评论——例如"这是一张文件的图片"之类的说明一律不要输出；
+                        3. 表格用 Markdown 表格输出（| 分隔单元格，第二行为 |---| 分隔行）；
+                        4. 忽略页眉、页脚、页码和水印；印章（公章/收文章/签名）是有效内容，
+                        必须识别并转录其中的文字（红色印章文字也要逐字输出）；
+                        5. 连续的编号/数字列直接输出数字本身，不要用 LaTeX 公式（\\[...\\]、\\begin{split} 等）包装；
+                        6. 空白或无法辨认的区域不要编造内容；
+                        7. 若图片为文档/扫描件，请尽力辨认并逐字输出全部可见文字（印刷体、印章字、轻微模糊的字都要输出）——
+                        仅当整张图片确实不含任何文字时才允许输出空。""";
+
         Map<String, Object> body = Map.of(
                 "model", model,
                 "messages", List.of(
                         Map.of("role", "user", "content", List.of(
                                 Map.of("type", "image_url", "image_url", Map.of("url", dataUrl)),
-                                Map.of("type", "text", "text", "请识别图片中的所有文字内容，直接输出文字，不要添加任何解释。")
+                                Map.of("type", "text", "text", ocrPrompt)
                         ))
                 ),
                 "max_tokens", 4096
@@ -124,7 +141,13 @@ public class OcrService {
                 throw new RuntimeException("OCR API returned " + response.statusCode() + ": " + response.body());
             }
 
-            return parseResponse(response.body());
+            String result = parseResponse(response.body());
+            // [ocr-dbg] 空结果时打印响应体（截断）：确认 finish_reason / 模型为何返回空
+            if (result == null || result.isBlank()) {
+                log.warn("[ocr-dbg] OCR returned EMPTY content, body: {}",
+                        response.body() == null ? "null" : response.body().substring(0, Math.min(600, response.body().length())));
+            }
+            return result;
         } catch (Exception e) {
             log.error("OCR recognition failed", e);
             throw new RuntimeException("图片识别失败: " + e.getMessage(), e);
@@ -147,11 +170,44 @@ public class OcrService {
             JsonNode root = objectMapper.readTree(resp);
             String content = root.path("choices").path(0).path("message").path("content").asText("");
             log.info("OCR result length: {} chars", content.length());
-            return content;
+            // [ocr-dbg] 打印原始返回（截断），确认是否被 cleanOcrText 剥空
+            log.info("[ocr-dbg] OCR raw content: {}", content.length() > 300 ? content.substring(0, 300) + "…" : content);
+            return cleanOcrText(content);
         } catch (Exception e) {
             log.error("Failed to parse OCR response: {}", resp, e);
             throw new RuntimeException("解析 OCR 响应失败", e);
         }
+    }
+
+    /** LaTeX 环境块：\begin{env}...\end{env}（split/align/array 等公式环境） */
+    private static final java.util.regex.Pattern LATEX_ENV_BLOCK = java.util.regex.Pattern.compile(
+            "\\\\begin\\{([a-zA-Z*]+)}([\\s\\S]*?)\\\\end\\{\\1}");
+
+    /**
+     * OCR 结果清洗：
+     * <ul>
+     *   <li>丢弃"纯数字/符号"LaTeX 环境块（\begin{split} &28 \\ &29 ...\end{split} 之类——
+     *       多为装饰线条/页码列被误识别为公式；剥掉 LaTeX 命令与标记符后不含任何文字即丢弃），
+     *       含字母变量的真实公式保留；</li>
+     *   <li>剥掉残留的 \[ \] \( \) 定界符与多余空行。</li>
+     * </ul>
+     */
+    private String cleanOcrText(String content) {
+        if (content == null || content.isBlank()) return content;
+        String text = LATEX_ENV_BLOCK.matcher(content)
+                .replaceAll(m -> hasProseLetters(m.group(2)) ? m.group(0) : "");
+        // 剥掉残留的 \( \) \[ \] 定界符（regex：反斜杠 + 四种括号之一）
+        text = text.replaceAll("\\\\[()\\[\\]]", "");
+        text = text.replaceAll("\\n{3,}", "\n\n");
+        return text.strip();
+    }
+
+    /** 块内容剥掉 LaTeX 命令与标记符后是否还含有效文字（字母/中文）——无则视为线条/页码类伪公式 */
+    private boolean hasProseLetters(String latexInner) {
+        if (latexInner == null) return false;
+        String s = latexInner.replaceAll("\\\\[a-zA-Z]+", "")
+                .replaceAll("[$&{}\\[\\]\\s\\\\|]", "");
+        return s.matches(".*[a-zA-Z\\u4e00-\\u9fa5].*");
     }
 
     private String getMimeType(String extension) {

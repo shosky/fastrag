@@ -2,7 +2,7 @@
 /**
  * 嵌入式 OnlyOffice Viewer（非全屏，精简查看器）。
  *
- * <p>与 {@link OnlyOfficeEditorDialog} 的区别：
+ * <p>与在线编辑页 office-edit.vue 的区别：
  * <ul>
  *   <li>无 fullscreen 包裹，直接渲染到父容器（典型用于 AiChunkPanel 左栏）</li>
  *   <li><b>UI 精简</b>：隐藏工具栏/标题栏；不强制 view 模式（只读态外层不派发选区事件，
@@ -253,7 +253,7 @@ function openSelectionChannel() {
   //   （插件冷启需数秒；OO 7.4 autostart 竞态也会导致永远不启动——后者由超时兜底接管）。
   //   alive：收到过信号；OO 会暂停不活跃插件 iframe 的定时器/回调（实测最长停摆十几秒），
   //          故判死阈值放宽到 20s —— 窗口被真正关闭时 postMessage 全灭,20s 必然暴露。
-  //   down：emit false（面板提示恢复 / 自动切结构视图）；信号重现 → 回 alive。
+  //   down：emit false（面板提示恢复方式）；信号重现 → 回 alive。
   let warmingDeadline = Date.now() + 60_000
   bridgeWatch = setInterval(() => {
     const now = Date.now()

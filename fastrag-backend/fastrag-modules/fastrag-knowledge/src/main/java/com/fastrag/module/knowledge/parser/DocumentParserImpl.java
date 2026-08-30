@@ -135,24 +135,21 @@ public class DocumentParserImpl implements DocumentParser {
         try (PDDocument doc = Loader.loadPDF(pdfBytes)) {
             int totalPages = doc.getNumberOfPages();
             log.info("Parsing PDF: {} pages", totalPages);
-
-            // 逐页提取文字，插入 PAGE_BREAK 标记
-            StringBuilder textWithMarkers = new StringBuilder();
             PDFRenderer renderer = new PDFRenderer(doc);
 
             // 页 → 最近标题映射（供 PDF 图片分片的语义上下文，1-based）
             Map<Integer, String> pageTitles = new HashMap<>();
             String currentTitle = null;
 
+            // 第一遍：逐页行提取。文字层页 → 带坐标几何行（行距分段/表格/标题识别的输入）；
+            // <50 字符判定扫描页 → 渲染 PNG 走 OCR 兜底（OCR 文本无坐标，仅按结构切分）
+            Map<Integer, List<PageLine>> geoRows = new LinkedHashMap<>();
+            Map<Integer, List<PageLine>> ocrRows = new LinkedHashMap<>();
             for (int pageNum = 0; pageNum < totalPages; pageNum++) {
-                // 提取该页文本
-                PDFTextStripper stripper = new PDFTextStripper();
-                stripper.setStartPage(pageNum + 1);
-                stripper.setEndPage(pageNum + 1);
-                String pageText = stripper.getText(doc);
-
-                // 扫描件 OCR 兜底：文字太少则渲染页面为图片调 OCR
-                if (pageText.trim().length() < 50) {
+                List<PageLine> rows = extractGeometryLines(doc, pageNum);
+                int chars = rows.stream().mapToInt(r -> r.text().length()).sum();
+                if (chars < 50) {
+                    // 扫描件 OCR 兜底：文字太少则渲染页面为图片调 OCR
                     try {
                         java.awt.image.BufferedImage pageImage = renderer.renderImageWithDPI(pageNum, 200);
                         java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
@@ -161,38 +158,79 @@ public class DocumentParserImpl implements DocumentParser {
                                 options != null ? options.getOcrEngine() : null);
                         if (ocrResult != null && !ocrResult.isBlank()) {
                             log.info("OCR fallback for page {}: {} chars", pageNum + 1, ocrResult.length());
-                            pageText = ocrResult;
+                            List<PageLine> o = new ArrayList<>();
+                            int ln = 0;
+                            for (String l : ocrResult.split("\n")) {
+                                String tt = l.trim();
+                                if (!tt.isEmpty()) o.add(new PageLine(++ln * 100f, 80f, 0f, 1f, tt));
+                            }
+                            if (!o.isEmpty()) {
+                                ocrRows.put(pageNum, o);
+                                continue;
+                            }
                         }
                     } catch (Exception e) {
                         log.warn("OCR fallback failed for page {}: {}", pageNum + 1, e.getMessage());
                     }
                 }
+                geoRows.put(pageNum, rows);
+            }
 
-                // 页标题检测：该页第一个"标题样"行，无则继承上一页标题（跨页章节延续）
-                String pageTitle = detectPdfTitleLine(pageText);
-                if (pageTitle != null) {
-                    currentTitle = pageTitle;
+            // 页眉/页脚/页码清理：几何行与 OCR 文本两条链路各自清理
+            Map<Integer, Float> geoPageH = new HashMap<>();
+            for (int p = 0; p < totalPages; p++) {
+                geoPageH.put(p, doc.getPage(p).getCropBox().getHeight());
+            }
+            stripRowHeaderFooters(geoRows, geoPageH);
+            if (!ocrRows.isEmpty()) {
+                List<String> ocrTexts = new ArrayList<>();
+                List<Integer> ocrPageNums = new ArrayList<>();
+                for (Map.Entry<Integer, List<PageLine>> e : ocrRows.entrySet()) {
+                    ocrPageNums.add(e.getKey());
+                    ocrTexts.add(e.getValue().stream().map(PageLine::text).collect(Collectors.joining("\n")));
+                }
+                List<String> cleanedOcr = stripHeadersFooters(ocrTexts);
+                for (int i = 0; i < ocrPageNums.size(); i++) {
+                    List<PageLine> o = new ArrayList<>();
+                    int ln = 0;
+                    for (String l : cleanedOcr.get(i).split("\n")) {
+                        String tt = l.trim();
+                        if (!tt.isEmpty()) o.add(new PageLine(++ln * 100f, 80f, 0f, 1f, tt));
+                    }
+                    ocrRows.put(ocrPageNums.get(i), o);
+                }
+            }
+
+            // 标题继承：每页第一个标题行，无则继承上一页（跨页章节延续）
+            for (int pageNum = 0; pageNum < totalPages; pageNum++) {
+                List<PageLine> rows = ocrRows.containsKey(pageNum)
+                        ? ocrRows.get(pageNum) : geoRows.getOrDefault(pageNum, new ArrayList<>());
+                for (PageLine r : rows) {
+                    String t = r.text().trim();
+                    if (!t.contains("\t") && isPdfTitleLikeLine(t)) {
+                        currentTitle = t;
+                        break;
+                    }
                 }
                 pageTitles.put(pageNum + 1, currentTitle);
+            }
 
-                textWithMarkers.append(pageText.trim());
-                if (pageNum < totalPages - 1) {
-                    textWithMarkers.append("\n\n[PAGE_BREAK:").append(pageNum + 1).append("]\n\n");
+            // 第二遍：逐页行 → DocNode 装配（行几何分段）
+            List<DocNode> pdfNodes = new ArrayList<>();
+            for (int pageNum = 0; pageNum < totalPages; pageNum++) {
+                if (ocrRows.containsKey(pageNum)) {
+                    pdfNodes.addAll(assemblePageNodes(ocrRows.get(pageNum), pageNum + 1, false));
+                } else {
+                    pdfNodes.addAll(assemblePageNodes(geoRows.getOrDefault(pageNum, new ArrayList<>()), pageNum + 1, true));
                 }
             }
 
-            // LLM 增强（可选）
-            String fullText = textWithMarkers.toString();
+            // Markdown 序列化 + 可选 LLM 增强（与 docx/pptx/xlsx 对齐，见 docs/design/parsed-markdown.md ADR-2）
+            String markdown = markdownSerializer.serialize(pdfNodes);
             if (strategy != null && strategy.getLlmModel() != null) {
                 LlmConfig llmCfg = resolveLlmConfig(strategy);
-                fullText = enhanceWithLlm(fullText, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
+                markdown = enhanceWithLlm(markdown, strategy.getLlmModel(), llmCfg.apiUrl, llmCfg.apiKey);
             }
-
-            // 结构化：把纯文本 + [PAGE_BREAK:n] 转成 DocNode，再经 MarkdownSerializer 产出 markdown，
-            // 与 docx/pptx/xlsx 对齐（见 docs/design/parsed-markdown.md ADR-2）。
-            // 这使 PDF 也拥有 heading 上下文、表格/图片引用、markdown 分片能力。
-            List<DocNode> pdfNodes = buildPdfDocNodes(fullText, pageTitles);
-            String markdown = markdownSerializer.serialize(pdfNodes);
 
             return ParseResult.builder()
                     .text(markdown)
@@ -201,6 +239,268 @@ public class DocumentParserImpl implements DocumentParser {
                     .pageTitles(pageTitles)
                     .build();
         }
+    }
+
+    /**
+     * 页面行（顶左原点 pt，cropBox 相对）：y/height 为行盒位置与视觉高度，
+     * x/width 为行横向范围（表格行覆盖全部单元格）；text 内 \t 为列分隔。
+     * 公开供 rect 装配（AiChunkServiceImpl.fillPdfRects）与解析共用同一行结构。
+     */
+    public record PageLine(float y, float height, float x, float width, String text) {}
+
+    /**
+     * 逐页提取带坐标的行（静态、无状态，rect 装配与解析共用同一行结构）：
+     * 基线差 >2pt 换行；同一视觉行内 x 间隙 > max(6pt, 1.5×字号) 以 \t 连接（列结构标记）。
+     */
+    public static List<PageLine> extractGeometryLines(PDDocument doc, int pageIndex) throws IOException {
+        List<float[]> boxes = new ArrayList<>();   // [minY, maxY, minX, maxX]（顶左原点；y 用 getYDirAdj，排序方向已验证正确）
+        List<Float> maxFonts = new ArrayList<>();
+        List<StringBuilder> texts = new ArrayList<>();
+        boxes.add(new float[]{Float.MAX_VALUE, -1f, Float.MAX_VALUE, -1f});
+        maxFonts.add(0f);
+        texts.add(new StringBuilder());
+        final float[] lastY = {Float.NaN};
+        PDFTextStripper stripper = new PDFTextStripper() {
+            @Override
+            protected void writeString(String text, List<org.apache.pdfbox.text.TextPosition> positions) {
+                if (positions == null || positions.isEmpty()) return;
+                org.apache.pdfbox.text.TextPosition first = positions.get(0);
+                float y0 = first.getYDirAdj();
+                float x0 = first.getXDirAdj();
+                // getFontSize() 返回文本状态字号（可能被矩阵放大，如 240pt），
+                // 用 getFontSizeInPt() 取真实渲染字号（~12pt）——行高/行盒判定依赖它，
+                // 虚高会让 midY 失真导致区域行命中错位
+                float font = first.getFontSizeInPt() > 0 ? first.getFontSizeInPt() : 10f;
+                boolean newRow = Float.isNaN(lastY[0]) || Math.abs(y0 - lastY[0]) > 2f;
+                if (newRow) {
+                    boxes.add(new float[]{Float.MAX_VALUE, -1f, Float.MAX_VALUE, -1f});
+                    maxFonts.add(0f);
+                    texts.add(new StringBuilder());
+                } else {
+                    float[] b = boxes.get(boxes.size() - 1);
+                    if (b[3] > 0 && x0 - b[3] > Math.max(6f, font * 1.5f)) {
+                        texts.get(texts.size() - 1).append('\t');
+                    }
+                }
+                for (org.apache.pdfbox.text.TextPosition tp : positions) {
+                    lastY[0] = tp.getYDirAdj();
+                    float[] b = boxes.get(boxes.size() - 1);
+                    b[0] = Math.min(b[0], tp.getYDirAdj());
+                    b[1] = Math.max(b[1], tp.getYDirAdj());
+                    b[2] = Math.min(b[2], tp.getXDirAdj());
+                    b[3] = Math.max(b[3], tp.getXDirAdj() + tp.getWidthDirAdj());
+                    int last = maxFonts.size() - 1;
+                    maxFonts.set(last, Math.max(maxFonts.get(last), font));
+                }
+                texts.get(texts.size() - 1).append(text == null ? "" : text);
+            }
+        };
+        stripper.setStartPage(pageIndex + 1);
+        stripper.setEndPage(pageIndex + 1);
+        stripper.getText(doc);
+        List<PageLine> rows = new ArrayList<>();
+        for (int i = 0; i < boxes.size(); i++) {
+            String t = texts.get(i).toString();
+            if (t.isBlank()) continue;
+            float[] b = boxes.get(i);
+            float font = Math.max(1f, maxFonts.get(i));
+            // 行视觉高度 = 基线跨度 + 0.4 字号（覆盖字形上下沿）；行顶上提 0.25 字号留上沿余量
+            float h = Math.max(font, (b[1] - b[0]) + font * 0.4f);
+            rows.add(new PageLine(b[0] - font * 0.25f, h, b[2], b[3] - b[2], t));
+        }
+        rows.sort(java.util.Comparator.comparingDouble(PageLine::y));
+        return rows;
+    }
+
+    /** 几何行页眉脚/页码清理（与解析文本清理同规则：跨页频次 + 数字掩码 + 边缘区域） */
+
+    /** 几何行页眉脚/页码清理（与解析文本清理同规则：跨页频次 + 数字掩码 + 边缘区域） */
+    public static void stripRowHeaderFooters(Map<Integer, List<PageLine>> pageRows, Map<Integer, Float> pageHeights) {
+        if (pageRows == null || pageRows.size() < 2) return;
+        int threshold = Math.max(2, (int) Math.ceil(pageRows.size() * 0.3));
+        Map<String, Integer> headFreq = new HashMap<>();
+        Map<String, Integer> footFreq = new HashMap<>();
+        for (Map.Entry<Integer, List<PageLine>> e : pageRows.entrySet()) {
+            float pageH = pageHeights.getOrDefault(e.getKey(), 0f);
+            List<PageLine> rows = e.getValue();
+            for (int i = 0; i < rows.size(); i++) {
+                if (!inRowEdgeZone(rows, i, pageH)) continue;
+                String t = rows.get(i).text().trim();
+                if (t.isEmpty()) continue;
+                String key = t.replaceAll("\\d+", "#").replaceAll("\\s+", "");
+                headFreq.merge(key, 1, Integer::sum);
+                footFreq.merge(key, 1, Integer::sum);
+            }
+        }
+        for (Map.Entry<Integer, List<PageLine>> e : pageRows.entrySet()) {
+            float pageH = pageHeights.getOrDefault(e.getKey(), 0f);
+            List<PageLine> rows = e.getValue();
+            List<PageLine> kept = new ArrayList<>();
+            for (int i = 0; i < rows.size(); i++) {
+                PageLine r = rows.get(i);
+                String t = r.text().trim();
+                if (t.isEmpty()) continue;
+                boolean headZone = i < 2 || (pageH > 0 && (r.y() + r.height()) <= pageH * 0.12f);
+                boolean footZone = i >= rows.size() - 2 || (pageH > 0 && r.y() >= pageH * 0.87f);
+                String key = t.replaceAll("\\d+", "#").replaceAll("\\s+", "");
+                if (headZone && headFreq.getOrDefault(key, 0) >= threshold) continue;
+                if (footZone && footFreq.getOrDefault(key, 0) >= threshold) continue;
+                if ((headZone || footZone) && isPageNumberLine(t)) continue;
+                kept.add(r);
+            }
+            rows.clear();
+            rows.addAll(kept);
+        }
+    }
+
+    /** 行序前 2 行/末 2 行，或行盒落在页高 12% 顶带（head）/87% 以下底带（foot） */
+    private static boolean inRowEdgeZone(List<PageLine> rows, int i, float pageH) {
+        if (i < 2 || i >= rows.size() - 2) return true;
+        PageLine r = rows.get(i);
+        return pageH > 0 && ((r.y() + r.height()) <= pageH * 0.12f || r.y() >= pageH * 0.87f);
+    }
+
+    /**
+     * 行 → DocNode 装配（行几何分段，通用；阈值均为行高/行距的相对量）：
+     * <ul>
+     *   <li>段落边界：垂直间距 &gt; max(1.6×中位行距, 0.9×行高)（geometric=true 时）</li>
+     *   <li>单行标题样（isPdfTitleLikeLine）→ HEADING，级别按编号深度——块内单行也能识别</li>
+     *   <li>Markdown 表格行（| 开头）连续 → TABLE</li>
+     *   <li>连续 ≥2 行、行内 ≥2 个 \t 列且单元格 ≤40 字符 → TABLE（文字层表格结构化）</li>
+     *   <li>其余累积为 PARAGRAPH（段内行以 \n 连接）</li>
+     * </ul>
+     * geometric=false（扫描页 OCR 文本，无坐标）时不做间距分段，仅按标题/表格结构切分。
+     */
+    private List<DocNode> assemblePageNodes(List<PageLine> rows, int pageNo, boolean geometric) {
+        List<DocNode> nodes = new ArrayList<>();
+        if (rows == null || rows.isEmpty()) return nodes;
+        List<PageLine> sorted = new ArrayList<>(rows);
+        sorted.sort(java.util.Comparator.comparingDouble(PageLine::y));
+
+        List<Float> gaps = new ArrayList<>();
+        for (int i = 1; i < sorted.size(); i++) {
+            float g = sorted.get(i).y() - (sorted.get(i - 1).y() + sorted.get(i - 1).height());
+            if (g > 0) gaps.add(g);
+        }
+        Collections.sort(gaps);
+        float medianGap = gaps.isEmpty() ? 0f : gaps.get(gaps.size() / 2);
+        float rowH = sorted.get(0).height() > 0 ? sorted.get(0).height() : 12f;
+        float paraGap = Math.max(medianGap * 1.6f, rowH * 0.9f);
+
+        List<String> paraLines = new ArrayList<>();
+        float prevBottom = -1f;
+
+        for (int i = 0; i < sorted.size(); i++) {
+            PageLine row = sorted.get(i);
+            String t = row.text() == null ? "" : row.text().trim();
+            float rowBottom = row.y() + row.height();
+            if (t.isEmpty()) {
+                prevBottom = rowBottom;
+                continue;
+            }
+            boolean titleLike = !t.contains("\t") && isPdfTitleLikeLine(t);
+            boolean mdTable = t.startsWith("|");
+            int tabCols = t.contains("\t") ? t.split("\t", -1).length : 0;
+            boolean tabRow = tabCols >= 2;
+
+            boolean paraBreak = geometric && !paraLines.isEmpty() && i > 0
+                    && (row.y() - prevBottom) > paraGap;
+            if (titleLike || mdTable || tabRow) paraBreak = true;
+            if (paraBreak) {
+                flushParagraph(paraLines, nodes, pageNo);
+            }
+
+            if (titleLike) {
+                nodes.add(DocNode.builder()
+                        .type(DocNode.NodeType.HEADING)
+                        .level(titleLevel(t))
+                        .title(t)
+                        .pageNumber(pageNo)
+                        .build());
+                prevBottom = rowBottom;
+                continue;
+            }
+            if (mdTable) {
+                int j = i;
+                List<String> block = new ArrayList<>();
+                while (j < sorted.size() && sorted.get(j).text().trim().startsWith("|")) {
+                    block.add(sorted.get(j).text().trim());
+                    j++;
+                }
+                DocNode tableNode = buildMarkdownTableNode(String.join("\n", block), pageNo);
+                if (tableNode != null) {
+                    nodes.add(tableNode);
+                    prevBottom = sorted.get(j - 1).y() + sorted.get(j - 1).height();
+                    i = j - 1;
+                    continue;
+                }
+                paraLines.add(t);
+                prevBottom = rowBottom;
+                continue;
+            }
+            if (tabRow) {
+                int j = i;
+                int cols = tabCols;
+                List<String> block = new ArrayList<>();
+                while (j < sorted.size()) {
+                    String rt = sorted.get(j).text().trim();
+                    String[] cells = rt.split("\t", -1);
+                    if (cells.length != cols
+                            || !Arrays.stream(cells).allMatch(c -> c.length() <= 40)) break;
+                    block.add(rt);
+                    j++;
+                }
+                if (block.size() >= 2) {
+                    List<List<String>> tableRows = new ArrayList<>();
+                    for (String rt : block) {
+                        List<String> cells = new ArrayList<>();
+                        for (String c : rt.split("\t", -1)) cells.add(c.trim());
+                        tableRows.add(cells);
+                    }
+                    nodes.add(DocNode.builder()
+                            .type(DocNode.NodeType.TABLE)
+                            .headers(tableRows.get(0))
+                            .rows(tableRows.subList(1, tableRows.size()))
+                            .pageNumber(pageNo)
+                            .build());
+                    prevBottom = sorted.get(j - 1).y() + sorted.get(j - 1).height();
+                    i = j - 1;
+                    continue;
+                }
+            }
+            paraLines.add(t);
+            prevBottom = rowBottom;
+        }
+        flushParagraph(paraLines, nodes, pageNo);
+        return nodes;
+    }
+
+    /** 段落行累积 → PARAGRAPH 节点（段内行 \n 连接，保留行结构供锚定/前端 normalizeLines 使用） */
+    private void flushParagraph(List<String> paraLines, List<DocNode> nodes, int pageNo) {
+        if (paraLines.isEmpty()) return;
+        nodes.add(DocNode.builder()
+                .type(DocNode.NodeType.PARAGRAPH)
+                .content(String.join("\n", paraLines))
+                .pageNumber(pageNo)
+                .build());
+        paraLines.clear();
+    }
+
+    /** tab 分隔行 → TABLE 节点（首行为表头）；少于「表头 + 1 数据行」返回 null */
+    private DocNode buildTabTableNode(List<String> rowTexts, int pageNo) {
+        List<List<String>> rows = new ArrayList<>();
+        for (String rt : rowTexts) {
+            List<String> cells = new ArrayList<>();
+            for (String c : rt.split("\t", -1)) cells.add(c.trim());
+            rows.add(cells);
+        }
+        if (rows.size() < 2) return null;
+        return DocNode.builder()
+                .type(DocNode.NodeType.TABLE)
+                .headers(rows.get(0))
+                .rows(rows.subList(1, rows.size()))
+                .pageNumber(pageNo)
+                .build();
     }
 
     /**
@@ -220,7 +520,82 @@ public class DocumentParserImpl implements DocumentParser {
         return null;
     }
 
-    private boolean isPdfTitleLikeLine(String t) {
+    /**
+     * 页眉/页脚/页码清理：
+     * <ol>
+     *   <li>纯页码行（"12"、"- 3 -"、"第5页/共10页"）出现在页面前两行/末两行 → 删除；</li>
+     *   <li>规范化后相同文本在 ≥30% 页（且 ≥2 页）的页首区重复 → 判定为页眉，删除；
+     *       页尾区重复 → 页脚，删除。</li>
+     * </ol>
+     * 仅处理页面前两行/末两行区域，正文内容不受影响；单页文档不做清理。
+     */
+    private List<String> stripHeadersFooters(List<String> pageTexts) {
+        int n = pageTexts.size();
+        if (n < 2) return pageTexts;
+        Map<String, Integer> headFreq = new HashMap<>();
+        Map<String, Integer> footFreq = new HashMap<>();
+        List<List<String>> pageLines = new ArrayList<>();
+        for (String pt : pageTexts) {
+            List<String> lines = new ArrayList<>();
+            if (pt != null) {
+                for (String l : pt.split("\n")) {
+                    String t = l.trim();
+                    if (!t.isEmpty()) lines.add(t);
+                }
+            }
+            pageLines.add(lines);
+            for (int i = 0; i < Math.min(2, lines.size()); i++) {
+                headFreq.merge(normLineFreq(lines.get(i)), 1, Integer::sum);
+                footFreq.merge(normLineFreq(lines.get(lines.size() - 1 - i)), 1, Integer::sum);
+            }
+        }
+        int threshold = Math.max(2, (int) Math.ceil(n * 0.3));
+        Set<String> headerLines = frequentOf(headFreq, threshold);
+        Set<String> footerLines = frequentOf(footFreq, threshold);
+
+        List<String> out = new ArrayList<>();
+        for (List<String> lines : pageLines) {
+            List<String> kept = new ArrayList<>();
+            for (int i = 0; i < lines.size(); i++) {
+                String t = lines.get(i);
+                String norm = normLineFreq(t);
+                boolean inHeadZone = i < 2;
+                boolean inFootZone = i >= lines.size() - 2;
+                if ((inHeadZone && headerLines.contains(norm)) || (inFootZone && footerLines.contains(norm))) continue;
+                if ((inHeadZone || inFootZone) && isPageNumberLine(t)) continue;
+                kept.add(t);
+            }
+            out.add(String.join("\n", kept));
+        }
+        return out;
+    }
+
+    /** 频次归一化：数字掩码为 #（页码不同的页脚行也能对上频次）、去空白 */
+    private String normLineFreq(String s) {
+        return normLine(s).replaceAll("\\d+", "#");
+    }
+
+    private Set<String> frequentOf(Map<String, Integer> freq, int threshold) {
+        Set<String> out = new HashSet<>();
+        for (Map.Entry<String, Integer> e : freq.entrySet()) {
+            if (e.getValue() >= threshold) out.add(e.getKey());
+        }
+        return out;
+    }
+
+    private String normLine(String s) {
+        return s.replaceAll("\\s+", "");
+    }
+
+    /** 纯页码行：12、- 3 -、第5页、第5页/共10页、3/28 等 */
+    private static boolean isPageNumberLine(String s) {
+        String t = s.trim();
+        return t.matches("[-–—\\s]*\\d{1,4}[-–—\\s]*")
+                || t.matches("第\\s*\\d+\\s*页(\\s*[,，/]\\s*共?\\s*\\d+\\s*页)?")
+                || t.matches("\\d{1,4}\\s*/\\s*\\d{1,4}");
+    }
+
+    public static boolean isPdfTitleLikeLine(String t) {
         if (t.isEmpty()) return false;
         if (t.length() < 5 || t.length() > 60) return false;
         if (t.matches("^[\\d\\s\\-–.]+$")) return false; // 纯数字/页码
@@ -235,58 +610,40 @@ public class DocumentParserImpl implements DocumentParser {
         return digitTokens < 3;
     }
 
-    /**
-     * 把 PDF 解析出的"纯文本 + [PAGE_BREAK:n]"转换为结构化 DocNode 列表：
-     * - [PAGE_BREAK:n] 作为分页边界（不产出节点，MarkdownSerializer 对 PAGE_BREAK 输出空串）；
-     * - 每页首个非空段若匹配该页最近标题（pageTitles），先产一个 HEADING 节点（level=2）；
-     * - 余下文本按空行分段为 PARAGRAPH 节点，保留 pageNumber。
-     *
-     * <p>见 docs/design/parsed-markdown.md ADR-2：让 PDF 与 docx/pptx/xlsx 输出同一中间表征。</p>
-     */
-    private List<DocNode> buildPdfDocNodes(String fullText, Map<Integer, String> pageTitles) {
-        List<DocNode> nodes = new ArrayList<>();
-        if (fullText == null || fullText.isEmpty()) return nodes;
-
-        String[] pages = fullText.split("\\[PAGE_BREAK:\\d+\\]");
-        for (int i = 0; i < pages.length; i++) {
-            String pageText = pages[i] == null ? "" : pages[i].trim();
-            if (pageText.isEmpty()) continue;
-
-            String pageTitle = (pageTitles != null) ? pageTitles.get(i + 1) : null;
-            boolean titleEmitted = false;
-
-            String[] paragraphs = pageText.split("\\n\\s*\\n");
-            for (String p : paragraphs) {
-                String trimmed = p.trim();
-                if (trimmed.isEmpty()) continue;
-
-                if (!titleEmitted && pageTitle != null && trimmed.equals(pageTitle)) {
-                    nodes.add(DocNode.builder()
-                            .type(DocNode.NodeType.HEADING)
-                            .level(2)
-                            .title(pageTitle)
-                            .pageNumber(i)
-                            .build());
-                    titleEmitted = true;
-                    continue;
-                }
-                nodes.add(DocNode.builder()
-                        .type(DocNode.NodeType.PARAGRAPH)
-                        .content(trimmed)
-                        .pageNumber(i)
-                        .build());
-            }
-            // 该页没有能与标题精确匹配的段落，仍单独落一个 HEADING 以保留章节上下文
-            if (!titleEmitted && pageTitle != null) {
-                nodes.add(DocNode.builder()
-                        .type(DocNode.NodeType.HEADING)
-                        .level(2)
-                        .title(pageTitle)
-                        .pageNumber(i)
-                        .build());
-            }
+    /** 标题级别：按编号深度推断（"1"→1、"2.1"→2、"2.1.1"→3，封顶 4；无编号默认 2） */
+    private int titleLevel(String t) {
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile("^\\s*(\\d+(?:\\.\\d+)*)").matcher(t);
+        if (m.find()) {
+            return Math.min(4, m.group(1).split("\\.").length);
         }
-        return nodes;
+        return 2;
+    }
+
+    /**
+     * Markdown 表格块（OCR 常见输出，| 分隔单元格）→ TABLE 节点。
+     * 跳过 |---| 分隔行；单元格转 tab 语义（与 tableText 序列化格式一致，前端 parseTable 可直接渲染）。
+     * 少于「表头 + 1 数据行」不成表，按普通段落处理。
+     */
+    private DocNode buildMarkdownTableNode(String block, int pageNo) {
+        List<List<String>> rows = new ArrayList<>();
+        for (String line : block.split("\n")) {
+            String t = line.trim();
+            if (!t.startsWith("|")) continue;
+            String inner = t.length() > 1 && t.endsWith("|") ? t.substring(1, t.length() - 1) : t.substring(1);
+            String[] cells = inner.split("\\|", -1);
+            boolean separator = Arrays.stream(cells).allMatch(c -> c.trim().matches(":?-{2,}:?"));
+            if (separator) continue;
+            List<String> row = new ArrayList<>();
+            for (String c : cells) row.add(c.trim());
+            rows.add(row);
+        }
+        if (rows.size() < 2) return null;
+        return DocNode.builder()
+                .type(DocNode.NodeType.TABLE)
+                .headers(rows.get(0))
+                .rows(rows.subList(1, rows.size()))
+                .pageNumber(pageNo)
+                .build();
     }
 
     private ParseResult parseDocx(InputStream stream, KbParseStrategy strategy) throws Exception {

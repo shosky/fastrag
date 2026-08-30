@@ -1,10 +1,8 @@
 <script setup lang="ts">
 import type { KnowledgeFile, AiChunkParagraphType, AiChunkResult, AiChunkParagraph, AiChunkLayoutBlock } from '@/types/knowledge'
-import { Refresh, Document, Check, MagicStick, CopyDocument, Edit, Plus } from '@element-plus/icons-vue'
+import { Refresh, Document, Check, MagicStick, CopyDocument, Edit, Plus, Scissor, ArrowUp, ArrowDown, RefreshLeft, Picture } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { storage } from '@/utils/storage'
-import mammoth from 'mammoth'
-import { init as initPptx } from 'pptx-preview'
 import AiChunkPdfOverlay from './AiChunkPdfOverlay.vue'
 import OnlyOfficeViewer from './OnlyOfficeViewer.vue'
 import { isOfficeFile } from '@/config'
@@ -19,7 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:modelValue', v: boolean): void
   (e: 'applied', fileId: string): void
-  /** chunk 卡被点击：父组件可触发 OnlyOfficeEditorDialog 跳转到对应页 */
+  /** chunk 卡被点击：Office 文件由内嵌 OnlyOfficeViewer 跳页，父组件可自行消费 */
   (e: 'chunk-click', chunk: { id: string; index: number; pageNumber?: number; title?: string }): void
 }>()
 
@@ -38,21 +36,49 @@ const stage = ref('')
 const hoverParagraphId = ref<string | null>(null)
 const activeChunkId = ref<string | null>(null)
 
-// ---- 左侧视图：真实文件渲染（默认，一比一原件） / 结构视图（选中分片） ----
-const leftView = ref<'real' | 'model'>('real')
+// ---- 左侧视图：一比一原件渲染（PDF=pdf.js 版面框可点选 / Office=OnlyOffice 选区桥）----
 const realLoading = ref(false)
 const realError = ref('')
 const objectUrl = ref('')          // PDF blob url
-const officeHtml = ref('')         // DOCX mammoth HTML（OnlyOffice 不可用时的兜底）
-const officeHoverable = ref(false) // 段落锚点是否注入
-const officeDocRef = ref<HTMLDivElement | null>(null)
-const officePptxRef = ref<HTMLDivElement | null>(null)
-const isPptx = computed(() => {
-  const ext = (props.file?.name.split('.').pop() || '').toLowerCase()
-  return ext === 'pptx' || ext === 'ppt'
-})
-const isOffice = computed(() => isOfficeFile(props.file?.name || ''))  // OnlyOffice 支持的文件类型
 const isPdf = computed(() => (props.file?.name.split('.').pop() || '').toLowerCase() === 'pdf')
+const isOffice = computed(() => isOfficeFile(props.file?.name || ''))  // OnlyOffice 支持的文件类型
+// PDF 版面框已选中的段落 id（点击框选中/取消 → 「生成分片」落草稿）
+const pdfSelectedIds = ref<Set<string>>(new Set())
+const pdfSelectedCount = computed(() => pdfSelectedIds.value.size)
+/** 「生成分片」按钮可点性：Office 有捕获选区 或 PDF 有版面框/区域选中 */
+const selectedKeysDisabled = computed(() => pdfSelectedCount.value === 0 && pdfRegionsCount.value === 0 && !officeCapturedText.value)
+/** 图片盒 OCR 进行中（生成分片按钮转圈） */
+const ocrLoading = ref(false)
+/** 扫描件延迟解析：打开时探测到无文字层 → 不自动 OCR，等用户点「一键自动分片」 */
+const pdfScanDeferred = ref(false)
+
+/** 原生拖选文字（TextLayer 选区，跨页可选）→ 捕获文本，随「生成分片」直接成片 */
+const pdfCapturedText = ref('')
+const pdfCapturedPage = ref(1)
+
+/** 原生拖选完成：捕获选中文本（同页多次拖选会各自成片，可删除） */
+function onPdfTextSelect(payload: { text: string; page: number }) {
+  pdfCapturedText.value = payload.text
+  pdfCapturedPage.value = payload.page
+  status.value = 'done'
+  ElMessage.success(`已捕获选中文本（${payload.text.length} 字），可点下方「生成分片」`)
+}
+
+/**
+ * Overlay 文字层探测回调：过半页面无文字层判定为扫描件。
+ * 打开即解析（整本 OCR）动辄分钟级且非用户本意——扫描件延迟到点「一键自动分片」时；
+ * 有文字层的 PDF 解析是秒级文本提取，照旧立即加载（版面框选段/联动可用）。
+ */
+function onPdfScanCheck(payload: { pages: number; scannedPages: number }) {
+  if (status.value === 'parsing' || status.value === 'loadingLeft') return
+  const needsOcr = payload.pages > 0 && payload.scannedPages * 2 >= payload.pages
+  if (needsOcr) {
+    pdfScanDeferred.value = true
+  } else {
+    pdfScanDeferred.value = false
+    loadRealLeft()
+  }
+}
 // OnlyOffice 已捕获的选区文本（常驻防抖捕获，父页面「创建分片」按钮消费；'' = 无有效选区）
 const officeCapturedText = ref('')
 // 选区桥存活状态：插件小窗被关闭时变 false，提示用户恢复方式
@@ -61,40 +87,22 @@ const selBridgeDown = ref(false)
 function onBridgeState(alive: boolean) {
   selBridgeDown.value = !alive
   console.log('[OO] bridge-state ->', alive ? 'alive' : 'DOWN')
-  if (!alive && isOffice.value && leftView.value === 'real') {
-    // B 线兜底：插件桥断开时自动切到结构视图，段落选择不中断
-    leftView.value = 'model'
-    ElMessage.info('原件选区监听已断开，已切换到结构视图——点击段落即可生成分片')
+  if (!alive && isOffice.value) {
+    // 选区桥断开：明确告知恢复方式（不再有结构视图兜底）
+    ElMessage.warning('原件选区监听已断开：请在编辑器「插件」选项卡重新打开 ChunkBoundary，或点底部「重置」重新加载')
   }
 }
 // OnlyOffice 跳转目标 chunk（chunk-click 触发）
 const officeFocusChunkId = ref<string | null>(null)
-let pptxPreviewer: any = null
 
 // ---- 数据 ----
-const leftError = ref('')   // 左侧结构视图加载失败提示（不展示演示数据）
 const dirtyCount = ref(0)
 const editingChunkId = ref<string | null>(null)
 const editText = ref('')
 let chunkSeq = 0
 
-// ---- 左侧片段与选中 ----
-interface LeftFragment {
-  key: string            // page#index 唯一键（仅渲染 key，联动一律用 paragraphId）
-  paragraphId: string
-  type: AiChunkParagraphType
-  text: string
-  label: string
-  page: number
-  crossPage?: boolean
-  imageKey?: string
-}
-interface LeftPage { page: number; fragments: LeftFragment[] }
-const leftPages = ref<LeftPage[]>([])
-const selectedKeys = ref<Set<string>>(new Set())
-
 // ---- 右侧分片卡（手动 + 自动） ----
-interface ChunkBlock { paragraphId: string; type: AiChunkParagraphType; text: string; page: number; label?: string }
+interface ChunkBlock { paragraphId: string; type: AiChunkParagraphType; text: string; page: number; label?: string; imageKey?: string }
 interface ChunkCard {
   id: string
   index: number
@@ -128,28 +136,98 @@ function onOfficeCaptured(text: string) {
 }
 
 // 调试：生成分片按钮可点性状态（选中/捕获 任一有值即点亮）
-watch([officeCapturedText, selectedKeys], () => {
+watch([officeCapturedText, pdfSelectedIds], () => {
   console.log('[OO] 「生成分片」按钮状态:', {
     capturedLen: officeCapturedText.value?.length ?? 0,
-    selectedKeys: selectedKeys.value.size,
-    disabled: selectedKeys.value.size === 0 && !officeCapturedText.value,
+    pdfSelected: pdfSelectedIds.value.size,
+    disabled: selectedKeysDisabled.value,
   })
 })
 
-/** 通用「生成分片」入口：原件渲染(OFFICE)有捕获选区 → 对齐创建；结构视图有勾选段落 → 段创建 */
+/** 通用「生成分片」入口：原件渲染 OFFICE 有捕获选区 → 对齐创建；PDF 有版面框选中 → 段创建 */
 function handleCreateChunk() {
-  if (officeCapturedText && isOffice.value && leftView.value === 'real') {
-    createOfficeChunk()
-  } else if (selectedKeys.value.size > 0) {
-    createManualChunk()
+  if (officeCapturedText && isOffice.value) {
+    addCapturedToDraft()
+  } else if (pdfRegions.value.length > 0) {
+    createChunksFromRegions()
+  } else if (pdfSelectedIds.value.size > 0) {
+    createManualChunkFromSelection()
   } else {
-    ElMessage.warning('请先在左侧选中内容（结构视图点选段落，或在原件中三击/框选文字）')
+    ElMessage.warning('请先在左侧选中内容（PDF 拖拽框选区域或点图片框，Office 三击/框选文字）')
+  }
+}
+
+/** 区域内容提取结果 → 分片块。OCR 空时含占位块（不跳过——用户选择的对象必有所属卡） */
+function regionBlocksOf(selId: string, page: number, res: any): ChunkBlock[] {
+  const contentBlocks = (Array.isArray(res?.blocks) ? res.blocks : [])
+    .map((b: any, k: number) => ({
+      paragraphId: `${selId}_${k}`,
+      type: (b.type as AiChunkParagraphType) || 'paragraph',
+      text: String(b.text ?? ''),
+      page,
+      // 后端裁剪图已落 MinIO（{kbId}/{fileId}/images/{key}），分片卡可直接渲染
+      imageKey: b.imageKey ? String(b.imageKey) : undefined,
+    }))
+    .filter((b: any) => b.text || b.imageKey)
+  if (contentBlocks.length === 0) {
+    contentBlocks.push({
+      paragraphId: selId,
+      type: 'image' as AiChunkParagraphType,
+      text: '（该区域未识别到内容，请手动编辑）',
+      page,
+    })
+  }
+  return contentBlocks
+}
+
+/** 逐区域调后端结构化/OCR 提取，所有块合并为**一张**分片卡（跨页区域按页序+页内位置拼接阅读顺序） */
+async function createChunksFromRegions() {
+  if (!props.kbId || !props.file || pdfRegions.value.length === 0) return
+  snapshotChunks()
+  // 页序 + 页内位置排序 → 合并卡内容按阅读顺序（跨两页就是连续一段）
+  const regions = [...pdfRegions.value].sort((a, b) => a.page - b.page || a.y - b.y)
+  ocrLoading.value = true
+  try {
+    const allBlocks: ChunkBlock[] = []
+    let emptyCount = 0
+    for (const r of regions) {
+      const res: any = await api.aiChunkImageOcr(props.kbId, props.file.id, {
+        page: r.page, x: r.x, y: r.y, width: r.width, height: r.height,
+      })
+      const blocks = regionBlocksOf(r.id, r.page, res)
+      if (blocks.length === 1 && blocks[0].text.startsWith('（该区域未识别到内容')) emptyCount++
+      allBlocks.push(...blocks)
+    }
+    if (allBlocks.length === 0) {
+      ElMessage.warning('所选区域均未识别到内容')
+      return
+    }
+    chunkCards.value.push({
+      id: `chunk_${++chunkSeq}`,
+      index: chunkCards.value.length,
+      source: 'manual',
+      blocks: allBlocks,
+      pageRange: pageRangeOfBlocks(allBlocks),
+    })
+    pdfRegions.value = []
+    status.value = 'done'
+    const pages = [...new Set(regions.map((r) => r.page))].sort((a, b) => a - b)
+    const chars = allBlocks.reduce((n: number, b: ChunkBlock) => n + b.text.length, 0)
+    ElMessage.success(
+      regions.length > 1
+        ? `已创建跨页分片 #${chunkCards.value.length}（第 ${pages.join('、')} 页合并，${allBlocks.length} 块，${chars} 字${emptyCount ? `；${emptyCount} 个区域未识别到内容` : ''}）`
+        : `已创建分片 #${chunkCards.value.length}（${allBlocks.length} 块，${chars} 字）`,
+    )
+  } catch (e: any) {
+    ElMessage.error(`区域内容提取失败：${e?.message || e}`)
+  } finally {
+    ocrLoading.value = false
   }
 }
 
 /**
  * 把 OO 划选/三击得到的文本，对齐到解析模型段落（alignParagraphs）。
- * 与结构视图「选段」一致：命中后取整段（或多段）全文作为 chunk 内容，页码取模型值。
+ * 与 PDF 版面框「点选」一致：命中后取整段（或多段）全文作为 chunk 内容，页码取模型值。
  * @returns 对齐结果：paragraphIds / 段全文 / 起始页；未命中返回 null（退化为自由文本）
  */
 /** 把对齐段落按各自类型重建为 Markdown（表格→管道表 / 标题→## / 列表→- / 代码→围栏） */
@@ -220,6 +298,25 @@ function matchCapturedToParagraphs(raw: string): AlignedCapture | null {
       acc += pj
       objs.push(paras[j])
       if (acc.includes(target)) {
+        // ★ 选区范围内（order 介于首末命中段落之间）的图片段落（docx 图片不进
+        //   选区文本，对齐结果天然缺失）→ 按 order 穿插补全，随分片按顺序渲染
+        const all = alignParagraphs.value ?? []
+        const orders = objs.map((o) => o.order).filter((n) => Number.isFinite(n))
+        if (orders.length > 0) {
+          const lo = Math.min(...orders)
+          const hi = Math.max(...orders)
+          const imgs = all.filter(
+            (p) => p.order >= lo && p.order <= hi && p.type === 'image' && p.imageKey && !objs.includes(p),
+          )
+          if (imgs.length > 0) {
+            const merged = [...objs, ...imgs].sort((a, b) => (a.order ?? 0) - (b.order ?? 0))
+            return {
+              paragraphIds: merged.map((o) => o.id),
+              paras: merged,
+              page: paras[i].page ?? 1,
+            }
+          }
+        }
         return {
           paragraphIds: objs.map((o) => o.id),
           paras: objs,
@@ -233,83 +330,240 @@ function matchCapturedToParagraphs(raw: string): AlignedCapture | null {
 }
 
 /** 用已捕获的 OO 选区创建分片：优先对齐解析段落（段落级 chunk），未命中退化为选中原文（立即落库，origin=manual） */
-async function createOfficeChunk() {
-  if (!props.kbId || !props.file) return
+/** OO 选区加入草稿（不立即落库）：对齐解析段落→按类型重建 Markdown→追加为手动草稿卡，随「应用 AI分片」统一落库 */
+function addCapturedToDraft() {
+  if (!props.file) return
   const text = officeCapturedText.value?.trim()
   if (!text || text.length < 2) {
     ElMessage.warning('请先在文档中选中内容（三击整段或框选文字）')
     return
   }
   const aligned = matchCapturedToParagraphs(text)
-  // 对齐成功 → 按解析段落类型重建 Markdown（表格还原为管道表、标题/列表/代码保形）
-  // 未对齐 → 退化为选中文本原文
   const content = aligned ? parasToMarkdown(aligned.paras) : text
   const pageNumber = aligned ? aligned.page : undefined
   if (!aligned) {
-    ElMessage.info('未精确匹配到解析段落，按选中文本原文创建')
+    ElMessage.info('未精确匹配到解析段落，按选中文本原文加入')
   }
-  try {
-    const created: any = await api.createChunk(props.kbId, {
-      fileId: props.file.id,
-      content,
-      chunkType: 'text',
-      ...(pageNumber ? { pageNumber } : {}),
-    })
-    officeCapturedText.value = ''
-    ElMessage.success('已创建分片')
-    // 直接在右侧追加手动卡（不要 initPanel 全量重置：那会清空草稿区且不回显已落库分片）
-    chunkCards.value.push({
-      id: String(created?.id ?? `${props.file.id}_manual_${chunkCards.value.length + 1}`),
-      index: chunkCards.value.length,
-      source: 'manual',
-      blocks: [{ paragraphId: aligned?.paragraphIds?.[0] ?? 'manual', type: 'paragraph', text: content, page: pageNumber ?? 1 }],
-      pageRange: String(pageNumber ?? '—'),
-    })
-  } catch (e: any) {
-    ElMessage.error(`创建失败: ${e?.message || e}`)
-  }
+  const blocks: ChunkBlock[] = aligned
+    ? aligned.paras.map((p) => ({
+        paragraphId: p.id,
+        type: p.type as AiChunkParagraphType,
+        text: p.text,
+        page: p.page ?? 1,
+        // docx 图片段落：MinIO key，分片卡按 /files/{fileId}/images/{key} 渲染
+        imageKey: p.imageKey,
+      }))
+    : [{ paragraphId: 'manual', type: 'paragraph', text, page: pageNumber ?? 1 }]
+  chunkCards.value.push({
+    id: props.file.id + '_manual_' + Date.now(),
+    index: chunkCards.value.length,
+    source: 'manual',
+    blocks,
+    pageRange: pageRangeOfBlocks(blocks),
+  })
+  officeCapturedText.value = ''
+  dirtyCount.value++
+  ElMessage.success('已加入草稿（' + blocks.length + ' 块），可继续选择或点「应用 AI分片」落库')
 }
 
-/**
- * 按结构自动分片（规则流，不调 LLM）：让服务端确保文件绑定 structure_aware 策略后
- * 走 re-chunk 全流水线重切；手动分片保留。有未应用草稿时先确认丢弃。
- */
-async function structureChunk() {
-  if (!props.kbId || !props.file) return
-  if (chunkCards.value.length > 0) {
-    try {
-      await ElMessageBox.confirm(
-        '将丢弃当前未应用的分片草稿，并按文档结构（标题/小节）重新分片（手动分片会保留）。继续？',
-        '按结构分片',
-        { type: 'warning', confirmButtonText: '按结构分片', cancelButtonText: '取消' },
-      )
-    } catch {
+  // ---- 合并选择 ----
+  const mergeSelIds = ref(new Set<string>())
+  function toggleMergeSel(card: ChunkCard) {
+    const next = new Set(mergeSelIds.value)
+    next.has(card.id) ? next.delete(card.id) : next.add(card.id)
+    mergeSelIds.value = next
+  }
+
+  function reindexCards() {
+    chunkCards.value.forEach((c, i) => { c.index = i })
+  }
+
+  // ---- 撤销（校对类操作全部可逆） ----
+  const undoStack = ref<ChunkCard[][]>([])
+  const MAX_UNDO = 20
+  /** 变更前快照（深拷贝卡片与块） */
+  function snapshotChunks() {
+    undoStack.value.push(chunkCards.value.map((c) => ({ ...c, blocks: c.blocks.map((b) => ({ ...b })) })))
+    if (undoStack.value.length > MAX_UNDO) undoStack.value.shift()
+  }
+  function undoChunkOp() {
+    const prev = undoStack.value.pop()
+    if (!prev) {
+      ElMessage.info('没有可撤销的操作')
       return
     }
+    chunkCards.value = prev
+    reindexCards()
+    mergeSelIds.value = new Set()
+    if (chunkCards.value.length > 0) status.value = 'done'
   }
-  try {
-    await api.reChunkFile(props.kbId, props.file.id, { presetStrategy: 'structure_aware' })
-    // 立即清空本地草稿（re-chunk 为异步 pipeline，完成后文件状态回 completed）
-    chunkCards.value = []
-    selectedKeys.value = new Set()
-    officeCapturedText.value = ''
-    ElMessage.success('已触发按结构分片，处理中…')
-    await initPanel()
-  } catch (e: any) {
-    ElMessage.error(`触发失败: ${e?.message || e}`)
+
+  // ---- 多选批量操作 ----
+  function selectAllCards() {
+    mergeSelIds.value = new Set(chunkCards.value.map((c) => c.id))
   }
-}
+  function invertCardSelection() {
+    const s = new Set<string>()
+    for (const c of chunkCards.value) if (!mergeSelIds.value.has(c.id)) s.add(c.id)
+    mergeSelIds.value = s
+  }
+  function deleteSelectedCards() {
+    if (mergeSelIds.value.size === 0) return
+    snapshotChunks()
+    chunkCards.value = chunkCards.value.filter((c) => !mergeSelIds.value.has(c.id))
+    reindexCards()
+    mergeSelIds.value = new Set()
+    dirtyCount.value++
+    ElMessage.success('已删除所选分片')
+  }
+  function onPanelKeydown(e: KeyboardEvent) {
+    if (!props.modelValue) return
+    if ((e.ctrlKey || e.metaKey) && (e.key === 'z' || e.key === 'Z')) {
+      e.preventDefault()
+      undoChunkOp()
+    } else if (e.key === 'Delete' && mergeSelIds.value.size > 0) {
+      e.preventDefault()
+      deleteSelectedCards()
+    }
+  }
+  onMounted(() => window.addEventListener('keydown', onPanelKeydown))
+  onBeforeUnmount(() => window.removeEventListener('keydown', onPanelKeydown))
+
+  /** 卡片上移/下移（分片顺序影响阅读与召回） */
+  function moveCard(card: ChunkCard, dir: -1 | 1) {
+    const idx = chunkCards.value.findIndex((c) => c.id === card.id)
+    const target = idx + dir
+    if (idx < 0 || target < 0 || target >= chunkCards.value.length) return
+    snapshotChunks()
+    const [c] = chunkCards.value.splice(idx, 1)
+    chunkCards.value.splice(target, 0, c)
+    reindexCards()
+    dirtyCount.value++
+  }
+
+  /** 在卡片第 at 块边界处一分为二（两卡继承源卡片属性） */
+  function splitChunkCard(card: ChunkCard, at: number) {
+    snapshotChunks()
+    const idx = chunkCards.value.findIndex((c) => c.id === card.id)
+    if (idx < 0 || at <= 0 || at >= card.blocks.length) return
+    const head = card.blocks.slice(0, at)
+    const tail = card.blocks.slice(at)
+    if (!head.length || !tail.length) return
+    const mk = (blocks: ChunkBlock[], suffix: string): ChunkCard => ({
+      id: card.id + suffix + '_' + Date.now(),
+      index: idx,
+      source: card.source,
+      blocks,
+      pageRange: pageRangeOfBlocks(blocks),
+      edited: true,
+    })
+    chunkCards.value.splice(idx, 1, mk(head, '_sa'), mk(tail, '_sb'))
+    reindexCards()
+    dirtyCount.value++
+    ElMessage.success('已拆分为 2 个分片')
+  }
+
+  const SENTENCE_ENDS = '。！？；.!?;'
+
+  /** 单块卡句界拆分：整段成卡时没有块间拆分热区（超长段二次切分的补救入口），在文本中点最近的句界处一分为二 */
+  function splitSingleBlockCard(card: ChunkCard) {
+    snapshotChunks()
+    if (card.blocks.length !== 1) return
+    const text = card.blocks[0].text
+    const mid = Math.floor(text.length / 2)
+    let cut = -1
+    for (let d = 0; d < text.length; d++) {
+      const li = mid - d
+      const ri = mid + d
+      if (li >= 0 && SENTENCE_ENDS.includes(text[li])) { cut = li + 1; break }
+      if (ri < text.length && SENTENCE_ENDS.includes(text[ri])) { cut = ri + 1; break }
+    }
+    if (cut < 0) cut = mid
+    const left = text.slice(0, cut).trim()
+    const right = text.slice(cut).trim()
+    if (!left || !right) {
+      ElMessage.warning('未找到合适的句界拆分点')
+      return
+    }
+    const mk = (t: string, suffix: string): ChunkCard => ({
+      id: card.id + suffix + '_' + Date.now(),
+      index: 0,
+      source: card.source,
+      blocks: [{ ...card.blocks[0], text: t }],
+      pageRange: card.pageRange,
+      edited: true,
+    })
+    const idx = chunkCards.value.findIndex((c) => c.id === card.id)
+    if (idx < 0) return
+    chunkCards.value.splice(idx, 1, mk(left, '_a'), mk(right, '_b'))
+    reindexCards()
+    dirtyCount.value++
+    ElMessage.success('已按句界拆分为 2 个分片')
+  }
+
+  /** 合并勾选的卡片：按当前顺序拼接，落在首个被勾选卡的位置 */
+  function mergeSelectedCards() {
+    snapshotChunks()
+    const sel = chunkCards.value.filter((c) => mergeSelIds.value.has(c.id))
+    if (sel.length < 2) return
+    const firstIdx = chunkCards.value.findIndex((c) => c.id === sel[0].id)
+    const blocks = sel.flatMap((c) => c.blocks)
+    const merged: ChunkCard = {
+      id: sel[0].id + '_m_' + Date.now(),
+      index: firstIdx,
+      source: sel.every((c) => c.source === 'manual') ? 'manual' : 'auto',
+      blocks,
+      pageRange: pageRangeOfBlocks(blocks),
+      edited: true,
+    }
+    chunkCards.value = chunkCards.value.filter((c) => !mergeSelIds.value.has(c.id))
+    chunkCards.value.splice(firstIdx, 0, merged)
+    mergeSelIds.value = new Set()
+    reindexCards()
+    dirtyCount.value++
+    ElMessage.success('已合并为 1 个分片（' + charCountOf(merged) + ' 字符）')
+  }
 
 // 后端返回的对齐模型（用于左侧渲染与分片块取材）
 const alignParagraphs = ref<AiChunkParagraph[]>([])
 // PDF 内容图片渲染位置（旁路可视化数据：原件渲染画 image 框，不参与段落对齐模型）
 const imageBoxes = ref<AiChunkResult['imageBoxes']>([])
+
+// ---- 分片卡图片渲染：/files/{fileId}/images/{key} 带 token 拉取 → objectURL 缓存 ----
+const chunkImageUrls = ref<Record<string, string>>({})
+const chunkImageLoading = new Set<string>()
+
+/** 分片块图片 src：命中缓存直接返回，否则异步拉取（拉取完成后响应式更新） */
+function blockImageSrc(b: ChunkBlock): string | undefined {
+  if (!b.imageKey || !props.kbId || !props.file) return undefined
+  const cacheKey = `${props.file.id}_${b.imageKey}`
+  const hit = chunkImageUrls.value[cacheKey]
+  if (hit) return hit
+  void loadChunkImage(props.kbId, props.file.id, b.imageKey, cacheKey)
+  return undefined
+}
+
+async function loadChunkImage(kbId: string, fileId: string, imageKey: string, cacheKey: string) {
+  if (chunkImageUrls.value[cacheKey] || chunkImageLoading.has(cacheKey)) return
+  chunkImageLoading.add(cacheKey)
+  try {
+    const token = storage.get('token')
+    const resp = await fetch(`/api/kb/${kbId}/files/${fileId}/images/${imageKey}`, {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    chunkImageUrls.value[cacheKey] = URL.createObjectURL(blob)
+  } catch (e) {
+    console.warn('[AiChunk] load chunk image failed:', imageKey, e)
+  } finally {
+    chunkImageLoading.delete(cacheKey)
+  }
+}
 // VLM 版面分析块（原件渲染分块画框；缓存命中随 preview 返回，否则走 SSE 按需生成）
 const layoutBlocks = ref<AiChunkLayoutBlock[]>([])
 // 版面分析 SSE 中断句柄（面板关闭时 abort）
 let layoutAbort: AbortController | null = null
-// 结构视图图片 blob url 缓存（imageKey → blob url，带 Auth 拉取）
-const imageBlobs = ref<Record<string, string>>({})
 
 // ===========================================================================
 // 基础工具
@@ -332,10 +586,6 @@ function typeLabel(type: AiChunkParagraphType): string {
   return m[type]
 }
 
-function truncate(s: string, n: number): string {
-  return s.length <= n ? s : s.slice(0, n) + '…'
-}
-
 function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms))
 }
@@ -348,17 +598,14 @@ async function initPanel() {
   progress.value = 0
   stage.value = ''
   chunkCards.value = []
-  alignParagraphs.value = []
-  selectedKeys.value = new Set()
+  pdfSelectedIds.value = new Set()
+  pdfRegions.value = []
+  undoStack.value = []
   dirtyCount.value = 0
   editingChunkId.value = null
   hoverParagraphId.value = null
   activeChunkId.value = null
   chunkSeq = 0
-  leftError.value = ''
-  Object.values(imageBlobs.value).forEach((u) => URL.revokeObjectURL(u))
-  imageBlobs.value = {}
-  leftView.value = 'real'
   realLoading.value = false
   realCleanup()
   alignParagraphs.value = []
@@ -368,17 +615,33 @@ async function initPanel() {
   layoutBlocks.value = []
 
   if (props.kbId && props.file) {
-    await loadRealLeft()
-  } else {
-    leftError.value = '缺少知识库/文件信息，无法加载解析数据'
+    if (isOffice.value) {
+      // Office 解析无 OCR（docx/pptx 图片 OCR 发生在入库流水线而非此处），立即加载选区对齐模型
+      await loadRealLeft()
+    } else if (isPdf.value && props.file.url) {
+      // PDF：先渲染原件 → overlay 文字层探测后决定是否解析（扫描件不自动 OCR，见 onPdfScanCheck）
+      pdfScanDeferred.value = false
+      await loadRealFile()
+    }
   }
 }
 
 /** 真实左侧：ai-chunk-preview 返回对齐模型 → 每段按 pages 在每页渲染一个片段（跨页共享 paragraphId） */
+// 解析用时计时器：扫描件/大文档的解析（含全本 OCR）可能分钟级，让用户看到在进行而非卡死
+let parseTicker: ReturnType<typeof setInterval> | null = null
+
 async function loadRealLeft() {
   if (!props.kbId || !props.file) return
   status.value = 'loadingLeft'
-  stage.value = '加载原件…'
+  const parseStart = Date.now()
+  stage.value = '解析原件…'
+  parseTicker = setInterval(() => {
+    const sec = Math.round((Date.now() - parseStart) / 1000)
+    stage.value =
+      sec < 60
+        ? `解析原件… ${sec}s（扫描件/大文档 OCR 可能需要更久）`
+        : `解析原件… ${Math.floor(sec / 60)}m${sec % 60}s`
+  }, 1000)
   try {
     // 拦截器已解包 {code,data,message} → res 即 AiChunkResult 本体
     const data = (await api.aiChunkPreview(props.kbId, props.file.id, false)) as unknown as AiChunkResult | null
@@ -388,20 +651,23 @@ async function loadRealLeft() {
     alignParagraphs.value = data.paragraphs
     imageBoxes.value = data.imageBoxes ?? []
     layoutBlocks.value = data.layoutBlocks ?? []
-    leftPages.value = paragraphsToLeftPages(data.paragraphs)
-    // 版面分析缓存未命中（首开）→ 走 SSE 按需逐页生成
+    // 版面分析缓存未命中（首开）→ 走 SSE 按需生成
     if (layoutBlocks.value.length === 0) {
       startLayoutStream()
     }
-    leftError.value = ''
     status.value = 'idle'
-    await loadFragmentImages() // 结构视图图片渲染（异步，失败不阻断）
   } catch (e: any) {
-    // 后端不可用 → 展示错误，不回落演示数据
     console.error('[AiChunk] loadRealLeft failed:', e)
-    leftPages.value = []
-    leftError.value = e?.message || '无法加载解析数据'
+    alignParagraphs.value = []
+    imageBoxes.value = []
+    layoutBlocks.value = []
+    ElMessage.error('解析数据加载失败：版面框选段与联动不可用，仍可一键自动分片')
     status.value = 'idle'
+  } finally {
+    if (parseTicker) {
+      clearInterval(parseTicker)
+      parseTicker = null
+    }
   }
 }
 
@@ -452,105 +718,24 @@ async function startLayoutStream() {
   }
 }
 
-function paragraphsToLeftPages(paragraphs: AiChunkParagraph[]): LeftPage[] {
-  const pages = new Map<number, LeftPage>()
-  for (const p of paragraphs) {
-    const pageList = (p.pages && p.pages.length > 0) ? p.pages : [p.page]
-    for (const page of pageList) {
-      if (!pages.has(page)) pages.set(page, { page, fragments: [] })
-      pages.get(page)!.fragments.push({
-        key: `${page}#${pages.get(page)!.fragments.length}`,
-        paragraphId: p.id,
-        type: (p.type as AiChunkParagraphType) || 'paragraph',
-        // 跨页合并块在每页展示该页片段文本（自首见：全部页展示全文，标注↔跨页合并）
-        text: p.text,
-        label: `${typeLabel((p.type as AiChunkParagraphType) || 'paragraph')} · 页${page}`,
-        page,
-        crossPage: p.crossPage || pageList.length > 1,
-        imageKey: p.imageKey,
-      })
-    }
-  }
-  return [...pages.values()].sort((a, b) => a.page - b.page)
-}
-
 // ===========================================================================
-// 结构视图增强：图片真实显示 + 标题层级（尽可能还原原件观感）
-// ===========================================================================
-/** 预加载结构视图中的图片：带 Auth 拉取 {kbId}/{fileId}/images/{key} → blob url */
-async function loadFragmentImages() {
-  if (!props.kbId || !props.file) return
-  const keys = [...new Set(alignParagraphs.value
-    .filter((p) => p.type === 'image' && p.imageKey)
-    .map((p) => p.imageKey as string))]
-  const token = storage.get('token')
-  await Promise.all(keys.map(async (key) => {
-    if (imageBlobs.value[key]) return
-    try {
-      const resp = await fetch(
-        `/api/kb/${props.kbId}/files/${props.file!.id}/images/${encodeURIComponent(key)}`,
-        { headers: token ? { Authorization: `Bearer ${token}` } : {} },
-      )
-      if (!resp.ok) return
-      const blobUrl = URL.createObjectURL(await resp.blob())
-      imageBlobs.value = { ...imageBlobs.value, [key]: blobUrl }
-    } catch { /* 单张失败不阻断 */ }
-  }))
-}
-
-function imageSrc(f: LeftFragment): string {
-  return (f.imageKey && imageBlobs.value[f.imageKey]) || ''
-}
-
-/** 标题层级：按 headingPath 的 ">" 分段数 推定 1~6 级（无层级默认 1） */
-function headingLevel(p: AiChunkParagraph | LeftFragment): number {
-  const path = (p as any).headingPath
-  if (typeof path === 'string' && path) {
-    const depth = path.split('>').length
-    return Math.min(6, Math.max(1, depth))
-  }
-  return 1
-}
-
-// ===========================================================================
-// 左侧真实文件渲染（PDF=pdf.js / DOCX=mammoth / PPTX=pptx-preview）→ 一比一原件
+// 左侧真实文件渲染（PDF=pdf.js）→ 一比一原件，版面框点击可选中建分片
 // ===========================================================================
 function realCleanup() {
   if (objectUrl.value) {
     URL.revokeObjectURL(objectUrl.value)
     objectUrl.value = ''
   }
-  officeHtml.value = ''
-  officeHoverable.value = false
-  pptxPreviewer = null
   realError.value = ''
 }
 
-function hoverParagraphs(ids: string[]) {
-  if (ids.length === 0) {
-    hoverParagraphId.value = null
-    activeChunkId.value = null
-    return
-  }
-  activeChunkId.value = chunkOfFragment(ids[0])?.id ?? null
-  hoverParagraphId.value = ids[0]
-}
-
 async function loadRealFile() {
-  if (!props.file?.url && !isOffice.value) {
+  if (!props.file?.url) {
     realError.value = '文件无可预览地址'
     return
   }
   realLoading.value = true
   realError.value = ''
-
-  // Office 文件直接交给 OnlyOfficeViewer，无需预先拉字节流（OO 服务端自己拉）
-  if (isOffice.value) {
-    realLoading.value = false
-    return
-  }
-
-  const ext = '.' + (props.file.name.split('.').pop() || '').toLowerCase()
   try {
     const token = storage.get('token')
     const resp = await fetch(props.file.url, {
@@ -558,135 +743,165 @@ async function loadRealFile() {
     })
     if (!resp.ok) throw new Error(`加载失败（HTTP ${resp.status}）`)
     const ab = await resp.arrayBuffer()
-    await renderRealFile(ab, ext)
+    realCleanup()
+    objectUrl.value = URL.createObjectURL(new Blob([ab], { type: 'application/pdf' }))
   } catch (e: any) {
     realError.value = e?.message || '原件加载失败'
-    ElMessage.warning('原件渲染失败，可切到结构视图继续')
+    ElMessage.warning('原件渲染失败，仍可通过一键自动分片生成分片')
   } finally {
     realLoading.value = false
   }
 }
 
-async function renderRealFile(ab: ArrayBuffer, ext: string) {
-  realCleanup()
-  if (ext === '.pdf') {
-    objectUrl.value = URL.createObjectURL(new Blob([ab], { type: 'application/pdf' }))
-    officeHoverable.value = false
-  } else if (isOffice.value) {
-    // OnlyOffice 渲染走 OnlyOfficeViewer，不在此处处理
-    return
-  } else if (ext === '.docx' || ext === '.doc') {
-    const res = await mammoth.convertToHtml({ arrayBuffer: ab })
-    officeHtml.value = res.value
-    await nextTick()
-    officeHoverable.value = tryInjectDocxHover()
-  } else if (isPptx.value) {
-    await nextTick()
-    if (officePptxRef.value) {
-      if (!pptxPreviewer) pptxPreviewer = initPptx(officePptxRef.value, { width: 960, height: 540 })
-      pptxPreviewer.preview(ab)
-      await nextTick()
-      bindPptxSlideHover()
-      officeHoverable.value = true
-    } else {
-      throw new Error('PPTX 预览容器未就绪')
-    }
-  } else {
-    throw new Error('该类型不支持原件渲染')
-  }
-}
-
-/** DOCX：mammoth 的 <p> 与对齐模型的 paragraph/heading/list 段落按序对齐时注入 hover */
-function tryInjectDocxHover(): boolean {
-  const root = officeDocRef.value
-  const modelPs = alignParagraphs.value.filter((p) => ['paragraph', 'heading', 'list'].includes(p.type))
-  if (!root || modelPs.length === 0) return false
-  const ps = root.querySelectorAll('p')
-  if (ps.length !== modelPs.length) return false
-  ps.forEach((el, i) => {
-    const pid = modelPs[i].id
-    el.classList.add('ai-chunk-hover')
-    el.setAttribute('data-pid', pid)
-    el.addEventListener('mouseenter', () => hoverParagraphs([pid]))
-    el.addEventListener('mouseleave', () => hoverParagraphs([]))
-  })
-  return true
-}
-
-/** PPTX：pptx-preview 的 slide 容器 → 每页映射到 page 匹配的段落（hover 整页） */
-function bindPptxSlideHover() {
-  const root = officePptxRef.value
-  if (!root) return
-  const slides = root.querySelectorAll(':scope > *')
-  slides.forEach((el, i) => {
-    const ids = alignParagraphs.value.filter((p) => p.page === i + 1).map((p) => p.id)
-    if (ids.length === 0) return
-    el.classList.add('ai-chunk-slide-hover')
-    el.addEventListener('mouseenter', () => hoverParagraphs(ids))
-    el.addEventListener('mouseleave', () => hoverParagraphs([]))
-  })
-}
-
-watch(() => [props.modelValue, leftView.value], () => {
-  if (props.modelValue && leftView.value === 'real' && props.file?.url) {
-    loadRealFile()
-  }
-})
-
 // ===========================================================================
-// 左侧选中 → 手动分片
+// PDF 版面框点击选中 → 手动分片（结构视图移除后的手动选段入口）
 // ===========================================================================
-function toggleSelect(f: LeftFragment) {
-  const s = new Set(selectedKeys.value)
-  if (s.has(f.key)) s.delete(f.key)
-  else s.add(f.key)
-  selectedKeys.value = s
-}
+/** 已框选待生成区域（红色高亮，点「生成分片」统一调后端 OCR/结构化成片） */
+interface PdfRegion { id: string; page: number; x: number; y: number; width: number; height: number; chars: number; text?: string }
+const pdfRegions = ref<PdfRegion[]>([])
+const pdfRegionsCount = computed(() => pdfRegions.value.length)
+const pdfRegionsChars = computed(() => pdfRegions.value.reduce((n, r) => n + (r.chars || 0), 0))
 
-function isSelected(f: LeftFragment): boolean {
-  return selectedKeys.value.has(f.key)
-}
-
-function selectedFragmentsInOrder(): LeftFragment[] {
-  return leftPages.value.flatMap((p) => p.fragments).filter((f) => selectedKeys.value.has(f.key))
-}
-
-function createManualChunk() {
-  const frags = selectedFragmentsInOrder()
-  if (frags.length === 0) {
-    ElMessage.warning('请先在左侧点击选中要分片的内容')
-    return
-  }
-  // 去重同 paragraphId（跨页片段共享 id）→ 用全量对齐段落文本（跨页已合并）
-  const seen = new Set<string>()
-  const blocks: ChunkBlock[] = []
-  for (const f of frags) {
-    if (seen.has(f.paragraphId)) continue
-    seen.add(f.paragraphId)
-    const p = alignParagraphs.value.find((x) => x.id === f.paragraphId)
-    blocks.push({
-      paragraphId: f.paragraphId,
-      type: f.type,
-      text: p ? p.text : f.text,
-      page: f.page,
-      label: f.label,
-    })
-  }
-  chunkCards.value.push({
-    id: `chunk_${++chunkSeq}`,
-    index: chunkCards.value.length,
-    source: 'manual',
-    blocks,
-    pageRange: pageRangeOfBlocks(blocks),
-  })
-  selectedKeys.value = new Set()
+/** 拖拽框选区域完成：只记录并高亮（不立即成片），提示字数与选中内容，用户点「生成分片」统一生成 */
+function onRegionSelect(region: { id: string; page: number; x: number; y: number; width: number; height: number; chars: number; text?: string }) {
+  pdfRegions.value.push({ ...region })
   status.value = 'done'
-  ElMessage.success(`已创建手动分片 #${chunkCards.value.length}（${blocks.length} 段）`)
+  const preview = (region.text || '').trim()
+  const tip = preview
+    ? `已框选第 ${region.page} 页区域（约 ${region.chars ?? 0} 字）：「${preview.length > 40 ? preview.slice(0, 40) + '…' : preview}」，可点下方「生成分片」`
+    // 无文字层（扫描件/纯图片区）：前端数不出字属正常，内容由生成分片时 OCR 识别
+    : `已框选第 ${region.page} 页区域，生成分片时将由 OCR 识别内容`
+  ElMessage.success(tip)
 }
+
+/** 点击已框选区域框：取消该区域 */
+function onRegionRemove(id: string) {
+  pdfRegions.value = pdfRegions.value.filter((r) => r.id !== id)
+  ElMessage.info('已取消该框选区域')
+}
+
+function onPdfToggleSelect(paragraphId: string) {
+  const s = new Set(pdfSelectedIds.value)
+  s.has(paragraphId) ? s.delete(paragraphId) : s.add(paragraphId)
+  pdfSelectedIds.value = s
+}
+
+  /**
+   * PDF 版面框选中 → 手动分片。段落盒按解析段落成片；
+   * 图片盒（img:page:index）逐张调 OCR 模型识别区域内容后生成图片分片。
+   */
+  /** 区域/图片内容提取结果 → 分片卡（单区域：图片盒点选路径）。空结果创建占位卡 */
+  function pushRegionChunk(selId: string, page: number, res: any) {
+    snapshotChunks()
+    const contentBlocks = regionBlocksOf(selId, page, res)
+    const isEmpty = contentBlocks.length === 1 && contentBlocks[0].text.startsWith('（该区域未识别到内容')
+    chunkCards.value.push({
+      id: `chunk_${++chunkSeq}`,
+      index: chunkCards.value.length,
+      source: 'manual',
+      blocks: contentBlocks,
+      pageRange: pageRangeOfBlocks(contentBlocks),
+    })
+    status.value = 'done'
+    if (isEmpty) {
+      ElMessage.warning('该区域未识别到内容，已创建占位分片，可手动编辑')
+    } else {
+      ElMessage.success(`已创建分片 #${chunkCards.value.length}（${contentBlocks.length} 块，${contentBlocks.reduce((n: number, b: ChunkBlock) => n + b.text.length, 0)} 字）`)
+    }
+  }
+
+  /** 文字层命中行 → 分片卡（精确文本，所见即所得；行以 
+ 连接为单块） */
+  function pushLinesChunk(selId: string, page: number, lines: Array<{ y: number; text: string }>) {
+    const text = lines.map((l) => l.text).join('\n')
+    chunkCards.value.push({
+      id: `chunk_${++chunkSeq}`,
+      index: chunkCards.value.length,
+      source: 'manual',
+      blocks: [{ paragraphId: selId, type: 'paragraph' as AiChunkParagraphType, text, page }],
+      pageRange: String(page),
+    })
+    status.value = 'done'
+    ElMessage.success(`已创建分片 #${chunkCards.value.length}（${lines.length} 行，${text.length} 字）`)
+  }
+
+  async function createManualChunkFromSelection() {
+    if (pdfSelectedIds.value.size === 0 && !pdfCapturedText.value) return
+    if (!props.kbId || !props.file) return
+    snapshotChunks()
+    const ids = [...pdfSelectedIds.value]
+    const imgIds = ids.filter((id) => id.startsWith('img:'))
+    const paraIds = ids.filter((id) => !id.startsWith('img:'))
+
+    // ① 原生拖选文字（TextLayer 选区）→ 一个文字分片（所见即所得，跨页可选）
+    if (pdfCapturedText.value.trim()) {
+      const page = pdfCapturedPage.value
+      chunkCards.value.push({
+        id: `chunk_${++chunkSeq}`,
+        index: chunkCards.value.length,
+        source: 'manual',
+        blocks: [{ paragraphId: `sel_${Date.now()}`, type: 'paragraph' as AiChunkParagraphType, text: pdfCapturedText.value, page }],
+        pageRange: String(page),
+      })
+      pdfCapturedText.value = ''
+      status.value = 'done'
+      ElMessage.success(`已创建文字分片 #${chunkCards.value.length}（${chunkCards.value[chunkCards.value.length - 1].blocks[0].text.length} 字）`)
+      return
+    }
+
+    // ② 段落盒：按文档顺序取整段（跨页合并块共享 paragraphId，天然去重）。
+    // 内容优先取锚定行文本 anchorText（框住什么就进什么，行链路已清理页眉脚），
+    // 解析全文 text 仅作无锚定信息时的兜底
+    const blocks: ChunkBlock[] = alignParagraphs.value
+      .filter((p) => paraIds.includes(p.id))
+      .map((p) => ({
+        paragraphId: p.id,
+        type: (p.type as AiChunkParagraphType) || 'paragraph',
+        text: (p.anchorText && p.anchorText.trim()) || p.text,
+        page: p.page ?? 1,
+      }))
+    if (blocks.length > 0) {
+      chunkCards.value.push({
+        id: `chunk_${++chunkSeq}`,
+        index: chunkCards.value.length,
+        source: 'manual',
+        blocks,
+        pageRange: pageRangeOfBlocks(blocks),
+      })
+      ElMessage.success(`已创建手动分片 #${chunkCards.value.length}（${blocks.length} 段）`)
+    }
+
+    // ③ 图片盒：调区域内容提取（结构化优先，图片部分 OCR）
+    for (const imgId of imgIds) {
+      const box = imageBoxes.value?.find((b, i) => `img:${b.page}:${i}` === imgId)
+      if (!box) continue
+      ocrLoading.value = true
+      try {
+        const res: any = await api.aiChunkImageOcr(props.kbId, props.file.id, {
+          page: box.page, x: box.x, y: box.y, width: box.width, height: box.height,
+        })
+        pushRegionChunk(imgId, box.page, res)
+      } catch (e: any) {
+        ElMessage.error(`图片内容提取失败：${e?.message || e}`)
+      } finally {
+        ocrLoading.value = false
+      }
+    }
+
+    pdfSelectedIds.value = new Set()
+    if (chunkCards.value.length > 0) status.value = 'done'
+  }
 
 // ===========================================================================
 // 一键自动分片：真实走 SSE（fragment/chunk 逐个出），失败回退 preview；演示走模拟
 // ===========================================================================
+/** 自动分片实际来源 → 用户可读标签（后端 LLM 不可用时静默降级，完成后显式告知） */
+const CHUNK_SOURCE_LABELS: Record<string, string> = {
+  llm: 'LLM 语义分组',
+  embedding: 'Embedding 相似度切分（未配置 LLM，已降级）',
+  rule: '规则长度切分（未配置 LLM/Embedding，已降级）',
+}
+
 async function autoChunk() {
   if (status.value === 'parsing' || status.value === 'loadingLeft') return
   if (chunkCards.value.length > 0) {
@@ -694,12 +909,14 @@ async function autoChunk() {
       await ElMessageBox.confirm('右侧已有分片，重新自动分片将清空现有分片（含手动分片）。继续？', '一键自动分片', { type: 'warning', confirmButtonText: '重新分析', cancelButtonText: '取消' })
     } catch { return }
   }
-  chunkCards.value = []
-  selectedKeys.value = new Set()
-  dirtyCount.value = 0
-  editingChunkId.value = null
-  status.value = 'parsing'
-  progress.value = 0
+    snapshotChunks()
+    chunkCards.value = []
+    pdfSelectedIds.value = new Set()
+    pdfRegions.value = []
+    dirtyCount.value = 0
+    editingChunkId.value = null
+    status.value = 'parsing'
+    progress.value = 0
 
   if (!props.kbId || !props.file) {
     ElMessage.warning('缺少知识库/文件信息，无法自动分片')
@@ -760,7 +977,9 @@ async function realAutoChunkSSE() {
           appendChunkPayloads(chunksFromStream)
           progress.value = 100
           stage.value = '完成'
-          ElMessage.success(`LLM 自动分片完成（${chunkCards.value.length} 个分片${payload.chunkSource ? `，${payload.chunkSource === 'llm' ? 'LLM' : payload.chunkSource}` : ''}）`)
+          // 后端 LLM 不可用时会静默降级（embedding/规则），此处显式告知实际切分来源
+          const src = CHUNK_SOURCE_LABELS[payload.chunkSource as string]
+          ElMessage.success(`自动分片完成（${chunkCards.value.length} 个分片${src ? ' · ' + src : ''}）`)
           status.value = 'done'
           return
         case 'error':
@@ -784,7 +1003,6 @@ async function realAutoChunkPreview() {
     alignParagraphs.value = data.paragraphs
     imageBoxes.value = data.imageBoxes ?? []
     layoutBlocks.value = data.layoutBlocks ?? []
-    leftPages.value = paragraphsToLeftPages(data.paragraphs)
   }
   stage.value = 'LLM 自动分片'
   progress.value = 20
@@ -797,7 +1015,8 @@ async function realAutoChunkPreview() {
   progress.value = 100
   stage.value = '完成'
   status.value = 'done'
-  ElMessage.success(`自动分片完成（${chunkCards.value.length} 个分片）`)
+  const src = CHUNK_SOURCE_LABELS[data.chunkSource as string]
+  ElMessage.success(`自动分片完成（${chunkCards.value.length} 个分片${src ? ' · ' + src : ''}）`)
 }
 
 /**
@@ -806,29 +1025,42 @@ async function realAutoChunkPreview() {
  * <p>块内容取值优先级：对齐段落全文（拿得到类型/页码，展示最准）→
  * payload 自带 text（后端永远携带！对齐模型缺失/失败时的可靠兜底——
  * 此前完全依赖反查，模型一旦缺失卡片就变成"有头无身"的空分片）。</p>
+ *
+ * <p>二次切分片（p_xxxx_sN，§6.3 超长段句界切分）/overlap 片（p_xxxx_oN，§6.3 回退路径重叠）
+ * 不在对齐模型中：类型/页码回溯基段落，文本取 payload 按 \n\n 对应的片段
+ * （后端 group.text 即成员文本按 \n\n 连接，成员数与片段数一致）。</p>
  */
 function chunkFromPayload(c: any): ChunkCard {
   const seen = new Set<string>()
   const blocks: ChunkBlock[] = []
   const pids: string[] = c.paragraphIds ?? []
   const fallbackText: string = String(c.text ?? '')
-  // 无对齐模型时，按双换行把 payload 文本切成块（保持视觉分段）
-  const fallbackParts = pids.length > 0 && !alignParagraphs.value.length
-    ? fallbackText.split(/\n{2,}/)
-    : []
+  const parts = fallbackText.split(/\n{2,}/)
+  const pieceTextOf = (i: number) => (parts.length === pids.length ? (parts[i] ?? '') : '')
+  const baseOf = (pid: string): { para?: AiChunkParagraph; piece: boolean } => {
+    const exact = alignParagraphs.value.find((x) => x.id === pid)
+    if (exact) return { para: exact, piece: false }
+    const m = /^(p_\d+)_(?:s|o)\d+$/.exec(pid)
+    if (m) {
+      const base = alignParagraphs.value.find((x) => x.id === m[1])
+      if (base) return { para: base, piece: true }
+    }
+    return { para: undefined, piece: false }
+  }
 
   for (let i = 0; i < pids.length; i++) {
     const pid = pids[i]
     if (seen.has(pid)) continue
     seen.add(pid)
-    const p = alignParagraphs.value.find((x) => x.id === pid)
-    const fb = fallbackParts.length === pids.length ? (fallbackParts[i] ?? '') : ''
-    const text = p?.text || fb || fallbackText
+    const { para: p, piece } = baseOf(pid)
+    const text = piece ? (pieceTextOf(i) || p?.text || fallbackText) : (p?.text || pieceTextOf(i) || fallbackText)
     blocks.push({
       paragraphId: pid,
       type: (p?.type as AiChunkParagraphType) || 'paragraph',
       text,
       page: p?.page ?? 1,
+      // 图片段落：MinIO key，分片卡按 /files/{fileId}/images/{key} 渲染
+      imageKey: p?.imageKey,
     })
   }
   // 极端兜底：连 paragraphIds 都没有时，整段文本作为单块
@@ -853,27 +1085,9 @@ function appendChunkPayloads(items: any[]) {
 // ===========================================================================
 // 联动
 // ===========================================================================
-function chunkOfFragment(paragraphId: string | null): ChunkCard | undefined {
-  if (!paragraphId) return undefined
-  return chunkCards.value.find((c) => c.blocks.some((b) => b.paragraphId === paragraphId))
-}
-
-function isLeftActive(f: LeftFragment): boolean {
-  if (activeChunkId.value) {
-    const card = chunkCards.value.find((c) => c.id === activeChunkId.value)
-    if (card?.blocks.some((b) => b.paragraphId === f.paragraphId)) return true
-  }
-  return hoverParagraphId.value === f.paragraphId
-}
-
 function isChunkActive(card: ChunkCard): boolean {
   if (activeChunkId.value === card.id) return true
   return !!hoverParagraphId.value && card.blocks.some((b) => b.paragraphId === hoverParagraphId.value)
-}
-
-function hoverFragment(f: LeftFragment | null) {
-  hoverParagraphId.value = f?.paragraphId ?? null
-  activeChunkId.value = f ? (chunkOfFragment(f.paragraphId)?.id ?? null) : null
 }
 
 function hoverChunk(card: ChunkCard | null) {
@@ -881,7 +1095,7 @@ function hoverChunk(card: ChunkCard | null) {
   hoverParagraphId.value = card?.blocks[0]?.paragraphId ?? null
 }
 
-/** chunk 卡 click 事件：通知父组件（FileManager）打开 OnlyOfficeEditorDialog 并跳转 */
+/** chunk 卡 click 事件：Office 文件驱动嵌入式 OnlyOfficeViewer 跳页，并通知父组件 */
 function onChunkClick(card: ChunkCard | null) {
   activeChunkId.value = card?.id ?? null
   hoverParagraphId.value = card?.blocks[0]?.paragraphId ?? null
@@ -897,7 +1111,7 @@ function onChunkClick(card: ChunkCard | null) {
   if (isOffice.value) {
     officeFocusChunkId.value = payload.id
   }
-  // 始终通知父组件（FileManager 可选地打开全屏 OnlyOfficeEditorDialog）
+  // 通知父组件（目前无消费者，保留事件供后续扩展）
   emit('chunk-click', payload)
 }
 
@@ -924,29 +1138,53 @@ function copyChunk(card: ChunkCard) {
 
 function startEditChunk(card: ChunkCard) {
   editingChunkId.value = card.id
-  editText.value = card.blocks.map((b) => b.text).join('\n\n')
+  // 编辑态只编辑文本块；图片块原位保留（保存时按块序合并回，不丢图）
+  editText.value = card.blocks
+    .filter((b) => !(b.type === 'image' && b.imageKey))
+    .map((b) => b.text)
+    .join('\n\n')
 }
 
-function saveEditChunk(card: ChunkCard) {
-  const text = editText.value.trim()
+  function saveEditChunk(card: ChunkCard) {
+    snapshotChunks()
+    const text = editText.value.trim()
   if (!text) {
     ElMessage.warning('内容不能为空')
     return
   }
-  const parts = text.split(/\n\n+/).filter(Boolean)
-  if (parts.length === card.blocks.length) {
-    card.blocks.forEach((b, k) => { b.text = parts[k] })
-  } else {
-    const first = card.blocks[0]
-    card.blocks = parts.map((t, k) => ({ ...first, text: t, label: k === 0 ? first.label : undefined }))
+  const parts = text.split(/\n\n+/).map((s) => s.trim()).filter(Boolean)
+  const isImageBlock = (b: ChunkBlock) => b.type === 'image' && !!b.imageKey
+  const textBlocks = card.blocks.filter((b) => !isImageBlock(b))
+  // 按原块序重建：图片块原位保留，文本块依次回填编辑后的段落
+  const rebuilt: ChunkBlock[] = []
+  let pi = 0
+  for (const b of card.blocks) {
+    if (isImageBlock(b)) {
+      rebuilt.push(b)
+      continue
+    }
+    if (pi < parts.length) {
+      rebuilt.push({ ...b, text: parts[pi] })
+      pi++
+    }
+    // parts 不足时多余的文本块丢弃（用户删段）
   }
+  // parts 多于原文本块：多余段落并入末尾新增文本块
+  if (pi < parts.length) {
+    const last = textBlocks[textBlocks.length - 1] ?? card.blocks[0]
+    for (; pi < parts.length; pi++) {
+      rebuilt.push({ ...last, paragraphId: `${last.paragraphId}_e${pi}`, text: parts[pi], label: undefined })
+    }
+  }
+  card.blocks = rebuilt
   card.edited = true
   editingChunkId.value = null
   dirtyCount.value++
 }
 
-async function deleteChunk(card: ChunkCard) {
-  try {
+  async function deleteChunk(card: ChunkCard) {
+    snapshotChunks()
+    try {
     await ElMessageBox.confirm(`确定删除分片 #${card.index + 1}？`, '删除分片', { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' })
   } catch { return }
   chunkCards.value = chunkCards.value.filter((c) => c.id !== card.id)
@@ -980,6 +1218,7 @@ async function handleApply() {
       })),
     }
     await api.aiChunkApply(props.kbId, props.file.id, payload)
+    undoStack.value = []
     ElMessage.success('AI分片 已应用并落库')
     emit('applied', props.file.id)
     visible.value = false
@@ -1027,29 +1266,34 @@ onUnmounted(() => layoutAbort?.abort())
 
     <!-- Body: split panel -->
     <div class="ai-chunk-panel__body">
-      <!-- LEFT: 原件预览（真实文件渲染，一比一原件；可切结构视图做选中分片） -->
+      <!-- LEFT: 原件预览（一比一原件；PDF 版面框点击选中 / Office 选区捕获 → 生成分片） -->
       <div class="ai-chunk-panel__left">
         <div class="ai-chunk-panel__pane-title">
           <el-icon><Document /></el-icon>
           <span>原件预览</span>
-          <el-radio-group v-model="leftView" size="small" class="ai-chunk-panel__view-toggle">
-            <el-radio-button value="real">原件渲染</el-radio-button>
-            <el-radio-button value="model">结构视图</el-radio-button>
-          </el-radio-group>
 <!-- Office 文件：选区常驻捕获提示（无独立按钮，统一走下方「生成分片」） -->
           <span class="ai-chunk-panel__pane-hint">
-            <template v-if="leftView === 'model'">点击选中内容 → <b>生成分片</b></template>
-            <template v-else-if="isOffice">
+            <template v-if="isOffice">
               <template v-if="selBridgeDown">⚠ 选区监听已断开：请在编辑器顶部「插件」选项卡重新打开 ChunkBoundary</template>
               <template v-else-if="officeCapturedText">已捕获 {{ officeCapturedText.length }} 字，可点下方<b>生成分片</b></template>
               <template v-else>在文档中三击选中整段或框选文字，即可用下方<b>生成分片</b>创建</template>
             </template>
-            <template v-else>悬停<template v-if="!officeHoverable">（PDF 仅浏览）</template>联动右侧</template>
+            <template v-else>
+              <template v-if="pdfRegionsCount > 0">
+                已框选 {{ pdfRegionsCount }} 个区域（共 {{ pdfRegionsChars }} 字{{ pdfScanDeferred ? '，松手后由 OCR 识别内容' : '' }}），可点下方<b>生成分片</b>；点红色框可取消
+              </template>
+              <template v-else-if="pdfScanDeferred">
+                <template v-if="chunkCards.length === 0">扫描件：可直接<b>拖拽框选</b>任意区域，点下方<b>生成分片</b>由 OCR 提取内容；或点「一键自动分片」解析全文</template>
+                <template v-else>扫描件已解析：也可继续拖拽框选区域分片；右侧可编辑 / 拆分 / 合并分片后应用</template>
+              </template>
+              <template v-else-if="pdfSelectedCount > 0">已选 {{ pdfSelectedCount }} 项，可点下方<b>生成分片</b></template>
+              <template v-else><b>拖拽框选</b>任意区域提取内容（文字层精确提取，图片自动 OCR）；点击绿色图片框生成图片分片；右侧勾选可合并/删除</template>
+            </template>
           </span>
         </div>
 
-        <!-- 真实文件渲染（一比一原件） -->
-        <div v-if="leftView === 'real'" class="ai-chunk-panel__real">
+        <!-- 原件渲染（一比一原件） -->
+        <div class="ai-chunk-panel__real">
           <div v-if="realLoading" class="ai-chunk-panel__real-loading">
             <el-empty description="正在渲染原件…" :image-size="80" />
           </div>
@@ -1057,13 +1301,17 @@ onUnmounted(() => layoutAbort?.abort())
             <el-empty :description="realError" :image-size="80" />
           </template>
           <AiChunkPdfOverlay
-            v-if="isPdf && objectUrl"
+            v-else-if="isPdf && objectUrl"
             :file="file"
             :src="objectUrl"
-            :paragraphs="alignParagraphs"
-            :active-paragraph-ids="activePdfIds"
             :image-boxes="imageBoxes"
-            :layout-blocks="layoutBlocks"
+            :selected-image-box-ids="[...pdfSelectedIds]"
+            :regions="pdfRegions"
+            @toggle-select="onPdfToggleSelect"
+            @region-select="onRegionSelect"
+            @region-remove="onRegionRemove"
+            @scan-check="onPdfScanCheck"
+            @text-select="onPdfTextSelect"
           />
           <OnlyOfficeViewer
             v-else-if="isOffice && file"
@@ -1076,80 +1324,31 @@ onUnmounted(() => layoutAbort?.abort())
             @bridge-state="onBridgeState"
             class="ai-chunk-panel__real-office"
           />
-          <div v-else-if="officeHtml" ref="officeDocRef" class="ai-chunk-panel__real-doc" v-html="officeHtml" />
-          <div v-else-if="isPptx" ref="officePptxRef" class="ai-chunk-panel__real-pptx" />
           <el-empty v-else description="无可渲染内容" :image-size="80" />
         </div>
-
-        <!-- 结构化段落视图（真实解析内容，尽量还原原件样式） -->
-        <div v-else class="ai-chunk-panel__pages">
-          <div
-            v-for="page in leftPages"
-            :key="page.page"
-            class="ai-chunk-panel__page"
-          >
-            <div class="ai-chunk-panel__page-head">第 {{ page.page }} 页</div>
-            <div
-              v-for="f in page.fragments"
-              :key="f.key"
-              class="ai-chunk-panel__fragment"
-              :class="{ 'is-active': isLeftActive(f), 'is-selected': isSelected(f) }"
-              @click="toggleSelect(f)"
-              @mouseenter="hoverFragment(f)"
-              @mouseleave="hoverFragment(null)"
-            >
-              <span class="ai-chunk-panel__fragment-label">
-                {{ f.label }}
-                <el-icon v-if="isSelected(f)" class="ai-chunk-panel__fragment-check"><Check /></el-icon>
-              </span>
-              <component
-                :is="'h' + headingLevel(f)"
-                v-if="f.type === 'heading'"
-                class="ai-chunk-panel__block"
-                :class="`ai-chunk-panel__block--h${headingLevel(f)}`"
-              >{{ f.text }}</component>
-              <img
-                v-else-if="f.type === 'image' && imageSrc(f)"
-                :src="imageSrc(f)"
-                class="ai-chunk-panel__block ai-chunk-panel__block--image"
-                alt=""
-              />
-              <pre v-else-if="f.type === 'code'" class="ai-chunk-panel__block ai-chunk-panel__block--code">{{ f.text }}</pre>
-              <table v-else-if="f.type === 'table'" class="ai-chunk-panel__block ai-chunk-panel__block--table">
-                <tbody>
-                  <tr v-for="(row, ri) in parseTable(f.text).slice(0, 8)" :key="ri">
-                    <td v-for="(cell, ci) in row" :key="ci">{{ cell }}</td>
-                  </tr>
-                </tbody>
-              </table>
-              <ul v-else-if="f.type === 'list'" class="ai-chunk-panel__block ai-chunk-panel__block--list">
-                <li v-for="(l, i) in f.text.split('\n')" :key="i">{{ l }}</li>
-              </ul>
-              <p v-else class="ai-chunk-panel__block" :class="{ 'has-image-key': f.imageKey }">{{ truncate(f.text, 300) }}</p>
-              <span v-if="f.crossPage" class="ai-chunk-panel__merged-flag">↔ 跨页内容</span>
-            </div>
-          </div>
-          <el-empty v-if="leftPages.length === 0 && status === 'loadingLeft'" description="正在加载原件…" :image-size="80" />
-          <el-empty v-if="leftPages.length === 0 && status === 'idle' && leftError" :description="leftError" :image-size="80" />
-        </div>
-        <!-- 手动分片操作条：结构视图选段 或 OnlyOffice 捕获选区（原始渲染）→ 生成分片 -->
+        <!-- 手动分片操作条：PDF 版面框选中 或 OnlyOffice 捕获选区 → 生成分片 -->
         <div class="ai-chunk-panel__left-actions">
           <el-button
             type="primary"
             :icon="Plus"
-            :disabled="selectedKeys.size === 0 && !officeCapturedText"
+            :disabled="selectedKeysDisabled"
+            :loading="ocrLoading"
             @click="handleCreateChunk"
           >
-            <template v-if="officeCapturedText && isOffice && leftView === 'real'">
+            <template v-if="officeCapturedText && isOffice">
               生成分片（已捕获 {{ officeCapturedText.length }} 字）
             </template>
-            <template v-else-if="selectedKeys.size > 0">
-              生成分片（已选 {{ selectedKeys.size }} 段）
+            <template v-else-if="pdfRegionsCount > 0">
+              生成分片（{{ pdfRegionsCount }} 个区域 · {{ pdfRegionsChars }} 字）
+            </template>
+            <template v-else-if="pdfSelectedCount > 0">
+              生成分片（已选 {{ pdfSelectedCount }} 块）
             </template>
             <template v-else>生成分片</template>
           </el-button>
-          <el-button v-if="selectedKeys.size > 0" text @click="selectedKeys = new Set()">清空选择</el-button>
-          <el-button v-if="officeCapturedText && isOffice && leftView === 'real'" text @click="officeCapturedText = ''">清除选区</el-button>
+          <el-button v-if="pdfRegionsCount > 0" text @click="pdfRegions = []">清空区域</el-button>
+          <el-button v-if="pdfSelectedCount > 0" text @click="pdfSelectedIds = new Set()">清空选择</el-button>
+          <el-button v-if="officeCapturedText && isOffice" text @click="officeCapturedText = ''">清除选区</el-button>
         </div>
       </div>
 
@@ -1167,17 +1366,7 @@ onUnmounted(() => layoutAbort?.abort())
             :disabled="status === 'loadingLeft'"
             @click="autoChunk"
           >
-            {{ chunkCards.length > 0 ? '重新自动分片' : '一键自动分片' }}（OCR 大模型分析）
-          </el-button>
-          <!-- 按结构分片：规则流（不调 LLM），复用 structure_aware 策略重切；全部文档类型可见 -->
-          <el-button
-            class="ai-chunk-panel__structure-btn"
-            size="small"
-            :icon="Document"
-            :disabled="status === 'loadingLeft'"
-            @click="structureChunk"
-          >
-            按结构分片
+            {{ chunkCards.length > 0 ? '重新自动分片' : '一键自动分片' }}（AI 语义分组）
           </el-button>
         </div>
 
@@ -1187,7 +1376,7 @@ onUnmounted(() => layoutAbort?.abort())
             <el-empty :image-size="110" description="暂无分片">
               <template #description>
                 <div class="ai-chunk-panel__empty-text">
-                  从<b>左侧</b>点击选中内容后「生成分片」，<br>或一键自动分片让 OCR 大模型分析
+                  从<b>左侧</b>选中内容后「生成分片」，<br>或一键自动分片（AI 语义分组）
                 </div>
               </template>
             </el-empty>
@@ -1199,7 +1388,16 @@ onUnmounted(() => layoutAbort?.abort())
             <span>{{ stage }}，分片将逐个出现在此处…</span>
           </div>
 
-          <!-- 分片卡 -->
+          <!-- 批量操作工具条（常显）：勾选卡片后合并/删除，或全选/反选 -->
+          <div v-if="chunkCards.length > 0" class="ai-chunk-panel__merge-bar">
+            <el-button size="small" text @click="selectAllCards">全选</el-button>
+            <el-button size="small" text @click="invertCardSelection">反选</el-button>
+            <span class="ai-chunk-panel__merge-hint">已勾选 {{ mergeSelIds.size }} 片（合并后按当前顺序拼接）</span>
+            <el-button size="small" type="primary" :disabled="mergeSelIds.size < 2" @click="mergeSelectedCards">合并所选</el-button>
+            <el-button size="small" type="danger" :disabled="mergeSelIds.size === 0" @click="deleteSelectedCards">删除所选</el-button>
+            <el-button size="small" text @click="mergeSelIds = new Set()">取消勾选</el-button>
+          </div>
+                    <!-- 分片卡 -->
           <div
             v-for="card in chunkCards"
             :key="card.id"
@@ -1210,6 +1408,13 @@ onUnmounted(() => layoutAbort?.abort())
             @click="onChunkClick(card)"
           >
             <div class="ai-chunk-panel__card-head">
+              <el-checkbox
+              class="ai-chunk-panel__card-sel"
+              :model-value="mergeSelIds.has(card.id)"
+              title="勾选用于合并"
+              @change="toggleMergeSel(card)"
+              @click.stop
+            />
               <span class="ai-chunk-panel__card-index">#{{ card.index + 1 }}</span>
               <el-tag size="small" :type="card.source === 'manual' ? 'warning' : 'info'" effect="plain">
                 {{ card.source === 'manual' ? '手动' : '自动' }}
@@ -1220,6 +1425,16 @@ onUnmounted(() => layoutAbort?.abort())
               <span class="ai-chunk-panel__card-actions">
                 <el-button size="small" text :icon="CopyDocument" title="复制分片内容" @click.stop="copyChunk(card)">复制</el-button>
                 <el-button size="small" text :icon="Edit" title="编辑分片内容" @click.stop="startEditChunk(card)">编辑</el-button>
+                <el-button size="small" text :icon="ArrowUp" title="上移（调整分片顺序）" @click.stop="moveCard(card, -1)" />
+                <el-button size="small" text :icon="ArrowDown" title="下移（调整分片顺序）" @click.stop="moveCard(card, 1)" />
+                <el-button
+                  v-if="card.blocks.length === 1 && charCountOf(card) > 400"
+                  size="small"
+                  text
+                  :icon="Scissor"
+                  title="按句界把此分片一分为二"
+                  @click.stop="splitSingleBlockCard(card)"
+                >拆分</el-button>
                 <el-button size="small" text type="danger" @click.stop="deleteChunk(card)">删除</el-button>
               </span>
             </div>
@@ -1232,6 +1447,21 @@ onUnmounted(() => layoutAbort?.abort())
                 :autosize="{ minRows: 3, maxRows: 16 }"
                 placeholder="编辑分片内容；空行分段，表格行以 Tab 分隔"
               />
+              <!-- 编辑态只编辑文字；图片块原位保留（保存时按块序合并回），此处只读预览 -->
+              <div v-if="card.blocks.some((b) => b.type === 'image' && b.imageKey)" class="ai-chunk-panel__editing-images">
+                <div class="ai-chunk-panel__editing-images-tip">
+                  <el-icon><Picture /></el-icon>
+                  分片包含 {{ card.blocks.filter((b) => b.type === 'image' && b.imageKey).length }} 张图片，编辑保存后原位保留
+                </div>
+                <div class="ai-chunk-panel__editing-images-list">
+                  <img
+                    v-for="(b, bi) in card.blocks.filter((b) => b.type === 'image' && b.imageKey)"
+                    :key="bi"
+                    :src="blockImageSrc(b)"
+                    alt="分片图片"
+                  />
+                </div>
+              </div>
               <div class="ai-chunk-panel__editing-actions">
                 <el-button size="small" @click="editingChunkId = null">取消</el-button>
                 <el-button size="small" type="primary" :icon="Check" @click="saveEditChunk(card)">保存</el-button>
@@ -1250,7 +1480,21 @@ onUnmounted(() => layoutAbort?.abort())
                   </tbody>
                 </table>
                 <pre v-else-if="b.type === 'code'" class="ai-chunk-panel__block ai-chunk-panel__block--code">{{ b.text }}</pre>
+                <!-- 图片块：MinIO 裁剪/提取图直接渲染，OCR 文本作说明 -->
+                <figure v-else-if="b.type === 'image' && b.imageKey" class="ai-chunk-panel__block ai-chunk-panel__block--image">
+                  <img v-if="blockImageSrc(b)" :src="blockImageSrc(b)" alt="分片图片" />
+                  <div v-else class="ai-chunk-panel__block-image-loading">图片加载中…</div>
+                  <figcaption v-if="b.text">{{ b.text }}</figcaption>
+                </figure>
                 <p v-else class="ai-chunk-panel__block ai-chunk-panel__block--paragraph">{{ b.text }}</p>
+                <div
+                  v-if="bi < card.blocks.length - 1"
+                  class="ai-chunk-panel__split-zone"
+                  title="在此拆分为两个分片"
+                  @click.stop="splitChunkCard(card, bi + 1)"
+                >
+                  <span>✂ 在此拆分</span>
+                </div>
               </template>
               <span class="ai-chunk-panel__block-meta">{{ card.blocks.map((b) => typeLabel(b.type)).join(' + ') }}</span>
             </template>
@@ -1263,8 +1507,9 @@ onUnmounted(() => layoutAbort?.abort())
     <template #footer>
       <div class="ai-chunk-panel__footer">
         <span class="ai-chunk-panel__footer-tip"><el-icon><MagicStick /></el-icon> 支持手动选中分片 + 一键自动分片；应用后以当前分片替换旧数据</span>
-        <div>
-          <el-button :icon="Refresh" :disabled="status === 'parsing' || status === 'applying' || status === 'loadingLeft'" @click="initPanel">重置</el-button>
+  <div>
+    <el-button :icon="RefreshLeft" :disabled="undoStack.length === 0" title="撤销上一步操作（Ctrl+Z）" @click="undoChunkOp">撤销</el-button>
+    <el-button :icon="Refresh" :disabled="status === 'parsing' || status === 'applying' || status === 'loadingLeft'" @click="initPanel">重置</el-button>
           <el-button @click="visible = false">取消</el-button>
           <el-button type="primary" :icon="Check" :loading="status === 'applying'" :disabled="chunkCards.length === 0" @click="handleApply">应用 AI分片</el-button>
         </div>
@@ -1350,9 +1595,7 @@ onUnmounted(() => layoutAbort?.abort())
 
   &__auto-btn { margin-left: auto; }
 
-  &__view-toggle { margin-left: $spacing-sm; }
-
-  // ---------- Left: 真实文件渲染（一比一原件） ----------
+  // ---------- Left: 原件渲染（一比一原件） ----------
   &__real {
     flex: 1;
     min-height: 0;
@@ -1368,129 +1611,6 @@ onUnmounted(() => layoutAbort?.abort())
     align-items: center;
     justify-content: center;
     flex: 1;
-  }
-
-  &__real-pdf {
-    width: 100%;
-    height: 100%;
-    min-height: 480px;
-    border: none;
-    flex: 1;
-  }
-
-  &__real-doc {
-    flex: 1;
-    padding: $spacing-xl;
-    background: $bg-white;
-
-    :deep(p) {
-      margin: 0 0 12px;
-      line-height: 1.75;
-      font-size: 14px;
-    }
-
-    :deep(.ai-chunk-hover) {
-      border: 1px solid transparent;
-      border-radius: $radius-sm;
-      padding: 2px 4px;
-      cursor: pointer;
-      transition: all 0.15s;
-
-      &:hover {
-        border-color: $color-primary;
-        background: $color-primary-light;
-      }
-    }
-
-    :deep(img) { max-width: 100%; height: auto; }
-    :deep(table) { border-collapse: collapse; width: 100%; margin-bottom: 12px; }
-    :deep(td), :deep(th) { border: 1px solid $border-base; padding: 4px 8px; }
-  }
-
-  &__real-pptx {
-    flex: 1;
-    padding: $spacing-base;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: $spacing-base;
-
-    :deep(.ai-chunk-slide-hover) {
-      outline: 1px solid transparent;
-      border-radius: $radius-base;
-      transition: outline-color 0.15s;
-
-      &:hover {
-        outline-color: $color-primary;
-      }
-    }
-  }
-
-  &__pages {
-    flex: 1;
-    min-height: 0;          // 关键：允许收缩，让滚动发生在栏内而非撑高弹窗
-    overflow: auto;
-    overscroll-behavior: contain;
-    padding: $spacing-base;
-    display: flex;
-    flex-direction: column;
-    gap: $spacing-base;
-    background: $bg-page;
-  }
-
-  &__page {
-    background: $bg-white;
-    border-radius: $radius-base;
-    padding: $spacing-md;
-    box-shadow: $shadow-sm;
-    display: flex;
-    flex-direction: column;
-    gap: $spacing-sm;
-  }
-
-  &__page-head {
-    font-size: 12px;
-    color: $text-placeholder;
-    font-weight: 600;
-    text-transform: uppercase;
-  }
-
-  &__fragment {
-    border: 1px solid $border-light;
-    border-radius: $radius-sm;
-    padding: $spacing-sm;
-    cursor: pointer;
-    transition: all 0.15s;
-
-    &:hover {
-      border-color: $color-primary;
-      background: $color-primary-lighter;
-    }
-
-    &.is-active {
-      border-color: $color-primary;
-      background: $color-primary-light;
-    }
-
-    &.is-selected {
-      border-color: $color-primary;
-      background: $color-primary-light;
-      box-shadow: inset 0 0 0 1px $color-primary;
-    }
-  }
-
-  &__fragment-label {
-    display: flex;
-    align-items: center;
-    gap: 4px;
-    font-size: 11px;
-    color: $text-placeholder;
-    margin-bottom: 4px;
-  }
-
-  &__fragment-check {
-    color: $color-primary;
-    font-size: 13px;
   }
 
   &__merged-flag {
@@ -1584,6 +1704,66 @@ onUnmounted(() => layoutAbort?.abort())
     }
   }
 
+  &__card-sel {
+    margin-right: 2px;
+    height: auto;
+  }
+
+  &__split-zone {
+    position: relative;
+    height: 4px;
+    margin: 2px 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    opacity: 0;
+    transition: all 0.15s;
+
+    &::before {
+      content: '';
+      position: absolute;
+      left: 0;
+      right: 0;
+      top: 50%;
+      border-top: 1px dashed #b0c4de;
+    }
+
+    span {
+      position: relative;
+      z-index: 1;
+      font-size: 11px;
+      color: #409eff;
+      background: #f0f7ff;
+      border: 1px solid #c6e2ff;
+      border-radius: 4px;
+      padding: 1px 8px;
+    }
+
+    &:hover {
+      opacity: 1;
+      height: 24px;
+      background: #ecf5ff;
+    }
+  }
+
+  &__merge-bar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 6px 12px;
+    margin-bottom: 10px;
+    background: #ecf5ff;
+    border: 1px solid #d9ecff;
+    border-radius: 6px;
+    font-size: 12px;
+    color: #409eff;
+
+    span:first-child {
+      flex: 1;
+    }
+  }
+
   &__card-head {
     display: flex;
     align-items: center;
@@ -1623,6 +1803,36 @@ onUnmounted(() => layoutAbort?.abort())
     gap: $spacing-sm;
   }
 
+  // 编辑态图片块预览：图片原位保留提示 + 缩略图列表
+  &__editing-images {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+
+    &-tip {
+      display: flex;
+      align-items: center;
+      gap: 4px;
+      font-size: 12px;
+      color: $text-secondary;
+    }
+
+    &-list {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+
+      img {
+        max-width: 180px;
+        max-height: 90px;
+        object-fit: contain;
+        border: 1px solid $border-base;
+        border-radius: $radius-sm;
+        background: #fff;
+      }
+    }
+  }
+
   &__editing-actions {
     display: flex;
     justify-content: flex-end;
@@ -1648,11 +1858,46 @@ onUnmounted(() => layoutAbort?.abort())
     &--h5 { font-size: 14px; font-weight: 600; margin: 4px 0; }
     &--h6 { font-size: 13px; font-weight: 600; margin: 4px 0; }
 
+    // 正文段落：保留 OCR/解析文本中的换行
+    &--paragraph {
+      white-space: pre-wrap;
+      word-break: break-word;
+      line-height: 1.7;
+    }
+
     &--image {
       max-width: 100%;
-      border-radius: $radius-sm;
-      box-shadow: $shadow-sm;
       margin: 4px 0;
+
+      img {
+        display: block;
+        max-width: 100%;
+        border-radius: $radius-sm;
+        border: 1px solid $border-base;
+        box-shadow: $shadow-sm;
+      }
+
+      // 图片拉取中占位
+      .ai-chunk-panel__block-image-loading {
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        min-height: 64px;
+        font-size: 12px;
+        color: $text-secondary;
+        background: $bg-page;
+        border: 1px dashed $border-base;
+        border-radius: $radius-sm;
+      }
+
+      figcaption {
+        margin-top: 4px;
+        font-size: 12px;
+        line-height: 1.6;
+        color: $text-regular;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
     }
 
     &--list {

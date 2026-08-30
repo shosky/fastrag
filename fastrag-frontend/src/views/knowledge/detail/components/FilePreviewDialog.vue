@@ -17,7 +17,7 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'update:visible', value: boolean): void
   (e: 'download', file: KnowledgeFile): void
-  /** 文件是 Office 类型（且 OnlyOffice 可用）时通知父组件打开 OnlyOfficeEditorDialog */
+  /** 文件是 Office 类型（且 OnlyOffice 可用）时通知父组件跳转在线编辑页 */
   (e: 'open-office', file: KnowledgeFile): void
 }>()
 
@@ -90,7 +90,7 @@ function handleDownload() {
   }
 }
 
-/** 触发父组件打开 OnlyOfficeEditorDialog（仅 OO 支持的文件扩展名） */
+/** 触发父组件跳转 OnlyOffice 在线编辑页（仅 OO 支持的文件扩展名） */
 function openOfficeEditor() {
   if (!props.file) return
   emit('open-office', props.file)
@@ -164,8 +164,8 @@ async function loadOfficeContent() {
   officeLoading.value = true
 
   // OnlyOffice 启用时：仅显示"在线编辑"入口按钮，不在预览弹窗中拉文件
-  // （编辑器需独立 fullscreen 弹窗，详见 OnlyOfficeEditorDialog）
-  const extName = '.' + props.file.name.split('.').pop()?.toLowerCase()
+  // （编辑走独立路由页 office-edit.vue，保留全局 Header）
+  const ext = '.' + props.file.name.split('.').pop()?.toLowerCase()
   if (isOfficeFile(props.file.name)) {
     officeLoading.value = false
     officeError.value = ''
@@ -318,7 +318,7 @@ watch(
             <div style="line-height:1.7">
               <p style="margin:0 0 6px 0;color:#303133;font-weight:600">{{ file?.name }}</p>
               <p style="margin:0;color:#909399;font-size:13px">
-                OnlyOffice 支持选中文字 / 编辑保存自动重分片
+                在独立编辑页中编辑，保存后自动触发重新切片
               </p>
             </div>
           </template>

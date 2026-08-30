@@ -71,4 +71,21 @@ public class AiChunkController {
                                       @RequestBody AiChunkApplyRequest request) {
         return ApiResponse.success(aiChunkService.apply(kbId, id, request));
     }
+
+    /**
+     * 图片框 OCR：对原件预览中选中的图片区域（归一化 0~1、cropBox 顶左坐标，
+     * 与 ai-chunk-preview 返回的 imageBoxes 同坐标系）渲染裁剪后调 OCR 模型识别，
+     * 返回 {text} 用于前端生成图片分片。
+     */
+    @KbAuth(KBRole.viewer)
+    @PostMapping("/{id}/ai-chunk/image-ocr")
+    public ApiResponse<java.util.Map<String, Object>> imageOcr(@PathVariable String kbId, @PathVariable String id,
+                                                               @RequestBody java.util.Map<String, Object> body) {
+        int page = body.get("page") == null ? 0 : ((Number) body.get("page")).intValue();
+        float x = body.get("x") == null ? 0f : ((Number) body.get("x")).floatValue();
+        float y = body.get("y") == null ? 0f : ((Number) body.get("y")).floatValue();
+        float width = body.get("width") == null ? 0f : ((Number) body.get("width")).floatValue();
+        float height = body.get("height") == null ? 0f : ((Number) body.get("height")).floatValue();
+        return ApiResponse.success(aiChunkService.ocrImageRegion(kbId, id, page, x, y, width, height));
+    }
 }

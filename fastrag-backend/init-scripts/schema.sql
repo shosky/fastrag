@@ -308,6 +308,7 @@ CREATE TABLE IF NOT EXISTS kb_benchmark_question (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     benchmark_id VARCHAR(32) NOT NULL,
     question_index INT,
+    cross_boundary TINYINT NOT NULL DEFAULT 0 COMMENT '跨界切断标志：1=答案跨多个相邻 chunk（评测召回完整度专用）',
     question TEXT NOT NULL,
     gold_chunks VARCHAR(512),
     gold_answer TEXT,
@@ -347,6 +348,8 @@ CREATE TABLE IF NOT EXISTS kb_evaluation_result (
     recall_at_3 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@3',
     recall_at_5 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@5',
     recall_at_10 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@10',
+    context_completeness DECIMAL(5,4) DEFAULT NULL COMMENT '上下文完整度（原始命中，0~1）',
+    context_completeness_extended DECIMAL(5,4) DEFAULT NULL COMMENT '上下文完整度（父块扩展，跨界题，0~1）',
     is_correct TINYINT,
     judge_reason TEXT,
     INDEX idx_evaluation_id (evaluation_id)
@@ -1549,6 +1552,7 @@ CREATE TABLE IF NOT EXISTS kb_benchmark_question (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     benchmark_id VARCHAR(32) NOT NULL,
     question_index INT,
+    cross_boundary TINYINT NOT NULL DEFAULT 0 COMMENT '跨界切断标志：1=答案跨多个相邻 chunk（评测召回完整度专用）',
     question TEXT NOT NULL,
     gold_chunks VARCHAR(512),
     gold_answer TEXT,
@@ -1590,6 +1594,8 @@ CREATE TABLE IF NOT EXISTS kb_evaluation_result (
     recall_at_3 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@3',
     recall_at_5 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@5',
     recall_at_10 DECIMAL(5,4) DEFAULT NULL COMMENT '结构化检索指标：Recall@10',
+    context_completeness DECIMAL(5,4) DEFAULT NULL COMMENT '上下文完整度（原始命中，0~1）',
+    context_completeness_extended DECIMAL(5,4) DEFAULT NULL COMMENT '上下文完整度（父块扩展，跨界题，0~1）',
     is_correct TINYINT,
     judge_reason TEXT,
     INDEX idx_evaluation_id (evaluation_id)

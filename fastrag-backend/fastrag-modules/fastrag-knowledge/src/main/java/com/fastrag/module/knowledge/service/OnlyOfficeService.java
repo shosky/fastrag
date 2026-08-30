@@ -55,4 +55,15 @@ public interface OnlyOfficeService {
      * OO 强制 reload 编辑后的版本，避免浏览器缓存）。
      */
     String buildDocumentKey(String fileId, java.time.LocalDateTime updatedAt);
+
+    /**
+     * 对当前活跃编辑会话执行 forcesave（页面「保存」按钮）。
+     *
+     * <p>通过 OO CommandService（{@code c=forcesave}）触发：OO 收到命令后回调
+     * /onlyoffice/callback（status=6），由 {@link #handleCallback} 完成落盘 + 重分片。
+     *
+     * @return result 字段：initiated（已发起）/ no-changes（无修改）/ no-session（会话不存在）
+     *         / no-file / disabled / failed
+     */
+    Map<String, Object> forceSave(String kbId, String fileId);
 }

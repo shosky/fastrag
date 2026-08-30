@@ -6,7 +6,7 @@
 --    上下文完整度打分（≈ Ragas context_recall）：
 --    - context_completeness：原始命中上下文的要点支撑比例
 --    - context_completeness_extended：父块扩展上下文的要点支撑比例
---============================================================
+-- ============================================================
 
 -- ---------- 1. kb_benchmark_question.cross_boundary ----------
 SET @col_exists = (SELECT COUNT(1) FROM information_schema.columns

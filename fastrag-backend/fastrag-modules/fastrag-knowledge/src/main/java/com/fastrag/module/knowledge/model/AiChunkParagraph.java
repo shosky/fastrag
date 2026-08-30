@@ -56,6 +56,13 @@ public class AiChunkParagraph {
     /** 章节层级路径，如 "5.8" 或 "第一章 > 1.1 背景" */
     private String headingPath;
 
+    /**
+     * 锚定行文本（PDF 专用，fillPdfRects 装配）：本段在页面上实际命中的行文本按序拼接。
+     * 行链路已经过页眉脚清理，手动分片以它为内容源（所见即所得），text（解析全文）作兜底；
+     * 未锚定段落（无 rects）为 null。
+     */
+    private String anchorText;
+
     /** 所属分片 id（自动分片后回填；手动/编辑后由 apply 回填） */
     private String chunkId;
 

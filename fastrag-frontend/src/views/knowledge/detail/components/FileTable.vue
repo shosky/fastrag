@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import type { KnowledgeFile, FileCategory, ProcessStatus, ParseStrategy } from '@/types/knowledge'
 import { FILE_CATEGORY_ICONS, formatFileSize, formatDuration } from '@/types/knowledge'
+import { isOfficeFile } from '@/config'
 import { Refresh, Search, MoreFilled, View, Download, RefreshRight, Delete, Grid, Rank, Edit, Document, Setting, MagicStick } from '@element-plus/icons-vue'
 import { usePagination } from '@/composables/usePagination'
 import ProcessStatusBar from './ProcessStatusBar.vue'
@@ -198,13 +199,12 @@ function showAiChunk(file: KnowledgeFile): boolean {
   return AI_CHUNK_EXTS.includes(ext)
 }
 
-// OnlyOffice 在线编辑：仅 OO 支持的扩展名 + completed/pending 状态可编辑
-const OFFICE_EDIT_EXTS = ['.doc', '.docx', '.xls', '.xlsx', '.ppt', '.pptx']
+// OnlyOffice 在线编辑：能否用 OO 打开统一由 isOfficeFile 判断（与后端 SUPPORTED_EXTS 对齐）；
+// 处理中隐藏（OO 保存回调会触发重分片），回收站文件不显示
 function showOfficeEdit(file: KnowledgeFile): boolean {
   if (file.category !== 'document') return false
   if (file.deletedAt) return false
-  const ext = '.' + (file.extension || file.name.split('.').pop() || '').toLowerCase()
-  return OFFICE_EDIT_EXTS.includes(ext) && file.status !== 'processing'
+  return isOfficeFile(file.name) && file.status !== 'processing'
 }
 
 // 换策略入口：QA 模式文件不受分片策略影响，处理中/回收站文件由对话框内守卫与后端兜底

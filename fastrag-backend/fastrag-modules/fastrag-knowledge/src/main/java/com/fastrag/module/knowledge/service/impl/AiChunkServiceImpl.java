@@ -6,6 +6,7 @@ import cn.hutool.core.util.StrUtil;
 import com.fastrag.ai.embedding.EmbeddingService;
 import com.fastrag.ai.layout.LayoutAnalysisService;
 import com.fastrag.ai.llm.LlmService;
+import com.fastrag.ai.ocr.OcrService;
 import com.fastrag.common.exception.BusinessException;
 import com.fastrag.infra.milvus.MilvusService;
 import com.fastrag.infra.minio.MinioService;
@@ -26,6 +27,7 @@ import com.fastrag.module.knowledge.model.AiChunkResult;
 import com.fastrag.module.knowledge.model.ParseStrategyConfig;
 import com.fastrag.module.knowledge.parser.DocNode;
 import com.fastrag.module.knowledge.parser.DocumentParser;
+import com.fastrag.module.knowledge.parser.DocumentParserImpl;
 import com.fastrag.module.knowledge.parser.MediaExtractor;
 import com.fastrag.module.knowledge.parser.ParseResult;
 import com.fastrag.module.knowledge.service.AiChunkService;
@@ -94,6 +96,7 @@ public class AiChunkServiceImpl implements AiChunkService {
     private final LlmService llmService;
     private final EmbeddingService embeddingService;
     private final StrategyConfigResolver configResolver;
+    private final OcrService ocrService;
 
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -106,11 +109,17 @@ public class AiChunkServiceImpl implements AiChunkService {
     /** 页面被视为「有文字层」的最小字符数：低于此值视作扫描/图片页，版面分析走 OCR */
     private static final int TEXT_LAYER_CHARS = 200;
 
-    /** 版面分析缓存版本：分析引擎/格式演进时 +1，旧缓存自动失效重算（当前为 PDFBox 几何 + VLM 分层） */
-    private static final int LAYOUT_CACHE_VERSION = 2;
+    /** 版面分析缓存版本：分析引擎/格式演进时 +1，旧缓存自动失效重算（当前为几何聚类 v3：页眉脚清理 + 同行合并） */
+    private static final int LAYOUT_CACHE_VERSION = 3;
 
-    /** LLM 分组单批段落数（超长文档分批请求） */
-    private static final int LLM_GROUP_BATCH = 50;
+    /** LLM 分组单批上限（段数）：双约束装箱之一（另一约束为截断后字符数） */
+    private static final int LLM_BATCH_MAX_PARAS = 60;
+    /** LLM 分组单批上限（截断后总字符） */
+    private static final int LLM_BATCH_MAX_CHARS = 9000;
+    /** 迷你组下限：低于此长度的纯文本组与相邻组合并（LLM prompt 的目标下限同值） */
+    private static final int MIN_CHUNK_CHARS = 300;
+    /** 回退路径 overlap 字符数（§6.3：默认 100，仅回退路径使用） */
+    private static final int FALLBACK_OVERLAP_CHARS = 100;
 
     /** LLM 分组提示词中单段文本截断长度 */
     private static final int LLM_TEXT_TRUNCATE = 200;
@@ -231,6 +240,319 @@ public class AiChunkServiceImpl implements AiChunkService {
     }
 
     /**
+     * 图片框 OCR：渲染指定页（200 DPI；renderImageWithDPI 渲染 cropBox 区域，
+     * 与框选归一化坐标同基准），按归一化区域裁剪后调 OCR 模型识别。
+     */
+    @Override
+    public Map<String, Object> ocrImageRegion(String kbId, String fileId, int page,
+                                              float x, float y, float width, float height) {
+        KbFile f = requireFile(kbId, fileId);
+        byte[] bytes;
+        try (InputStream in = minioService.download(f.getObjectKey())) {
+            bytes = in.readAllBytes();
+        } catch (Exception e) {
+            throw BusinessException.badRequest("文档下载失败：" + e.getMessage());
+        }
+        try (PDDocument doc = org.apache.pdfbox.Loader.loadPDF(bytes)) {
+            if (page < 1 || page > doc.getNumberOfPages()) {
+                throw BusinessException.badRequest("页码超出范围: " + page);
+            }
+            org.apache.pdfbox.pdmodel.common.PDRectangle cb = doc.getPage(page - 1).getCropBox();
+            float pageW = cb.getWidth();
+            float pageH = cb.getHeight();
+            if (pageW <= 0 || pageH <= 0) {
+                throw BusinessException.badRequest("页面尺寸无效");
+            }
+            // 视觉空间（与前端 pdf.js 渲染一致）：/Rotate 90/270 页渲染宽高与 cropBox 交换。
+            // 此前未处理旋转 → 渲染图（已旋转）与裁剪坐标（未旋转）基准错位，裁出页面其他区域，
+            // OCR 拿到错位/空白图返回空（扫描件框选提取不到内容的根因）。
+            int rot = ((doc.getPage(page - 1).getRotation() % 360) + 360) % 360;
+            boolean swapped = rot == 90 || rot == 270;
+            float visW = swapped ? pageH : pageW;
+            float visH = swapped ? pageW : pageH;
+            // 区域 → 视觉 pt（顶左原点）
+            float rx = x * visW;
+            float ry = y * visH;
+            float rx2 = rx + width * visW;
+            float ry2 = ry + height * visH;
+
+            List<Map<String, Object>> blocks = new ArrayList<>();
+
+            // ① 文字层行命中（行中心落在区域内、水平覆盖 ≥40% 行宽、页眉脚边缘带排除）
+            //    → 结构化文本块：精确文本、零 OCR
+            List<DocumentParserImpl.PageLine> hit = DocumentParserImpl.extractGeometryLines(doc, page - 1).stream()
+                    .filter(l -> {
+                        float midY = l.y() + l.height() / 2f;
+                        float midX = l.x() + l.width() / 2f;
+                        if (midY < ry || midY > ry2 || midX < rx || midX > rx2) return false;
+                        if (midY <= visH * 0.07f || midY >= visH * 0.93f) return false; // 页眉脚边缘带
+                        float overlap = Math.min(l.x() + l.width(), rx2) - Math.max(l.x(), rx);
+                        return l.width() > 0 && overlap >= l.width() * 0.4f;
+                    })
+                    .sorted(java.util.Comparator.comparingDouble(DocumentParserImpl.PageLine::y))
+                    .collect(Collectors.toList());
+            // 意图对齐：框选节标题时起点常略高于标题行，会把上一节的尾行带进区域。
+            // 区域内存在标题行时，从第一个标题行开始截取（纯正文区域不受影响）
+            int firstHeading = -1;
+            for (int i = 0; i < hit.size(); i++) {
+                String t = hit.get(i).text() == null ? "" : hit.get(i).text().trim();
+                if (!t.contains("\t") && DocumentParserImpl.isPdfTitleLikeLine(t)) {
+                    firstHeading = i;
+                    break;
+                }
+            }
+            if (firstHeading > 0) hit = hit.subList(firstHeading, hit.size());
+            if (!hit.isEmpty()) {
+                // 组块：\t 行连续 → TABLE；单行标题样 → heading；其余按行距聚合成段。
+                // _y 为块在页面上的起始纵坐标（临时字段，尾部排序后移除）：图片块按位置穿插必需
+                int i = 0;
+                while (i < hit.size()) {
+                    DocumentParserImpl.PageLine l = hit.get(i);
+                    String t = l.text() == null ? "" : l.text().trim();
+                    if (t.contains("\t")) {
+                        int j2 = i;
+                        List<String> rowTexts = new ArrayList<>();
+                        while (j2 < hit.size() && hit.get(j2).text() != null && hit.get(j2).text().contains("\t")) {
+                            rowTexts.add(hit.get(j2).text().trim());
+                            j2++;
+                        }
+                        if (rowTexts.size() >= 2) {
+                            Map<String, Object> b = new HashMap<>();
+                            b.put("type", "table");
+                            b.put("text", String.join("\n", rowTexts));
+                            b.put("_y", l.y());
+                            blocks.add(b);
+                            i = j2;
+                            continue;
+                        }
+                    }
+                    // 段落聚合：与下一行垂直间距 ≤ 1.6×行高 则继续
+                    List<String> para = new ArrayList<>();
+                    para.add(t);
+                    int j = i + 1;
+                    float prevBottom = l.y() + l.height();
+                    float lineH = Math.max(1f, l.height());
+                    while (j < hit.size()) {
+                        DocumentParserImpl.PageLine nx = hit.get(j);
+                        String nt = nx.text() == null ? "" : nx.text().trim();
+                        float gap = nt.isEmpty() ? Float.MAX_VALUE : nx.y() - prevBottom;
+                        if (gap > lineH * 1.6f) break;
+                        para.add(nt);
+                        prevBottom = nx.y() + nx.height();
+                        lineH = Math.max(1f, nx.height());
+                        j++;
+                    }
+                    Map<String, Object> b = new HashMap<>();
+                    b.put("type", para.size() == 1 && DocumentParserImpl.isPdfTitleLikeLine(t) ? "heading" : "paragraph");
+                    b.put("text", String.join("\n", para));
+                    b.put("_y", l.y());
+                    blocks.add(b);
+                    i = j;
+                }
+            }
+
+            // ② 区域内命中的内容图片（相交 ≥30% 图片面积）→ 按完整图框裁剪原图直达分片（不做 OCR：
+            //    界面截图/图表的 OCR 文字价值低且丢失视觉信息；扫描底图 ≥85% 页面者跳过走路径③）
+            List<MediaExtractor.PdfImageBox> imgs = mediaExtractor.extractContentImageBoxes(doc);
+            boolean needRender = imgs.stream().anyMatch(ib -> ib.page() == page);
+            // 旋转页跳过路径②：图片盒坐标是未旋转用户空间，与视觉区域比较会错位（走路径③渲染裁剪，旋转感知）
+            log.info("[ocr-dbg] page={} rot={} region visPt={{x1:{},y1:{},x2:{},y2:{}}} imgsOnPage={} blocksAfterTextPath={}",
+                    page, rot, rx, ry, rx2, ry2, imgs.stream().filter(ib -> ib.page() == page).count(), blocks.size());
+            if (needRender && rot == 0) {
+                org.apache.pdfbox.rendering.PDFRenderer renderer = new org.apache.pdfbox.rendering.PDFRenderer(doc);
+                java.awt.image.BufferedImage pageImage = renderer.renderImageWithDPI(page - 1, 220);
+                for (MediaExtractor.PdfImageBox ib : imgs) {
+                    if (ib.page() != page) continue;
+                    // 扫描底图判定：几乎占满整页（≥85% 宽高）的图是扫描件底图而非内容图，
+                    // 跳过使其落到路径③整区域 OCR 转文字（扫描件转文字/非扫描件原图直达的分界）
+                    if (ib.width() >= visW * 0.85f && ib.height() >= visH * 0.85f) continue;
+                    float ix1 = Math.max(ib.x(), rx);
+                    float iy1 = Math.max(ib.y(), ry);
+                    float ix2 = Math.min(ib.x() + ib.width(), rx2);
+                    float iy2 = Math.min(ib.y() + ib.height(), ry2);
+                    if (ix2 <= ix1 || iy2 <= iy1) continue;
+                    float interArea = (ix2 - ix1) * (iy2 - iy1);
+                    float imgArea = ib.width() * ib.height();
+                    float interRatio = imgArea <= 0 ? 0 : interArea / imgArea;
+                    log.info("[ocr-dbg] img box={{x:{},y:{},w:{},h:{}}} regionInterRatio={} skip={}",
+                            String.format("%.1f", ib.x()), String.format("%.1f", ib.y()),
+                            String.format("%.1f", ib.width()), String.format("%.1f", ib.height()),
+                            String.format("%.2f", interRatio), interRatio < 0.3f);
+                    if (imgArea <= 0 || interRatio < 0.3f) continue;
+                    // 命中即按图片完整框裁剪原图直达分片（不做 OCR：界面截图/图表的 OCR 文字
+                    // 价值低且丢失视觉信息）；原图落 MinIO，前端分片卡直接渲染
+                    java.awt.image.BufferedImage cropped = cropPtRegion(pageImage, visW, visH, ib.x(), ib.y(), ib.width(), ib.height(), 0.01f);
+                    if (cropped == null) continue;
+                    String imageKey = uploadRegionImage(kbId, fileId, cropped, page, blocks.size());
+                    if (imageKey == null) continue;
+                    Map<String, Object> b = new HashMap<>();
+                    b.put("type", "image");
+                    b.put("text", "");
+                    b.put("imageKey", imageKey);
+                    b.put("_y", ib.y());
+                    blocks.add(b);
+                }
+            }
+
+            // 图片块按页面位置与文字块穿插（此前文字全在前、图片全在后 → 分片里图片位置不对）
+            blocks.sort(java.util.Comparator.comparingDouble(b -> (Double) b.get("_y")));
+            blocks.forEach(b -> b.remove("_y"));
+
+            // ③ 无文字行也无内容图（纯图形/扫描页）→ 整个区域渲染裁剪，多级重试 OCR
+            if (blocks.isEmpty()) {
+                log.info("[ocr-dbg] path3 fallback (blocks empty after path1+2)");
+                org.apache.pdfbox.rendering.PDFRenderer renderer = new org.apache.pdfbox.rendering.PDFRenderer(doc);
+                // 区域截图 key（首次裁剪即上传）：OCR 全空时分片卡仍有截图可人工查看，也便于诊断裁剪位置
+                String shotKey = null;
+                // 重试序列：220 原图 → 300 原图 → 300 反相（白字黑底）→ 300 红章增强（红/橙印章文字在绿蓝通道呈深色）
+                Object[][] attempts = {{220, 0}, {300, 0}, {300, 1}, {300, 2}};
+                for (Object[] a : attempts) {
+                    int dpi = (Integer) a[0];
+                    int mode = (Integer) a[1];
+                    java.awt.image.BufferedImage pageImage = renderer.renderImageWithDPI(page - 1, dpi);
+                    log.info("[ocr-dbg] path3 dpi={} mode={} pageImg={}x{} cropVisPt={{x:{},y:{},w:{},h:{}}} rot={} vis={}x{}",
+                            dpi, mode, pageImage.getWidth(), pageImage.getHeight(),
+                            String.format("%.1f", rx), String.format("%.1f", ry),
+                            String.format("%.1f", rx2 - rx), String.format("%.1f", ry2 - ry),
+                            rot, visW, visH);
+                    // 渲染图已应用 /Rotate（与视觉同向），按视觉 pt 裁剪；边距 5% 给文字留呼吸空间
+                    java.awt.image.BufferedImage cropped = cropPtRegion(pageImage, visW, visH, rx, ry, rx2 - rx, ry2 - ry, 0.05f);
+                    if (cropped == null) break;
+                    // 增强仅用于提升 OCR 识别率，展示/上传始终用原图
+                    java.awt.image.BufferedImage ocrInput = mode == 1 ? invertImage(cropped)
+                            : mode == 2 ? redSealEnhance(cropped) : cropped;
+                    String text = ocrService.recognize(toJpegBytes(ocrInput), "jpeg", null);
+                    if (text != null && !text.isBlank()) {
+                        // 扫描件/纯图形区域的 OCR 文字 → 正文文本块（与结构化 PDF 的文字块同形态），
+                        // 不作为图片块展示
+                        Map<String, Object> b = new HashMap<>();
+                        b.put("type", "paragraph");
+                        b.put("text", text.trim());
+                        blocks.add(b);
+                        break;
+                    }
+                    if (shotKey == null) {
+                        shotKey = uploadRegionImage(kbId, fileId, cropped, page, 0);
+                    }
+                }
+                // OCR 全空：不再空手而归——返回"区域截图 + 占位说明"块
+                if (blocks.isEmpty() && shotKey != null) {
+                    Map<String, Object> b = new HashMap<>();
+                    b.put("type", "image");
+                    b.put("text", "（区域 OCR 未识别到文字，请参考截图或手动编辑）");
+                    b.put("imageKey", shotKey);
+                    blocks.add(b);
+                }
+            }
+
+            return Map.of("blocks", blocks);
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            log.warn("[AiChunk] region content failed for {}: {}", fileId, e.getMessage());
+            throw BusinessException.badRequest("区域内容提取失败：" + e.getMessage());
+        }
+    }
+
+    /**
+     * 渲染图 → JPEG 字节（OCR 送图格式）：JPEG 兼容性最好，
+     * DeepSeek-OCR 对部分大尺寸 PNG 偶发空 content 返回。带 alpha 通道时先铺白底转 RGB。
+     */
+    private byte[] toJpegBytes(java.awt.image.BufferedImage img) throws java.io.IOException {
+        java.awt.image.BufferedImage rgb = img;
+        if (img.getColorModel().hasAlpha()) {
+            rgb = new java.awt.image.BufferedImage(img.getWidth(), img.getHeight(), java.awt.image.BufferedImage.TYPE_INT_RGB);
+            java.awt.Graphics2D g = rgb.createGraphics();
+            g.setColor(java.awt.Color.WHITE);
+            g.fillRect(0, 0, rgb.getWidth(), rgb.getHeight());
+            g.drawImage(img, 0, 0, null);
+            g.dispose();
+        }
+        java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+        javax.imageio.ImageIO.write(rgb, "jpeg", baos);
+        return baos.toByteArray();
+    }
+
+    /**
+     * 区域裁剪图上传 MinIO {kbId}/{fileId}/images/{imageKey}，返回 imageKey 供前端分片卡渲染。
+     * 上传失败不影响文本块（返回 null，仅缺图）。
+     */
+    private String uploadRegionImage(String kbId, String fileId, java.awt.image.BufferedImage img, int page, int seq) {
+        try {
+            java.io.ByteArrayOutputStream baos = new java.io.ByteArrayOutputStream();
+            javax.imageio.ImageIO.write(img, "png", baos);
+            String key = "region_p" + page + "_" + System.currentTimeMillis() + "_" + seq + ".png";
+            minioService.upload(kbId + "/" + fileId + "/images/" + key,
+                    new java.io.ByteArrayInputStream(baos.toByteArray()), "image/png");
+            return key;
+        } catch (Exception e) {
+            log.warn("[AiChunk] upload region image failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    /**
+     * 按 pt 区域裁剪页面渲染图：rx/ry/rw/rh 与 pageW/pageH 均为<b>视觉空间</b>（顶左原点，
+     * /Rotate 页渲染图已随旋转、宽高与视觉一致），pt → px 按「渲染宽 / 视觉 pt 宽」比例换算
+     * （此前对 /Rotate 270 页用未旋转 cropBox 尺寸换算 → 裁剪错位 → OCR 拿到无关区域返回空），
+     * 并外扩 padRatio 页宽高（≥8px）；无效返回 null。
+     */
+    private java.awt.image.BufferedImage cropPtRegion(java.awt.image.BufferedImage pageImage,
+                                                      float pageW, float pageH,
+                                                      float rx, float ry, float rw, float rh, float padRatio) {
+        int imgW = pageImage.getWidth();
+        int imgH = pageImage.getHeight();
+        if (pageW <= 0 || pageH <= 0 || imgW <= 0 || imgH <= 0) return null;
+        float scale = imgW / pageW;
+        int padX = Math.max(8, Math.round(imgW * padRatio));
+        int padY = Math.max(8, Math.round(imgH * padRatio));
+        int px = clampRange(Math.round(rx * scale) - padX, 0, imgW);
+        int py = clampRange(Math.round(ry * scale) - padY, 0, imgH);
+        int pw = clampRange(Math.round(rw * scale) + padX * 2, 0, imgW - px);
+        int ph = clampRange(Math.round(rh * scale) + padY * 2, 0, imgH - py);
+        if (pw <= 0 || ph <= 0) return null;
+        return pageImage.getSubimage(px, py, pw, ph);
+    }
+
+    private int clampRange(int v, int min, int max) {
+        return Math.max(min, Math.min(max, v));
+    }
+
+    /** 反相（白字黑底的终端截图反相后 OCR 识别率大增；保留透明通道） */
+    private java.awt.image.BufferedImage invertImage(java.awt.image.BufferedImage src) {
+        java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(
+                src.getWidth(), src.getHeight(),
+                src.getColorModel().hasAlpha() ? java.awt.image.BufferedImage.TYPE_INT_ARGB : java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < src.getHeight(); y++) {
+            for (int x = 0; x < src.getWidth(); x++) {
+                int c = src.getRGB(x, y);
+                out.setRGB(x, y, (c & 0xFF000000) | (~c & 0x00FFFFFF));
+            }
+        }
+        return out;
+    }
+
+    /**
+     * 红章增强：取每像素 min(G,B) 通道灰度化。
+     * 红/橙色印章文字 R 高 G/B 低 → 在 min(G,B) 里呈深色，白底保持白 → 变成"黑字白底"标准图，
+     * OCR 对红章（收文章/公章）的识别率大增。
+     */
+    private java.awt.image.BufferedImage redSealEnhance(java.awt.image.BufferedImage src) {
+        java.awt.image.BufferedImage out = new java.awt.image.BufferedImage(
+                src.getWidth(), src.getHeight(), java.awt.image.BufferedImage.TYPE_INT_RGB);
+        for (int y = 0; y < src.getHeight(); y++) {
+            for (int x = 0; x < src.getWidth(); x++) {
+                int c = src.getRGB(x, y);
+                int g = (c >> 8) & 0xFF;
+                int b = c & 0xFF;
+                int v = Math.min(g, b);
+                out.setRGB(x, y, (v << 16) | (v << 8) | v);
+            }
+        }
+        return out;
+    }
+
+    /**
      * SSE 版面分析（原件渲染分块画框数据源）：
      * <ol>
      *   <li>MinIO {@code {kbId}/{fileId}/layout.json} 命中 → 一次全量 layout 事件 + done</li>
@@ -284,7 +606,10 @@ public class AiChunkServiceImpl implements AiChunkService {
                 List<AiChunkLayoutBlock> all = Collections.synchronizedList(new ArrayList<>());
                 final int[] okPages = {0};
                 List<Integer> vlmPages = new ArrayList<>();
+                Map<Integer, List<PdfLayoutAnalyzer.Line>> geoLines = new LinkedHashMap<>();
+                Map<Integer, Float> geoPageH = new HashMap<>();
                 try (PDDocument doc = org.apache.pdfbox.Loader.loadPDF(pdfBytes)) {
+                    // 第一遍：收集各文字层页的行（扫描页归入 VLM）
                     for (int p = 0; p < total; p++) {
                         List<PdfLayoutAnalyzer.Line> plines = extractPageLines(doc, p);
                         int chars = 0;
@@ -295,8 +620,18 @@ public class AiChunkServiceImpl implements AiChunkService {
                             vlmPages.add(p); // 文字量过少 → 视作扫描/图片页，走 OCR
                             continue;
                         }
+                        geoLines.put(p, plines);
+                        geoPageH.put(p, doc.getPage(p).getCropBox().getHeight());
+                    }
+                    // 跨页页眉/页脚/页码行清理（几何行链路此前无清理 → 页脚被画框）
+                    PdfLayoutAnalyzer.stripHeaderFooterLines(geoLines, geoPageH);
+                    // 第二遍：逐页几何聚类 + 推送（按页序，progress 单调）
+                    for (Map.Entry<Integer, List<PdfLayoutAnalyzer.Line>> geo : geoLines.entrySet()) {
+                        int p = geo.getKey();
+                        List<PdfLayoutAnalyzer.Line> plines = geo.getValue();
                         try {
-                            org.apache.pdfbox.pdmodel.common.PDRectangle mb = doc.getPage(p).getMediaBox();
+                            // 与 fillPdfRects 一致：归一化除数统一用 cropBox（文本/图片坐标均为 cropBox 相对）
+                            org.apache.pdfbox.pdmodel.common.PDRectangle mb = doc.getPage(p).getCropBox();
                             List<float[]> pageImgs = new ArrayList<>();
                             for (MediaExtractor.PdfImageBox b : allImgs) {
                                 if (b.page() == p + 1) {
@@ -418,8 +753,23 @@ public class AiChunkServiceImpl implements AiChunkService {
         }
     }
 
+    /** apply 文件级互斥：前端超时重试会触发并发 apply，交错执行删除/插入会撞主键、污染向量与图谱
+     *  （实证：A 删除后卡图清理 41s，B 超时重试时删空库、A 再插入，B 最后撞 Duplicate entry） */
+    private static final java.util.concurrent.ConcurrentHashMap<String, Boolean> APPLYING_FILES = new java.util.concurrent.ConcurrentHashMap<>();
+
     @Override
     public int apply(String kbId, String fileId, AiChunkApplyRequest request) {
+        if (APPLYING_FILES.putIfAbsent(fileId, Boolean.TRUE) != null) {
+            throw BusinessException.badRequest("该文件正在应用 AI分片（上次操作可能仍在执行，图谱/向量化较慢时约需 1 分钟），请稍后刷新文件列表查看结果，勿重复提交");
+        }
+        try {
+            return doApply(kbId, fileId, request);
+        } finally {
+            APPLYING_FILES.remove(fileId);
+        }
+    }
+
+    private int doApply(String kbId, String fileId, AiChunkApplyRequest request) {
         KbFile f = requireFile(kbId, fileId);
         if (f.getDeletedAt() != null) {
             throw BusinessException.badRequest("文件已在回收站中，请先恢复后再应用 AI分片");
@@ -715,9 +1065,19 @@ public class AiChunkServiceImpl implements AiChunkService {
         if (!"table".equals(cur.getType())) return false;
         String prevHeader = firstLine(prev.getText());
         String curHeader = firstLine(cur.getText());
-        if (prevHeader == null || curHeader == null || !prevHeader.equals(curHeader)) return false;
-        // 丢弃续表重复表头行后拼接
-        String curBody = cur.getText().substring(cur.getText().indexOf('\n') + 1);
+        if (prevHeader == null || curHeader == null) return false;
+        // 列数一致才认定是同一张表的延续（表头比对不可靠：续表常不带表头或表头有 OCR 差异）
+        if (prevHeader.split("\t", -1).length != curHeader.split("\t", -1).length) return false;
+        boolean sameHeader = prevHeader.equals(curHeader);
+        // 表头重复 → 丢弃续表表头行后拼接；无表头续表 → 直接拼接
+        String curBody;
+        if (sameHeader) {
+            int nl = cur.getText().indexOf('\n');
+            if (nl < 0) return false;   // 续表只剩表头行，无数据可并
+            curBody = cur.getText().substring(nl + 1);
+        } else {
+            curBody = cur.getText();
+        }
         prev.setText(prev.getText() + "\n" + curBody);
         absorb(prev, cur);
         return true;
@@ -760,8 +1120,7 @@ public class AiChunkServiceImpl implements AiChunkService {
         String llmModel = kb == null ? null : kb.getGraphLlmModel();
         if (llmModel != null && !llmModel.isBlank()) {
             try {
-                List<AiChunkGroup> groups = llmGroup(llmModel, paragraphs, chunkLength);
-                if (groups != null) return new AutoChunkOutcome(groups, "llm");
+                return finishAuto(llmGroup(llmModel, paragraphs, chunkLength), chunkLength, "llm");
             } catch (Exception e) {
                 log.warn("[AiChunk] LLM grouping failed, falling back to embedding: {}", e.getMessage());
             }
@@ -771,19 +1130,46 @@ public class AiChunkServiceImpl implements AiChunkService {
         String embModel = kb == null ? null : kb.getEmbeddingModel();
         if (embModel != null && !embModel.isBlank()) {
             try {
-                List<AiChunkGroup> groups = embeddingGroup(embModel, paragraphs, threshold, chunkLength);
-                return new AutoChunkOutcome(groups, "embedding");
+                return finishAuto(embeddingGroup(embModel, paragraphs, threshold, chunkLength), chunkLength, "embedding");
             } catch (Exception e) {
                 log.warn("[AiChunk] embedding grouping failed, falling back to rule: {}", e.getMessage());
             }
         }
 
         // 3) 长度累积兜底
-        return new AutoChunkOutcome(ruleGroup(paragraphs, chunkLength), "rule");
+        return finishAuto(ruleGroup(paragraphs, chunkLength), chunkLength, "rule");
     }
 
-    /** LLM 分组：段落清单 → 分组 JSON；输出无效（覆盖不全/乱序）时抛异常走回退 */
-    private List<AiChunkGroup> llmGroup(String model, List<AiChunkParagraph> paragraphs, int chunkLength) {
+    /**
+     * 分组收尾（三条路径共用）：长度硬约束 + 迷你组回收后统一编号出组。
+     * <ul>
+     *   <li>§6.3 chunkLength 为硬上限：超限组按段界装箱，超长段再按句界/表行二次切分
+     *       （paragraphId 加 _sN 后缀，§5.3/§9）</li>
+     *   <li>低于 {@link #MIN_CHUNK_CHARS} 的纯文本组合并进相邻组（表格/代码/图片组保持独立）</li>
+     * </ul>
+     */
+    private AutoChunkOutcome finishAuto(List<List<AiChunkParagraph>> memberLists, int chunkLength, String source) {
+        int minLen = Math.min(MIN_CHUNK_CHARS, Math.max(1, chunkLength));
+        List<List<AiChunkParagraph>> enforced = new ArrayList<>();
+        for (List<AiChunkParagraph> members : memberLists) {
+            if (textsLen(members) > chunkLength) enforced.addAll(splitList(members, chunkLength));
+            else enforced.add(members);
+        }
+        enforced = mergeMiniLists(enforced, chunkLength, minLen);
+        List<AiChunkGroup> groups = new ArrayList<>();
+        int idx = 0;
+        for (List<AiChunkParagraph> members : enforced) {
+            groups.add(group(idx++, "auto", members));
+        }
+        return new AutoChunkOutcome(groups, source);
+    }
+
+    /**
+     * LLM 分组：段落清单 → 分组 JSON；输出无效（覆盖不全/乱序）时抛异常走回退。
+     * 分批按「段数 + 截断后字符数」双约束装箱（比固定段数更适应长短段落混排），
+     * 并附带下一批开头两段作为语义衔接参考（禁止编入输出），缓解批边界的硬语义切缝。
+     */
+    private List<List<AiChunkParagraph>> llmGroup(String model, List<AiChunkParagraph> paragraphs, int chunkLength) {
         ModelRecord rec = resolveRecord(model);
         String apiUrl = rec != null ? rec.getApiUrl() : null;
         String apiKey = rec != null ? rec.getApiKeyRef() : null;
@@ -791,13 +1177,28 @@ public class AiChunkServiceImpl implements AiChunkService {
         List<List<Integer>> groupedIndexes = new ArrayList<>();
         int consumed = 0;
         while (consumed < paragraphs.size()) {
-            int end = Math.min(consumed + LLM_GROUP_BATCH, paragraphs.size());
+            // 双约束装箱：段数 ≤ LLM_BATCH_MAX_PARAS 且截断后总字符 ≤ LLM_BATCH_MAX_CHARS
+            int end = consumed + 1;
+            int chars = truncate(paragraphs.get(consumed).getText(), LLM_TEXT_TRUNCATE).length();
+            while (end < paragraphs.size() && end - consumed < LLM_BATCH_MAX_PARAS) {
+                int nextLen = truncate(paragraphs.get(end).getText(), LLM_TEXT_TRUNCATE).length();
+                if (chars + nextLen > LLM_BATCH_MAX_CHARS) break;
+                chars += nextLen;
+                end++;
+            }
             List<AiChunkParagraph> batch = paragraphs.subList(consumed, end);
             StringBuilder list = new StringBuilder();
             for (int i = 0; i < batch.size(); i++) {
                 list.append(consumed + i + 1).append(". [").append(batch.get(i).getType()).append("] ")
                         .append(truncate(batch.get(i).getText(), LLM_TEXT_TRUNCATE).replace('\n', ' ')).append('\n');
             }
+            StringBuilder context = new StringBuilder();
+            int ctxEnd = Math.min(end + 2, paragraphs.size());
+            for (int i = end; i < ctxEnd; i++) {
+                context.append("- [").append(paragraphs.get(i).getType()).append("] ")
+                        .append(truncate(paragraphs.get(i).getText(), 80).replace('\n', ' ')).append('\n');
+            }
+
             String prompt = """
                     你是文档语义分片器。下面是文档的段落清单（编号从 %d 到 %d，按原文顺序）。
                     请把段落划分为语义完整的分片，规则：
@@ -806,9 +1207,11 @@ public class AiChunkServiceImpl implements AiChunkService {
                     3. 标题与其后首个正文段落应同片；
                     4. 输出仅为 JSON：数组的数组，元素为段落编号，按升序覆盖全部编号且不重复。
                     示例：[[1,2],[3],[4,5,6]]
-
+                    %s
                     段落清单：
-                    %s""".formatted(consumed + 1, end, chunkLength, list);
+                    %s""".formatted(consumed + 1, end, chunkLength,
+                    context.isEmpty() ? "" : "\n语义衔接参考（以下是下一批开头的段落，仅供衔接判断，禁止编入输出）：\n" + context,
+                    list);
 
             String response = llmService.chatWithTimeout(model, prompt, apiUrl, apiKey, false, 60);
             List<List<Integer>> parsed = parseGroups(response, consumed + 1, end);
@@ -817,13 +1220,11 @@ public class AiChunkServiceImpl implements AiChunkService {
             consumed = end;
         }
 
-        List<AiChunkGroup> groups = new ArrayList<>();
-        int idx = 0;
+        List<List<AiChunkParagraph>> memberLists = new ArrayList<>();
         for (List<Integer> indexes : groupedIndexes) {
-            List<AiChunkParagraph> members = indexes.stream().map(i -> paragraphs.get(i - 1)).toList();
-            groups.add(group(idx++, "auto", members));
+            memberLists.add(indexes.stream().map(i -> paragraphs.get(i - 1)).toList());
         }
-        return groups;
+        return memberLists;
     }
 
     private List<List<Integer>> parseGroups(String response, int from, int to) {
@@ -872,9 +1273,9 @@ public class AiChunkServiceImpl implements AiChunkService {
         return t;
     }
 
-    /** Embedding 段落相似度分组：相邻段落余弦 < threshold 或超长 → 断点 */
-    private List<AiChunkGroup> embeddingGroup(String model, List<AiChunkParagraph> paragraphs,
-                                              double threshold, int chunkLength) {
+    /** Embedding 段落相似度分组：相邻段落余弦 < threshold 或超长 → 断点（长度断片携带 overlap，§6.3） */
+    private List<List<AiChunkParagraph>> embeddingGroup(String model, List<AiChunkParagraph> paragraphs,
+                                                        double threshold, int chunkLength) {
         ModelRecord rec = resolveRecord(model);
         String apiUrl = rec != null ? rec.getApiUrl() : null;
         String apiKey = rec != null ? rec.getApiKeyRef() : null;
@@ -891,45 +1292,246 @@ public class AiChunkServiceImpl implements AiChunkService {
             throw new IllegalStateException("embedding 数量不匹配: " + vectors.size() + "/" + paragraphs.size());
         }
 
-        List<AiChunkGroup> groups = new ArrayList<>();
+        List<List<AiChunkParagraph>> memberLists = new ArrayList<>();
         List<AiChunkParagraph> current = new ArrayList<>();
         int currentLen = 0;
         for (int i = 0; i < paragraphs.size(); i++) {
             AiChunkParagraph p = paragraphs.get(i);
             boolean boundary = false;
+            boolean lengthDriven = false;
             if (!current.isEmpty()) {
                 double sim = cosine(vectors.get(i - 1), vectors.get(i));
                 if (sim < threshold) boundary = true;              // 语义断点
-                if (currentLen + p.getText().length() > chunkLength) boundary = true; // 超长
+                if (currentLen + p.getText().length() > chunkLength) {
+                    boundary = true;
+                    lengthDriven = true;                            // 超长
+                }
             }
             if (boundary) {
-                groups.add(group(groups.size(), "auto", current));
+                memberLists.add(current);
                 current = new ArrayList<>();
                 currentLen = 0;
+                // §6.3 overlap：仅长度断片携带上一片尾部（语义断点处不需要）
+                AiChunkParagraph ovl = lengthDriven
+                        ? tailOverlapPiece(memberLists.get(memberLists.size() - 1), FALLBACK_OVERLAP_CHARS) : null;
+                if (ovl != null) {
+                    current.add(ovl);
+                    currentLen += ovl.getText().length();
+                }
             }
             current.add(p);
             currentLen += p.getText().length();
         }
-        if (!current.isEmpty()) groups.add(group(groups.size(), "auto", current));
-        return groups;
+        if (!current.isEmpty()) memberLists.add(current);
+        return memberLists;
     }
 
-    /** 长度累积兜底：段落为最小单位，累计至 chunkLength 断片 */
-    private List<AiChunkGroup> ruleGroup(List<AiChunkParagraph> paragraphs, int chunkLength) {
-        List<AiChunkGroup> groups = new ArrayList<>();
+    /** 长度累积兜底：段落为最小单位，累计至 chunkLength 断片（长度断片携带 overlap，§6.3） */
+    private List<List<AiChunkParagraph>> ruleGroup(List<AiChunkParagraph> paragraphs, int chunkLength) {
+        List<List<AiChunkParagraph>> memberLists = new ArrayList<>();
         List<AiChunkParagraph> current = new ArrayList<>();
         int currentLen = 0;
         for (AiChunkParagraph p : paragraphs) {
-            if (!current.isEmpty() && currentLen + p.getText().length() > chunkLength) {
-                groups.add(group(groups.size(), "auto", current));
+            boolean lengthDriven = !current.isEmpty() && currentLen + p.getText().length() > chunkLength;
+            if (lengthDriven) {
+                memberLists.add(current);
                 current = new ArrayList<>();
                 currentLen = 0;
+                AiChunkParagraph ovl = tailOverlapPiece(memberLists.get(memberLists.size() - 1), FALLBACK_OVERLAP_CHARS);
+                if (ovl != null) {
+                    current.add(ovl);
+                    currentLen += ovl.getText().length();
+                }
             }
             current.add(p);
             currentLen += p.getText().length();
         }
-        if (!current.isEmpty()) groups.add(group(groups.size(), "auto", current));
-        return groups;
+        if (!current.isEmpty()) memberLists.add(current);
+        return memberLists;
+    }
+
+    /**
+     * 回退路径 overlap（§6.3 默认 100）：取上一组末段尾部 ≤overlapChars 作为下一组开头，
+     * 向前回退到句界保证尾句完整。表格/代码尾部不参与；有效重叠 <20 字符时放弃。
+     */
+    private AiChunkParagraph tailOverlapPiece(List<AiChunkParagraph> members, int overlapChars) {
+        if (members == null || members.isEmpty()) return null;
+        AiChunkParagraph last = members.get(members.size() - 1);
+        boolean proseLike = "paragraph".equals(last.getType()) || "list".equals(last.getType())
+                || "caption".equals(last.getType());
+        if (!proseLike) return null;
+        String text = last.getText();
+        if (text.length() <= overlapChars) return null;
+        String tail = text.substring(text.length() - overlapChars);
+        int cut = -1;
+        for (int i = 0; i < tail.length(); i++) {
+            if (SENTENCE_TERMINATORS.indexOf(tail.charAt(i)) >= 0) {
+                cut = i;    // 最早的句界 → 重叠部分由完整句子构成
+                break;
+            }
+        }
+        if (cut >= 0 && cut < tail.length() - 1) tail = tail.substring(cut + 1);
+        tail = tail.trim();
+        if (tail.length() < 20) return null;
+        return AiChunkParagraph.builder()
+                .id(last.getId() + "_o1")
+                .order(last.getOrder())
+                .type(last.getType())
+                .text(tail)
+                .page(last.getPage())
+                .pages(new ArrayList<>(last.getPages() != null ? last.getPages() : List.of(last.getPage())))
+                .pageRange(last.getPageRange())
+                .headingPath(last.getHeadingPath())
+                .build();
+    }
+
+    private int textsLen(List<AiChunkParagraph> members) {
+        return members.stream().mapToInt(p -> p.getText().length()).sum();
+    }
+
+    /**
+     * 超长组二次切分（§5.3/§6.3）：优先在段界装箱；单段超长且可切时按句界
+     * （表格按行、代码按行）切分，paragraphId 加 _sN 后缀保持可追溯（§9）。
+     * 标题/图片为原子单位，允许超限（保持完整）。
+     */
+    private List<List<AiChunkParagraph>> splitList(List<AiChunkParagraph> members, int maxLen) {
+        List<AiChunkParagraph> pieces = new ArrayList<>();
+        for (AiChunkParagraph m : members) {
+            if (m.getText().length() <= maxLen || !isSplittable(m.getType())) {
+                pieces.add(m);
+                continue;
+            }
+            List<String> parts = splitByUnit(m, maxLen);
+            for (int i = 0; i < parts.size(); i++) {
+                pieces.add(AiChunkParagraph.builder()
+                        .id(m.getId() + "_s" + (i + 1))
+                        .order(m.getOrder())
+                        .type(m.getType())
+                        .text(parts.get(i))
+                        .page(m.getPage())
+                        .pages(new ArrayList<>(m.getPages() != null ? m.getPages() : List.of(m.getPage())))
+                        .pageRange(m.getPageRange())
+                        .headingPath(m.getHeadingPath())
+                        .build());
+            }
+        }
+        List<List<AiChunkParagraph>> bins = new ArrayList<>();
+        List<AiChunkParagraph> cur = new ArrayList<>();
+        int curLen = 0;
+        for (AiChunkParagraph piece : pieces) {
+            if (!cur.isEmpty() && curLen + piece.getText().length() > maxLen) {
+                bins.add(cur);
+                cur = new ArrayList<>();
+                curLen = 0;
+            }
+            cur.add(piece);
+            curLen += piece.getText().length();
+        }
+        if (!cur.isEmpty()) bins.add(cur);
+        return bins;
+    }
+
+    /**
+     * 可二次切分的类型：正文/列表/题注按句界，代码按行。
+     * 表格**原子不可切**（产品要求：单页表格必须完整在一个分片内以表格呈现，
+     * 超长表格保持完整、允许超限）——此条覆盖设计文档 §6.3「表格按行切分」。
+     * 标题/图片原子。
+     */
+    private boolean isSplittable(String type) {
+        return "paragraph".equals(type) || "list".equals(type) || "caption".equals(type)
+                || "code".equals(type);
+    }
+
+    private List<String> splitByUnit(AiChunkParagraph m, int maxLen) {
+        return switch (m.getType()) {
+            case "table", "code" -> splitLines(m.getText(), maxLen);
+            default -> splitSentences(m.getText(), maxLen);
+        };
+    }
+
+    /** 按行累积切分（表格行/代码行），超长行硬切 */
+    private List<String> splitLines(String text, int maxLen) {
+        List<String> pieces = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (String line : text.split("\n", -1)) {
+            String l = line;
+            if (cur.length() + l.length() + 1 > maxLen && cur.length() > 0) {
+                pieces.add(cur.toString());
+                cur.setLength(0);
+            }
+            while (l.length() > maxLen) {
+                pieces.add(l.substring(0, maxLen));
+                l = l.substring(maxLen);
+            }
+            if (cur.length() > 0) cur.append('\n');
+            cur.append(l);
+        }
+        if (cur.length() > 0) pieces.add(cur.toString());
+        return pieces;
+    }
+
+    /** 句界切分（句终符保留在句尾），聚句成片 ≤maxLen；单句超长硬切 */
+    private List<String> splitSentences(String text, int maxLen) {
+        List<String> sentences = new ArrayList<>();
+        int start = 0;
+        for (int i = 0; i < text.length(); i++) {
+            if (SENTENCE_TERMINATORS.indexOf(text.charAt(i)) >= 0) {
+                sentences.add(text.substring(start, i + 1));
+                start = i + 1;
+            }
+        }
+        if (start < text.length()) sentences.add(text.substring(start));
+        List<String> pieces = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        for (String s : sentences) {
+            if (cur.length() + s.length() > maxLen && cur.length() > 0) {
+                pieces.add(cur.toString());
+                cur.setLength(0);
+            }
+            while (s.length() > maxLen) {
+                pieces.add(s.substring(0, maxLen));
+                s = s.substring(maxLen);
+            }
+            cur.append(s);
+        }
+        if (cur.length() > 0) pieces.add(cur.toString());
+        return pieces;
+    }
+
+    /** 迷你组回收：低于 minLen 的纯文本组（正文/列表/标题）优先向后合并，装不下再并入前一组 */
+    private List<List<AiChunkParagraph>> mergeMiniLists(List<List<AiChunkParagraph>> lists, int maxLen, int minLen) {
+        List<List<AiChunkParagraph>> out = new ArrayList<>();
+        int i = 0;
+        while (i < lists.size()) {
+            List<AiChunkParagraph> cur = lists.get(i);
+            int len = textsLen(cur);
+            boolean mergeable = mergeableTypes(cur);
+            if (len < minLen && mergeable) {
+                if (i + 1 < lists.size() && mergeableTypes(lists.get(i + 1))
+                        && len + textsLen(lists.get(i + 1)) <= maxLen) {
+                    List<AiChunkParagraph> merged = new ArrayList<>(cur);
+                    merged.addAll(lists.get(i + 1));
+                    out.add(merged);
+                    i += 2;
+                    continue;
+                }
+                if (!out.isEmpty() && mergeableTypes(out.get(out.size() - 1))
+                        && textsLen(out.get(out.size() - 1)) + len <= maxLen) {
+                    out.get(out.size() - 1).addAll(cur);
+                    i++;
+                    continue;
+                }
+            }
+            out.add(cur);
+            i++;
+        }
+        return out;
+    }
+
+    /** 可参与迷你组合并的类型（表格/代码/图片保持独立成片） */
+    private boolean mergeableTypes(List<AiChunkParagraph> members) {
+        return members.stream().allMatch(p ->
+                "paragraph".equals(p.getType()) || "list".equals(p.getType()) || "heading".equals(p.getType()));
     }
 
     private AiChunkGroup group(int index, String source, List<AiChunkParagraph> members) {
@@ -950,7 +1552,15 @@ public class AiChunkServiceImpl implements AiChunkService {
     private void backfillChunkIds(List<AiChunkParagraph> paragraphs, List<AiChunkGroup> groups) {
         Map<String, String> pid2chunk = new HashMap<>();
         for (AiChunkGroup g : groups) {
-            for (String pid : g.getParagraphIds()) pid2chunk.put(pid, g.getId());
+            for (String pid : g.getParagraphIds()) {
+                pid2chunk.put(pid, g.getId());
+                // 二次切分片（p_xxxx_sN）/overlap 片（p_xxxx_oN）回填基段落：一个基段可能跨多个 chunk，
+                // 取最后一个映射（chunkId 仅用于 parsed.json 审计，不影响分片内容）
+                int sIdx = pid.indexOf("_s");
+                int oIdx = pid.indexOf("_o");
+                if (sIdx > 0) pid2chunk.put(pid.substring(0, sIdx), g.getId());
+                else if (oIdx > 0) pid2chunk.put(pid.substring(0, oIdx), g.getId());
+            }
         }
         for (AiChunkParagraph p : paragraphs) p.setChunkId(pid2chunk.get(p.getId()));
     }
@@ -1007,10 +1617,16 @@ public class AiChunkServiceImpl implements AiChunkService {
         try (InputStream in = minioService.download(f.getObjectKey())) {
             byte[] bytes = in.readAllBytes();
             try (PDDocument doc = org.apache.pdfbox.Loader.loadPDF(bytes)) {
-                Map<Integer, List<PdfLayoutAnalyzer.Line>> pageLines = new HashMap<>();
+                // 与解析端同一几何行结构（extractGeometryLines，含 \t 列标记与 x 范围）：
+                // 此前用旧版碎片行提取，与解析段落行对不上 → 全页锚定失败退化为兜底横带（位置不准的根因）
+                Map<Integer, List<DocumentParserImpl.PageLine>> pageLines = new HashMap<>();
+                Map<Integer, Float> pageHeights = new HashMap<>();
                 for (int p = 0; p < doc.getNumberOfPages(); p++) {
-                    pageLines.put(p + 1, extractPageLines(doc, p));
+                    pageLines.put(p + 1, DocumentParserImpl.extractGeometryLines(doc, p));
+                    pageHeights.put(p + 1, doc.getPage(p).getCropBox().getHeight());
                 }
+                // 页眉/页脚/页码行清理：解析文本已剥页眉脚，行盒不同步清理会导致锚定/兜底带盖到页脚上
+                DocumentParserImpl.stripRowHeaderFooters(pageLines, pageHeights);
                 // 按页聚合段落（保持 order 序；跨页段落在每个出现页各对齐一次）
                 Map<Integer, List<AiChunkParagraph>> pageParas = new LinkedHashMap<>();
                 for (AiChunkParagraph para : paragraphs) {
@@ -1021,50 +1637,111 @@ public class AiChunkServiceImpl implements AiChunkService {
                     }
                 }
                 for (Map.Entry<Integer, List<AiChunkParagraph>> e : pageParas.entrySet()) {
-                    List<PdfLayoutAnalyzer.Line> lines = pageLines.getOrDefault(e.getKey(), List.of());
+                    List<DocumentParserImpl.PageLine> lines = pageLines.getOrDefault(e.getKey(), List.of());
                     if (lines.isEmpty()) continue;
-                    org.apache.pdfbox.pdmodel.common.PDRectangle mb = doc.getPage(e.getKey() - 1).getMediaBox();
-                    float pageW = mb.getWidth();
-                    float pageH = mb.getHeight();
+                    // 归一化除数用 cropBox：PDFBox 3.x 文本/图片坐标为 cropBox 相对，pdf.js 亦按 cropBox 渲染
+                    org.apache.pdfbox.pdmodel.common.PDRectangle cb = doc.getPage(e.getKey() - 1).getCropBox();
+                    float pageW = cb.getWidth();
+                    float pageH = cb.getHeight();
                     if (pageW <= 0 || pageH <= 0) continue;
                     List<AiChunkParagraph> paras = e.getValue();
                     List<String> lineTexts = lines.stream().map(l -> l.text()).collect(Collectors.toList());
                     List<String> paraTexts = paras.stream().map(AiChunkParagraph::getText).collect(Collectors.toList());
                     int[][] ranges = assignLineRanges(paraTexts, lineTexts);
+                    AiChunkParagraph.RectItem[] built = new AiChunkParagraph.RectItem[paras.size()];
                     for (int i = 0; i < paras.size(); i++) {
                         int start = ranges[i][0], end = ranges[i][1];
-                        if (start < 0) continue; // 本页未锚定（继承标题/OCR 差异）→ 无盒且不占行
+                        if (start < 0) continue; // 本页未锚定（继承标题/OCR 差异）→ 走兜底估计
                         float x1 = Float.MAX_VALUE, y1 = Float.MAX_VALUE, x2 = -1f, y2 = -1f;
+                        float lineHSum = 0f;
+                        int lineCnt = 0;
                         for (int k = start; k < end; k++) {
-                            float[] r = lines.get(k).rect();
-                            if (r[0] < x1) x1 = r[0];
-                            if (r[1] < y1) y1 = r[1];
-                            if (r[0] + r[2] > x2) x2 = r[0] + r[2];
-                            if (r[1] + r[3] > y2) y2 = r[1] + r[3];
+                            DocumentParserImpl.PageLine pl = lines.get(k);
+                            if (pl.x() < x1) x1 = pl.x();
+                            if (pl.y() < y1) y1 = pl.y();
+                            if (pl.x() + pl.width() > x2) x2 = pl.x() + pl.width();
+                            if (pl.y() + pl.height() > y2) y2 = pl.y() + pl.height();
+                            lineHSum += pl.height();
+                            lineCnt++;
                         }
                         if (x2 < x1 || y2 < y1) continue;
-                        // 行盒只覆盖基线+字高，上下各留 ~15% 字高余量更贴合视觉块
-                        float pad = (y2 - y1) * 0.15f;
-                        AiChunkParagraph para = paras.get(i);
-                        if (para.getRects() == null) para.setRects(new ArrayList<>());
-                        para.getRects().add(AiChunkParagraph.RectItem.builder()
+                        // 外扩按「单行盒高」计，与段落跨高无关：
+                        // 单行段 y2==y1 时旧逻辑 pad=0，框上下不对称（顶边切字形、底边坠入行距）
+                        float pad = (lineCnt > 0 ? lineHSum / lineCnt : 0f) * 0.18f;
+                        built[i] = AiChunkParagraph.RectItem.builder()
                                 .page(e.getKey())
                                 .x(x1 / pageW)
                                 .y(Math.max(0, y1 - pad) / pageH)
                                 .width((x2 - x1) / pageW)
                                 .height((y2 - y1 + pad * 2) / pageH)
-                                .build());
+                                .build();
+                        // 锚定行文本（所见即所得的内容源）：行链路已清理页眉脚，
+                        // 手动分片用它替代解析全文，避免未框住的页眉脚/噪声进入分片
+                        AiChunkParagraph para0 = paras.get(i);
+                        StringBuilder at = new StringBuilder(para0.getAnchorText() == null ? "" : para0.getAnchorText());
+                        for (int k = start; k < end; k++) {
+                            String lt = lines.get(k).text();
+                            if (lt == null || lt.isBlank()) continue;
+                            if (at.length() > 0) at.append('\n');
+                            at.append(lt.trim());
+                        }
+                        para0.setAnchorText(at.length() > 0 ? at.toString() : null);
+                    }
+                    // 锚定失败兜底：连续未锚定段在「上锚点~下锚点」区间内按各自预估行数比例分割横带
+                    // （逐段独立取全区间会让连续未锚定段堆叠出同一个大框）
+                    int fi = 0;
+                    while (fi < paras.size()) {
+                        if (built[fi] != null) {
+                            fi++;
+                            continue;
+                        }
+                        int fj = fi;
+                        while (fj + 1 < paras.size() && built[fj + 1] == null) fj++;
+                        float top = 0f, bottom = pageH;
+                        if (fi > 0 && built[fi - 1] != null) {
+                            top = built[fi - 1].getY() + built[fi - 1].getHeight();
+                        }
+                        if (fj + 1 < paras.size() && built[fj + 1] != null) {
+                            bottom = built[fj + 1].getY();
+                        }
+                        int units = 0;
+                        for (int k = fi; k <= fj; k++) {
+                            units += Math.max(1, normalizeLines(paraTexts.get(k)).size());
+                        }
+                        float avail = bottom - top;
+                        if (units > 0 && avail > pageH * 0.01f) {
+                            float cursor = top;
+                            for (int k = fi; k <= fj; k++) {
+                                int u = Math.max(1, normalizeLines(paraTexts.get(k)).size());
+                                float band = avail * ((float) u / units);
+                                built[k] = AiChunkParagraph.RectItem.builder()
+                                        .page(e.getKey())
+                                        .x(0.03f)
+                                        .y(cursor / pageH)
+                                        .width(0.94f)
+                                        .height(band / pageH)
+                                        .build();
+                                cursor += band;
+                            }
+                        }
+                        fi = fj + 1;
+                    }
+                    for (int i = 0; i < paras.size(); i++) {
+                        if (built[i] == null) continue;
+                        AiChunkParagraph para = paras.get(i);
+                        if (para.getRects() == null) para.setRects(new ArrayList<>());
+                        para.getRects().add(built[i]);
                     }
                 }
                 return mediaExtractor.extractContentImageBoxes(doc).stream()
                         .map(b -> {
-                            org.apache.pdfbox.pdmodel.common.PDRectangle mb = doc.getPage(b.page() - 1).getMediaBox();
+                            org.apache.pdfbox.pdmodel.common.PDRectangle cb = doc.getPage(b.page() - 1).getCropBox();
                             return AiChunkParagraph.RectItem.builder()
                                     .page(b.page())
-                                    .x(b.x() / mb.getWidth())
-                                    .y(b.y() / mb.getHeight())
-                                    .width(b.width() / mb.getWidth())
-                                    .height(b.height() / mb.getHeight())
+                                    .x(b.x() / cb.getWidth())
+                                    .y(b.y() / cb.getHeight())
+                                    .width(b.width() / cb.getWidth())
+                                    .height(b.height() / cb.getHeight())
                                     .build();
                         })
                         .collect(Collectors.toList());
@@ -1118,9 +1795,23 @@ public class AiChunkServiceImpl implements AiChunkService {
                 m++;
                 last = s;
             }
-            ranges[i][0] = anchorLine;
-            ranges[i][1] = last + 1;
-            j = last + 1;
+            // 孤儿行吸收：锚点命中 seq 第 m 行（m>0）时，锚点前的视觉行多半是本段被
+            // 行碎片化/首行匹配失败跳过的首行（不吸收则框精确切掉段落首行）；尾部同理。
+            // 向后吸收遇到"更像下一段首行"的行即停，避免抢行。
+            int start = anchorLine;
+            int headNeed = Math.min(anchorSeq, anchorLine - j);
+            if (headNeed > 0) start = anchorLine - headNeed;
+            int end = last + 1;
+            int tailRemain = seq.size() - (m + 1);
+            List<String> nextSeq = (i + 1 < n) ? normalizeLines(paragraphTexts.get(i + 1)) : List.of();
+            while (tailRemain > 0 && end < normLines.size()) {
+                if (!nextSeq.isEmpty() && lineMatches(normLines.get(end), nextSeq.get(0))) break;
+                end++;
+                tailRemain--;
+            }
+            ranges[i][0] = start;
+            ranges[i][1] = end;
+            j = end;
         }
         return ranges;
     }
@@ -1199,8 +1890,9 @@ public class AiChunkServiceImpl implements AiChunkService {
                     flush.run();
                 }
                 texts.get(texts.size() - 1).append(text == null ? "" : text);
-                // 取行首字符的字号、字体名与字体度量（ascent/descent，10em/1000 折算 pt）
-                float f = positions.get(0).getFontSize();
+                // 取行首字符的真实渲染字号（getFontSize 可能被矩阵放大，间隙阈值依赖真实值）
+                float f = positions.get(0).getFontSizeInPt() > 0
+                        ? positions.get(0).getFontSizeInPt() : positions.get(0).getFontSize();
                 if (f > 0) curFont[0] = f;
                 String nm = null;
                 try {

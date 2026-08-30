@@ -157,6 +157,9 @@ onlyoffice:
   url: ${ONLYOFFICE_URL:http://localhost:8082}
   # FastRAG → OO 拉取保存后文件时的 base URL；与 url 同源即可
   internal-url: ${ONLYOFFICE_INTERNAL_URL:http://localhost:8082}
+  # OO CommandService 路径（forcesave 手动保存用）。默认长期稳定的 .ashx 端点；
+  # 若 OO 版本 ≥8.3 且该端点不可用，可改为 /command
+  command-path: ${ONLYOFFICE_COMMAND_PATH:/coauthoring/CommandService.ashx}
   # 与 OnlyOffice Document Server JWT_SECRET 同步；服务端签名 + 验签共用
   jwt-secret: ${ONLYOFFICE_JWT_SECRET:fastrag-onlyoffice-dev-secret-change-me}
   # 与 OO 容器 token.enable 保持同步：false 时 config 不签名 / callback 跳过 token 校验

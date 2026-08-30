@@ -9,7 +9,6 @@ import FileUploader from './FileUploader.vue'
 import type { UploadConfig } from './FileUploader.vue'
 import FilePreviewDialog from './FilePreviewDialog.vue'
 import AiChunkPanel from './AiChunkPanel.vue'
-import OnlyOfficeEditorDialog from './OnlyOfficeEditorDialog.vue'
 import ChunkManagementPanel from './ChunkManagementPanel.vue'
 import MoveFileDialog from './MoveFileDialog.vue'
 import RenameFileDialog from './RenameFileDialog.vue'
@@ -456,41 +455,14 @@ function handleAiChunk(file: KnowledgeFile) {
   aiChunkVisible.value = true
 }
 
-// ---- OnlyOffice 编辑器弹窗 ----
-const onlyOfficeVisible = ref(false)
-const onlyOfficeFile = ref<KnowledgeFile | null>(null)
-const focusChunkId = ref<string | null>(null)
-
-/** 打开 OnlyOffice 编辑器（FileTable / FilePreviewDialog 都可调用） */
+// ---- OnlyOffice 在线编辑（独立路由页，保留全局 Header；编辑保存后后端自动触发重分片） ----
+/** 打开 OnlyOffice 编辑页（FileTable / FilePreviewDialog 都可调用） */
 function openOnlyOffice(file: KnowledgeFile) {
   if (!isOfficeFile(file.name)) {
     ElMessage.warning(`OnlyOffice 不支持该文件类型: ${file.extension}`)
     return
   }
-  onlyOfficeFile.value = file
-  focusChunkId.value = null
-  onlyOfficeVisible.value = true
-}
-
-/** AiChunkPanel chunk-click 回调：把 OO 编辑器打开并跳转到 chunk 对应页 */
-function handleChunkClickInOffice(chunk: { id: string; index: number; pageNumber?: number; title?: string }) {
-  // 若 AI 分片弹窗里的当前文件是 Office 类型，直接打开 OO
-  const sourceFile = aiChunkFile.value
-  if (sourceFile && isOfficeFile(sourceFile.name)) {
-    onlyOfficeFile.value = sourceFile
-    focusChunkId.value = chunk.id
-    onlyOfficeVisible.value = true
-  } else {
-    ElMessage.info('当前文件不是 Office 类型，请用对应的渲染器查看')
-  }
-}
-
-/** OO 选区创建 chunk 后，刷新 AI 分片弹窗的数据（无需重新打开） */
-function handleSelectionChunkCreated() {
-  // AiChunkPanel 内部使用 api.getChunks 拉数据；此处无需主动刷新，
-  // 因为手动创建的 chunk 在 AiChunkPanel 的「应用」流程中才会落库。
-  // 简单提示即可。
-  ElMessage.success('分片已创建')
+  router.push(`/knowledge/${kbId}/office/${file.id}`)
 }
 
 function handleAiChunkApplied() {
@@ -745,16 +717,6 @@ onBeforeUnmount(() => {
       :file="aiChunkFile"
       :kb-id="kbId"
       @applied="handleAiChunkApplied"
-      @chunk-click="handleChunkClickInOffice"
-    />
-
-    <!-- OnlyOffice 在线编辑弹窗（office 文件 / OO 服务启用时可用） -->
-    <OnlyOfficeEditorDialog
-      v-model="onlyOfficeVisible"
-      :file="onlyOfficeFile"
-      :kb-id="kbId"
-      :focus-chunk-id="focusChunkId"
-      @chunk-created="handleSelectionChunkCreated"
     />
 
     <!-- Chunk management panel -->

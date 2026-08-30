@@ -227,12 +227,21 @@ export async function downloadFile(kbId: string, fileId: string) {
 
 /** AI分片 同步预览：chunk=false 仅返回段落对齐模型（渲染左侧原件，不触发 LLM 分片）；chunk=true 含自动分片结果（SSE 不可用时兜底） */
 export async function aiChunkPreview(kbId: string, fileId: string, chunk = false) {
-  return request.post(`/kb/${kbId}/files/${fileId}/ai-chunk-preview`, null, { params: { chunk } })
+  // 扫描件/PDF 全本 OCR 同步执行，耗时可达分钟级——单独放宽到 5 分钟
+  // （axios 实例全局 30s 超时会把慢 OCR 误杀成 timeout，后端实际仍在继续）
+  return request.post(`/kb/${kbId}/files/${fileId}/ai-chunk-preview`, null, {
+    params: { chunk },
+    timeout: 300_000,
+  })
 }
 
 /** AI分片 应用：提交用户确认的分片列表；后端尊重边界只做向量化与落库（不重新切分、不重新解析原文件） */
 export async function aiChunkApply(kbId: string, fileId: string, payload: AiChunkApplyPayload) {
-  return request.post(`/kb/${kbId}/files/${fileId}/ai-chunk-apply`, payload)
+  // 落库含全量分片向量化（embedding API 逐/批调用）+ Milvus 写入 + parsed 工件写盘，
+  // 分片多/文本长时可达分钟级——放宽到 5 分钟（全局 30s 会误报 timeout，后端实际仍在继续）
+  return request.post(`/kb/${kbId}/files/${fileId}/ai-chunk-apply`, payload, {
+    timeout: 300_000,
+  })
 }
 
 /**
@@ -398,6 +407,33 @@ import type { OnlyOfficeConfig } from '@/types/onlyoffice'
  */
 export async function getOnlyOfficeConfig(kbId: string, fileId: string): Promise<OnlyOfficeConfig> {
   return request.get(`/kb/${kbId}/files/${fileId}/onlyoffice/config`)
+}
+
+/**
+ * 手动保存：对当前 OO 编辑会话执行 forcesave。
+ * 受理后 OO 以 status=6 回调后端 → 落盘 + 触发重新分片。
+ * 返回 result: initiated（已发起）/ no-changes（无修改）/ no-session（会话不存在）
+ *        / no-file / disabled / failed
+ */
+export async function forceOnlyOfficeSave(
+  kbId: string,
+  fileId: string,
+): Promise<{ result: string; ooError?: number; message?: string }> {
+  return request.post(`/kb/${kbId}/files/${fileId}/onlyoffice/forcesave`)
+}
+
+/**
+ * 区域内容提取（结构化优先，OCR 兜底）：
+ * 文字层行命中区域 → 结构化块（表格/段落/标题，精确文本零 OCR）；
+ * 区域内内容图片 → 裁剪调 OCR 模型；纯图形/扫描页 → 整区域渲染 OCR。
+ * region 坐标为归一化 0~1（cropBox 顶左原点），与 ai-chunk-preview 返回的 imageBoxes 同坐标系。
+ */
+export async function aiChunkImageOcr(
+  kbId: string,
+  fileId: string,
+  region: { page: number; x: number; y: number; width: number; height: number },
+): Promise<{ blocks: Array<{ type: string; text: string }> }> {
+  return request.post(`/kb/${kbId}/files/${fileId}/ai-chunk/image-ocr`, region)
 }
 
 // ===========================================================================

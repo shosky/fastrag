@@ -34,4 +34,19 @@ public interface AiChunkService {
 
     /** 应用：以用户确认的分片列表为唯一事实源落库，返回落库分片数 */
     int apply(String kbId, String fileId, AiChunkApplyRequest request);
+
+    /**
+     * 区域内容提取（结构化优先，OCR 兜底）：
+     * 文字层行命中区域 → 结构化块（表格/段落/标题，精确文本零 OCR）；
+     * 区域内内容图片 → 裁剪调 OCR 模型；两者皆无（纯图形/扫描页）→ 整区域渲染 OCR。
+     *
+     * @param page   页码（1-based）
+     * @param x      区域左上角 x（归一化 0~1，cropBox 顶左原点，与 preview imageBoxes 同坐标系）
+     * @param y      区域左上角 y
+     * @param width  区域宽
+     * @param height 区域高
+     * @return {blocks: [{type: heading|paragraph|table|image, text}]}
+     */
+    java.util.Map<String, Object> ocrImageRegion(String kbId, String fileId, int page,
+                                                 float x, float y, float width, float height);
 }

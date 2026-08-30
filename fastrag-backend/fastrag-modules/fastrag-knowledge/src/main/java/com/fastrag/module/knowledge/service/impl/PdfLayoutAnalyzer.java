@@ -4,11 +4,12 @@ import com.fastrag.module.knowledge.model.AiChunkLayoutBlock;
 
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
-import java.util.TreeMap;
 import java.util.TreeSet;
+import java.util.regex.Pattern;
 
 /**
  * PDFBox 几何版面分析：对<b>有文字层</b>的正规 PDF 页，把精确行盒聚类成内容块并打类型标签，
@@ -54,6 +55,79 @@ public final class PdfLayoutAnalyzer {
     private static final String MONO_PATTERN = "(?i).*(mono|consolas|courier|menlo|code|ocr).*";
 
     private PdfLayoutAnalyzer() {
+    }
+
+    /** 纯页码行：12、- 3 -、第5页/共10页、3/28 */
+    private static final Pattern PAGE_NUM_PATTERN = Pattern.compile(
+            "[-–—\\s]*\\d{1,4}[-–—\\s]*|第\\s*\\d+\\s*页(\\s*[,，/]\\s*共?\\s*\\d+\\s*页)?|\\d{1,4}\\s*/\\s*\\d{1,4}");
+
+    /**
+     * 跨页页眉/页脚/页码行清理（几何行链路通用，与解析侧文本清理同规则）：
+     * <ul>
+     *   <li>边缘区 = 行序位于页首/页尾两行，<b>或</b> y 落在页高 12% 顶带 / 87% 底带
+     *       （多行页眉、页脚上方还有其他元素时按行序判定不到，y 区域补足）；</li>
+     *   <li>边缘区内行文本数字掩码归一化（页码数字变化不影响判定）后在 ≥30% 页（且 ≥2 页）
+     *       重复 → 判定页眉/页脚行；纯页码行出现在边缘区 → 直接删除。</li>
+     * </ul>
+     * 原地修改传入的行表；单页文档不清理（无频次依据）。
+     *
+     * @param pageHeights 每页 cropBox 高度（pt，1-based 页码 → 高度），用于 y 区域判定
+     */
+    public static void stripHeaderFooterLines(Map<Integer, List<Line>> pageLines,
+                                              Map<Integer, Float> pageHeights) {
+        if (pageLines == null || pageLines.size() < 2) return;
+        int threshold = Math.max(2, (int) Math.ceil(pageLines.size() * 0.3));
+        Map<String, Integer> headFreq = new HashMap<>();
+        Map<String, Integer> footFreq = new HashMap<>();
+        for (Map.Entry<Integer, List<Line>> e : pageLines.entrySet()) {
+            float pageH = pageHeights.getOrDefault(e.getKey(), 0f);
+            List<Line> lines = e.getValue();
+            for (int i = 0; i < lines.size(); i++) {
+                String t = lines.get(i).text() == null ? "" : lines.get(i).text().trim();
+                if (t.isEmpty()) continue;
+                if (inHeadZone(lines, i, pageH) || inFootZone(lines, i, pageH)) {
+                    headFreq.merge(maskDigits(t), 1, Integer::sum);
+                    footFreq.merge(maskDigits(t), 1, Integer::sum);
+                }
+            }
+        }
+        for (Map.Entry<Integer, List<Line>> e : pageLines.entrySet()) {
+            float pageH = pageHeights.getOrDefault(e.getKey(), 0f);
+            List<Line> lines = e.getValue();
+            List<Line> kept = new ArrayList<>();
+            for (int i = 0; i < lines.size(); i++) {
+                Line l = lines.get(i);
+                String t = l.text() == null ? "" : l.text().trim();
+                if (t.isEmpty()) continue;
+                boolean headZone = inHeadZone(lines, i, pageH);
+                boolean footZone = inFootZone(lines, i, pageH);
+                if (headZone && headFreq.getOrDefault(maskDigits(t), 0) >= threshold) continue;
+                if (footZone && footFreq.getOrDefault(maskDigits(t), 0) >= threshold) continue;
+                if ((headZone || footZone) && PAGE_NUM_PATTERN.matcher(t).matches()) continue;
+                kept.add(l);
+            }
+            lines.clear();
+            lines.addAll(kept);
+        }
+    }
+
+    /** 页首边缘区：行序前 2 行，或行盒完全落在页高 12% 顶带内 */
+    private static boolean inHeadZone(List<Line> lines, int i, float pageH) {
+        if (i < 2) return true;
+        float[] r = lines.get(i).rect();
+        return pageH > 0 && (r[1] + r[3]) <= pageH * 0.12f;
+    }
+
+    /** 页尾边缘区：行序末 2 行，或行盒完全落在页高 87% 以下底带 */
+    private static boolean inFootZone(List<Line> lines, int i, float pageH) {
+        if (i >= lines.size() - 2) return true;
+        float[] r = lines.get(i).rect();
+        return pageH > 0 && r[1] >= pageH * 0.87f;
+    }
+
+    /** 频次归一化：数字掩码为 #（页码变化不影响判定）、去空白 */
+    private static String maskDigits(String s) {
+        return (s == null ? "" : s).replaceAll("\\d+", "#").replaceAll("\\s+", "");
     }
 
     /**
@@ -117,6 +191,8 @@ public final class PdfLayoutAnalyzer {
         collectRuns(ordered, allIdx, lineH, code, "code", page, pageW, pageH, blocks, 0f, 0f);
         collectRuns(ordered, allIdx, lineH, title, "title", page, pageW, pageH, blocks, 0f, 0f);
         collectToc(ordered, allIdx, lineH, toc, page, pageW, pageH, blocks);
+        // 表格边缘吸收：漏判的表格行并入相邻表格块（否则末行散落、甚至被误标 caption）
+        absorbTableEdges(ordered, allIdx, lineH, table, code, title, toc, page, pageW, pageH, blocks);
         collectText(ordered, allIdx, lineH, table, code, title, toc, page, pageW, pageH, blocks);
         markCaptions(blocks, lineH, pageH);
 
@@ -237,37 +313,90 @@ public final class PdfLayoutAnalyzer {
         }
     }
 
-    /** 未分类行按列分桶（x 起点 2pt 桶），列内按 y 行距聚类成段（双栏页面各栏独立成段、不交错合并） */
+    /**
+     * 未分类行聚合成段：按 y 排序后顺序合并，条件 = 行距 ≤ 2×行高 且 水平重叠 ≥ 窄行宽的 35%。
+     * <p>不做 x 起点硬分桶——首行缩进/居中/表格碎片化的行因起点不同曾被拆进不同桶，导致一行一框；
+     * 水平重叠判定天然兼容缩进与起点抖动，同时仍能隔开双栏（左右栏 x 范围不重叠）与并排单元格。</p>
+     */
     private static void collectText(List<Line> lines, List<Integer> idxs, float lineH, boolean[] table,
                                     boolean[] code, boolean[] title, boolean[] toc,
                                     int page, float pageW, float pageH, List<AiChunkLayoutBlock> out) {
-        Map<Float, List<Integer>> byCol = new TreeMap<>();
+        List<Line> rest = new ArrayList<>();
         for (int idx : idxs) {
             if (table[idx] || code[idx] || title[idx] || toc[idx]) continue;
-            float colX = Math.round(lines.get(idx).rect()[0] / COL_BIN) * COL_BIN;
-            byCol.computeIfAbsent(colX, k -> new ArrayList<>()).add(idx);
+            rest.add(lines.get(idx));
         }
-        for (List<Integer> col : byCol.values()) {
-            col.sort(Comparator.comparingDouble(i -> lines.get(i).rect()[1]));
-            int k = 0;
-            while (k < col.size()) {
-                int j = k;
-                while (j + 1 < col.size()) {
-                    int a = col.get(j), b = col.get(j + 1);
-                    float[] ra = lines.get(a).rect();
-                    float[] rb = lines.get(b).rect();
-                    boolean overlap = ra[0] < rb[0] + rb[2] - 1 && rb[0] < ra[0] + ra[2] - 1; // 1pt 余量
-                    float gap = rb[1] - (ra[1] + ra[3]);
-                    if (overlap && gap <= lineH * PARA_GAP_RATIO) {
-                        j++;
-                    } else {
-                        break;
-                    }
+        rest.sort(Comparator.comparingDouble(l -> l.rect()[1]));
+
+        // ① 同 y 带（|dy| ≤ 0.3×行高）碎片先合并成整行：bullet 符号/编号前缀与正文间的
+        //    x 间隙曾被拆行，碎片起点不同导致一行一框、前缀落在框外。
+        //    合并间隙 ≤ 2.5×行高（bullet 缩进量级，远小于双栏栏间距，不跨栏粘连）。
+        List<Line> rows = new ArrayList<>();
+        for (Line l : rest) {
+            if (!rows.isEmpty()) {
+                Line prev = rows.get(rows.size() - 1);
+                float[] rp = prev.rect();
+                float[] rl = l.rect();
+                boolean sameRow = Math.abs(rl[1] - rp[1]) <= lineH * 0.3f
+                        && (rl[0] - (rp[0] + rp[2])) <= lineH * 2.5f;
+                if (sameRow) {
+                    float x1 = Math.min(rp[0], rl[0]);
+                    float y1 = Math.min(rp[1], rl[1]);
+                    float x2 = Math.max(rp[0] + rp[2], rl[0] + rl[2]);
+                    float y2 = Math.max(rp[1] + rp[3], rl[1] + rl[3]);
+                    String text = ((prev.text() == null ? "" : prev.text().trim()) + " "
+                            + (l.text() == null ? "" : l.text().trim())).trim();
+                    rows.set(rows.size() - 1, new Line(new float[]{x1, y1, x2 - x1, y2 - y1},
+                            text, prev.fontSize(), prev.fontName()));
+                    continue;
                 }
-                out.add(blockOf(lines, col, k, j, "text", page, pageW, pageH, 0f, 0f));
-                k = j + 1;
+            }
+            rows.add(l);
+        }
+
+        // ② 跨行聚合成段：行距 ≤ 2×行高 且 水平重叠 ≥ 窄行宽 35%（首行缩进/起点抖动不拆段，
+        //    双栏 x 范围不重叠仍隔开）
+        int k = 0;
+        while (k < rows.size()) {
+            int j = k;
+            while (j + 1 < rows.size()) {
+                float[] ra = rows.get(j).rect();
+                float[] rb = rows.get(j + 1).rect();
+                float gap = rb[1] - (ra[1] + ra[3]);
+                float overlapW = Math.min(ra[0] + ra[2], rb[0] + rb[2]) - Math.max(ra[0], rb[0]);
+                float minW = Math.min(ra[2], rb[2]);
+                boolean horizOverlap = minW > 0 && overlapW >= minW * 0.35f;
+                if (gap <= lineH * PARA_GAP_RATIO && horizOverlap) {
+                    j++;
+                } else {
+                    break;
+                }
+            }
+            out.add(blockOfLines(rows, k, j, "text", page, pageW, pageH));
+            k = j + 1;
+        }
+    }
+
+    /** 行列表直接成块（作用于同 y 合并后的局部行列表，逻辑与 blockOf 一致） */
+    private static AiChunkLayoutBlock blockOfLines(List<Line> ls, int from, int to, String type,
+                                                   int page, float pageW, float pageH) {
+        float x1 = Float.MAX_VALUE, y1 = Float.MAX_VALUE, x2 = -1, y2 = -1;
+        StringBuilder sb = new StringBuilder();
+        for (int k = from; k <= to; k++) {
+            float[] r = ls.get(k).rect();
+            x1 = Math.min(x1, r[0]);
+            y1 = Math.min(y1, r[1]);
+            x2 = Math.max(x2, r[0] + r[2]);
+            y2 = Math.max(y2, r[1] + r[3]);
+            if (ls.get(k).text() != null) {
+                if (sb.length() > 0) sb.append(' ');
+                sb.append(ls.get(k).text().trim());
             }
         }
+        String text = sb.length() > 60 ? sb.substring(0, 60) + "…" : sb.toString();
+        return AiChunkLayoutBlock.builder().page(page).type(type)
+                .x(x1 / pageW).y(y1 / pageH).width((x2 - x1) / pageW).height((y2 - y1) / pageH)
+                .text(text).build();
     }
 
     /** 行距不超过 maxGapRatio × 行高即视为同一块内相邻 */
@@ -276,7 +405,73 @@ public final class PdfLayoutAnalyzer {
         return gap <= lineH * maxGapRatio;
     }
 
-    /** 短正文块紧邻（≤2×行高，x 重叠）image/table → 图注 */
+    /**
+     * 表格边缘吸收（通用容错）：与表格块紧邻（垂直 ≤2.5×行高、x 覆盖 ≥60% 行宽）、
+     * 文本长度 8~48 字符的未分类行并入表格块——修复表格行判定漏行导致的
+     * 「末行散落在表格外 / 被 caption 规则误标」。
+     * 过短行（"示例："等引导语）与过长行（正文段落）不吸收。迭代直到无变化。
+     */
+    private static void absorbTableEdges(List<Line> lines, List<Integer> idxs, float lineH,
+                                         boolean[] table, boolean[] code, boolean[] title, boolean[] toc,
+                                         int page, float pageW, float pageH, List<AiChunkLayoutBlock> blocks) {
+        float maxGapN = pageH > 0 ? (lineH * 2.5f) / pageH : 0f;
+        boolean changed = true;
+        while (changed) {
+            changed = false;
+            for (AiChunkLayoutBlock b : blocks) {
+                if (!"table".equals(b.getType())) continue;
+                int pick = -1;
+                float pickGap = Float.MAX_VALUE;
+                float bX = (float) b.getX();
+                float bY = (float) b.getY();
+                float bW = (float) b.getWidth();
+                float bH = (float) b.getHeight();
+                for (int idx : idxs) {
+                    if (table[idx] || code[idx] || title[idx] || toc[idx]) continue;
+                    float[] r = lines.get(idx).rect();
+                    String t = lines.get(idx).text() == null ? "" : lines.get(idx).text().trim();
+                    if (t.length() < 8 || t.length() > 48) continue;
+                    float lx = r[0] / pageW;
+                    float ly = r[1] / pageH;
+                    float lBottom = (r[1] + r[3]) / pageH;
+                    float lWidth = r[2] / pageW;
+                    float overlapW = Math.min(lx + lWidth, bX + bW) - Math.max(lx, bX);
+                    if (lWidth <= 0 || overlapW < lWidth * 0.6f) continue;
+                    float gapAbove = Math.abs(bY - lBottom);
+                    float gapBelow = Math.abs(ly - (bY + bH));
+                    float gap = Math.min(gapAbove, gapBelow);
+                    if (gap <= maxGapN && gap < pickGap) {
+                        pick = idx;
+                        pickGap = gap;
+                    }
+                }
+                if (pick >= 0) {
+                    float[] r = lines.get(pick).rect();
+                    float lx = r[0] / pageW, ly = r[1] / pageH;
+                    float lw = r[2] / pageW, lh = r[3] / pageH;
+                    float nx = Math.min(bX, lx);
+                    float ny = Math.min(bY, ly);
+                    float nw = Math.max(bX + bW, lx + lw) - nx;
+                    float nh = Math.max(bY + bH, ly + lh) - ny;
+                    b.setX(nx);
+                    b.setY(ny);
+                    b.setWidth(nw);
+                    b.setHeight(nh);
+                    String add = lines.get(pick).text() == null ? "" : lines.get(pick).text().trim();
+                    String merged = (add + " " + (b.getText() == null ? "" : b.getText())).trim();
+                    b.setText(merged.length() > 60 ? merged.substring(0, 60) + "…" : merged);
+                    table[pick] = true;
+                    code[pick] = true;
+                    title[pick] = true;
+                    toc[pick] = true;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    /** 短正文块紧邻（≤2×行高，x 重叠）image → 图注。表格邻接的短行不标 caption：
+     *  表格漏行的末行常被此规则误标（表格边缘由 absorbTableEdges 吸收） */
     private static void markCaptions(List<AiChunkLayoutBlock> blocks, float lineH, float pageH) {
         float normGap = pageH > 0 ? (lineH * 2f) / pageH : 0f;
         for (AiChunkLayoutBlock b : blocks) {
@@ -284,7 +479,7 @@ public final class PdfLayoutAnalyzer {
             String t = b.getText() == null ? "" : b.getText().trim();
             if (t.length() > CAPTION_MAX_LEN) continue;
             for (AiChunkLayoutBlock o : blocks) {
-                if (!"image".equals(o.getType()) && !"table".equals(o.getType())) continue;
+                if (!"image".equals(o.getType())) continue;
                 if (b.getX() + b.getWidth() < o.getX() || o.getX() + o.getWidth() < b.getX()) continue;
                 float gapBelow = (float) Math.abs(b.getY() - (o.getY() + o.getHeight()));
                 float gapAbove = (float) Math.abs(o.getY() - (b.getY() + b.getHeight()));

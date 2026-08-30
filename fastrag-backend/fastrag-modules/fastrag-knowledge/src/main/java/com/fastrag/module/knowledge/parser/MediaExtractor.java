@@ -505,6 +505,10 @@ public class MediaExtractor {
                 org.apache.pdfbox.pdmodel.common.PDRectangle pageBox = page.getMediaBox();
                 float pageH = pageBox.getHeight();
                 double pageArea = (double) pageBox.getWidth() * pageH;
+                // 顶左转换基准与文本坐标一致：用 cropBox（页面可视区），mediaBox 含装订/出血区时二者不同
+                org.apache.pdfbox.pdmodel.common.PDRectangle cropBox = page.getCropBox();
+                float cropX = cropBox.getLowerLeftX();
+                float cropTopY = cropBox.getUpperRightY();
 
                 Map<String, List<float[]>> boxesByName = collectImageBoxes(page);
                 org.apache.pdfbox.pdmodel.PDResources resources = page.getResources();
@@ -513,14 +517,23 @@ public class MediaExtractor {
                     if (!(xobject instanceof org.apache.pdfbox.pdmodel.graphics.image.PDImageXObject image)) {
                         continue;
                     }
-                    if (ImageFilter.isDecorativeBySize(image.getWidth(), image.getHeight())) continue;
                     double imgArea = (double) image.getWidth() * image.getHeight();
-                    if (imgArea / pageArea < 0.01) continue;
+                    // 只排除分隔线（极端宽高比）与极小图标（单边 <40px）。
+                    // 不再用 isDecorativeBySize（单边<100px/面积<3万px²）与"像素面积<页面1%"过滤——
+                    // 那会误杀大量小尺寸内容图（命令截图/小图表），导致原件预览无 image 框、
+                    // 区域分片时图片内容缺失（用户要求小图同样可选、可随区域提取）
+                    if (ImageFilter.isDecorativeByAspectRatio(image.getWidth(), image.getHeight())) continue;
+                    if (Math.min(image.getWidth(), image.getHeight()) < 40) continue;
                     List<float[]> boxes = boxesByName.get(name.getName());
                     if (boxes == null || isInHeaderFooterZone(boxes, pageH, imgArea, pageArea)) continue;
                     for (float[] b : boxes) {
-                        // [minX,minY,maxX,maxY]（y 向上）→ 顶左原点 [x,y,w,h]（y 向下）
-                        result.add(new PdfImageBox(pageNum + 1, b[0], pageH - b[3], b[2] - b[0], b[3] - b[1]));
+                        // 渲染尺寸过小（占页面 <0.05%，如 <16pt 的图标）仍视为装饰，不入框
+                        double boxArea = (double) (b[2] - b[0]) * (b[3] - b[1]);
+                        if (boxArea / pageArea < 0.0005) continue;
+                        // [minX,minY,maxX,maxY]（用户空间，y 向上、原点为 mediaBox 左下）
+                        // → cropBox 顶左原点 [x,y,w,h]（y 向下），与文本坐标同基准
+                        result.add(new PdfImageBox(pageNum + 1, b[0] - cropX, cropTopY - b[3],
+                                b[2] - b[0], b[3] - b[1]));
                     }
                 }
             }

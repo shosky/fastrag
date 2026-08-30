@@ -113,6 +113,13 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '分片管理', hidden: true },
       },
 
+      {
+        path: 'knowledge/:id/office/:fileId',
+        name: 'KnowledgeOfficeEdit',
+        component: () => import('@/views/knowledge/detail/office-edit.vue'),
+        meta: { title: '在线编辑', hidden: true },
+      },
+
       // ===== 业务流 =====
       // ===== 应用与运营 =====
       {

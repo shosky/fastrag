@@ -695,6 +695,9 @@ export interface AiChunkParagraph {
   imageKey?: string
   /** 段落文字块坐标（每页一个盒；归一化 0~1 顶左原点；跨页合并块多页多个），前端 pdf.js overlay 据此画分块边界 */
   rects?: Array<{ page: number; x: number; y: number; width: number; height: number }>
+  /** 锚定行文本（PDF 专用）：本段在页面上实际命中的行文本（行链路已清理页眉脚）。
+   *  手动分片以它为内容源（所见即所得），text（解析全文）作兜底；未锚定段落无此字段 */
+  anchorText?: string
   /** 跨页合并后的页码范围，如 "15-16"；未跨页时为 "N" */
   pageRange: string
   /** PPTX 用：所在 slide 索引 */
@@ -749,6 +752,8 @@ export interface AiChunkResult {
   /** 版面分析块（缓存命中时随预览返回；未命中由前端走 SSE /ai-chunk/layout 按需生成） */
   layoutBlocks?: AiChunkLayoutBlock[]
   chunks: AiChunk[]
+  /** 自动分片实际来源：llm（LLM 语义分组）/ embedding（降级）/ rule（再降级）；withChunks=false 时为 null */
+  chunkSource?: string | null
   /** 合并后的 Markdown（parsed.md 同源） */
   markdown: string
 }

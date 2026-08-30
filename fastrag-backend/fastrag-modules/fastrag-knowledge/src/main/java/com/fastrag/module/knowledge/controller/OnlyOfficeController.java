@@ -93,6 +93,25 @@ public class OnlyOfficeController {
     }
 
     /**
+     * 页面「保存」按钮：对当前 OO 编辑会话执行 forcesave。
+     * 受理后 OO 会以 status=6 回调 /callback，完成落盘 + 触发重新分片。
+     * result: initiated（已发起）/ no-changes（无修改）/ no-session（会话不存在）/ failed。
+     */
+    @KbAuth(KBRole.viewer)
+    @PostMapping("/{id}/onlyoffice/forcesave")
+    public ApiResponse<?> forceSave(@PathVariable String kbId, @PathVariable String id) {
+        if (!ooEnabled) {
+            return ApiResponse.error(503, "OnlyOffice 未启用（onlyoffice.enabled=false）");
+        }
+        // 与 /config 一致的角色判断：viewer 只读，不能保存
+        KBRole role = resolveCurrentUserRole(kbId);
+        if (role != KBRole.editor && role != KBRole.owner) {
+            return ApiResponse.forbidden("viewer 角色无编辑权限，无法保存");
+        }
+        return ApiResponse.success(onlyOfficeService.forceSave(kbId, id));
+    }
+
+    /**
      * OnlyOffice Document Server 服务端拉取原始文件。
      * permitAll（在 SecurityConfig 已配置），仅接受 OnlyOffice 自签 JWT 作为身份证明。
      */

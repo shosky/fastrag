@@ -1,6 +1,7 @@
 package com.fastrag.module.knowledge.service.impl;
 
 import cn.hutool.core.util.StrUtil;
+import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbFile;
@@ -20,8 +21,10 @@ import org.springframework.stereotype.Service;
 
 import java.io.ByteArrayInputStream;
 import java.io.InputStream;
+import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.time.LocalDateTime;
@@ -29,6 +32,7 @@ import java.util.HashMap;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * OnlyOfficeService 实现类。
@@ -108,6 +112,19 @@ public class OnlyOfficeServiceImpl implements OnlyOfficeService {
     @Value("${onlyoffice.jwt-enabled:true}")
     private boolean jwtEnabled;
 
+    /** FastRAG 服务端 → OO CommandService 的 base URL（forcesave 用；与 url 同源即可） */
+    @Value("${onlyoffice.internal-url:http://localhost:8082}")
+    private String ooInternalUrl;
+
+    /** OO CommandService 路径（8.3 起新增 /command；默认用长期稳定的 .ashx 端点） */
+    @Value("${onlyoffice.command-path:/coauthoring/CommandService.ashx}")
+    private String commandPath;
+
+    /** fileId → 当前活跃 OO 编辑会话的 documentKey（{@link #buildEditorConfig} 时登记）。
+     *  作用有二：forcesave 定位当前会话；callback 校验时兼容「保存后 updatedAt 已变、
+     *  但同一编辑会话 key 不变」的后续回调（否则同一会话内的第二次保存会被误拒）。 */
+    private final Map<String, String> activeSessionKeys = new ConcurrentHashMap<>();
+
     @Override
     public boolean isSupportedFile(String fileName) {
         if (!enabled || StrUtil.isBlank(fileName)) {
@@ -158,6 +175,8 @@ public class OnlyOfficeServiceImpl implements OnlyOfficeService {
         }
 
         String documentKey = buildDocumentKey(fileId, f.getUpdatedAt());
+        // 登记活跃会话 key：forcesave 依赖它定位会话；callback 校验用它兼容同会话多次保存
+        activeSessionKeys.put(fileId, documentKey);
         // OnlyOffice 7.1+ 要求 document.url 同时带 token 和 key（防 URL 滥用 / 文档身份校验）
         String documentUrl = storageBaseUrl + "/api/kb/" + kbId + "/files/" + fileId + "/onlyoffice/raw"
                 + "?token=" + signRawFileToken(kbId, fileId)
@@ -259,7 +278,9 @@ public class OnlyOfficeServiceImpl implements OnlyOfficeService {
                 log.info("[OnlyOffice] JWT disabled, skipping callback token check (token present but ignored)");
             }
 
-            // 2. 校验 document.key
+            // 2. 校验 document.key：匹配「当前 updatedAt 派生 key」或「登记的活跃会话 key」。
+            //    后者覆盖同一编辑会话内多次保存的场景（首次保存后 updatedAt 已变，
+            //    但会话 key 保持不变；不认会话 key 会把第二次保存误拒）。
             KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
                     .eq(KbFile::getId, fileId)
                     .eq(KbFile::getKbId, kbId));
@@ -268,9 +289,13 @@ public class OnlyOfficeServiceImpl implements OnlyOfficeService {
                 return response;
             }
             String expectedKey = buildDocumentKey(fileId, f.getUpdatedAt());
-            if (key != null && !key.equals(expectedKey)) {
-                log.warn("[OnlyOffice] Callback document.key mismatch: expected={}, got={}",
-                        expectedKey, key);
+            String sessionKey = activeSessionKeys.get(fileId);
+            boolean keyTrusted = key == null
+                    || key.equals(expectedKey)
+                    || (sessionKey != null && key.equals(sessionKey));
+            if (!keyTrusted) {
+                log.warn("[OnlyOffice] Callback document.key mismatch: expected={}, session={}, got={}",
+                        expectedKey, sessionKey, key);
                 // key 不一致说明文件已在我们不知情的情况下被改动过，保守拒绝
                 response.put("error", 1);
                 return response;
@@ -349,6 +374,87 @@ public class OnlyOfficeServiceImpl implements OnlyOfficeService {
             return is.readAllBytes();
         } finally {
             conn.disconnect();
+        }
+    }
+
+    @Override
+    public Map<String, Object> forceSave(String kbId, String fileId) {
+        Map<String, Object> result = new HashMap<>();
+        if (!enabled) {
+            result.put("result", "disabled");
+            return result;
+        }
+        KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
+                .eq(KbFile::getId, fileId)
+                .eq(KbFile::getKbId, kbId));
+        if (f == null) {
+            result.put("result", "no-file");
+            return result;
+        }
+
+        // 会话 key：优先取 buildEditorConfig 登记的活跃会话；无会话时退化为按当前 updatedAt 计算
+        String key = activeSessionKeys.getOrDefault(fileId, buildDocumentKey(fileId, f.getUpdatedAt()));
+
+        try {
+            StringBuilder body = new StringBuilder("c=forcesave&key=")
+                    .append(URLEncoder.encode(key, StandardCharsets.UTF_8));
+            if (jwtEnabled) {
+                // OO CommandService JWT：payload 需镜像命令参数（c + key）
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("c", "forcesave");
+                payload.put("key", key);
+                body.append("&token=").append(URLEncoder.encode(ooJwtUtil.signPayload(payload, 60_000L), StandardCharsets.UTF_8));
+            }
+            int ooError = postCommand(body.toString());
+            log.info("[OnlyOffice] forcesave: kbId={}, fileId={}, ooError={}", kbId, fileId, ooError);
+            switch (ooError) {
+                case 0 -> result.put("result", "initiated");
+                case 4 -> result.put("result", "no-changes");
+                case 1 -> result.put("result", "no-session");
+                default -> {
+                    result.put("result", "failed");
+                    result.put("ooError", ooError);
+                }
+            }
+        } catch (Exception e) {
+            log.error("[OnlyOffice] forcesave request failed: kbId={}, fileId={}, {}", kbId, fileId, e.getMessage());
+            result.put("result", "failed");
+            result.put("message", e.getMessage());
+        }
+        return result;
+    }
+
+    /**
+     * POST 表单体到 OO CommandService，返回响应里的 error 码
+     * （0=已受理，4=无修改，1=key 不存在，3=内部错误，见 OO 官方文档）。
+     */
+    private int postCommand(String formBody) throws Exception {
+        URL url = new URL(ooInternalUrl + commandPath);
+        HttpURLConnection conn = (HttpURLConnection) url.openConnection();
+        conn.setRequestMethod("POST");
+        conn.setDoOutput(true);
+        conn.setConnectTimeout(10_000);
+        conn.setReadTimeout(30_000);
+        conn.setRequestProperty("Content-Type", "application/x-www-form-urlencoded");
+        try (OutputStream os = conn.getOutputStream()) {
+            os.write(formBody.getBytes(StandardCharsets.UTF_8));
+        }
+        int code = conn.getResponseCode();
+        String resp;
+        try (InputStream is = code >= 400 ? conn.getErrorStream() : conn.getInputStream()) {
+            resp = is == null ? "" : new String(is.readAllBytes(), StandardCharsets.UTF_8);
+        } finally {
+            conn.disconnect();
+        }
+        if (code >= 400) {
+            throw new RuntimeException("CommandService HTTP " + code + ": " + resp);
+        }
+        // 响应形如 {"error": 0}；解析失败保守返回 -1（前端按 failed 处理）
+        try {
+            return JSONUtil.parseObj(resp).getInt("error", -1);
+        } catch (Exception e) {
+            log.warn("[OnlyOffice] CommandService unparsable response: {}", resp);
+            return -1;
         }
     }
 
