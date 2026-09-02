@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ROLE_LABELS } from '@/types/auth'
+import { ROLE_LABELS, PERMISSIONS } from '@/types/auth'
 import type { RoleMeta } from '@/types/auth'
 import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
@@ -25,6 +25,18 @@ const roleMap = ref<Record<string, string>>({})
 const activeTab = ref('list')
 const searchKeyword = ref('')
 const loading = ref(false)
+const expandedRows = ref<Record<number, boolean>>({})
+
+function isExpanded(rowId: number) {
+  return !!expandedRows.value[rowId]
+}
+
+function toggleRow(row: PermissionItem) {
+  expandedRows.value = {
+    ...expandedRows.value,
+    [row.id]: !expandedRows.value[row.id],
+  }
+}
 
 // --- Pagination ---
 const { currentPage, pageSize, handleCurrentChange, handleSizeChange } = usePagination(10)
@@ -284,7 +296,7 @@ watch([() => formData.value.httpMethod, () => formData.value.apiPath], ([method,
     <!-- 权限列表 -->
     <div class="perm-list-toolbar">
       <div class="perm-list-toolbar__left">
-        <el-button type="primary" size="small" @click="handleAdd">新增权限</el-button>
+        <el-button type="primary" size="small" v-permission="PERMISSIONS.ADMIN_ROLE" @click="handleAdd">新增权限</el-button>
         <el-input
           v-model="searchKeyword"
           placeholder="搜索权限名称或标识"
@@ -327,20 +339,32 @@ watch([() => formData.value.httpMethod, () => formData.value.apiPath], ([method,
       </el-table-column>
       <el-table-column label="关联角色" min-width="200">
         <template #default="{ row }">
-          <el-tag
-            v-for="roleId in (row.roleIds || [])"
-            :key="roleId"
-            size="small"
-            style="margin: 1px 2px"
-          >
-            {{ roleMap[roleId] || roleId }}
-          </el-tag>
+          <div class="role-tags">
+            <template v-for="(roleId, idx) in (row.roleIds || [])" :key="roleId">
+              <el-tag
+                v-if="isExpanded(row.id) || idx < 2"
+                size="small"
+                style="margin: 1px 2px"
+              >
+                {{ roleMap[roleId] || roleId }}
+              </el-tag>
+            </template>
+            <el-button
+              v-if="(row.roleIds || []).length > 2"
+              link
+              type="primary"
+              size="small"
+              @click="toggleRow(row)"
+            >
+              {{ isExpanded(row.id) ? '收起' : `+${(row.roleIds || []).length - 2} 更多` }}
+            </el-button>
+          </div>
         </template>
       </el-table-column>
       <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
-          <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+          <el-button link type="primary" size="small" v-permission="PERMISSIONS.ADMIN_ROLE" @click="handleEdit(row)">编辑</el-button>
+          <el-button link type="danger" size="small" v-permission="PERMISSIONS.ADMIN_ROLE" @click="handleDelete(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -473,5 +497,11 @@ watch([() => formData.value.httpMethod, () => formData.value.apiPath], ([method,
   display: flex;
   justify-content: flex-end;
   margin-top: 16px;
+}
+
+.role-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
 }
 </style>

@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { OrgNode } from '@/mock/org'
+import { PERMISSIONS } from '@/types/auth'
 import * as api from '@/api'
 
 const searchName = ref('')
@@ -86,7 +87,7 @@ async function handleSave() {
       <div class="section-header">
         <div class="section-title">组织管理</div>
         <div>
-          <el-button type="primary" @click="handleAdd">新增组织</el-button>
+          <el-button type="primary" v-permission="PERMISSIONS.ADMIN_ORG_CREATE" @click="handleAdd">新增组织</el-button>
         </div>
       </div>
 
@@ -109,9 +110,9 @@ async function handleSave() {
         <el-table-column prop="relatedCount" label="关联人数" width="80" align="center" />
         <el-table-column label="操作" width="250" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handleAddChild(row.id)">新增下级</el-button>
-            <el-button link type="primary" size="small" @click="handleEdit(row as OrgNode)">编辑</el-button>
-            <el-button link type="danger" size="small" @click="handleDelete(row as OrgNode)">删除</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.ADMIN_ORG_CREATE" @click="handleAddChild(row.id)">新增下级</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.ADMIN_ORG_EDIT" @click="handleEdit(row as OrgNode)">编辑</el-button>
+            <el-button link type="danger" size="small" v-permission="PERMISSIONS.ADMIN_ORG_DELETE" @click="handleDelete(row as OrgNode)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

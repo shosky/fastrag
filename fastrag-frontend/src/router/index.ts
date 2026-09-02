@@ -1,8 +1,8 @@
 import { createRouter, createWebHistory } from 'vue-router'
 import routes from './routes'
 import { storage } from '@/utils/storage'
-import type { SystemRole } from '@/types/auth'
 import { MENU_PERMISSION_MAP, ROLE_PERMISSIONS } from '@/types/auth'
+import type { SystemRole } from '@/types/auth'
 import type { MenuPermission } from '@/types/auth'
 
 const router = createRouter({
@@ -11,11 +11,22 @@ const router = createRouter({
 })
 
 /**
+ * 路径是否匹配菜单条目（支持 :param 动态段，如 /admin/account/roles/:id/permissions）。
+ */
+function pathMatches(pattern: string, path: string): boolean {
+  if (pattern === path) return true
+  const patternSegs = pattern.split('/')
+  const pathSegs = path.split('/')
+  if (patternSegs.length !== pathSegs.length) return false
+  return patternSegs.every((seg, i) => seg.startsWith(':') || seg === pathSegs[i])
+}
+
+/**
  * 从 MENU_PERMISSION_MAP 中查找路由路径对应的所需权限。
  */
 function findRoutePerms(path: string, map: MenuPermission[] = MENU_PERMISSION_MAP): string[] {
   for (const item of map) {
-    if (item.path === path) return item.requiredPerms
+    if (pathMatches(item.path, path)) return item.requiredPerms
     if (item.children) {
       const found = findRoutePerms(path, item.children)
       if (found.length > 0) return found
@@ -78,26 +89,8 @@ router.beforeEach((to, _from, next) => {
     return
   }
 
-  // 角色检查（原有逻辑）
-  const requiredRoles = to.meta.roles as SystemRole[] | undefined
-  if (requiredRoles && requiredRoles.length > 0) {
-    try {
-      const userInfoStr = storage.get('userInfo')
-      if (userInfoStr) {
-        const userInfo = JSON.parse(userInfoStr)
-        const userRoles: string[] = userInfo.roles || []
-        const hasAccess = requiredRoles.some((r) => userRoles.includes(r) || userRoles.includes('super_admin'))
-        if (!hasAccess) {
-          next('/403')
-          return
-        }
-      }
-    } catch {
-      // 解析失败，放行（由 store 层兜底）
-    }
-  }
-
-  // 菜单权限检查（新增）
+  // 权限检查：访问控制完全由权限页勾选驱动（meta.roles 角色白名单已移除，
+  // MENU_PERMISSION_MAP 中未登记的路径放行，如详情页等由页面内权限自行控制）
   const routePerms = findRoutePerms(to.path)
   if (routePerms.length > 0) {
     const hasMenuAccess = routePerms.some((p) => userHasPermission(p))

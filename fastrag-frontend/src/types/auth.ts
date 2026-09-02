@@ -518,7 +518,6 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
     title: '管理',
     requiredPerms: [PERMISSIONS.MENU_ADMIN],
     children: [
-      { path: '/admin/index', title: '管理中心概览', requiredPerms: [PERMISSIONS.ADMIN_ACCESS] },
       {
         path: '/admin/system',
         title: '系统管理',
@@ -537,6 +536,8 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
         requiredPerms: [PERMISSIONS.MENU_ADMIN_ACCOUNT],
         children: [
           { path: '/admin/account/roles', title: '角色管理', requiredPerms: [PERMISSIONS.ADMIN_ROLE] },
+          // 角色权限配置页：与角色管理同门禁（能进角色管理才能配置权限）
+          { path: '/admin/account/roles/:id/permissions', title: '角色权限配置', requiredPerms: [PERMISSIONS.ADMIN_ROLE] },
           { path: '/admin/account/organization', title: '组织管理', requiredPerms: [PERMISSIONS.ADMIN_ORG] },
           { path: '/admin/account/personnel', title: '人员管理', requiredPerms: [PERMISSIONS.ADMIN_USER] },
           { path: '/admin/permissions', title: '权限管理', requiredPerms: [PERMISSIONS.ADMIN_ROLE] },
@@ -555,8 +556,8 @@ export const MENU_PERMISSION_MAP: MenuPermission[] = [
         title: '开放平台',
         requiredPerms: [PERMISSIONS.MENU_ADMIN_PLATFORM],
         children: [
-          { path: '/admin/platform/model-management', title: '模型管理', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
-          { path: '/admin/platform/api-keys', title: '开放密钥', requiredPerms: [PERMISSIONS.ADMIN_SYSTEM] },
+          { path: '/admin/platform/model-management', title: '模型管理', requiredPerms: [PERMISSIONS.MENU_ADMIN_PLATFORM_MODEL] },
+          { path: '/admin/platform/api-keys', title: '开放密钥', requiredPerms: [PERMISSIONS.MENU_ADMIN_PLATFORM_APIKEY] },
         ],
       },
     ],

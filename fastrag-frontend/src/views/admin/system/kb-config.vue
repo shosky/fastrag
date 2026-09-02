@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
 
 const searchName = ref('')
@@ -20,6 +21,14 @@ const batchForm = ref({ space: 10, unit: 'GB' })
 const selectedKBs = ref<string[]>([])
 
 const kbList = ref<any[]>([])
+
+// --- 分页 ---
+const { currentPage, pageSize, handleCurrentChange, handleSizeChange } = usePagination(10)
+
+const paginatedKBs = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredList.value.slice(start, start + pageSize.value)
+})
 
 async function loadKBs() {
   loading.value = true
@@ -117,7 +126,7 @@ async function handleInlineSave(kb: any) {
         <el-button @click="handleReset">重置</el-button>
       </div>
 
-      <el-table :data="filteredList" stripe @selection-change="(rows: any) => selectedKBs = rows.map((r: any) => r.id)">
+      <el-table :data="paginatedKBs" stripe @selection-change="(rows: any) => selectedKBs = rows.map((r: any) => r.id)">
         <el-table-column type="selection" width="50" />
         <el-table-column prop="name" label="知识库名称" />
         <el-table-column prop="creator" label="创建者" width="100" />
@@ -144,7 +153,18 @@ async function handleInlineSave(kb: any) {
           </template>
         </el-table-column>
       </el-table>
-      <div class="table-footer">共 {{ filteredList.length }} 条</div>
+      <div class="kb-config__pagination">
+        <el-pagination
+          v-if="filteredList.length > pageSize"
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="filteredList.length"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </div>
 
     <!-- 默认配置弹窗 -->
@@ -223,5 +243,11 @@ async function handleInlineSave(kb: any) {
 .space-input {
   display: flex;
   gap: $spacing-sm;
+}
+
+.kb-config__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

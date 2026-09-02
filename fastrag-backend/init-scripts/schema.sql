@@ -640,6 +640,7 @@ CREATE TABLE IF NOT EXISTS term_record (
     alias VARCHAR(256),
     definition TEXT,
     category VARCHAR(64),
+    status TINYINT NOT NULL DEFAULT 1 COMMENT '1=启用 0=禁用',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_library_id (library_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -670,7 +671,11 @@ CREATE TABLE IF NOT EXISTS sys_dictionary (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     dict_type VARCHAR(64) NOT NULL,
     dict_key VARCHAR(128) NOT NULL,
-    dict_value TEXT
+    dict_value TEXT,
+    label VARCHAR(128) DEFAULT NULL COMMENT '显示名，空则回退 dict_key',
+    enabled TINYINT NOT NULL DEFAULT 1,
+    remark VARCHAR(255) DEFAULT NULL,
+    sort_order INT NOT NULL DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ==================== Operations & Audit ====================

@@ -22,4 +22,8 @@ import com.baomidou.mybatisplus.annotation.*; import lombok.Data;
 @Data @TableName("sys_dictionary") public class SysDictionary {
     @TableId(type=IdType.AUTO) private Long id;
     private String dictType,dictKey,dictValue;
+    private String label;
+    private Integer enabled;
+    private String remark;
+    private Integer sortOrder;
 }

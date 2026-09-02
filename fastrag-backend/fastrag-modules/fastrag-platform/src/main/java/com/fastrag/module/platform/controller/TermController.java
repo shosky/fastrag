@@ -12,9 +12,11 @@ package com.fastrag.module.platform.controller;
  * <ul>
  *   <li>GET /api/terminology/libraries — 查询所有术语库列表</li>
  *   <li>POST /api/terminology/libraries — 创建术语库</li>
+ *   <li>PUT /api/terminology/libraries/{id} — 更新术语库</li>
  *   <li>DELETE /api/terminology/libraries/{id} — 删除术语库</li>
- *   <li>GET /api/terminology/terms — 查询术语条目列表，支持按 library 过滤</li>
+ *   <li>GET /api/terminology/terms — 查询术语条目列表，支持按 libraryId 过滤</li>
  *   <li>POST /api/terminology/terms — 创建术语条目</li>
+ *   <li>PUT /api/terminology/terms/{id} — 更新术语条目</li>
  *   <li>DELETE /api/terminology/terms/{id} — 删除术语条目</li>
  * </ul>
  *
@@ -31,7 +33,9 @@ public class TermController {
     @GetMapping("/api/terminology/libraries") public ApiResponse<?> libs() { return ApiResponse.success(svc.listLibraries()); }
     @PostMapping("/api/terminology/libraries") public ApiResponse<?> createLib(@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.createLibrary(f)); }
     @DeleteMapping("/api/terminology/libraries/{id}") public ApiResponse<?> deleteLib(@PathVariable String id) { svc.deleteLibrary(id); return ApiResponse.success(); }
-    @GetMapping("/api/terminology/terms") public ApiResponse<?> terms(@RequestParam(required=false) String library) { return ApiResponse.success(svc.listTerms(library)); }
+    @GetMapping("/api/terminology/terms") public ApiResponse<?> terms(@RequestParam(required=false) String libraryId) { return ApiResponse.success(svc.listTerms(libraryId)); }
     @PostMapping("/api/terminology/terms") public ApiResponse<?> createTerm(@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.createTerm(f)); }
+    @PutMapping("/api/terminology/terms/{id}") public ApiResponse<?> updateTerm(@PathVariable String id, @RequestBody Map<String,Object> f) { return ApiResponse.success(svc.updateTerm(id, f)); }
     @DeleteMapping("/api/terminology/terms/{id}") public ApiResponse<?> deleteTerm(@PathVariable String id) { svc.deleteTerm(id); return ApiResponse.success(); }
+    @PutMapping("/api/terminology/libraries/{id}") public ApiResponse<?> updateLib(@PathVariable String id, @RequestBody Map<String,Object> f) { return ApiResponse.success(svc.updateLibrary(id, f)); }
 }

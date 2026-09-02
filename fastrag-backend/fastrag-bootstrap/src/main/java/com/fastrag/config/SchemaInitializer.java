@@ -330,6 +330,15 @@ public class SchemaInitializer {
         addColumnIfNotExists("model_call_log", "org_id", "VARCHAR(32)");
         try { jdbc.execute("UPDATE model_call_log m LEFT JOIN sys_user u ON u.username=m.caller SET m.org_id=u.org_id"); } catch (Exception e) { log.warn("backfill model_call_log.org_id: {}", e.getMessage()); }
 
+        // --- 术语条目启用状态：expandSynonyms 仅消费启用词条（init-scripts 迁移文件不被应用执行，须在此幂等添加） ---
+        addColumnIfNotExists("term_record", "status", "TINYINT NOT NULL DEFAULT 1 COMMENT '1=启用 0=禁用'");
+
+        // --- 字典扩展字段：管理页 label/enabled/remark 此前为返回时硬编码的假值 ---
+        addColumnIfNotExists("sys_dictionary", "label", "VARCHAR(128) DEFAULT NULL COMMENT '显示名，空则回退 dict_key'");
+        addColumnIfNotExists("sys_dictionary", "enabled", "TINYINT NOT NULL DEFAULT 1");
+        addColumnIfNotExists("sys_dictionary", "remark", "VARCHAR(255) DEFAULT NULL");
+        addColumnIfNotExists("sys_dictionary", "sort_order", "INT NOT NULL DEFAULT 0");
+
         // --- 角色存量权限补授（幂等）：分类菜单、运营中心菜单改为细分权限键控制 ---
         grantRolePerms("role_kb_admin",
                 "menu:knowledge:categories",

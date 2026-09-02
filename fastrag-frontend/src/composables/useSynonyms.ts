@@ -19,11 +19,13 @@ export function useSynonyms() {
    */
   async function expandQuery(query: string): Promise<string> {
     try {
-      const synonyms = await api.expandSynonyms(query)
-      addedTerms.value = (synonyms as string[]) || []
-      matchedTerms.value = (synonyms as string[]) || []
-      expandedQuery.value = synonyms.length > 0
-        ? `${query} ${synonyms.join(' ')}`
+      const res: any = await api.expandSynonyms(query)
+      // 后端返回 {expandedQuery, matchedTerms, addedTerms}；兼容直接返回字符串数组的旧结构
+      const added: string[] = Array.isArray(res) ? res : (res?.addedTerms || [])
+      addedTerms.value = added
+      matchedTerms.value = added
+      expandedQuery.value = added.length > 0
+        ? `${query} ${added.join(' ')}`
         : query
     } catch {
       expandedQuery.value = query

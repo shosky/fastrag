@@ -3,7 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import type { RoleMeta } from '@/types/auth'
-import { PERMISSION_TREE, ROLE_LABELS } from '@/types/auth'
+import { PERMISSIONS, PERMISSION_TREE, ROLE_LABELS } from '@/types/auth'
 import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
 
@@ -162,7 +162,7 @@ function handleReset() {
     <div class="card-panel">
       <div class="section-header">
         <div class="section-title">角色管理</div>
-        <el-button type="primary" @click="handleAdd">新增角色</el-button>
+        <el-button type="primary" v-permission="PERMISSIONS.ADMIN_ROLE_CREATE" @click="handleAdd">新增角色</el-button>
       </div>
 
       <div class="filter-bar">
@@ -189,13 +189,14 @@ function handleReset() {
         <el-table-column prop="createdAt" label="创建时间" width="160" />
         <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handlePermConfig(row as RoleMeta)">权限配置</el-button>
-            <el-button link type="primary" size="small" @click="handleSetDefault(row as RoleMeta)">设为默认</el-button>
-            <el-button link type="primary" size="small" @click="handleEdit(row as RoleMeta)">编辑</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.ADMIN_ROLE_EDIT" @click="handlePermConfig(row as RoleMeta)">权限配置</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.ADMIN_ROLE_SET_DEFAULT" @click="handleSetDefault(row as RoleMeta)">设为默认</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.ADMIN_ROLE_EDIT" @click="handleEdit(row as RoleMeta)">编辑</el-button>
             <el-button
               link
               type="danger"
               size="small"
+              v-permission="PERMISSIONS.ADMIN_ROLE_DELETE"
               :disabled="(row as RoleMeta).isDefault"
               @click="handleDelete(row as RoleMeta)"
             >

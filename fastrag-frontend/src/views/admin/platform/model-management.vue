@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePagination } from '@/composables/usePagination'
+import { PERMISSIONS } from '@/types/auth'
 import * as api from '@/api'
 
 interface ModelRecord {
@@ -28,6 +30,14 @@ const MODEL_PURPOSE_COLORS: Record<string, string> = {
 
 const models = ref<ModelRecord[]>([])
 const loading = ref(false)
+
+// --- 分页 ---
+const { currentPage, pageSize, handleCurrentChange, handleSizeChange } = usePagination(10)
+
+const paginatedModels = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return models.value.slice(start, start + pageSize.value)
+})
 
 // --- 模型测试 ---
 const showTestDialog = ref(false)
@@ -245,21 +255,21 @@ async function handleSave() {
     <div class="section-header">
       <h3>模型管理</h3>
       <div>
-        <el-button @click="openImport">导入模型</el-button>
-        <el-button @click="api.exportModels(); ElMessage.success('已导出')">导出模型</el-button>
-        <el-button type="primary" @click="handleAdd">
+        <el-button v-permission="PERMISSIONS.MODEL_IMPORT" @click="openImport">导入模型</el-button>
+        <el-button v-permission="PERMISSIONS.MODEL_EXPORT" @click="api.exportModels(); ElMessage.success('已导出')">导出模型</el-button>
+        <el-button v-permission="PERMISSIONS.MODEL_CREATE" type="primary" @click="handleAdd">
           <el-icon><Plus /></el-icon>新增模型
         </el-button>
       </div>
     </div>
 
     <!-- 模型卡片列表 -->
-    <div v-if="models.length" class="model-grid">
-      <div v-for="model in models" :key="model.id" class="model-card">
+    <div v-if="paginatedModels.length" class="model-grid">
+      <div v-for="model in paginatedModels" :key="model.id" class="model-card">
         <div class="card-header">
           <div class="model-brand">{{ model.brand }}</div>
           <div class="card-actions">
-            <el-button link size="small" @click="handleClone(model)">复刻</el-button>
+            <el-button link size="small" v-permission="PERMISSIONS.MODEL_CREATE" @click="handleClone(model)">复刻</el-button>
           </div>
         </div>
         <h4>{{ model.name }}</h4>
@@ -275,12 +285,13 @@ async function handleSave() {
           <el-tag size="small" type="warning">思考模式已启用</el-tag>
         </div>
         <div class="card-footer">
-          <el-button size="small" @click="handleEdit(model)">编辑</el-button>
-          <el-button size="small" type="primary" @click="openTestDialog(model)">
+          <el-button size="small" v-permission="PERMISSIONS.MODEL_EDIT" @click="handleEdit(model)">编辑</el-button>
+          <el-button size="small" type="primary" v-permission="PERMISSIONS.MODEL_TEST" @click="openTestDialog(model)">
             {{ model.purpose === 'Embedding' ? '向量测试' : model.purpose === 'Rerank' ? '排序测试' : '对话测试' }}
           </el-button>
-          <el-button size="small" type="danger" @click="handleDelete(model)">删除</el-button>
+          <el-button size="small" type="danger" v-permission="PERMISSIONS.MODEL_DELETE" @click="handleDelete(model)">删除</el-button>
           <el-switch
+            v-permission="PERMISSIONS.MODEL_TOGGLE"
             :model-value="model.status === 'online'"
             size="small"
             active-text="上架"
@@ -291,6 +302,19 @@ async function handleSave() {
       </div>
     </div>
     <el-empty v-else-if="!loading" description="暂无模型，请新增或导入" :image-size="80" />
+
+    <div class="model-management__pagination">
+      <el-pagination
+        v-if="models.length > pageSize"
+        v-model:current-page="currentPage"
+        v-model:page-size="pageSize"
+        :total="models.length"
+        :page-sizes="[10, 20, 50, 100]"
+        layout="total, sizes, prev, pager, next, jumper"
+        @current-change="handleCurrentChange"
+        @size-change="handleSizeChange"
+      />
+    </div>
 
     <!-- ==================== 模型测试弹窗 ==================== -->
     <el-dialog v-model="showTestDialog" :title="`模型测试：${testingModelName}`" width="700px">
@@ -522,6 +546,12 @@ async function handleSave() {
   padding: 12px;
   background: $bg-hover;
   border-radius: $radius-base;
+}
+
+.model-management__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 
 .test-answer {

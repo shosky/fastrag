@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePagination } from '@/composables/usePagination'
+import { PERMISSIONS } from '@/types/auth'
 import * as api from '@/api'
 
 const activeType = ref('')
@@ -53,6 +55,14 @@ const currentList = computed(() => {
   return list
 })
 
+// --- 分页 ---
+const { currentPage, pageSize, handleCurrentChange, handleSizeChange } = usePagination(10)
+
+const paginatedDict = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return currentList.value.slice(start, start + pageSize.value)
+})
+
 function handleAdd() {
   dialogTitle.value = '新建字典条目'
   editingId.value = null
@@ -85,6 +95,9 @@ async function handleSave() {
     type: activeType.value,
     key: formData.value.key,
     value: formData.value.value,
+    label: formData.value.label,
+    enabled: formData.value.enabled,
+    remark: formData.value.remark,
   }
   if (editingId.value) {
     await api.updateDictionary(editingId.value, data)
@@ -116,14 +129,14 @@ async function handleSave() {
       <div class="dict-content">
         <div class="section-header">
           <div class="section-title">{{ activeType || '请选择字典类型' }}</div>
-          <el-button type="primary" @click="handleAdd" :disabled="!activeType">新建条目</el-button>
+          <el-button type="primary" v-permission="PERMISSIONS.DICTIONARY_CREATE" @click="handleAdd" :disabled="!activeType">新建条目</el-button>
         </div>
         <div class="filter-bar">
           <el-input v-model="searchKeyword" placeholder="搜索键、名称、值或备注" clearable style="width: 300px" />
           <el-button type="primary">搜索</el-button>
           <el-button @click="searchKeyword = ''">重置</el-button>
         </div>
-        <el-table :data="currentList" stripe>
+        <el-table :data="paginatedDict" stripe>
           <el-table-column prop="key" label="键(Key)" width="180" />
           <el-table-column prop="label" label="名称(Label)" width="150" />
           <el-table-column prop="value" label="值(Value)" show-overflow-tooltip />
@@ -135,12 +148,25 @@ async function handleSave() {
           <el-table-column prop="remark" label="备注" width="150" />
           <el-table-column label="操作" width="120">
             <template #default="{ row }">
-              <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
-              <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+              <el-button link type="primary" size="small" v-permission="PERMISSIONS.DICTIONARY_EDIT" @click="handleEdit(row)">编辑</el-button>
+              <el-button link type="danger" size="small" v-permission="PERMISSIONS.DICTIONARY_DELETE" @click="handleDelete(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>
         <el-empty v-if="!currentList.length && !loading && activeType" description="暂无条目" />
+
+        <div class="dictionary__pagination">
+          <el-pagination
+            v-if="currentList.length > pageSize"
+            v-model:current-page="currentPage"
+            v-model:page-size="pageSize"
+            :total="currentList.length"
+            :page-sizes="[10, 20, 50, 100]"
+            layout="total, sizes, prev, pager, next, jumper"
+            @current-change="handleCurrentChange"
+            @size-change="handleSizeChange"
+          />
+        </div>
       </div>
     </div>
 
@@ -210,5 +236,11 @@ async function handleSave() {
   align-items: center;
   justify-content: space-between;
   margin-bottom: $spacing-base;
+}
+
+.dictionary__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

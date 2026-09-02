@@ -1207,6 +1207,10 @@ export async function createTermLibrary(data: Record<string, unknown>) {
   return request.post('/terminology/libraries', data)
 }
 
+export async function updateTermLibrary(id: string, data: Record<string, unknown>) {
+  return request.put(`/terminology/libraries/${id}`, data)
+}
+
 export async function deleteTermLibrary(id: string) {
   return request.delete(`/terminology/libraries/${id}`)
 }
@@ -1217,6 +1221,10 @@ export async function getTerms(params?: { libraryId?: string }) {
 
 export async function createTerm(data: Record<string, unknown>) {
   return request.post('/terminology/terms', data)
+}
+
+export async function updateTerm(id: string, data: Record<string, unknown>) {
+  return request.put(`/terminology/terms/${id}`, data)
 }
 
 export async function deleteTerm(id: string) {

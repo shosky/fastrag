@@ -180,7 +180,7 @@ async function handleSend() {
   const mi = session.messages.length - 1, st = Date.now()
   await sendMessage(
     selectedAppId.value, question, session.sessionId,
-    (c: string) => { session.messages[mi].content += c; nextTick(scrollToBottom) },
+    (c: string, isReplace?: boolean) => { session.messages[mi].content = isReplace ? c : session.messages[mi].content + c; nextTick(scrollToBottom) },
     () => { session.messages[mi].streaming = false; session.messages[mi].isThinking = false; session.messages[mi].time = `${((Date.now()-st)/1000).toFixed(1)}s`; nextTick(scrollToBottom) },
     (msg: string) => { session.messages[mi].content = `抱歉，AI 服务暂时不可用：${msg}`; session.messages[mi].streaming = false; session.messages[mi].isThinking = false; session.messages[mi].time = '-'; nextTick(scrollToBottom) },
     (c: string) => { session.messages[mi].thinkingContent += c; session.messages[mi].isThinking = true; nextTick(scrollToBottom) },

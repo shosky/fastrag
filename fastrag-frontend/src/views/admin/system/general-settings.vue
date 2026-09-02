@@ -2,6 +2,7 @@
 import { ref, reactive, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+import { PERMISSIONS } from '@/types/auth'
 import { storage } from '@/utils/storage'
 
 const loading = ref(false)
@@ -275,7 +276,7 @@ async function handleResetToDefault() {
 
       <!-- ===== 操作按钮 ===== -->
       <div class="form-actions">
-        <el-button type="primary" size="large" @click="saveAll">保存配置</el-button>
+        <el-button type="primary" size="large" v-permission="PERMISSIONS.CONFIG_SAVE" @click="saveAll">保存配置</el-button>
         <el-button size="large" @click="handleResetToDefault">重置为默认值</el-button>
       </div>
     </div>

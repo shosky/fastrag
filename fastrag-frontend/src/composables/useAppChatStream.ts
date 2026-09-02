@@ -45,7 +45,8 @@ export interface SourceItem {
  * 应用对话流式回调接口
  */
 export interface AppChatCallbacks {
-  onChunk: (content: string) => void
+  /** 文本增量回调；isReplace=true 时 content 为整段替换后的全文（敏感词过滤修正） */
+  onChunk: (content: string, isReplace?: boolean) => void
   onEnd: (fullContent: string, data: Record<string, unknown>) => void
   onError: (message: string) => void
   onThinking?: (content: string) => void
@@ -69,7 +70,7 @@ export function useAppChatStream() {
    * @param appId 应用ID
    * @param query 用户消息
    * @param sessionId 会话ID
-   * @param onChunk 每个文本增量的回调
+   * @param onChunk 每个文本增量回调；第二参 isReplace=true 表示整段替换（敏感词过滤修正）
    * @param onEnd 流式完成的回调
    * @param onError 错误回调
    * @param onThinking 思考过程增量回调（可选）
@@ -82,7 +83,7 @@ export function useAppChatStream() {
     appId: string,
     query: string,
     sessionId: string | null,
-    onChunk: (content: string) => void,
+    onChunk: (content: string, isReplace?: boolean) => void,
     onEnd: (fullContent: string, data: Record<string, unknown>) => void,
     onError: (message: string) => void,
     onThinking?: (content: string) => void,
@@ -147,8 +148,14 @@ export function useAppChatStream() {
               try {
                 const data = JSON.parse(event.data)
                 if (data.content) {
-                  fullContent += data.content
-                  onChunk(data.content)
+                  if (data.replace) {
+                    // 敏感词过滤修正：整段替换已累计内容
+                    fullContent = data.content
+                    onChunk(data.content, true)
+                  } else {
+                    fullContent += data.content
+                    onChunk(data.content, false)
+                  }
                 }
               } catch {
                 // 非 JSON 格式，直接作为文本

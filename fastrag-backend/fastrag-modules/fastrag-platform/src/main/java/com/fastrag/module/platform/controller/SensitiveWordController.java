@@ -150,6 +150,8 @@ public class SensitiveWordController {
             return ApiResponse.success(Map.of("imported", imported));
         } catch (Exception e) {
             return ApiResponse.serverError("导入失败: " + e.getMessage());
+        } finally {
+            sensitiveWordService.invalidate();
         }
     }
 

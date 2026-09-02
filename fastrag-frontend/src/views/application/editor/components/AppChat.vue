@@ -250,9 +250,9 @@ async function handleSend() {
     appId(),
     question,
     session.sessionId,
-    // onChunk: 追加增量文本
-    (content: string) => {
-      session.messages[msgIndex].content += content
+    // onChunk: 追加增量文本；isReplace=true 时为敏感词过滤修正，整段替换
+    (content: string, isReplace?: boolean) => {
+      session.messages[msgIndex].content = isReplace ? content : session.messages[msgIndex].content + content
       nextTick(() => scrollToBottom())
     },
     // onEnd: 流式完成

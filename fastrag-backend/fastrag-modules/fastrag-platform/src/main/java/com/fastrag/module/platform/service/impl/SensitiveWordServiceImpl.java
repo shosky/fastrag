@@ -16,11 +16,24 @@ public class SensitiveWordServiceImpl implements SensitiveWordService {
 
     private final SensitiveWordMapper sensitiveWordMapper;
 
+    /** 启用词表缓存：会话每条消息都会做输入/输出检查，写失效读加载，避免逐消息全表查询 */
+    private volatile List<SensitiveWord> enabledCache;
+
     @Override
     public List<SensitiveWord> list() {
-        return sensitiveWordMapper.selectList(
-                new LambdaQueryWrapper<SensitiveWord>().eq(SensitiveWord::getEnabled, 1)
-        );
+        List<SensitiveWord> cached = enabledCache;
+        if (cached == null) {
+            cached = sensitiveWordMapper.selectList(
+                    new LambdaQueryWrapper<SensitiveWord>().eq(SensitiveWord::getEnabled, 1)
+            );
+            enabledCache = cached;
+        }
+        return cached;
+    }
+
+    @Override
+    public void invalidate() {
+        enabledCache = null;
     }
 
     @Override
@@ -68,11 +81,13 @@ public class SensitiveWordServiceImpl implements SensitiveWordService {
             return Optional.empty();
         }
 
-        List<SensitiveWord> words = list();
-        for (SensitiveWord sw : words) {
+        for (SensitiveWord sw : list()) {
             if (isBlockInput(sw) && sw.getWord() != null && !sw.getWord().isEmpty()
                     && text.contains(sw.getWord())) {
-                return Optional.of("输入包含敏感词: " + sw.getWord());
+                // 命中词不回显给用户；优先使用词条配置的「指定回复」
+                String reply = sw.getReplacement();
+                return Optional.of(reply != null && !reply.isBlank()
+                        ? reply : "您的输入包含受限内容，无法处理");
             }
         }
         return Optional.empty();
@@ -104,16 +119,19 @@ public class SensitiveWordServiceImpl implements SensitiveWordService {
     public void save(SensitiveWord sw) {
         sw.setCreatedAt(LocalDateTime.now());
         sensitiveWordMapper.insert(sw);
+        invalidate();
     }
 
     @Override
     public void update(SensitiveWord sw) {
         sensitiveWordMapper.updateById(sw);
+        invalidate();
     }
 
     @Override
     public void delete(Long id) {
         sensitiveWordMapper.deleteById(id);
+        invalidate();
     }
 
     @Override

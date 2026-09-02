@@ -18,6 +18,7 @@ import com.fastrag.module.knowledge.entity.KnowledgeBase;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.platform.entity.ModelRecord;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
+import com.fastrag.module.platform.service.SensitiveWordService;
 import com.fastrag.module.retrieval.model.RetrievalRequest;
 import com.fastrag.module.retrieval.model.SearchResultItem;
 import com.fastrag.module.retrieval.service.RetrievalService;
@@ -57,6 +58,8 @@ public class AppServiceImpl implements AppService {
     private final LlmService llmService;
     private final RetrievalService retrievalService;
     private final AgentEngine agentEngine;
+    private final SensitiveWordService sensitiveWordService;
+    private final AppGlobalPolicyMapper globalPolicyMapper;
 
     private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
 
@@ -77,6 +80,13 @@ public class AppServiceImpl implements AppService {
         LoginUser user = SecurityUtil.getCurrentUser();
         if (app == null) throw BusinessException.notFound("应用不存在");
         if (!DataScope.manageable(user, app.getOwner())) throw BusinessException.forbidden("无权管理该应用");
+    }
+
+    /** 应用「安全策略启用」开关：未配置或字段为空时默认开启（安全默认） */
+    private boolean isSafetyEnabled(String appId) {
+        AppGlobalPolicy policy = globalPolicyMapper.selectOne(
+                new LambdaQueryWrapper<AppGlobalPolicy>().eq(AppGlobalPolicy::getAppId, appId).last("LIMIT 1"));
+        return policy == null || policy.getSafetyEnabled() == null || policy.getSafetyEnabled() == 1;
     }
 
     /** 会话归属校验：仅会话属主可访问（API Token 除外） */
@@ -378,6 +388,26 @@ public class AppServiceImpl implements AppService {
                             .eq(AppConversation::getSessionId, sessionId));
         }
 
+        // 2.5 敏感词拦截（总开关 = 应用「安全策略启用」）：
+        // 命中 blockInput 词条时直接拒绝，不保存用户消息、不产生模型调用
+        final boolean finalSafetyFilterOn = isSafetyEnabled(appId);
+        Optional<String> blocked = finalSafetyFilterOn ? sensitiveWordService.checkInput(query) : Optional.empty();
+        if (blocked.isPresent()) {
+            try {
+                SseEmitter emitter = new SseEmitter(60 * 1000L);
+                Map<String, Object> data = new LinkedHashMap<>();
+                data.put("content", blocked.get());
+                data.put("blocked", true);
+                data.put("sessionId", sessionId);
+                emitter.send(SseEmitter.event().name("message").data(data));
+                emitter.send(SseEmitter.event().name("end").data(data));
+                emitter.complete();
+                return emitter;
+            } catch (Exception e) {
+                throw new RuntimeException("Failed to send blocked-input reply", e);
+            }
+        }
+
         // 3. 保存用户消息
         AppConversationMessage userMsg = new AppConversationMessage();
         userMsg.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 32));
@@ -490,7 +520,10 @@ public class AppServiceImpl implements AppService {
         emitter.onTimeout(() -> {
             log.warn("[AppChat] SSE timeout: sessionId={}", finalSessionId);
             if (fullAnswer.length() > 0) {
-                saveAssistantMessage(finalConv, fullAnswer.toString(), null, null, (int)(System.currentTimeMillis() - startTime));
+                String partial = finalSafetyFilterOn
+                        ? sensitiveWordService.filterOutput(fullAnswer.toString()).orElse(fullAnswer.toString())
+                        : fullAnswer.toString();
+                saveAssistantMessage(finalConv, partial, null, null, (int)(System.currentTimeMillis() - startTime));
             }
         });
         emitter.onError(e -> log.warn("[AppChat] SSE error: sessionId={}, error={}", finalSessionId, e.getMessage()));
@@ -633,8 +666,25 @@ public class AppServiceImpl implements AppService {
                         (finalAnswer, finalThinking, finalToolCalls) -> {
                             // 该回调在 end 事件发送前执行
                             try {
+                                // 敏感词输出过滤（受安全开关控制）：命中 replaceAnswer 词条时替换文本，
+                                // 并补发 replace 事件让前端把气泡整段替换为过滤后全文
+                                String answerToSave = finalAnswer;
+                                Optional<String> filtered = finalSafetyFilterOn
+                                        ? sensitiveWordService.filterOutput(finalAnswer)
+                                        : Optional.empty();
+                                if (filtered.isPresent()) {
+                                    answerToSave = filtered.get();
+                                    try {
+                                        Map<String, Object> fixData = new LinkedHashMap<>();
+                                        fixData.put("content", answerToSave);
+                                        fixData.put("replace", true);
+                                        emitter.send(SseEmitter.event().name("message").data(fixData));
+                                    } catch (Exception e) {
+                                        log.warn("[AppChat] Failed to send filtered answer: {}", e.getMessage());
+                                    }
+                                }
                                 long duration = System.currentTimeMillis() - startTime;
-                                saveAssistantMessage(finalConv, finalAnswer, finalThinking, finalToolCalls, (int) duration);
+                                saveAssistantMessage(finalConv, answerToSave, finalThinking, finalToolCalls, (int) duration);
                             } catch (Exception e) {
                                 log.warn("[AppChat] Failed to save message after stream: {}", e.getMessage());
                             }

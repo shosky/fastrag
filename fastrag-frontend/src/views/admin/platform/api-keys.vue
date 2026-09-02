@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePagination } from '@/composables/usePagination'
+import { PERMISSIONS } from '@/types/auth'
 import * as api from '@/api'
 
 const showCreateDialog = ref(false)
@@ -15,6 +17,14 @@ const formData = ref({
 })
 
 const keyList = ref<any[]>([])
+
+// --- 分页 ---
+const { currentPage, pageSize, handleCurrentChange, handleSizeChange } = usePagination(10)
+
+const paginatedKeys = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return keyList.value.slice(start, start + pageSize.value)
+})
 
 async function loadKeys() {
   loading.value = true
@@ -80,10 +90,10 @@ async function handleSave() {
           <div class="section-title">开放密钥</div>
           <el-alert title="API key 生成后，将不会再次显示" type="warning" :closable="false" style="margin-top: 8px" />
         </div>
-        <el-button type="primary" @click="handleCreate">创建</el-button>
+        <el-button type="primary" v-permission="PERMISSIONS.API_KEY_CREATE" @click="handleCreate">创建</el-button>
       </div>
 
-      <el-table :data="keyList" stripe>
+      <el-table :data="paginatedKeys" stripe>
         <el-table-column prop="label" label="名称" width="150" />
         <el-table-column label="开放密钥" width="250">
           <template #default="{ row }">
@@ -96,12 +106,25 @@ async function handleSave() {
         <el-table-column prop="key" label="描述信息" />
         <el-table-column label="操作" width="120">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.API_KEY_EDIT" @click="handleEdit(row)">编辑</el-button>
+            <el-button link type="danger" size="small" v-permission="PERMISSIONS.API_KEY_DELETE" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
       <el-empty v-if="!keyList.length && !loading" description="暂无 API 密钥" />
+
+      <div class="api-keys__pagination">
+        <el-pagination
+          v-if="keyList.length > pageSize"
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="keyList.length"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </div>
 
     <el-dialog v-model="showCreateDialog" :title="editingId ? '编辑 API Key' : '创建 API Key'" width="500px">
@@ -144,5 +167,11 @@ async function handleSave() {
   display: flex;
   align-items: center;
   gap: $spacing-xs;
+}
+
+.api-keys__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
 }
 </style>

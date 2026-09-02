@@ -73,6 +73,11 @@ public interface AppConfigService {
     Map<String,Object> exportDialogConfig(String appId);
     Map<String,Object> importDialogConfig(String appId, Map<String,Object> data);
     AppVariable updateVariable(String id, AppVariable v);
+    /**
+     * @deprecated 敏感词统一由平台词库（/api/sensitive-words）管理，App 级仅保留安全开关；
+     * 本方法历史上会静默丢弃 words，仅为兼容保留。
+     */
+    @Deprecated(since = "2.5", forRemoval = false)
     Map<String,Object> saveSensitiveWords(String appId, Map<String,Object> cfg);
     Map<String,Object> togglePolicy(String appId, Map<String,Object> cfg);
     Map<String,Object> saveUnmatchedConfig(String appId, Map<String,Object> cfg);

@@ -12,6 +12,12 @@ public interface SensitiveWordService {
     List<SensitiveWord> list();
 
     /**
+     * Invalidate the enabled-words cache; must be called after any write
+     * (create/update/delete/batch import) so chat-time filtering sees fresh data.
+     */
+    void invalidate();
+
+    /**
      * Core filtering logic.
      * @param text input text to check
      * @param mode one of "reject", "replace", "mask"

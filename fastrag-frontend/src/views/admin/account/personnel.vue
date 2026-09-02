@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { PersonnelRecord } from '@/mock/auth-roles'
 import type { RoleMeta } from '@/types/auth'
 import type { OrgNode } from '@/mock/org'
+import { PERMISSIONS } from '@/types/auth'
 import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
 
@@ -183,7 +184,7 @@ function handleReset() {
       <div class="section-header">
         <div class="section-title">人员管理</div>
         <div>
-          <el-button type="primary" @click="handleAdd">添加人员</el-button>
+          <el-button type="primary" v-permission="PERMISSIONS.ADMIN_USER_CREATE" @click="handleAdd">添加人员</el-button>
         </div>
       </div>
 
@@ -216,6 +217,7 @@ function handleReset() {
         <el-table-column label="状态" width="80" align="center">
           <template #default="{ row }">
             <el-switch
+              v-permission="PERMISSIONS.ADMIN_USER_DISABLE"
               :model-value="row.status === 'enabled'"
               @change="handleStatusChange(row as PersonnelRecord)"
               inline-prompt
@@ -226,8 +228,8 @@ function handleReset() {
         </el-table-column>
         <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handleEdit(row as PersonnelRecord)">编辑</el-button>
-            <el-button link type="primary" size="small" @click="handleRoleConfig(row as PersonnelRecord)">角色配置</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.ADMIN_USER_EDIT" @click="handleEdit(row as PersonnelRecord)">编辑</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.ADMIN_USER_ROLE_CONFIG" @click="handleRoleConfig(row as PersonnelRecord)">角色配置</el-button>
           </template>
         </el-table-column>
       </el-table>

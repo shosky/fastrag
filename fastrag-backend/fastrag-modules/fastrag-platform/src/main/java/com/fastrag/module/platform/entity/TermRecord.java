@@ -24,5 +24,6 @@ import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.ti
 @Data @TableName("term_record") public class TermRecord {
     @TableId(type=IdType.ASSIGN_ID) private String id;
     private String libraryId,term,alias,definition,category;
+    private Integer status;
     private LocalDateTime createdAt;
 }

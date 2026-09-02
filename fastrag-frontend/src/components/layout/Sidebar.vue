@@ -155,9 +155,9 @@ const allModules: NavModule[] = [
     key: 'admin',
     title: '管理',
     icon: 'Setting',
+    path: '/admin',
     requirePerm: 'admin:access',
     children: [
-      { path: '/admin/index', title: '管理中心概览', icon: 'DataBoard' },
       {
         path: '/admin/system',
         title: '系统管理',

@@ -22,13 +22,16 @@ public class DictionaryServiceImpl implements DictionaryService {
         if (dictType != null && !dictType.isEmpty()) {
             query.eq(SysDictionary::getDictType, dictType);
         }
-        query.orderByAsc(SysDictionary::getId);
+        query.orderByAsc(SysDictionary::getSortOrder).orderByAsc(SysDictionary::getId);
         return dictionaryMapper.selectList(query);
     }
 
     @Override
     public Map<String, List<SysDictionary>> listAllGroupedByType() {
-        List<SysDictionary> all = dictionaryMapper.selectList(null);
+        List<SysDictionary> all = dictionaryMapper.selectList(
+                new LambdaQueryWrapper<SysDictionary>()
+                        .orderByAsc(SysDictionary::getSortOrder)
+                        .orderByAsc(SysDictionary::getId));
         return all.stream().collect(
                 Collectors.groupingBy(d -> d.getDictType() != null ? d.getDictType() : "未分类",
                         LinkedHashMap::new, Collectors.toList())

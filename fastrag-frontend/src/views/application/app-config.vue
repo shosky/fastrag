@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, reactive } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox, ElUpload } from 'element-plus'
 import * as api from '@/api'
 import { UploadFilled, Download, Edit, Delete, Plus, ZoomIn, VideoPlay } from '@element-plus/icons-vue'
 
 const route = useRoute()
+const router = useRouter()
 const appId = (route.params.id as string) || 'app_001'
 const activeTab = ref('basic')
 const loading = ref(false)
@@ -180,18 +181,10 @@ async function handleDeleteVariable(row: any) {
   try { await ElMessageBox.confirm('确认删除变量？', '确认', { type: 'warning' }); await api.deleteAppVariable(appId, row.id); await loadVariables(); ElMessage.success('删除成功') } catch {}
 }
 
-// 敏感词管理
-const showSensitiveDialog = ref(false)
-const sensitiveWordText = ref('')
-const sensitiveWordMode = ref('reject')
-
-async function handleSaveSensitiveWords() {
-  if (!sensitiveWordText.value) { ElMessage.warning('请输入敏感词列表'); return }
-  try {
-    const words = sensitiveWordText.value.split('\n').map(s => s.trim()).filter(Boolean)
-    await api.saveAppSensitiveWords(appId, { words, mode: sensitiveWordMode.value })
-    showSensitiveDialog.value = false; ElMessage.success(`已保存 ${words.length} 个敏感词`)
-  } catch { ElMessage.error('保存失败') }
+// 敏感词：统一由平台敏感词库管理（/admin/system/sensitive-words），
+// 词条分别配置「阻止用户输入」与「回答替换」，应用开启安全策略后生效
+function goSensitiveWords() {
+  router.push('/admin/system/sensitive-words')
 }
 
 // 未匹配策略管理
@@ -390,7 +383,9 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
             <el-form-item label="安全策略启用">
               <el-switch v-model="policyForm.safetyEnabled" @change="handleTogglePolicy('safetyEnabled')" />
             </el-form-item>
-            <el-form-item label="敏感词处理"><el-select v-model="policyForm.sensitiveWordMode" style="width:160px"><el-option label="拒绝" value="reject" /><el-option label="替换" value="replace" /><el-option label="遮盖" value="mask" /></el-select></el-form-item>
+            <el-form-item label="敏感词拦截">
+              <span class="sensitive-hint">由平台敏感词库的词条配置决定（阻止输入 / 回答替换）</span>
+            </el-form-item>
             <el-form-item label="兜底话术"><el-input v-model="policyForm.fallbackText" type="textarea" :rows="2" /></el-form-item>
             <el-form-item><el-button type="primary" @click="savePolicy">保存策略</el-button></el-form-item>
           </el-form>
@@ -419,11 +414,9 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
         <div class="card-panel" style="margin-top:16px">
           <div class="section-header">
             <div class="section-title">敏感词管理</div>
-            <el-button size="small" :icon="Plus" @click="showSensitiveDialog = true">配置敏感词</el-button>
+            <el-button size="small" @click="goSensitiveWords">前往平台敏感词库</el-button>
           </div>
-          <el-form label-width="140px">
-            <el-form-item label="敏感词模式"><el-select v-model="sensitiveWordMode" style="width:160px"><el-option label="拒绝" value="reject" /><el-option label="替换" value="replace" /><el-option label="遮盖" value="mask" /></el-select></el-form-item>
-          </el-form>
+          <p class="sensitive-hint">敏感词统一在平台敏感词库维护：命中「阻止用户输入」词条将直接拦截提问，命中「回答替换」词条会在回答中替换为指定文本。开启上方安全策略后即生效。</p>
         </div>
 
         <div class="card-panel" style="margin-top:16px">
@@ -511,18 +504,6 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
       </template>
     </el-dialog>
 
-    <!-- 敏感词对话框 -->
-    <el-dialog v-model="showSensitiveDialog" title="配置敏感词" width="500px">
-      <el-form label-width="90px">
-        <el-form-item label="处理模式"><el-select v-model="sensitiveWordMode" style="width:160px"><el-option label="拒绝" value="reject" /><el-option label="替换" value="replace" /><el-option label="遮盖" value="mask" /></el-select></el-form-item>
-        <el-form-item label="敏感词列表"><el-input v-model="sensitiveWordText" type="textarea" :rows="6" placeholder="每行一个敏感词&#10;例如:&#10;敏感词1&#10;敏感词2" /></el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="showSensitiveDialog=false">取消</el-button>
-        <el-button type="primary" @click="handleSaveSensitiveWords">保存</el-button>
-      </template>
-    </el-dialog>
-
     <!-- 未匹配策略对话框 -->
     <el-dialog v-model="showUnmatchedDialog" title="未匹配策略配置" width="480px">
       <el-form label-width="110px">
@@ -587,5 +568,11 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
   border-radius: 8px;
   padding: 20px;
   border: 1px solid var(--el-border-color-light);
+}
+.sensitive-hint {
+  margin: 0;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.6;
 }
 </style>

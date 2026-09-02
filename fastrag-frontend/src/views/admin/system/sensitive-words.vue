@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { usePagination } from '@/composables/usePagination'
+import { PERMISSIONS } from '@/types/auth'
 import * as api from '@/api'
 
 const showDialog = ref(false)
@@ -16,7 +18,27 @@ const formData = ref({
   replaceAnswer: false,
 })
 
+// 拦截回复与答案替换文本共用同一个存储字段（replacement），标签随勾选的开关变化
+const replyFieldLabel = computed(() => {
+  if (formData.value.blockInput && formData.value.replaceAnswer) return '回复 / 替换文本'
+  if (formData.value.blockInput) return '命中后的回复文案'
+  return '答案替换为'
+})
+const replyFieldPlaceholder = computed(() => {
+  if (formData.value.blockInput && formData.value.replaceAnswer) return '命中后直接回复用户的文案；答案中命中时也替换为该文本'
+  if (formData.value.blockInput) return '命中后直接回复用户的文案（不调用模型），留空使用默认文案'
+  return '答案中命中时替换为该文本，留空则替换为 ***'
+})
+
 const wordList = ref<any[]>([])
+
+// --- 分页 ---
+const { currentPage, pageSize, handleCurrentChange, handleSizeChange } = usePagination(10)
+
+const paginatedWords = computed(() => {
+  const start = (currentPage.value - 1) * pageSize.value
+  return wordList.value.slice(start, start + pageSize.value)
+})
 
 async function loadWords() {
   loading.value = true
@@ -114,14 +136,14 @@ function handleBatchImport() {
         <div class="section-title">敏感词设置</div>
         <div>
           <el-button @click="handleDownloadTemplate">下载模板</el-button>
-          <el-button @click="handleBatchImport">批量导入</el-button>
-          <el-button type="primary" @click="handleAdd">添加敏感词</el-button>
+          <el-button v-permission="PERMISSIONS.SENSITIVE_WORD_IMPORT" @click="handleBatchImport">批量导入</el-button>
+          <el-button type="primary" v-permission="PERMISSIONS.SENSITIVE_WORD_CREATE" @click="handleAdd">添加敏感词</el-button>
         </div>
       </div>
 
-      <el-table :data="wordList" stripe>
+      <el-table :data="paginatedWords" stripe>
         <el-table-column prop="word" label="敏感词" />
-        <el-table-column prop="reply" label="指定回复" show-overflow-tooltip />
+        <el-table-column prop="reply" label="回复 / 替换文本" show-overflow-tooltip />
         <el-table-column label="阻止用户输入" width="120" align="center">
           <template #default="{ row }">
             <el-tag :type="row.blockInput ? 'danger' : 'info'" size="small">{{ row.blockInput ? '是' : '否' }}</el-tag>
@@ -134,30 +156,47 @@ function handleBatchImport() {
         </el-table-column>
         <el-table-column label="操作" width="120">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
+            <el-button link type="primary" size="small" v-permission="PERMISSIONS.SENSITIVE_WORD_EDIT" @click="handleEdit(row)">编辑</el-button>
+            <el-button link type="danger" size="small" v-permission="PERMISSIONS.SENSITIVE_WORD_DELETE" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
       <el-empty v-if="!wordList.length && !loading" description="暂无敏感词" />
+
+      <div class="sensitive-words__pagination">
+        <el-pagination
+          v-if="wordList.length > pageSize"
+          v-model:current-page="currentPage"
+          v-model:page-size="pageSize"
+          :total="wordList.length"
+          :page-sizes="[10, 20, 50, 100]"
+          layout="total, sizes, prev, pager, next, jumper"
+          @current-change="handleCurrentChange"
+          @size-change="handleSizeChange"
+        />
+      </div>
     </div>
 
     <el-dialog v-model="showDialog" :title="dialogTitle" width="500px">
-      <el-form label-width="120px">
+      <el-form label-width="140px">
         <el-form-item label="敏感词" required>
           <el-input v-model="formData.word" placeholder="请输入敏感词" />
         </el-form-item>
-        <el-form-item label="指定回复">
-          <el-input v-model="formData.reply" type="textarea" :rows="3" placeholder="请输入指定回复内容" />
-        </el-form-item>
         <el-form-item label="阻止用户输入">
           <el-switch v-model="formData.blockInput" />
+          <span class="flag-hint">用户提问命中时直接拦截，不调用模型</span>
         </el-form-item>
         <el-form-item label="联网检索屏蔽">
-          <el-switch v-model="formData.blockSearch" />
+          <el-switch v-model="formData.blockSearch" disabled />
+          <span class="flag-hint">预留功能，暂未接入执行链路</span>
         </el-form-item>
         <el-form-item label="模型生成答案时替换">
           <el-switch v-model="formData.replaceAnswer" />
+          <span class="flag-hint">回答中命中时替换为下方文本</span>
+        </el-form-item>
+        <el-form-item v-if="formData.blockInput || formData.replaceAnswer" :label="replyFieldLabel">
+          <el-input v-model="formData.reply" type="textarea" :rows="3" :placeholder="replyFieldPlaceholder" />
+          <span v-if="formData.blockInput && formData.replaceAnswer" class="flag-hint">两种方式共用此文本</span>
         </el-form-item>
       </el-form>
       <template #footer>
@@ -176,5 +215,17 @@ function handleBatchImport() {
   align-items: center;
   justify-content: space-between;
   margin-bottom: $spacing-base;
+}
+
+.sensitive-words__pagination {
+  display: flex;
+  justify-content: flex-end;
+  margin-top: 16px;
+}
+
+.flag-hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 </style>
