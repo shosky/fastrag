@@ -82,6 +82,14 @@ const allModules: NavModule[] = [
 	        ],
       },
       {
+        path: '/bpm',
+        title: '业务流程',
+        children: [
+          { path: '/bpm/flows', title: '流程列表' },
+          { path: '/bpm/instances', title: '实例监控' },
+        ],
+      },
+      {
         path: '/application/tools',
         title: '工具与服务',
         children: [
@@ -245,6 +253,7 @@ const activeModule = computed(() => {
   // 应用（含机器人配置、业务流、对话知识、发布评估、运营中心、工具/MCP/插件/技能/数据库）
   if (
     path.startsWith('/application') ||
+    path.startsWith('/bpm') ||
     path.startsWith('/publish-eval') ||
     path.startsWith('/robot-operation') ||
     path.startsWith('/plugin-db') ||

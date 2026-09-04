@@ -30,6 +30,16 @@ public class KnowledgeManageServiceImpl implements KnowledgeManageService {
         knowledge.setId(id); knowledgeMapper.updateById(knowledge); return knowledgeMapper.selectById(id);
     }
     @Override public void delete(String id) { knowledgeMapper.deleteById(id); }
+    @Override public void updateCoverImage(String id, String objectKey) {
+        var k = new KbKnowledge();
+        k.setId(id);
+        k.setCoverImage(objectKey);
+        knowledgeMapper.updateById(k);
+    }
+    @Override public String getContent(String id) {
+        var k = knowledgeMapper.selectById(id);
+        return k == null ? null : k.getContent();
+    }
     @Override public List<KbKnowledgeTest> listTests(String kbId,String knowledgeId) {
         var w=new LambdaQueryWrapper<KbKnowledgeTest>();
         if(kbId!=null&&!kbId.isEmpty()) w.eq(KbKnowledgeTest::getKbId,kbId);

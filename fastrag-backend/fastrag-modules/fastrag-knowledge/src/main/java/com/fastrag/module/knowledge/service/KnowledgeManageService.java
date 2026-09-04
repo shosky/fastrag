@@ -6,6 +6,9 @@ public interface KnowledgeManageService {
     KbKnowledge create(KbKnowledge knowledge);
     KbKnowledge update(String id,KbKnowledge knowledge);
     void delete(String id);
+    // AI 能力：更新封面图、获取内容
+    void updateCoverImage(String id, String objectKey);
+    String getContent(String id);
     // 知识测试
     List<KbKnowledgeTest> listTests(String kbId,String knowledgeId);
     KbKnowledgeTest createTest(KbKnowledgeTest test);

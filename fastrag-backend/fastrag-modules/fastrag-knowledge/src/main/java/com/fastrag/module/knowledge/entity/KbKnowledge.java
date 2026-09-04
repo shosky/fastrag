@@ -3,7 +3,7 @@ import com.baomidou.mybatisplus.annotation.*; import com.fasterxml.jackson.annot
 @Data @TableName("kb_knowledge") public class KbKnowledge {
     private static final ObjectMapper MAPPER = new ObjectMapper();
     @TableId(type=IdType.ASSIGN_ID) private String id;
-    private String kbId,title,content,summary,category,source,sourceId,status,createdBy;
+    private String kbId,title,content,summary,category,source,sourceId,status,createdBy,coverImage;
     @JsonIgnore private String tags;
     private Integer version,viewCount;
     private Double qualityScore;

@@ -42,6 +42,7 @@
         <module>fastrag-modules/fastrag-tools</module>
         <module>fastrag-modules/fastrag-platform</module>
         <module>fastrag-modules/fastrag-operation</module>
+        <module>fastrag-modules/fastrag-bpm</module>
         <module>fastrag-bootstrap</module>
     </modules>
 
@@ -111,6 +112,11 @@
             <dependency>
                 <groupId>com.fastrag</groupId>
                 <artifactId>fastrag-operation</artifactId>
+                <version>${project.version}</version>
+            </dependency>
+            <dependency>
+                <groupId>com.fastrag</groupId>
+                <artifactId>fastrag-bpm</artifactId>
                 <version>${project.version}</version>
             </dependency>
 

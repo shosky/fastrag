@@ -14,7 +14,7 @@ interface ModelRecord {
   status: string
 }
 
-const MODEL_PURPOSES = ['LLM', 'Embedding', 'Rerank', 'ASR', 'TTS', 'OCR']
+const MODEL_PURPOSES = ['LLM', 'Embedding', 'Rerank', 'ASR', 'TTS', 'OCR', 'IMAGE_GEN']
 const MODEL_BRANDS = ['OpenAI', '阿里云', '百度', '智谱', '深度求索', '月之暗面', 'BAAI']
 const MODEL_PURPOSE_COLORS: Record<string, string> = {
   'LLM': '',
@@ -23,6 +23,7 @@ const MODEL_PURPOSE_COLORS: Record<string, string> = {
   'ASR': 'info',
   'TTS': 'danger',
   'OCR': 'info',
+  'IMAGE_GEN': 'warning',
 }
 
 const models = ref<ModelRecord[]>([])

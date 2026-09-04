@@ -5,7 +5,7 @@
 // 模型管理页 / 知识库表单 / 应用配置 共享本文件。
 // ===========================================================================
 
-export type ModelPurpose = '大语言模型' | 'Embedding模型' | 'Rerank模型' | 'OCR识别'
+export type ModelPurpose = '大语言模型' | 'Embedding模型' | 'Rerank模型' | 'OCR识别' | '语音合成' | '文生图'
 export type ModelStatus = 'online' | 'offline'
 
 export interface ModelRecord {
@@ -83,7 +83,7 @@ export function toggleModelStatus(id: string): ModelRecord | null {
   return { ...modelStore[idx] }
 }
 
-export const MODEL_PURPOSES: ModelPurpose[] = ['大语言模型', 'Embedding模型', 'Rerank模型', 'OCR识别']
+export const MODEL_PURPOSES: ModelPurpose[] = ['大语言模型', 'Embedding模型', 'Rerank模型', 'OCR识别', '语音合成', '文生图']
 
 export const MODEL_BRANDS = [
   '火山引擎', '通义千问', 'DeepSeek', '月之暗面', '智谱AI',
@@ -98,6 +98,8 @@ export const MODEL_PURPOSE_COLORS: Record<ModelPurpose, TagType> = {
   'Embedding模型': 'success',
   'Rerank模型': 'warning',
   'OCR识别': 'danger',
+  '语音合成': 'info',
+  '文生图': 'warning',
 }
 
 // ===========================================================================

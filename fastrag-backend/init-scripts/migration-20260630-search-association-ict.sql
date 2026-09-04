@@ -12,7 +12,7 @@
 
 SET NAMES utf8mb4;
 SET CHARACTER SET utf8mb4;
-USE fastrag;
+USE fastrag2;
 
 -- ==================== 1. 主题词/别名维度 (content) ====================
 -- 针对用户搜索的关键词做联想，常见 ICT 业务词汇 → 关联知识/流程

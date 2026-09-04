@@ -1240,6 +1240,14 @@ export async function updateKnowledge(kbId: string, id: string, data: Record<str
 export async function deleteKnowledge(kbId: string, id: string) {
   return request.delete(`/kb/${kbId}/knowledge/${id}`)
 }
+// AI 配图（基于知识标题生成封面图，保存到知识库）
+export async function generateKnowledgeCoverImage(kbId: string, knowledgeId: string, body: { prompt?: string; imageSize?: string; seed?: number } = {}) {
+  return request.post(`/kb/${kbId}/knowledge/${knowledgeId}/cover-image/generate`, body)
+}
+// AI 朗读（基于知识内容生成 TTS 音频，返回可下载的 audioUrl）
+export async function generateKnowledgeTts(kbId: string, knowledgeId: string, body: { text?: string; voice?: string } = {}) {
+  return request.post(`/kb/${kbId}/knowledge/${knowledgeId}/tts`, body)
+}
 export async function getKnowledgeTests(kbId: string, knowledgeId?: string) {
   return request.get(`/kb/${kbId}/knowledge-tests`, { params: { knowledgeId } })
 }

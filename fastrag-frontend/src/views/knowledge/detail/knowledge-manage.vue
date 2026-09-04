@@ -2,10 +2,42 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import { Edit, Picture, Download, Delete } from '@element-plus/icons-vue'
 import * as api from '@/api'
+import { storage } from '@/utils/storage'
 
 const route = useRoute()
 const kbId = (route.params.id as string) || 'kb_sample'
+
+/**
+ * 带 JWT 鉴权的文件下载。
+ * 后端 /api/** 走 authenticated()，浏览器 <a>.click() 不带 Authorization，
+ * 会导致下载失败（"无法从该网站下载"）。
+ * 这里用 fetch 取回字节流并包装为 Blob URL，再触发下载。
+ */
+async function downloadWithAuth(rawUrl: string, filename: string) {
+  const token = storage.get<string>('token') || ''
+  const absUrl = rawUrl.startsWith('http')
+    ? rawUrl
+    : `${window.location.origin}${rawUrl.startsWith('/') ? '' : '/'}${rawUrl}`
+  const resp = await fetch(absUrl, {
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+  });
+  if (!resp.ok) throw new Error(`下载失败 HTTP ${resp.status}`)
+  const blob = await resp.blob()
+  const blobUrl = URL.createObjectURL(blob)
+  try {
+    const a = document.createElement('a')
+    a.href = blobUrl
+    a.download = filename
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+  } finally {
+    // 给浏览器一点时间真正发起下载再回收
+    setTimeout(() => URL.revokeObjectURL(blobUrl), 1000)
+  }
+}
 const activeTab = ref('knowledge')
 const loading = ref(false)
 
@@ -41,6 +73,51 @@ async function handleSaveKnowledge() {
 async function handleDeleteKnowledge(row: any) {
   try { await ElMessageBox.confirm('确认删除该知识？', '删除确认', { type: 'warning' })
     await api.deleteKnowledge(kbId, row.id); await loadKnowledge(); ElMessage.success('删除成功') } catch {}
+}
+
+// AI 配图（静默生成：prompt 由后端基于知识 summary/content 自动构造，与内容真正相关）
+const generatingCoverFor = ref<string | null>(null)
+async function handleGenerateCover(row: any) {
+  if (generatingCoverFor.value === row.id) return
+  generatingCoverFor.value = row.id
+  const loading = ElMessage({ message: '正在生成封面图…', type: 'info', duration: 0 })
+  try {
+    // 不传 prompt → 后端会用 summary/content 拼接真正的内容相关描述
+    const res: any = await api.generateKnowledgeCoverImage(kbId, row.id, {})
+    let imageUrl = res?.imageUrl
+    if (!imageUrl) throw new Error('未返回 imageUrl')
+    loading.close()
+    ElMessage.success('封面图已生成，开始下载')
+    // 带鉴权下载（普通 a.click() 无法携带 Authorization 头）
+    await downloadWithAuth(imageUrl, `${row.title || row.id}_cover.png`)
+  } catch (e: any) {
+    loading.close()
+    ElMessage.error('生成封面图失败：' + (e?.message || '未知错误'))
+  } finally {
+    generatingCoverFor.value = null
+  }
+}
+
+// AI 朗读（直接触发 mp3 下载，不弹窗）
+const downloadingTtsFor = ref<string | null>(null)
+async function handleGenerateTts(row: any) {
+  if (downloadingTtsFor.value === row.id) return
+  downloadingTtsFor.value = row.id
+  const hint = ElMessage({ message: '正在合成语音…', type: 'info', duration: 0 })
+  try {
+    const res: any = await api.generateKnowledgeTts(kbId, row.id, {})
+    let audioUrl = res?.audioUrl
+    if (!audioUrl) throw new Error('未返回 audioUrl')
+    hint.close()
+    ElMessage.success('开始下载音频')
+    // 带鉴权下载（普通 a.click() 无法携带 Authorization 头）
+    await downloadWithAuth(audioUrl, `${row.title || row.id}.mp3`)
+  } catch (e: any) {
+    hint.close()
+    ElMessage.error('生成朗读失败：' + (e?.message || '未知错误'))
+  } finally {
+    downloadingTtsFor.value = null
+  }
 }
 
 // 知识更新
@@ -236,8 +313,20 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs() })
             <el-table-column prop="viewCount" label="查看数" width="80" />
             <el-table-column label="操作" width="120">
               <template #default="{ row }">
-                <el-button link type="primary" size="small" @click="handleEditKnowledge(row)">编辑</el-button>
-                <el-button link type="danger" size="small" @click="handleDeleteKnowledge(row)">删除</el-button>
+                <el-button-group>
+                  <el-tooltip content="编辑" placement="top">
+                    <el-button link size="small" :icon="Edit" @click="handleEditKnowledge(row)" />
+                  </el-tooltip>
+                  <el-tooltip content="AI 生图" placement="top">
+                    <el-button link type="warning" size="small" :icon="Picture" :loading="generatingCoverFor===row.id" @click="handleGenerateCover(row)" />
+                  </el-tooltip>
+                  <el-tooltip content="朗读下载" placement="top">
+                    <el-button link type="success" size="small" :icon="Download" :loading="downloadingTtsFor===row.id" @click="handleGenerateTts(row)" />
+                  </el-tooltip>
+                  <el-tooltip content="删除" placement="top">
+                    <el-button link type="danger" size="small" :icon="Delete" @click="handleDeleteKnowledge(row)" />
+                  </el-tooltip>
+                </el-button-group>
               </template>
             </el-table-column>
           </el-table>

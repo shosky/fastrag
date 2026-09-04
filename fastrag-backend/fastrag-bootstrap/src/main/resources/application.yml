@@ -11,7 +11,7 @@ spring:
   application:
     name: fastrag-backend
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/fastrag?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://127.0.0.1:3306/fastrag2?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
     username: root
     password: 123456
     driver-class-name: com.mysql.cj.jdbc.Driver
@@ -52,11 +52,29 @@ ai:
     url: https://api.siliconflow.cn
     key: ${ASR_API_KEY:}
     model: deepseek-ai/DeepSeek-OCR
+  tts:
+    url: https://api.siliconflow.cn
+    key: ${ASR_API_KEY:}
+    model: fnlp/MOSS-TTSD-v0.5
+    voice: alex                # 纯音色名，会被自动拼成 model:voice
+    response-format: mp3
+  imagegen:
+    url: https://api.siliconflow.cn
+    key: ${ASR_API_KEY:}
+    model: Kwai-Kolors/Kolors
+    image-size: 1024x1024
+    num-inference-steps: 20
+    guidance-scale: 7.5
+    batch-size: 1
+    response-format: url       # url 或 b64_json
 
 # 本地文件存储路径
+# 注意：必须用绝对路径或环境变量，**不能用相对路径 ./uploads**——
+# 后端进程 CWD 不固定（IDE / mvn / java -cp / 容器），相对路径会指向不同目录，
+# 导致生成的文件落盘了但下载时找不到。
 storage:
   local:
-    path: ./uploads
+    path: ${UPLOAD_PATH:D:/Workspace/java/github/rag/fastrag/uploads}
 
 springdoc:
   api-docs:
@@ -68,3 +86,25 @@ logging:
   level:
     com.fastrag: DEBUG
     org.springframework.security: DEBUG
+
+# ========== 业务流程管理 (fastrag-bpm) ==========
+bpm:
+  executor:
+    pool-size: 8
+    queue-capacity: 200
+    stream-name: bpm:stream:instance
+    consumer-group: bpm-workers
+    pending-timeout-ms: 60000
+  scheduler:
+    timeout-scan-cron: "0/30 * * * * *"
+    enabled: true
+  instance:
+    max-duration-hours: 24
+    max-running: 200
+    max-nodes-per-flow: 50
+    max-edges-per-flow: 200
+    log-retention-days: 180
+  spel:
+    enable-type-access: false
+  async:
+    enabled: false  # true=使用 Redis Stream 异步队列,false=同步触发

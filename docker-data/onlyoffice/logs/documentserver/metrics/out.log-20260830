@@ -1,0 +1,1378 @@
+26 Aug 08:21:47 - [660] reading config file: ./config/config.js
+26 Aug 08:21:47 - server is up INFO
+Flushing stats at  Wed Aug 26 2026 08:32:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 08:42:08 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 2 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+26 Aug 12:01:49 - [652] reading config file: ./config/config.js
+26 Aug 12:01:49 - server is up INFO
+Flushing stats at  Wed Aug 26 2026 12:12:36 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+26 Aug 12:14:48 - [656] reading config file: ./config/config.js
+26 Aug 12:14:48 - server is up INFO
+26 Aug 12:20:54 - [668] reading config file: ./config/config.js
+26 Aug 12:20:54 - server is up INFO
+Flushing stats at  Wed Aug 26 2026 12:31:47 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 12:41:40 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -7 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 12:51:45 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 5 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 13:01:49 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 4 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 13:11:51 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 2 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 13:21:53 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 2 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 13:31:50 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 13:41:53 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 13:51:56 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 14:01:53 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 14:11:50 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 14:21:54 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 4 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 14:31:54 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 0 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 14:41:53 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -1 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 14:51:51 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -2 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 15:01:55 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 4 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 15:11:49 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -6 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 15:21:48 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -1 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+26 Aug 15:24:40 - [658] reading config file: ./config/config.js
+26 Aug 15:24:40 - server is up INFO
+26 Aug 15:27:01 - [663] reading config file: ./config/config.js
+26 Aug 15:27:01 - server is up INFO
+Flushing stats at  Wed Aug 26 2026 15:38:02 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+26 Aug 15:41:24 - [660] reading config file: ./config/config.js
+26 Aug 15:41:24 - server is up INFO
+Flushing stats at  Wed Aug 26 2026 15:52:28 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 16:02:22 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -6 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+26 Aug 16:02:54 - [672] reading config file: ./config/config.js
+26 Aug 16:02:54 - server is up INFO
+Flushing stats at  Wed Aug 26 2026 16:13:58 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Wed Aug 26 2026 16:23:53 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -5 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 01:10:28 - [714] reading config file: ./config/config.js
+27 Aug 01:10:28 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 01:21:24 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 01:31:17 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -7 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 01:41:17 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 0 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 01:43:29 - [654] reading config file: ./config/config.js
+27 Aug 01:43:29 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 01:54:24 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 02:04:21 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 02:09:49 - [659] reading config file: ./config/config.js
+27 Aug 02:09:49 - server is up INFO
+27 Aug 02:13:05 - [660] reading config file: ./config/config.js
+27 Aug 02:13:05 - server is up INFO
+27 Aug 02:21:14 - [663] reading config file: ./config/config.js
+27 Aug 02:21:14 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 02:32:09 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 02:35:45 - [652] reading config file: ./config/config.js
+27 Aug 02:35:45 - server is up INFO
+27 Aug 02:43:07 - [720] reading config file: ./config/config.js
+27 Aug 02:43:07 - server is up INFO
+27 Aug 02:51:17 - [664] reading config file: ./config/config.js
+27 Aug 02:51:17 - server is up INFO
+27 Aug 02:55:17 - [681] reading config file: ./config/config.js
+27 Aug 02:55:17 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 03:06:12 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 03:16:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -6 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 03:26:09 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 03:36:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 03:46:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 0 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 03:56:09 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 04:06:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 04:16:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 0 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 04:26:09 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 04:36:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 04:46:01 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -5 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 04:56:09 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 8 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 05:06:04 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -5 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 05:16:00 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -4 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 05:26:09 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 9 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 05:36:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 05:46:05 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -1 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 05:56:10 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 5 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 06:06:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -4 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 06:16:09 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 06:26:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 06:35:58 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -8 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 06:45:58 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 0 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 06:55:13 - [682] reading config file: ./config/config.js
+27 Aug 06:55:13 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 07:06:08 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 07:16:02 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -6 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 07:16:39 - [683] reading config file: ./config/config.js
+27 Aug 07:16:39 - server is up INFO
+27 Aug 07:21:17 - [657] reading config file: ./config/config.js
+27 Aug 07:21:17 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 07:32:11 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 07:41:57 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -14 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 07:52:06 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 9 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 08:29:34 - [711] reading config file: ./config/config.js
+27 Aug 08:29:34 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 08:40:27 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 08:50:16 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -11 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 09:00:22 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 6 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 09:10:24 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 2 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 09:20:27 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 09:30:24 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 09:40:24 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 0 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 09:50:27 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 10:00:24 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 10:10:24 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 0 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 10:20:21 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': -3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+Flushing stats at  Thu Aug 27 2026 10:30:24 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: { 'statsd.timestamp_lag': 3 },
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 10:30:55 - [692] reading config file: ./config/config.js
+27 Aug 10:30:55 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 10:41:49 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}
+27 Aug 12:16:10 - [733] reading config file: ./config/config.js
+27 Aug 12:16:10 - server is up INFO
+Flushing stats at  Thu Aug 27 2026 12:26:12 GMT+0000 (Coordinated Universal Time)
+{
+  counters: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  timers: {},
+  gauges: {},
+  timer_data: {},
+  counter_rates: {
+    'statsd.bad_lines_seen': 0,
+    'statsd.packets_received': 0,
+    'statsd.metrics_received': 0
+  },
+  sets: {},
+  pctThreshold: [ 90 ]
+}

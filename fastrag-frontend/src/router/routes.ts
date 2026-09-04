@@ -153,7 +153,57 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/knowledge/tags.vue'),
         meta: { title: '知识库标签' },
       },
-      // ===== 业务流 =====
+      // ===== 业务流 BPM =====
+      {
+        path: 'bpm',
+        name: 'Bpm',
+        redirect: '/bpm/flows',
+        meta: { title: '业务流程', icon: 'Connection', roles: ['super_admin', 'kb_admin'] as const },
+        children: [
+          {
+            path: 'flows',
+            name: 'BpmFlowList',
+            component: () => import('@/views/bpm/FlowList.vue'),
+            meta: { title: '流程列表' },
+          },
+          {
+            path: 'flows/:flowDefId/canvas',
+            name: 'BpmCanvas',
+            component: () => import('@/views/bpm/CanvasEditor.vue'),
+            meta: { title: '画布编辑', hidden: true },
+          },
+          {
+            path: 'flows/:flowDefId/canvas/:versionId',
+            name: 'BpmCanvasVersion',
+            component: () => import('@/views/bpm/CanvasEditor.vue'),
+            meta: { title: '画布编辑', hidden: true },
+          },
+          {
+            path: 'flows/:flowDefId/versions',
+            name: 'BpmVersion',
+            component: () => import('@/views/bpm/VersionPanel.vue'),
+            meta: { title: '版本管理', hidden: true },
+          },
+          {
+            path: 'flows/:flowDefId/test-cases',
+            name: 'BpmTestCase',
+            component: () => import('@/views/bpm/TestCasePanel.vue'),
+            meta: { title: '测试用例', hidden: true },
+          },
+          {
+            path: 'flows/:flowDefId/stats',
+            name: 'BpmStats',
+            component: () => import('@/views/bpm/FlowStats.vue'),
+            meta: { title: '流程统计', hidden: true },
+          },
+          {
+            path: 'instances',
+            name: 'BpmInstance',
+            component: () => import('@/views/bpm/InstanceMonitor.vue'),
+            meta: { title: '实例监控' },
+          },
+        ],
+      },
       // ===== 应用与运营 =====
       {
         path: 'application',

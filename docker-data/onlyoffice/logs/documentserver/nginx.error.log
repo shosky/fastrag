@@ -1,0 +1,2 @@
+2026/09/01 12:08:32 [error] 909#909: *1 connect() failed (111: Connection refused) while connecting to upstream, client: ::1, server: , request: "GET /healthcheck HTTP/1.1", upstream: "http://127.0.0.1:8000/healthcheck", host: "localhost"
+2026/09/01 12:08:32 [error] 909#909: *1 connect() failed (111: Connection refused) while connecting to upstream, client: ::1, server: , request: "GET /healthcheck HTTP/1.1", upstream: "http://127.0.0.1:8000/healthcheck", host: "localhost"

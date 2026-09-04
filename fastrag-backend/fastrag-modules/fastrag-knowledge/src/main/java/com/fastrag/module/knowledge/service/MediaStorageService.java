@@ -13,4 +13,6 @@ public interface MediaStorageService {
     // M9 文件上传/下载
     KbMediaStorage uploadFile(String kbId, String mediaType, MultipartFile file, String description, String tags);
     FileResource getDownloadResource(String id);
+    // AI 生成内容落盘（图片/音频字节流）
+    KbMediaStorage saveBytes(String kbId, String mediaType, byte[] bytes, String extension, String source, String description);
 }

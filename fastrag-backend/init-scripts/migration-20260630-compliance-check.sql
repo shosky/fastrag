@@ -4,7 +4,7 @@
 
 SET NAMES utf8mb4;
 SET CHARACTER SET utf8mb4;
-USE fastrag;
+USE fastrag2;
 
 -- 1. kb_compliance_rule 增加 hit_count 和 last_checked_at 字段
 ALTER TABLE kb_compliance_rule

@@ -1,0 +1,2 @@
+2026/09/01 02:50:40 [error] 886#886: *1 connect() failed (111: Connection refused) while connecting to upstream, client: ::1, server: , request: "GET /healthcheck HTTP/1.1", upstream: "http://127.0.0.1:8000/healthcheck", host: "localhost"
+2026/09/01 02:50:40 [error] 886#886: *1 connect() failed (111: Connection refused) while connecting to upstream, client: ::1, server: , request: "GET /healthcheck HTTP/1.1", upstream: "http://127.0.0.1:8000/healthcheck", host: "localhost"

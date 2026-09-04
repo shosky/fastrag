@@ -6,7 +6,7 @@
 
 SET NAMES utf8mb4;
 SET CHARACTER SET utf8mb4;
-USE fastrag;
+USE fastrag2;
 
 -- ==================== 1. 补充真实 ICT 业务标签 ====================
 -- 文档分类 (tag_type_id=T1)

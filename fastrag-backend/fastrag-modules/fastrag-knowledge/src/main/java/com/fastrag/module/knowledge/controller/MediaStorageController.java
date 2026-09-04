@@ -62,6 +62,19 @@ public class MediaStorageController {
 
     @GetMapping("/storage/{mediaType}/{id}/download")
     public ResponseEntity<Resource> downloadFile(@PathVariable String id) {
+        return downloadById(id);
+    }
+
+    /**
+     * 与 /storage/{mediaType}/{id}/download 等价：AI 生成端点（封面图、TTS 等）
+     * 返回的 URL 前缀使用 /media/{mediaType}/{id}/download。
+     */
+    @GetMapping("/media/{mediaType}/{id}/download")
+    public ResponseEntity<Resource> downloadMediaFile(@PathVariable String id) {
+        return downloadById(id);
+    }
+
+    private ResponseEntity<Resource> downloadById(String id) {
         var fileInfo = svc.getDownloadResource(id);
         if (fileInfo == null) return ResponseEntity.notFound().build();
         return ResponseEntity.ok()

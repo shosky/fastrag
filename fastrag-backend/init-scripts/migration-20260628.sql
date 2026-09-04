@@ -6,7 +6,7 @@
 
 SET NAMES utf8mb4;
 SET CHARACTER SET utf8mb4;
-USE fastrag;
+USE fastrag2;
 
 -- 先删除已有的存储过程避免重复创建报错
 DROP PROCEDURE IF EXISTS sp_add_column_if_not_exists;
