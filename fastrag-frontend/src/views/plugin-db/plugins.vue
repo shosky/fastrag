@@ -256,6 +256,11 @@ async function handleSave() {
       if (!Array.isArray(plugins)) {
         plugins = [plugins]
       }
+      const badIdx = plugins.findIndex((p) => !p || (!p.name && !p.identifier))
+      if (badIdx >= 0) {
+        ElMessage.warning(`第 ${badIdx + 1} 个插件缺少 name 或 identifier 字段，请检查 JSON 内容`)
+        return
+      }
       await api.importPluginsFromJson(plugins)
       ElMessage.success(`成功导入 ${plugins.length} 个插件`)
       showDialog.value = false

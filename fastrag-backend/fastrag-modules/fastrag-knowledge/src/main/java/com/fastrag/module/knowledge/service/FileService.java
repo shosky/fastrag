@@ -10,6 +10,7 @@ public interface FileService {
     List<FileDto> list(String kbId);
     List<FileDto> listDeleted(String kbId);
     FileDto upload(String kbId, MultipartFile file);
+    FileDto uploadText(String kbId, String fileName, String content);
     void process(String kbId, String fileId);
     FileDto update(String kbId, String fileId, Map<String, Object> patch);
     void delete(String kbId, String fileId);

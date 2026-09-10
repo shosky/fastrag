@@ -11,6 +11,7 @@ const loading = ref(false)
 
 // 搜索联想
 const DIMENSION_OPTIONS = [
+  { label: '内容', value: 'content' },
   { label: '主题词/别名', value: 'content' },
   { label: '搜索规则', value: 'rule' },
   { label: '附件', value: 'attachment' },

@@ -1,20 +1,40 @@
 package com.fastrag.module.application.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fastrag.module.application.entity.*; import com.fastrag.module.application.mapper.*;
 import com.fastrag.module.application.service.WorkflowService;
 import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 import java.time.LocalDateTime; import java.util.*;
 @Service @RequiredArgsConstructor
 public class WorkflowServiceImpl implements WorkflowService {
     private final WorkflowMapper wfMapper; private final WfNodeMapper nodeMapper;
     private final WfTestCaseMapper tcMapper; private final WfTemplateMapper templateMapper; private final WfMigrationMapper migMapper;
-    private final WfOptimizationMapper optMapper;
+    private final WfOptimizationMapper optMapper; private final AppConfigMapper configMapper; private final ObjectMapper objectMapper;
     @Override public List<Workflow> list() { return wfMapper.selectList(null); }
     @Override public Workflow get(String id) { return wfMapper.selectById(id); }
     @Override public Workflow create(Map<String,Object> f) { var w=new Workflow(); w.setName((String)f.get("name")); w.setDescription((String)f.get("description")); w.setStatus("draft"); w.setNodes("[]"); w.setEdges("[]"); wfMapper.insert(w); return w; }
     @Override public Workflow update(String id,Map<String,Object> f) { var w=wfMapper.selectById(id); if(w!=null){if(f.containsKey("name"))w.setName((String)f.get("name")); if(f.containsKey("nodes"))w.setNodes((String)f.get("nodes")); if(f.containsKey("edges"))w.setEdges((String)f.get("edges")); wfMapper.updateById(w);} return w; }
-    @Override public void delete(String id) { wfMapper.deleteById(id); }
+    @Override public void delete(String id) {
+        wfMapper.deleteById(id);
+        // 级联清理工作流节点
+        nodeMapper.delete(new LambdaQueryWrapper<WfNode>().eq(WfNode::getWorkflowId,id));
+        // 清理各应用配置中对已删工作流的引用，避免悬挂 workflowIds
+        for(var c:configMapper.selectList(new LambdaQueryWrapper<AppConfig>().isNotNull(AppConfig::getWorkflowIds))) {
+            if(!StringUtils.hasText(c.getWorkflowIds())) continue;
+            try {
+                List<?> l=objectMapper.readValue(c.getWorkflowIds(),List.class);
+                if(l==null) continue;
+                List<Object> filtered=new ArrayList<>(l);
+                filtered.removeIf(o->id.equals(String.valueOf(o)));
+                if(filtered.size()!=l.size()) {
+                    c.setWorkflowIds(objectMapper.writeValueAsString(filtered));
+                    configMapper.updateById(c);
+                }
+            } catch (Exception ignored) {}
+        }
+    }
     @Override public void publish(String id) { var w=wfMapper.selectById(id); if(w!=null){w.setStatus("published");wfMapper.updateById(w);} }
     // ===== 画布节点 =====
     @Override public WfNode addNode(String wfId,String nodeKey,String nodeType,String name,Integer x,Integer y) {

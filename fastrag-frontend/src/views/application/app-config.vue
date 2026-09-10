@@ -229,21 +229,29 @@ async function handleUnbindKb(row: any) {
   try { await ElMessageBox.confirm('确认解绑？', '确认', { type: 'warning' }); await api.unbindAppKb(appId, row.id); await loadKbBindings(); ElMessage.success('已解绑') } catch {}
 }
 async function handleExportKbBindings() {
-  const blob = new Blob([JSON.stringify(kbBindings.value, null, 2)], { type: 'application/json' })
-  const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `kb_bindings_${appId}.json`
-  a.click(); URL.revokeObjectURL(url); ElMessage.success('知识库绑定已导出')
+  try {
+    const r: any = await api.exportAppKbBindings(appId)
+    const blob = new Blob([JSON.stringify(r, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `kb_bindings_${appId}.json`
+    a.click(); URL.revokeObjectURL(url); ElMessage.success('知识库绑定已导出')
+  } catch { ElMessage.error('导出失败') }
 }
 async function handleImportKbBindings() {
   const input = document.createElement('input'); input.type = 'file'; input.accept = '.json'
   input.onchange = async (e: any) => {
     try {
-      const file = e.target.files[0]; if (!file) return
-      const bindings = JSON.parse(await file.text())
-      if (Array.isArray(bindings)) {
-        for (const b of bindings) { await api.bindAppKb(appId, { kbId: b.kbId, priority: b.priority || 0 }) }
-        await loadKbBindings(); ElMessage.success('知识库绑定已导入')
+      const file = e.target.files?.[0]; if (!file) return
+      const data = JSON.parse(await file.text())
+      // 兼容旧格式：数组直接视为 bindings
+      if (Array.isArray(data) && !(data as any).bindings) {
+        await api.importAppKbBindings(appId, { bindings: data })
+      } else if (Array.isArray((data as any)?.bindings)) {
+        await api.importAppKbBindings(appId, data)
+      } else {
+        ElMessage.error('导入文件格式错误'); return
       }
-    } catch { ElMessage.error('导入失败') }
+      await loadKbBindings(); ElMessage.success('知识库绑定已导入')
+    } catch { ElMessage.error('导入失败') } finally { input.value = '' }
   }
   input.click()
 }
@@ -287,18 +295,113 @@ async function handleDeleteTest(row: any) {
 }
 async function handleExportTests() {
   try {
-    const blob = await api.exportAppDialogTests(appId) as Blob
+    const blob = await api.exportAppDialogTests(appId) as unknown as Blob
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `test_report_${Date.now()}.csv`
     a.click(); URL.revokeObjectURL(url); ElMessage.success('已导出')
   } catch { ElMessage.error('导出失败') }
 }
+
+// 进行对话测试：单条执行 / 批量执行
+const testingId = ref('')
+const runningAll = ref(false)
+async function handleRunTest(row: any) {
+  testingId.value = row.id
+  try {
+    await api.runAppDialogTest(appId, row.id); await loadTests(); ElMessage.success(`测试「${row.name}」执行完成`)
+  } catch { ElMessage.error('执行失败') } finally { testingId.value = '' }
+}
+async function handleRunAllTests() {
+  runningAll.value = true
+  try {
+    const r: any = await api.runAllAppDialogTests(appId)
+    await loadTests()
+    ElMessage.success(`批量执行完成：共 ${r?.total ?? 0} 条，通过 ${r?.matched ?? 0} 条，通过率 ${r?.passRate ?? 0}%`)
+  } catch { ElMessage.error('批量执行失败') } finally { runningAll.value = false }
+}
+
+// 查看测试结果
+const showResultDialog = ref(false)
+const resultRow = ref<any>(null)
+function openResult(row: any) { resultRow.value = row; showResultDialog.value = true }
+function matchType(row: any) { return row.matched === 1 || row.matched === true ? 'success' : row.matched === 0 || row.matched === false ? 'danger' : 'info' }
+function matchText(row: any) { return row.matched === 1 || row.matched === true ? '匹配' : row.matched === 0 || row.matched === false ? '不匹配' : '未执行' }
+
+// 录制测试案例：与机器人真实对话后保存
+const showRecorder = ref(false)
+const recorderLoading = ref(false)
+const chatMessages = ref<{ role: 'user' | 'assistant'; content: string }[]>([])
+const chatInput = ref('')
+const recordedQA = ref<{ query: string; answer: string } | null>(null)
+
+function openRecorder() { chatMessages.value = []; chatInput.value = ''; recordedQA.value = null; showRecorder.value = true }
+async function handleRecorderSend() {
+  if (!chatInput.value.trim()) return
+  const question = chatInput.value.trim()
+  chatMessages.value.push({ role: 'user', content: question }); chatInput.value = ''
+  recorderLoading.value = true
+  try {
+    const res: any = await api.runApp(appId, question)
+    const answer = typeof res === 'string' ? res : (res?.answer || res?.content || res?.text || JSON.stringify(res))
+    chatMessages.value.push({ role: 'assistant', content: answer })
+    recordedQA.value = { query: question, answer }
+  } catch (e: any) {
+    chatMessages.value.push({ role: 'assistant', content: '（调用失败：' + (e?.message || '未知错误') + '）' })
+  } finally { recorderLoading.value = false }
+}
+async function handleSaveRecorded() {
+  if (!recordedQA.value) { ElMessage.warning('请先发送问题获取回答'); return }
+  try {
+    await api.createAppDialogTest(appId, {
+      name: '录制-' + recordedQA.value.query.substring(0, 16),
+      query: recordedQA.value.query, expectedAnswer: recordedQA.value.answer, tags: JSON.stringify(['录制']),
+    })
+    ElMessage.success('测试案例已录制保存'); showRecorder.value = false; await loadTests()
+  } catch { ElMessage.error('录制保存失败') }
+}
+
+// ===========================================================================
+// 对话调试
+// ===========================================================================
+const debugLevel = ref('debug')
+const debugLogs = ref<any[]>([])
+const debugLoading = ref(false)
+
+async function loadDebug() {
+  debugLoading.value = true
+  try {
+    const r: any = await api.getAppDebugInfo(appId)
+    debugLevel.value = r?.level || 'debug'
+    debugLogs.value = Array.isArray(r?.logs) ? r.logs : []
+  } catch { debugLogs.value = [] } finally { debugLoading.value = false }
+}
+async function saveDebugLevel() {
+  try {
+    await api.saveAppDebugConfig(appId, { level: debugLevel.value })
+    ElMessage.success('调试级别已保存'); await loadDebug()
+  } catch { ElMessage.error('保存失败') }
+}
+function levelTagType(level: string) { return level === 'error' ? 'danger' : level === 'warn' ? 'warning' : level === 'info' ? 'primary' : 'info' }
+async function handleExportDebugLogs() {
+  try {
+    const blob = await api.exportAppDebugLogs(appId) as unknown as Blob
+    const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `debug_logs_${appId}.csv`
+    a.click(); URL.revokeObjectURL(url); ElMessage.success('调试日志已导出')
+  } catch { ElMessage.error('导出失败') }
+}
+async function handleClearDebugLogs() {
+  try {
+    await ElMessageBox.confirm('确认清理该应用全部调试日志？', '清理确认', { type: 'warning' })
+    await api.clearAppDebugLogs(appId); await loadDebug(); ElMessage.success('调试日志已清理')
+  } catch {}
+}
+function handleTabChange(name: string | number) { if (name === 'debug') loadDebug() }
 
 onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadVariables(); loadKbBindings(); loadTests() })
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
-    <el-tabs v-model="activeTab">
+    <el-tabs v-model="activeTab" @tab-change="handleTabChange">
       <!-- ===== 基础配置 ===== -->
       <el-tab-pane label="基础配置" name="basic">
         <div class="card-panel">
@@ -461,23 +564,75 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
       <el-tab-pane label="对话测试" name="test">
         <div class="card-panel">
           <div class="section-header">
-            <div class="section-title">测试案例</div>
+            <div class="section-title">测试案例库</div>
             <div class="section-actions">
+              <el-button size="small" :icon="VideoPlay" @click="openRecorder">录制测试</el-button>
+              <el-button size="small" :icon="VideoPlay" :loading="runningAll" @click="handleRunAllTests">批量执行</el-button>
               <el-button size="small" :icon="Download" @click="handleExportTests">导出测试报告</el-button>
               <el-button type="primary" size="small" :icon="Plus" @click="openAddTest">新增测试</el-button>
             </div>
           </div>
           <el-table :data="testList" stripe size="small">
-            <el-table-column prop="name" label="名称" min-width="120" />
-            <el-table-column prop="query" label="问题" show-overflow-tooltip />
-            <el-table-column prop="expectedAnswer" label="期望答案" show-overflow-tooltip />
-            <el-table-column label="操作" width="130">
+            <el-table-column prop="name" label="名称" min-width="110" />
+            <el-table-column prop="query" label="问题" show-overflow-tooltip min-width="130" />
+            <el-table-column prop="expectedAnswer" label="期望答案" show-overflow-tooltip min-width="130" />
+            <el-table-column prop="actualAnswer" label="实际回答" show-overflow-tooltip min-width="130" />
+            <el-table-column label="匹配" width="80">
+              <template #default="{ row }"><el-tag size="small" :type="matchType(row)">{{ matchText(row) }}</el-tag></template>
+            </el-table-column>
+            <el-table-column label="相似度" width="80">
+              <template #default="{ row }">{{ row.similarity != null && row.similarity !== '' ? row.similarity + '%' : '-' }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }">
+                <el-button link type="success" size="small" :icon="VideoPlay" :loading="testingId === row.id" @click="handleRunTest(row)">执行</el-button>
+                <el-button link type="primary" size="small" :icon="ZoomIn" @click="openResult(row)">结果</el-button>
                 <el-button link type="primary" size="small" :icon="Edit" @click="openEditTest(row)">编辑</el-button>
                 <el-button link type="danger" size="small" :icon="Delete" @click="handleDeleteTest(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
+          <el-empty v-if="!testList.length" description="暂无测试案例" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
+      <!-- ===== 对话调试 ===== -->
+      <el-tab-pane label="对话调试" name="debug">
+        <div class="card-panel">
+          <div class="section-title">调试设置</div>
+          <el-form label-width="100px" style="margin-top:12px">
+            <el-form-item label="调试级别">
+              <el-select v-model="debugLevel" style="width:180px" @change="saveDebugLevel">
+                <el-option label="DEBUG（全部日志）" value="debug" />
+                <el-option label="INFO" value="info" />
+                <el-option label="WARN" value="warn" />
+                <el-option label="ERROR" value="error" />
+              </el-select>
+              <span style="margin-left:12px;font-size:12px;color:#909399">设置后仅显示该级别及以上的调试日志</span>
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <div class="card-panel" style="margin-top:16px">
+          <div class="section-header">
+            <div class="section-title">调试信息（{{ debugLogs.length }} 条）</div>
+            <div class="section-actions">
+              <el-button size="small" @click="loadDebug">刷新</el-button>
+              <el-button size="small" :icon="Download" @click="handleExportDebugLogs">导出调试日志</el-button>
+              <el-button size="small" type="danger" :icon="Delete" @click="handleClearDebugLogs">清理调试日志</el-button>
+            </div>
+          </div>
+          <el-table v-loading="debugLoading" :data="debugLogs" stripe size="small" max-height="420">
+            <el-table-column label="时间" width="170">
+              <template #default="{ row }">{{ (row.createdAt || '').toString().replace('T', ' ') }}</template>
+            </el-table-column>
+            <el-table-column label="级别" width="80">
+              <template #default="{ row }"><el-tag size="small" :type="levelTagType(row.level)">{{ (row.level || 'debug').toUpperCase() }}</el-tag></template>
+            </el-table-column>
+            <el-table-column prop="module" label="模块" width="120" />
+            <el-table-column prop="message" label="日志内容" show-overflow-tooltip />
+          </el-table>
+          <el-empty v-if="!debugLogs.length" description="暂无调试日志，可在「对话测试」中执行测试产生日志" :image-size="60" />
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -560,6 +715,46 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
         <el-button type="primary" @click="handleSaveTest">{{ isEditingTest ? '保存' : '创建' }}</el-button>
       </template>
     </el-dialog>
+
+    <!-- 测试结果对话框 -->
+    <el-dialog v-model="showResultDialog" title="测试结果" width="560px">
+      <el-form label-width="90px" v-if="resultRow">
+        <el-form-item label="测试问题"><div class="result-text">{{ resultRow.query || '（未设置）' }}</div></el-form-item>
+        <el-form-item label="期望答案"><div class="result-text">{{ resultRow.expectedAnswer || '（未设置）' }}</div></el-form-item>
+        <el-form-item label="实际回答"><div class="result-text">{{ resultRow.actualAnswer || '（尚未执行测试）' }}</div></el-form-item>
+        <el-form-item label="匹配结果">
+          <el-tag size="small" :type="matchType(resultRow)">{{ matchText(resultRow) }}</el-tag>
+          <el-tag size="small" style="margin-left:8px" v-if="resultRow.similarity != null && resultRow.similarity !== ''">相似度 {{ resultRow.similarity }}%</el-tag>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showResultDialog=false">关闭</el-button>
+        <el-button type="primary" @click="showResultDialog=false; handleRunTest(resultRow)">重新执行</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 录制测试案例：与机器人真实对话 -->
+    <el-dialog v-model="showRecorder" title="录制测试案例 - 与机器人对话" width="560px" :close-on-click-modal="false">
+      <div class="chat-box">
+        <div v-if="!chatMessages.length" class="chat-empty">在下方输入问题，与机器人对话后保存为测试案例</div>
+        <div v-for="(msg, idx) in chatMessages" :key="idx" :class="['chat-msg', msg.role === 'user' ? 'chat-user' : 'chat-assistant']">
+          <div class="chat-bubble">
+            <div class="chat-role">{{ msg.role === 'user' ? '我' : '机器人' }}</div>
+            <div class="chat-content">{{ msg.content }}</div>
+          </div>
+        </div>
+        <div v-if="recorderLoading" class="chat-loading">机器人正在思考...</div>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:12px">
+        <el-input v-model="chatInput" placeholder="输入测试问题，按 Enter 发送" @keyup.enter="handleRecorderSend" :disabled="recorderLoading" />
+        <el-button type="primary" :loading="recorderLoading" @click="handleRecorderSend" :disabled="!chatInput.trim()">发送</el-button>
+      </div>
+      <div v-if="recordedQA" style="margin-top:8px;font-size:12px;color:#67c23a">✓ 已获取回答，点击下方「保存为测试案例」完成录制</div>
+      <template #footer>
+        <el-button @click="showRecorder=false">取消</el-button>
+        <el-button type="success" @click="handleSaveRecorded" :disabled="!recordedQA">保存为测试案例</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -587,5 +782,67 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
   border-radius: 8px;
   padding: 20px;
   border: 1px solid var(--el-border-color-light);
+}
+.result-text {
+  white-space: pre-wrap;
+  line-height: 1.6;
+  font-size: 13px;
+  color: var(--el-text-color-regular);
+  background: var(--el-fill-color-light);
+  border-radius: 6px;
+  padding: 8px 12px;
+  width: 100%;
+}
+.chat-box {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 16px;
+  height: 360px;
+  overflow-y: auto;
+  background: var(--el-fill-color-lighter);
+}
+.chat-empty {
+  text-align: center;
+  color: var(--el-text-color-placeholder);
+  padding-top: 140px;
+  font-size: 14px;
+}
+.chat-msg {
+  display: flex;
+  margin-bottom: 12px;
+
+  &.chat-user { justify-content: flex-end; }
+  &.chat-assistant { justify-content: flex-start; }
+}
+.chat-bubble {
+  max-width: 80%;
+  padding: 8px 14px;
+  border-radius: 12px;
+
+  .chat-user & {
+    background: var(--el-color-primary);
+    color: #fff;
+  }
+  .chat-assistant & {
+    background: var(--el-bg-color-overlay);
+    color: var(--el-text-color-primary);
+    border: 1px solid var(--el-border-color-light);
+  }
+}
+.chat-role {
+  font-size: 11px;
+  opacity: 0.7;
+  margin-bottom: 4px;
+}
+.chat-content {
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+}
+.chat-loading {
+  text-align: center;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  padding: 8px;
 }
 </style>

@@ -5,4 +5,8 @@ import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.ma
     private String appId,model,prompt,knowledgeIds,toolIds;
     private BigDecimal temperature;
     private Integer maxTurns;
+    private String kbSettings;
+    private String monitorSettings;
+    private String debugSettings;
+    private String workflowIds;
 }

@@ -84,6 +84,27 @@ public class FileServiceImpl implements FileService {
     }
 
     @Override
+    public FileDto uploadText(String kbId, String fileName, String content) {
+        String objectKey = kbId + "/" + IdUtil.fastSimpleUUID();
+        byte[] bytes = content.getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        minioService.upload(objectKey, new java.io.ByteArrayInputStream(bytes), "text/plain");
+
+        String extension = FileUtil.extName(fileName);
+        KbFile f = new KbFile();
+        f.setKbId(kbId);
+        f.setName(fileName);
+        f.setExtension(extension);
+        f.setSize((long) bytes.length);
+        f.setCategory(detectCategory(extension));
+        f.setObjectKey(objectKey);
+        f.setStatus("pending");
+        f.setProgress(0);
+        f.setChunkCount(0);
+        fileMapper.insert(f);
+        return toDto(f);
+    }
+
+    @Override
     public void process(String kbId, String fileId) {
         KbFile f = fileMapper.selectOne(new LambdaQueryWrapper<KbFile>()
                 .eq(KbFile::getId, fileId)

@@ -11,6 +11,8 @@ import KnowledgeUpdate from './components/KnowledgeUpdate.vue'
 import DialogTest from './components/DialogTest.vue'
 import DialogOptimize from './components/DialogOptimize.vue'
 import MonitorPublishConfig from './components/MonitorPublishConfig.vue'
+import WorkflowConfig from './components/WorkflowConfig.vue'
+import MonitorManage from './components/MonitorManage.vue'
 import * as api from '@/api'
 
 const route = useRoute()
@@ -66,6 +68,7 @@ const menuGroups = reactive([
     items: [
       { key: 'basic', label: '基础配置', icon: 'Setting' },
       { key: 'kb', label: '知识库配置', icon: 'Collection' },
+      { key: 'workflow', label: '工作流配置', icon: 'Operation' },
       { key: 'skill', label: '技能配置', icon: 'MagicStick' },
       { key: 'tool', label: '工具配置', icon: 'SetUp' },
       { key: 'mcp', label: 'MCP配置', icon: 'Connection' },
@@ -99,6 +102,17 @@ const menuGroups = reactive([
     items: [
       { key: 'chat-log', label: '对话记录', icon: 'ChatLineRound' },
       { key: 'feedback', label: '反馈记录', icon: 'ChatDotSquare' },
+    ],
+  },
+  {
+    name: '监控管理',
+    expanded: true,
+    items: [
+      { key: 'monitor-chat', label: '查看对话', icon: 'View' },
+      { key: 'monitor-data', label: '分析对话', icon: 'DataAnalysis' },
+      { key: 'monitor-alert', label: '设置数据', icon: 'Bell' },
+      { key: 'monitor-perf', label: '查看性能', icon: 'Odometer' },
+      { key: 'monitor-opt', label: '优化性能', icon: 'Timer' },
     ],
   },
   {
@@ -143,63 +157,6 @@ function copyToClipboard(text: string) {
   }).catch(() => {
     ElMessage.error('复制失败')
   })
-}
-
-// 知识库配置
-const kbSearchKeyword = ref('')
-const categorySearchKeyword = ref('')
-const selectedCategory = ref('all')
-const bindPersonalKB = ref('no')
-const bindTeamKB = ref(true)
-
-const categories = ref([
-  { id: 'all', name: '全部', children: [] },
-  { id: 'market', name: '市场运营', children: [] },
-  { id: 'project', name: '项目管理', children: [] },
-  { id: 'product', name: '产品研发', children: [] },
-  { id: 'research', name: '市场研究', children: [] },
-  { id: 'rag', name: 'RAG测试集', children: [] },
-  { id: 'learning', name: '学习资源', children: [] },
-  { id: 'enterprise', name: '企业管理', children: [] },
-])
-
-const availableKBs = ref([
-  { id: '1', name: '物产定制化功能操作手册', embeddingModel: 'text-embedding-v4', dimension: 1024, category: 'product', selected: false },
-  { id: '2', name: '企业资质管理', embeddingModel: 'bge-m3', dimension: 1024, category: 'enterprise', selected: true },
-  { id: '3', name: '心愿汇', embeddingModel: 'bge-m3', dimension: 1024, category: 'project', selected: false },
-  { id: '4', name: 'SaaP攻略2026', embeddingModel: 'bge-m3', dimension: 1024, category: 'market', selected: false },
-  { id: '5', name: '数字员工宣发', embeddingModel: 'bge-m3', dimension: 1024, category: 'market', selected: false },
-  { id: '6', name: '2025年会', embeddingModel: 'bge-m3', dimension: 1024, category: 'enterprise', selected: false },
-  { id: '7', name: '2024年度年会珍贵记录', embeddingModel: 'bge-m3', dimension: 1024, category: 'enterprise', selected: true },
-  { id: '8', name: '深港科创项目知识库', embeddingModel: 'bge-m3', dimension: 1024, category: 'project', selected: false },
-  { id: '9', name: '市场营销和商机知识库', embeddingModel: 'bge-m3', dimension: 1024, category: 'market', selected: false },
-  { id: '10', name: '数字员工开发库', embeddingModel: 'bge-m3', dimension: 1024, category: 'product', selected: false },
-  { id: '11', name: '中汇项目管理知识库', embeddingModel: 'bge-m3', dimension: 1024, category: 'project', selected: false },
-])
-
-const filteredKBs = computed(() => {
-  let list = availableKBs.value
-  if (selectedCategory.value !== 'all') {
-    list = list.filter(kb => kb.category === selectedCategory.value)
-  }
-  if (kbSearchKeyword.value) {
-    list = list.filter(kb => kb.name.includes(kbSearchKeyword.value))
-  }
-  return list
-})
-
-const selectedKBCount = computed(() => availableKBs.value.filter(kb => kb.selected).length)
-const allSelected = computed(() => filteredKBs.value.length > 0 && filteredKBs.value.every(kb => kb.selected))
-
-function handleSelectAll() {
-  const newVal = !allSelected.value
-  filteredKBs.value.forEach(kb => {
-    kb.selected = newVal
-  })
-}
-
-function handleSaveKB() {
-  ElMessage.success('知识库配置保存成功')
 }
 
 // 技能配置
@@ -799,9 +756,13 @@ function handlePublish() {
 	      <DialogTest v-if="activeMenu === 'dialog-test'" :app-info="appInfo" />
 	      <DialogOptimize v-if="activeMenu === 'dialog-optimize'" :app-info="appInfo" />
 	      <MonitorPublishConfig v-if="activeMenu === 'monitor-publish'" :app-info="appInfo" />
+	      <MonitorManage v-if="['monitor-chat','monitor-data','monitor-alert','monitor-perf','monitor-opt'].includes(activeMenu)" :app-info="appInfo" :tab="activeMenu" />
 
-      <!-- 知识库配置 -->
-      <KnowledgeConfig v-if="activeMenu === 'kb'" />
+	      <!-- 知识库配置 -->
+	      <KnowledgeConfig v-if="activeMenu === 'kb'" :app-info="appInfo" />
+
+	      <!-- 工作流配置 -->
+	      <WorkflowConfig v-if="activeMenu === 'workflow'" :app-info="appInfo" />
 
       <!-- 技能配置 -->
       <div v-if="activeMenu === 'skill'" class="config-section">

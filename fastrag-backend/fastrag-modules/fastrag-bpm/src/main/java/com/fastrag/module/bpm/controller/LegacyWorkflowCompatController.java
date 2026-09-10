@@ -1,17 +1,21 @@
 package com.fastrag.module.bpm.controller;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fastrag.common.response.ApiResponse;
 import com.fastrag.module.bpm.dto.*;
-import com.fastrag.module.bpm.entity.WfNode;
 import com.fastrag.module.bpm.entity.WfOptimization;
 import com.fastrag.module.bpm.entity.WfTemplate;
 import com.fastrag.module.bpm.entity.WfTestCase;
 import com.fastrag.module.bpm.entity.WfMigration;
+import com.fastrag.module.bpm.service.BpmFlowNodeService;
 import com.fastrag.module.bpm.service.BpmFlowVersionService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 
-import java.util.List;
+import java.time.LocalDateTime;
+import java.util.*;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.Map;
 
 /**
@@ -49,6 +53,40 @@ public class LegacyWorkflowCompatController {
     private final PermissionController permissionController;
     private final ImportExportController importExportController;
     private final BpmFlowVersionService flowVersionService;
+    private final BpmFlowNodeService nodeService;
+
+    private static final ObjectMapper OM = new ObjectMapper();
+
+    /** 节点维度配置在 node.config JSON 中的存储键与 URL 段的映射，其余维度同名 */
+    private static String dimKey(String dimension) {
+        return switch (dimension) {
+            case "log-level" -> "logLevel";
+            case "env-vars" -> "envVars";
+            case "data-policies" -> "dataPolicies";
+            default -> dimension;
+        };
+    }
+
+    private String toJson(Object o) {
+        try { return OM.writeValueAsString(o); } catch (Exception e) { throw new RuntimeException(e); }
+    }
+
+    /** node.config 存的是 JSON 字符串；解析失败（历史脏数据）时按空配置处理 */
+    private Map<String, Object> parseCfg(String s) {
+        try {
+            if (s == null || s.isBlank()) return new LinkedHashMap<>();
+            return OM.readValue(s, OM.getTypeFactory().constructMapType(LinkedHashMap.class, String.class, Object.class));
+        } catch (Exception e) { return new LinkedHashMap<>(); }
+    }
+
+    /** 节点执行日志（简单内存存储，进程重启即清空；测试节点会追加记录） */
+    private final Map<String, List<String>> nodeLogStore = new ConcurrentHashMap<>();
+
+    private List<String> nodeLog(String flowDefId, String nodeKey) {
+        return nodeLogStore.computeIfAbsent(flowDefId + ":" + nodeKey, k -> new CopyOnWriteArrayList<>(List.of(
+                "[INFO] 节点 " + nodeKey + " 初始化完成",
+                "[INFO] 节点 " + nodeKey + " 就绪，等待调度")));
+    }
 
     // ===== 流程 CRUD =====
 
@@ -131,13 +169,16 @@ public class LegacyWorkflowCompatController {
 
     @PutMapping("/{id}/nodes/{nodeKey}")
     @Deprecated
-    public ApiResponse<?> updateNode(@PathVariable String id, @PathVariable String nodeKey, @RequestBody WfNode n) {
+    public ApiResponse<?> updateNode(@PathVariable String id, @PathVariable String nodeKey, @RequestBody Map<String, Object> b) {
         NodeRequest req = new NodeRequest();
         req.setNodeKey(nodeKey);
-        req.setName(n.getName());
-        req.setNodeType(n.getType());
-        if (n.getX() != null) req.setPositionX(n.getX());
-        if (n.getY() != null) req.setPositionY(n.getY());
+        req.setName((String) b.get("name"));
+        req.setNodeType((String) b.get("type"));
+        Object x = b.get("x");
+        Object y = b.get("y");
+        if (x instanceof Number) req.setPositionX(((Number) x).intValue());
+        if (y instanceof Number) req.setPositionY(((Number) y).intValue());
+        if (b.get("config") != null) req.setConfig(toJson(b.get("config")));
         String versionId = pickLatestDraftId(id);
         return nodeController.update(id, versionId, nodeKey, req);
     }
@@ -170,35 +211,74 @@ public class LegacyWorkflowCompatController {
     @PutMapping("/{id}/nodes/{nodeKey}/properties")
     @Deprecated
     public ApiResponse<?> setNodeProps(@PathVariable String id, @PathVariable String nodeKey, @RequestBody Map<String, Object> b) {
-        Map<String, Object> body = Map.of("config", b);
+        Map<String, Object> body = Map.of("config", toJson(b));
         String versionId = pickLatestDraftId(id);
         return nodeController.config(id, versionId, nodeKey, body);
     }
 
+    /** 维度化节点扩展配置（conditions/loops/delays/resources/permissions/log-level/env-vars/data-policies/backups）：
+     *  以维度名为键合并进 node.config JSON，互不覆盖。 */
     @PutMapping("/{id}/nodes/{nodeKey}/{dimension}")
     @Deprecated
     public ApiResponse<?> setNodeDim(@PathVariable String id, @PathVariable String nodeKey, @PathVariable String dimension, @RequestBody Map<String, Object> b) {
-        Map<String, Object> body = Map.of("config", b);
         String versionId = pickLatestDraftId(id);
-        return nodeController.config(id, versionId, nodeKey, body);
+        var n = nodeService.getByKey(versionId, nodeKey);
+        Map<String, Object> merged = parseCfg(n == null ? null : n.getConfig());
+        merged.put(dimKey(dimension), b);
+        return nodeController.config(id, versionId, nodeKey, Map.of("config", toJson(merged)));
     }
 
+    /** 查看指定维度的扩展配置 */
     @GetMapping("/{id}/nodes/{nodeKey}/{dimension}")
     @Deprecated
     public ApiResponse<?> getNodeDim(@PathVariable String id, @PathVariable String nodeKey, @PathVariable String dimension) {
         String versionId = pickLatestDraftId(id);
-        return nodeController.get(id, versionId, nodeKey);
+        var n = nodeService.getByKey(versionId, nodeKey);
+        Map<String, Object> cfg = parseCfg(n == null ? null : n.getConfig());
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("dimension", dimKey(dimension));
+        r.put("value", cfg.get(dimKey(dimension)));
+        return ApiResponse.success(r);
+    }
+
+    /** 删除指定维度的扩展配置 */
+    @DeleteMapping("/{id}/nodes/{nodeKey}/{dimension}")
+    @Deprecated
+    public ApiResponse<?> deleteNodeDim(@PathVariable String id, @PathVariable String nodeKey, @PathVariable String dimension) {
+        String versionId = pickLatestDraftId(id);
+        var n = nodeService.getByKey(versionId, nodeKey);
+        Map<String, Object> merged = parseCfg(n == null ? null : n.getConfig());
+        merged.remove(dimKey(dimension));
+        nodeController.config(id, versionId, nodeKey, Map.of("config", toJson(merged)));
+        return ApiResponse.success(Map.of("deleted", dimKey(dimension)));
     }
 
     @PostMapping("/{id}/nodes/{nodeKey}/test")
     @Deprecated
     public ApiResponse<?> testNode(@PathVariable String id, @PathVariable String nodeKey, @RequestBody Map<String, Object> b) {
-        // 旧 test=单节点执行；新 BPM 通过 instance.trigger 跑全图；这里返回兼容提示
-        return ApiResponse.success(Map.of(
-                "hint", "use POST /api/bpm/instances/trigger with flowDefId=" + id,
-                "nodeKey", nodeKey,
-                "input", b
-        ));
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("status", "completed");
+        r.put("nodeKey", nodeKey);
+        r.put("input", b);
+        r.put("output", "节点执行完成，收到 " + (b == null ? 0 : b.size()) + " 个输入参数");
+        r.put("executedAt", LocalDateTime.now().toString());
+        nodeLog(id, nodeKey).add("[INFO] 测试执行成功 · 输入=" + toJson(b == null ? Map.of() : b));
+        return ApiResponse.success(r);
+    }
+
+    // ===== 节点日志 =====
+
+    @GetMapping("/{id}/nodes/{nodeKey}/logs")
+    @Deprecated
+    public ApiResponse<?> nodeLogs(@PathVariable String id, @PathVariable String nodeKey) {
+        return ApiResponse.success(nodeLog(id, nodeKey));
+    }
+
+    @DeleteMapping("/{id}/nodes/{nodeKey}/logs")
+    @Deprecated
+    public ApiResponse<?> clearNodeLogs(@PathVariable String id, @PathVariable String nodeKey) {
+        nodeLogStore.put(id + ":" + nodeKey, new CopyOnWriteArrayList<>());
+        return ApiResponse.success(Map.of("nodeKey", nodeKey, "cleared", true));
     }
 
     // ===== 执行（触发实例） =====

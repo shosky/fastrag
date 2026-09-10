@@ -11,4 +11,7 @@ public class KbController {
     @PostMapping public ApiResponse<?> create(@Valid @RequestBody KbCreateRequest req) { return ApiResponse.success(svc.create(req,SecurityUtil.getCurrentUserId())); }
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@Valid @RequestBody KbCreateRequest req) { return ApiResponse.success(svc.update(id,req)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }
+    // 知识库导出 / 导入（导出包含元数据与文档全文，导入后自动重新解析嵌入）
+    @GetMapping("/{id}/export") public ApiResponse<?> exportKb(@PathVariable String id) { return ApiResponse.success(svc.exportKb(id)); }
+    @PostMapping("/import") public ApiResponse<?> importKb(@RequestBody java.util.Map<String,Object> data) { return ApiResponse.success(svc.importKb(data, SecurityUtil.getCurrentUserId())); }
 }

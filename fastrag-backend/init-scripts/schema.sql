@@ -335,7 +335,11 @@ CREATE TABLE IF NOT EXISTS app_config (
     temperature DECIMAL(3,2) DEFAULT 0.70,
     knowledge_ids JSON,
     tool_ids JSON,
-    max_turns INT DEFAULT 10
+    max_turns INT DEFAULT 10,
+    kb_settings TEXT COMMENT '应用知识库配置JSON(bindPersonalKB/specifyRetrieval)',
+    monitor_settings TEXT COMMENT '应用监控配置JSON(告警监控/性能优化配置)',
+    debug_settings TEXT COMMENT '应用调试配置JSON(调试级别等)',
+    workflow_ids TEXT COMMENT '应用绑定的工作流ID列表JSON'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS app_template (
@@ -1252,7 +1256,7 @@ CREATE TABLE IF NOT EXISTS app_db_binding (
     app_id VARCHAR(32) NOT NULL,
     db_id VARCHAR(32) NOT NULL,
     alias VARCHAR(128),
-    allowed_tables JSON,
+    allowed_tables TEXT,
     enabled TINYINT DEFAULT 1,
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_app_id (app_id)

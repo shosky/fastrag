@@ -86,6 +86,15 @@ export async function deleteKnowledgeBase(id: string) {
   return request.delete(`/kb/${id}`)
 }
 
+// 知识库导出 / 导入（导出包含知识库元数据与文档全文）
+export async function exportKnowledgeBase(id: string) {
+  return request.get(`/kb/${id}/export`)
+}
+
+export async function importKnowledgeBase(data: Record<string, unknown>) {
+  return request.post('/kb/import', data)
+}
+
 // ===========================================================================
 // 文件 API
 // ===========================================================================
@@ -1618,6 +1627,18 @@ export async function bindAppKb(appId: string, data: Record<string, unknown>) {
 export async function unbindAppKb(appId: string, id: string) {
   return request.delete(`/apps/${appId}/knowledge-bases/${id}`)
 }
+export async function exportAppKbBindings(appId: string) {
+  return request.get(`/apps/${appId}/knowledge-bases/export`)
+}
+export async function importAppKbBindings(appId: string, data: Record<string, unknown>) {
+  return request.post(`/apps/${appId}/knowledge-bases/import`, data)
+}
+export async function getAppKbSettings(appId: string) {
+  return request.get(`/apps/${appId}/knowledge-bases/settings`)
+}
+export async function saveAppKbSettings(appId: string, data: Record<string, unknown>) {
+  return request.put(`/apps/${appId}/knowledge-bases/settings`, data)
+}
 export async function getAppDbBindings(appId: string) {
   return request.get(`/apps/${appId}/databases`)
 }
@@ -1636,6 +1657,18 @@ export async function getAppPublishRecords(appId: string) {
 export async function publishApp(appId: string, data: Record<string, unknown>) {
   return request.post(`/apps/${appId}/publish/online`, data)
 }
+export async function saveAppPublishConfig(appId: string, data: Record<string, unknown>) {
+  return request.post(`/apps/${appId}/publish/config`, data)
+}
+export async function getAppPublishStatus(appId: string) {
+  return request.get(`/apps/${appId}/publish/status`)
+}
+export async function revokeAppPublish(appId: string, recordId: string) {
+  return request.post(`/apps/${appId}/publish/${recordId}/revoke`)
+}
+export async function republishApp(appId: string, data: Record<string, unknown>) {
+  return request.post(`/apps/${appId}/publish/republish`, data)
+}
 export async function getAppDialogTests(appId: string) {
   return request.get(`/apps/${appId}/dialog-tests`)
 }
@@ -1651,6 +1684,18 @@ export async function deleteAppDialogTest(appId: string, id: string) {
 export async function exportAppDialogTests(appId: string) {
   return request.get(`/apps/${appId}/dialog-tests/export`, { responseType: 'blob' })
 }
+export async function runAppDialogTest(appId: string, id: string) {
+  return request.post(`/apps/${appId}/dialog-tests/${id}/run`)
+}
+export async function runAllAppDialogTests(appId: string) {
+  return request.post(`/apps/${appId}/dialog-tests/run-all`)
+}
+export async function exportAppDebugLogs(appId: string) {
+  return request.get(`/apps/${appId}/debug/export`, { responseType: 'blob' })
+}
+export async function clearAppDebugLogs(appId: string) {
+  return request.delete(`/apps/${appId}/debug/logs`)
+}
 export async function getAppOptimizations(appId: string) {
   return request.get(`/apps/${appId}/optimizations`)
 }
@@ -1659,6 +1704,12 @@ export async function createAppOptimization(appId: string, data: Record<string, 
 }
 export async function applyAppOptimization(appId: string, id: string) {
   return request.post(`/apps/${appId}/optimizations/${id}/apply`)
+}
+export async function testAppOptimization(appId: string, id: string) {
+  return request.post(`/apps/${appId}/optimizations/${id}/test`)
+}
+export async function analyzeAppOptimization(appId: string) {
+  return request.post(`/apps/${appId}/optimization/analyze`)
 }
 export async function updateAppOptimization(appId: string, id: string, data: Record<string, unknown>) {
   return request.put(`/apps/${appId}/optimizations/${id}`, data)
@@ -1694,6 +1745,15 @@ export async function getWorkflowNodeConfig(wfId: string, nodeKey: string, dimen
 }
 export async function saveWorkflowNodeConfig(wfId: string, nodeKey: string, dimension: string, data: Record<string, unknown>) {
   return request.put(`/workflows/${wfId}/nodes/${nodeKey}/${dimension}`, data)
+}
+export async function deleteWorkflowNodeConfig(wfId: string, nodeKey: string, dimension: string) {
+  return request.delete(`/workflows/${wfId}/nodes/${nodeKey}/${dimension}`)
+}
+export async function getWorkflowNodeLogs(wfId: string, nodeKey: string) {
+  return request.get(`/workflows/${wfId}/nodes/${nodeKey}/logs`)
+}
+export async function clearWorkflowNodeLogs(wfId: string, nodeKey: string) {
+  return request.delete(`/workflows/${wfId}/nodes/${nodeKey}/logs`)
 }
 export async function executeWorkflow(wfId: string, inputs?: Record<string, unknown>) {
   return request.post(`/workflows/${wfId}/execute`, inputs || {})
@@ -1868,6 +1928,28 @@ export async function saveAppWorkflowConfig(appId: string, cfg: Record<string, u
 }
 export async function getAppMonitor(appId: string) {
   return request.get(`/apps/${appId}/monitor`)
+}
+// ===== 监控管理 =====
+export async function getAppMonitorChatRecords(appId: string, params?: { keyword?: string; status?: string }) {
+  return request.get(`/apps/${appId}/monitor/chat-records`, { params })
+}
+export async function getAppMonitorDataAnalysis(appId: string) {
+  return request.get(`/apps/${appId}/monitor/data-analysis`)
+}
+export async function getAppMonitorAlertConfig(appId: string) {
+  return request.get(`/apps/${appId}/monitor/alert-config`)
+}
+export async function saveAppMonitorAlertConfig(appId: string, cfg: Record<string, unknown>) {
+  return request.put(`/apps/${appId}/monitor/alert-config`, cfg)
+}
+export async function getAppMonitorPerfMetrics(appId: string) {
+  return request.get(`/apps/${appId}/monitor/perf-metrics`)
+}
+export async function getAppMonitorOptimizeConfig(appId: string) {
+  return request.get(`/apps/${appId}/monitor/optimize-config`)
+}
+export async function saveAppMonitorOptimizeConfig(appId: string, cfg: Record<string, unknown>) {
+  return request.put(`/apps/${appId}/monitor/optimize-config`, cfg)
 }
 export async function getAppDebugInfo(appId: string) {
   return request.get(`/apps/${appId}/debug`)
