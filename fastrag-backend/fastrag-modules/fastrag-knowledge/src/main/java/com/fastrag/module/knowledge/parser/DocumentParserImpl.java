@@ -304,9 +304,12 @@ public class DocumentParserImpl implements DocumentParser {
             if (t.isBlank()) continue;
             float[] b = boxes.get(i);
             float font = Math.max(1f, maxFonts.get(i));
-            // 行视觉高度 = 基线跨度 + 0.4 字号（覆盖字形上下沿）；行顶上提 0.25 字号留上沿余量
-            float h = Math.max(font, (b[1] - b[0]) + font * 0.4f);
-            rows.add(new PageLine(b[0] - font * 0.25f, h, b[2], b[3] - b[2], t));
+            // 行盒按基线张开（YDirAdj 是基线 y，顶左原点）：字形上沿约在基线上方 0.7~0.88 字号、
+            // 降部约在基线下方 0.2~0.25 字号。旧实现上沿只提 0.25、下沿却留 0.75——行盒整体
+            // 下坠约半个字号，段落框随之整体下坠数像素（AI分片 结构块"框往下坠几像素"的根因）。
+            float top = b[0] - font * 0.8f;
+            float bottom = b[1] + font * 0.25f;
+            rows.add(new PageLine(top, bottom - top, b[2], b[3] - b[2], t));
         }
         rows.sort(java.util.Comparator.comparingDouble(PageLine::y));
         return rows;
@@ -386,6 +389,13 @@ public class DocumentParserImpl implements DocumentParser {
         float medianGap = gaps.isEmpty() ? 0f : gaps.get(gaps.size() / 2);
         float rowH = sorted.get(0).height() > 0 ? sorted.get(0).height() : 12f;
         float paraGap = Math.max(medianGap * 1.6f, rowH * 0.9f);
+        // 页内行高中位数（正文字号的几何证据）：标题行判定用它区分"真标题"与"无标点的正文换行行"
+        List<Float> heights = new ArrayList<>();
+        for (PageLine r : sorted) {
+            if (r.height() > 0) heights.add(r.height());
+        }
+        Collections.sort(heights);
+        float medianH = heights.isEmpty() ? 0f : heights.get(heights.size() / 2);
 
         List<String> paraLines = new ArrayList<>();
         float prevBottom = -1f;
@@ -398,7 +408,9 @@ public class DocumentParserImpl implements DocumentParser {
                 prevBottom = rowBottom;
                 continue;
             }
-            boolean titleLike = !t.contains("\t") && isPdfTitleLikeLine(t);
+            // 标题行判定须带几何/编号证据（isPdfTitleRow）：纯文本特征会把中文正文
+            // 的无标点换行行几乎全部判成标题 → 每行一个 HEADING 节点，段落粒度退化为行
+            boolean titleLike = !t.contains("\t") && isPdfTitleRow(row, medianH);
             boolean mdTable = t.startsWith("|");
             int tabCols = t.contains("\t") ? t.split("\t", -1).length : 0;
             boolean tabRow = tabCols >= 2;
@@ -608,6 +620,26 @@ public class DocumentParserImpl implements DocumentParser {
         long digitTokens = java.util.Arrays.stream(t.split("\\s+"))
                 .filter(w -> w.matches(".*\\d.*")).count();
         return digitTokens < 3;
+    }
+
+    /** 显式标题编号：1.2 / 2.1.3（后随分隔或空白）/ 1、 / 一、 / 第二章（分隔符后须非数字，排除"1.5万元"这类小数开头的正文行） */
+    private static final java.util.regex.Pattern TITLE_NUMBERED_PATTERN = java.util.regex.Pattern.compile(
+            "^\\s*(?:\\d+(?:\\.\\d+)+(?=[\\s、.．（(])"
+                    + "|\\d{1,3}[、.．](?=\\s*[^\\d\\s])"
+                    + "|[一二三四五六七八九十百]+[、.．](?=\\s*\\S)"
+                    + "|第[一二三四五六七八九十百\\d]+[章节条款篇部分])");
+
+    /**
+     * 标题行判定（几何证据版，仅用于行→节点装配）：在 isPdfTitleLikeLine 文本特征之上，
+     * 还须满足其一——显式编号；行高 ≥ 页内行高中位数 × 1.12（真标题字号通常大于正文）。
+     * 纯文本特征会把中文/英文正文的无标点换行行几乎全部误判为标题：每行一个 HEADING 节点，
+     * 段落粒度退化为行（AI分片 结构块框选"一行一框"即源于此）。
+     */
+    public static boolean isPdfTitleRow(PageLine row, float medianH) {
+        String t = row.text() == null ? "" : row.text().trim();
+        if (!isPdfTitleLikeLine(t)) return false;
+        if (TITLE_NUMBERED_PATTERN.matcher(t).find()) return true;
+        return medianH > 0 && row.height() >= medianH * 1.12f;
     }
 
     /** 标题级别：按编号深度推断（"1"→1、"2.1"→2、"2.1.1"→3，封顶 4；无编号默认 2） */

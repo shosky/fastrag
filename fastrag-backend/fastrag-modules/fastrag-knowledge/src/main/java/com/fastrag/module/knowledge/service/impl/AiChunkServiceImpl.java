@@ -379,23 +379,33 @@ public class AiChunkServiceImpl implements AiChunkService {
                             String.format("%.1f", ib.width()), String.format("%.1f", ib.height()),
                             String.format("%.2f", interRatio), interRatio < 0.3f);
                     if (imgArea <= 0 || interRatio < 0.3f) continue;
-                    // 命中即按图片完整框裁剪原图直达分片（不做 OCR：界面截图/图表的 OCR 文字
-                    // 价值低且丢失视觉信息）；原图落 MinIO，前端分片卡直接渲染
+                    // 命中即按图片完整框裁剪原图直达分片：原图落 MinIO 供分片卡渲染，
+                    // 同时对原图追加一次 OCR，把识别文字填入图注（text）——识别为空/失败
+                    // 则保持纯图，不产生占位垃圾。不做增强重试：内容图以视觉信息为主、文字为辅
                     java.awt.image.BufferedImage cropped = cropPtRegion(pageImage, visW, visH, ib.x(), ib.y(), ib.width(), ib.height(), 0.01f);
                     if (cropped == null) continue;
                     String imageKey = uploadRegionImage(kbId, fileId, cropped, page, blocks.size());
                     if (imageKey == null) continue;
+                    String imgText = "";
+                    try {
+                        String t = ocrService.recognize(toJpegBytes(cropped), "jpeg", null);
+                        if (t != null && !t.isBlank()) imgText = t.trim();
+                    } catch (Exception oe) {
+                        log.warn("[AiChunk] content image OCR failed (keep image-only): {}", oe.getMessage());
+                    }
                     Map<String, Object> b = new HashMap<>();
                     b.put("type", "image");
-                    b.put("text", "");
+                    b.put("text", imgText);
                     b.put("imageKey", imageKey);
                     b.put("_y", ib.y());
                     blocks.add(b);
                 }
             }
 
-            // 图片块按页面位置与文字块穿插（此前文字全在前、图片全在后 → 分片里图片位置不对）
-            blocks.sort(java.util.Comparator.comparingDouble(b -> (Double) b.get("_y")));
+            // 图片块按页面位置与文字块穿插（此前文字全在前、图片全在后 → 分片里图片位置不对）。
+            // _y 是 float 装箱（PageLine/PdfImageBox 均为 float），必须经 Number 取值，
+            // 直接强转 (Double) 会在块数 ≥2 触发排序时抛 ClassCastException
+            blocks.sort(java.util.Comparator.comparingDouble(b -> ((Number) b.get("_y")).doubleValue()));
             blocks.forEach(b -> b.remove("_y"));
 
             // ③ 无文字行也无内容图（纯图形/扫描页）→ 整个区域渲染裁剪，多级重试 OCR
@@ -1666,8 +1676,9 @@ public class AiChunkServiceImpl implements AiChunkService {
                         }
                         if (x2 < x1 || y2 < y1) continue;
                         // 外扩按「单行盒高」计，与段落跨高无关：
-                        // 单行段 y2==y1 时旧逻辑 pad=0，框上下不对称（顶边切字形、底边坠入行距）
-                        float pad = (lineCnt > 0 ? lineHSum / lineCnt : 0f) * 0.18f;
+                        // 单行段 y2==y1 时旧逻辑 pad=0，框上下不对称。行盒本身已按基线
+                        // 张开覆盖字形（extractGeometryLines），此 pad 仅作字体度量余量，宜小
+                        float pad = (lineCnt > 0 ? lineHSum / lineCnt : 0f) * 0.1f;
                         built[i] = AiChunkParagraph.RectItem.builder()
                                 .page(e.getKey())
                                 .x(x1 / pageW)
@@ -1795,12 +1806,18 @@ public class AiChunkServiceImpl implements AiChunkService {
                 m++;
                 last = s;
             }
-            // 孤儿行吸收：锚点命中 seq 第 m 行（m>0）时，锚点前的视觉行多半是本段被
-            // 行碎片化/首行匹配失败跳过的首行（不吸收则框精确切掉段落首行）；尾部同理。
-            // 向后吸收遇到"更像下一段首行"的行即停，避免抢行。
+            // 孤儿行吸收：锚点命中 seq 第 m 行（m>0）时，锚点前的视觉行可能是本段被
+            // 行碎片化/首行匹配失败跳过的首行（不吸收则框精确切掉段落首行）。
+            // 吸收必须逐行内容匹配段落对应行（向前 headIdx 匹配 seq[seqIdx]，向后对称）——
+            // 纯按位置回退会把跨页段的页眉/上一页残留行误吸进框（2026-09-07 修复）
             int start = anchorLine;
-            int headNeed = Math.min(anchorSeq, anchorLine - j);
-            if (headNeed > 0) start = anchorLine - headNeed;
+            int headIdx = anchorLine - 1, seqHeadIdx = anchorSeq - 1;
+            while (headIdx >= j && seqHeadIdx >= 0
+                    && lineMatches(normLines.get(headIdx), seq.get(seqHeadIdx))) {
+                start = headIdx;
+                headIdx--;
+                seqHeadIdx--;
+            }
             int end = last + 1;
             int tailRemain = seq.size() - (m + 1);
             List<String> nextSeq = (i + 1 < n) ? normalizeLines(paragraphTexts.get(i + 1)) : List.of();

@@ -20,8 +20,8 @@ package com.fastrag.module.knowledge.entity;
  *   <li>imageKeys — JSON 数组，存储该分块关联的图片对象键列表</li>
  *   <li>chunkType — 分块类型："text"（文本）或 "image"（图片占位）</li>
  *   <li>title / headingPath — 结构感知分块：所属最近标题和层级路径（如 "第一章 > 1.1 背景"）</li>
- *   <li>graphIndexed — 是否已完成知识图谱实体提取（0=未提取，1=已提取）</li>
- *   <li>extractionResult — 图谱提取结果缓存，JSON 格式</li>
+ *   <li>graphIndexed — 知识图谱实体提取状态（0=未提取，1=已提取，2=提取/写入失败待增量重试）</li>
+ *   <li>extractionResult — 图谱提取结果缓存，JSON 格式（graphIndexed=1 时非空，供 replay 零成本重放）</li>
  * </ul>
  */
 import com.baomidou.mybatisplus.annotation.*;

@@ -20,7 +20,8 @@ package com.fastrag.ai.embedding;
  *   <li>请求体使用 JsonMapper 启用 ESCAPE_NON_ASCII，将中文等非 ASCII 字符转义为
  *       Unicode 转义序列（\\uXXXX），以兼容 SiliconFlow 等网关对 UTF-8 中文处理的 bug（返回 20015）</li>
  *   <li>动态路由时独立构建 WebClient 实例，避免 baseUrl 路径拼接问题</li>
- *   <li>请求超时 60 秒</li>
+ *   <li>请求超时 60 秒；瞬态网络错误（连接被重置/提前关闭/连接失败、网关 429/5xx）
+ *       自动重试 2 次（500ms/1s 退避），避免跨境链路抖动导致解析分片整体失败</li>
  * </ul>
  *
  * <p>依赖：aiWebClient（默认网关客户端）、aiHttpClient（支持代理的底层 HTTP 客户端）、
@@ -38,6 +39,8 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.stereotype.Service;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
+import org.springframework.web.reactive.function.client.WebClientRequestException;
+import org.springframework.web.reactive.function.client.WebClientResponseException;
 import reactor.netty.http.client.HttpClient;
 import java.time.Duration;
 import java.util.*;
@@ -46,6 +49,9 @@ import java.util.*;
 @Service
 @RequiredArgsConstructor
 public class EmbeddingService {
+    /** 瞬态网络错误的最大尝试次数（1 次原始请求 + 2 次重试） */
+    private static final int MAX_ATTEMPTS = 3;
+
     private final WebClient aiWebClient;
     private final HttpClient aiHttpClient;
     private final ObjectMapper objectMapper;
@@ -73,25 +79,6 @@ public class EmbeddingService {
         req.setInput(texts);
 
         try {
-            WebClient.RequestBodySpec requestSpec;
-            if (apiUrl != null && !apiUrl.isBlank()) {
-                // 动态路由：直接构造完整 URL，避免 baseUrl 路径被拼接
-                String fullUrl = apiUrl.endsWith("/") ? apiUrl + "v1/embeddings" : apiUrl + "/v1/embeddings";
-                WebClient dynamicClient = WebClient.builder()
-                        .clientConnector(new ReactorClientHttpConnector(aiHttpClient))
-                        .exchangeStrategies(ExchangeStrategies.builder()
-                                .codecs(c -> c.defaultCodecs().maxInMemorySize(20 * 1024 * 1024))
-                                .build())
-                        .build();
-                requestSpec = dynamicClient.post().uri(fullUrl);
-            } else {
-                // 默认网关：使用 aiWebClient，路径相对
-                requestSpec = aiWebClient.post().uri("/v1/embeddings");
-            }
-            if (apiKey != null && !apiKey.isBlank()) {
-                requestSpec = requestSpec.header("Authorization", "Bearer " + apiKey);
-            }
-
             // SiliconFlow 等网关对原始 UTF-8 中文 input 返回 20015（服务端回归 bug），
             // 必须将非 ASCII 字符转义为 unicode 转义序列（\\uXXXX）形式发送；英文/数字不受影响
             String body = JsonMapper.builder()
@@ -99,10 +86,24 @@ public class EmbeddingService {
                     .build()
                     .writeValueAsString(req);
 
-            String resp = requestSpec.contentType(MediaType.APPLICATION_JSON)
-                    .bodyValue(body)
-                    .retrieve().bodyToMono(String.class)
-                    .block(Duration.ofSeconds(60));
+            String resp = null;
+            for (int attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+                try {
+                    resp = postEmbeddings(apiUrl, apiKey, body);
+                    break;
+                } catch (Exception e) {
+                    if (attempt == MAX_ATTEMPTS || !isTransient(e)) throw e;
+                    long backoffMs = 500L * attempt;
+                    log.warn("Embedding transient failure (attempt {}/{}), retry in {} ms: {}",
+                            attempt, MAX_ATTEMPTS, backoffMs, e.getMessage());
+                    try {
+                        Thread.sleep(backoffMs);
+                    } catch (InterruptedException ie) {
+                        Thread.currentThread().interrupt();
+                        throw e;
+                    }
+                }
+            }
             JsonNode root = objectMapper.readTree(resp);
             List<List<Float>> embeddings = new ArrayList<>();
             for (JsonNode item : root.path("data")) {
@@ -117,5 +118,45 @@ public class EmbeddingService {
             log.error("Embedding failed, model={}, apiUrl={}", model, apiUrl, e);
             throw new RuntimeException("向量化失败", e);
         }
+    }
+
+    /** 单次 POST /v1/embeddings；每次调用重建请求链，避免复用已被消费的请求体 */
+    private String postEmbeddings(String apiUrl, String apiKey, String body) {
+        WebClient.RequestBodySpec requestSpec;
+        if (apiUrl != null && !apiUrl.isBlank()) {
+            // 动态路由：直接构造完整 URL，避免 baseUrl 路径被拼接
+            String fullUrl = apiUrl.endsWith("/") ? apiUrl + "v1/embeddings" : apiUrl + "/v1/embeddings";
+            WebClient dynamicClient = WebClient.builder()
+                    .clientConnector(new ReactorClientHttpConnector(aiHttpClient))
+                    .exchangeStrategies(ExchangeStrategies.builder()
+                            .codecs(c -> c.defaultCodecs().maxInMemorySize(20 * 1024 * 1024))
+                            .build())
+                    .build();
+            requestSpec = dynamicClient.post().uri(fullUrl);
+        } else {
+            // 默认网关：使用 aiWebClient，路径相对
+            requestSpec = aiWebClient.post().uri("/v1/embeddings");
+        }
+        if (apiKey != null && !apiKey.isBlank()) {
+            requestSpec = requestSpec.header("Authorization", "Bearer " + apiKey);
+        }
+        return requestSpec.contentType(MediaType.APPLICATION_JSON)
+                .bodyValue(body)
+                .retrieve().bodyToMono(String.class)
+                .block(Duration.ofSeconds(60));
+    }
+
+    /**
+     * 判断是否为可重试的瞬态错误：连接类 IO 失败（Connection reset、PrematureClose、
+     * 连接/读写超时等均包装为 WebClientRequestException）以及网关侧 429/5xx；
+     * 4xx（鉴权、参数错误）不重试。
+     */
+    private boolean isTransient(Exception e) {
+        if (e instanceof WebClientRequestException) return true;
+        if (e instanceof WebClientResponseException wcre) {
+            int status = wcre.getStatusCode().value();
+            return status == 429 || status == 502 || status == 503 || status == 504;
+        }
+        return false;
     }
 }

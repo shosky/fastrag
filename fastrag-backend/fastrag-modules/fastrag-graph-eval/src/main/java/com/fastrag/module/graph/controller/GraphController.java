@@ -102,6 +102,18 @@ public class GraphController {
         return ApiResponse.success();
     }
 
+    /**
+     * 重放式重建（零 LLM 成本，ADR-0002 存量迁移）：
+     * 重放 kb_chunk.extraction_result 持久化的抽取结果写入图谱；
+     * 历史上失败被误标已构建（无抽取结果）的 chunk 自动重置为待提取，由后续增量构建重新抽取。
+     */
+    @Loggable(category = LogCategory.operation, action = ActionType.graph_build_started, detail = "重放抽取结果重建图谱")
+    @PostMapping("/index/replay")
+    public ApiResponse<?> replay(@PathVariable String kbId) {
+        svc.buildIndex(kbId, "replay", null);
+        return ApiResponse.success();
+    }
+
     @GetMapping("/index/build-status")
     public ApiResponse<?> buildStatus(@PathVariable String kbId) {
         return ApiResponse.success(svc.getBuildStatus(kbId));
@@ -139,6 +151,27 @@ public class GraphController {
     public ApiResponse<?> saveSettings(@PathVariable String kbId,
                                        @RequestBody Map<String, Object> settings) {
         svc.saveSettings(kbId, settings);
+        return ApiResponse.success();
+    }
+
+    // ==================== 同义实体合并 ====================
+
+    /** 合并候选发现：基于实体 embedding 余弦相似度，仅建议不自动合并 */
+    @GetMapping("/merge-candidates")
+    public ApiResponse<?> mergeCandidates(@PathVariable String kbId,
+                                          @RequestParam(defaultValue = "0.92") double threshold,
+                                          @RequestParam(defaultValue = "20") int limit) {
+        return ApiResponse.success(svc.findMergeCandidates(kbId, threshold, limit));
+    }
+
+    /** 手动合并：source 的边与提及迁移到 target 后删除 source */
+    @Loggable(category = LogCategory.operation, action = ActionType.graph_settings_updated, detail = "合并同义实体")
+    @PostMapping("/merge")
+    public ApiResponse<?> mergeEntities(@PathVariable String kbId,
+                                        @RequestBody Map<String, Object> body) {
+        String sourceId = body != null ? (String) body.get("sourceId") : null;
+        String targetId = body != null ? (String) body.get("targetId") : null;
+        svc.mergeEntities(kbId, sourceId, targetId);
         return ApiResponse.success();
     }
 }

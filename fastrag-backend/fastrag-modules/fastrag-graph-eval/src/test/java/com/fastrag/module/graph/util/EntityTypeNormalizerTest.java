@@ -43,4 +43,15 @@ class EntityTypeNormalizerTest {
         // 自定义白名单下，"故障类型" 不在其中 → UNKNOWN
         assertEquals(EntityTypeNormalizer.UNKNOWN, EntityTypeNormalizer.normalize("故障类型", custom));
     }
+
+    @Test
+    void normalize_telecomProductDomainTypes_hitWhitelist() {
+        // 电信/产品营销域类型（生产数据中曾因白名单缺失大量落 UNKNOWN）
+        assertEquals("套餐", EntityTypeNormalizer.normalize("套餐"));
+        assertEquals("产品", EntityTypeNormalizer.normalize("产品"));
+        assertEquals("客户", EntityTypeNormalizer.normalize("客户"));
+        assertEquals("补贴", EntityTypeNormalizer.normalize("补贴"));
+        assertEquals("报价单", EntityTypeNormalizer.normalize("报价单"));
+        assertEquals("维保", EntityTypeNormalizer.normalize("维保 "));
+    }
 }

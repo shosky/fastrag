@@ -30,7 +30,7 @@
 |----|------|
 | `MyBatisPlusConfig` | 注册 MySQL 分页拦截器 + MetaObjectHandler（自动填充 createdAt/updatedAt） |
 | `RabbitMQConfig` | 声明 `fastrag.direct` 交换机、`fastrag.ingestion.queue`（routingKey: `ingestion`）、`fastrag.graph-build.queue`（routingKey: `graph-build`）、Jackson JSON 消息转换器 |
-| `Neo4jConfig` | 条件配置（`neo4j.enabled=true`），创建 Neo4j Driver Bean |
+| `Neo4jConfig` | 无条件创建 Neo4j Driver Bean，启动时校验连通性（不可达 fail-fast，ADR-0002） |
 
 ### 向量存储
 
@@ -42,10 +42,8 @@
 
 | 类 | 说明 |
 |----|------|
-| `GraphStore` | 图存储抽象接口：`createEntity`/`createRelation`/`getGraphData`/`expandGraph`/`searchNodes`/`clearGraph`/`deleteFileGraph` + mention 追踪 + 统计 |
-| `Neo4jGraphStore` | Neo4j 实现，使用 Cypher。MERGE 去重，kbId 属性隔离。条件加载（`neo4j.enabled=true`） |
-| `MysqlGraphStore` | MySQL 降级实现，使用 JdbcTemplate。`@ConditionalOnMissingBean(GraphStore.class)` 自动启用 |
-| `Neo4jService` | 向后兼容委托类，通过 `ObjectProvider<Neo4jGraphStore>` 安全注入 |
+| `GraphStore` | 图存储抽象接口：`createEntity`/`createRelation`/`getGraphData`/`expandGraph`/`searchNodes`/`clearGraph`/`deleteFileGraph` + mention 追踪 + 实体向量检索 + 统计 |
+| `Neo4jGraphStore` | 唯一实现（ADR-0002，MySQL 降级实现已移除）。Cypher + MERGE 去重，kbId 属性隔离，Neo4j 5.11+ 原生向量索引做实体语义检索。构建写方法失败向上抛出（消费端标记 chunk 待重试），查询/维护方法失败返回空结果 |
 
 ### 文件存储
 
@@ -72,8 +70,7 @@
 | `storage.local.path` | `./uploads` | 本地文件存储根路径 |
 | `milvus.host` | `127.0.0.1` | Milvus 地址 |
 | `milvus.port` | `19530` | Milvus 端口 |
-| `neo4j.enabled` | `false` | 是否启用 Neo4j（false 时使用 MySQL 图存储） |
-| `neo4j.uri` | `bolt://localhost:7687` | Neo4j 连接 URI |
+| `neo4j.uri` | `bolt://localhost:7687` | Neo4j 连接 URI（必需依赖，启动时校验连通性） |
 | `neo4j.user` | `neo4j` | Neo4j 用户名 |
 | `neo4j.password` | (空) | Neo4j 密码 |
 | `spring.mail.username` | (空) | 邮件发送地址 |

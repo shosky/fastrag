@@ -9,8 +9,8 @@ package com.fastrag.module.graph.util;
  *
  * <p>ID 生成规则如下：</p>
  * <ul>
- *   <li>实体 ID：{@code SHA-256(kbId:normalizedName:label)}，截断前 32 个十六进制字符，
- *       对应 {@link com.fastrag.module.graph.entity.KbGraphEntity} 的主键字段</li>
+ *   <li>实体 ID：{@code SHA-256(kbId:normalizedName)}——不含类型（Neo4j 实体节点按
+ *       (kbId, name) 合并，类型漂移不得影响实体身份；2026-09-06 修复边引用悬空问题）</li>
  *   <li>三元组 ID：{@code SHA-256(kbId:sourceName:sourceLabel:relationType:targetName:targetLabel)}，
  *       截断前 32 个十六进制字符，对应 {@link com.fastrag.module.graph.entity.KbGraphRelation} 的主键字段</li>
  * </ul>
@@ -35,10 +35,15 @@ public final class GraphIdHashing {
     private static final char[] HEX_CHARS = "0123456789abcdef".toCharArray();
 
     /**
-     * 计算实体 ID = SHA-256(kbId:normalizedName:label)，截断前 32 位
+     * 计算实体 ID = SHA-256(kbId:normalizedName)。
+     *
+     * <p>实体标识刻意<b>不含类型</b>：Neo4j 按 (kbId, name) MERGE 实体节点——同名即同一实体，
+     * 类型只是节点属性。若类型参与哈希，同名实体跨 chunk 以不同类型出现时，关系边写入的
+     * sourceId/targetId（写入时按当时类型现算）会与节点已存的 entityId（首建时写入）不一致，
+     * 造成边引用悬空、前端按 id 关联失败。名称唯一决定身份后，类型漂移不再影响 ID。</p>
      */
-    public static String entityId(String kbId, String normalizedName, String label) {
-        return hashstr32(kbId + ":" + normalizedName + ":" + label);
+    public static String entityId(String kbId, String normalizedName) {
+        return hashstr32(kbId + ":" + normalizedName);
     }
 
     /**

@@ -24,6 +24,18 @@ export function useForceGraph(
   const isSearchActive = ref(false)
   // 是否展示 Chunk 节点（对齐 Yuxi exclude_chunk 参数）
   const showChunks = ref(false)
+  // 图谱查询节点上限（可由 KB 级图谱设置 maxNodes 覆盖；默认 500，后端另有 5000 硬上限）
+  const queryMaxNodes = ref(500)
+  function setQueryMaxNodes(n: number | undefined | null) {
+    const v = Number(n)
+    if (Number.isFinite(v) && v > 0) queryMaxNodes.value = Math.min(Math.round(v), 5000)
+  }
+
+  // 大图渲染降级阈值（G6 4.x Canvas 渲染瓶颈）：超过后隐藏节点标签、关闭动画、
+  // 加快力导收敛（缩小 linkDistance/nodeSpacing、提高 alphaDecay），
+  // 保证 maxNodes 调大后画布仍可交互。节点数据完整保留在 originalData，搜索/选中不受影响
+  const DEGRADE_NODE_THRESHOLD = 400
+  const isLargeGraph = (count: number) => count > DEGRADE_NODE_THRESHOLD
 
   // 最近一次加载的完整数据集（类型过滤在其上操作，避免过滤后无法恢复）
   let allNodes: GraphNode[] = []
@@ -157,7 +169,7 @@ export function useForceGraph(
    * KG-01：边端点优先使用后端返回的 source_id/target_id（实体确定性 ID），
    * 避免同名不同型实体被 nameToId 映射连错；无 id 的历史数据回退名称映射。
    */
-  function transformData(rawNodes: GraphNode[], rawEdges: GraphEdge[]) {
+  function transformData(rawNodes: GraphNode[], rawEdges: GraphEdge[], degraded: boolean = false) {
     const nodeMap = new Map<string, GraphNode>()
     rawNodes.forEach((n) => {
       // 后端返回的 entity_type 可能是 snake_case
@@ -170,7 +182,8 @@ export function useForceGraph(
       const color = ENTITY_TYPE_COLORS[label] || '#1E88E5'
       return {
         id: n.id,
-        label: n.name,
+        // 降级模式下隐藏标签（渲染主瓶颈），名称仍在 originalData 供 tooltip/搜索
+        label: degraded ? '' : n.name,
         type: 'circle',
         style: {
           fill: color,
@@ -228,7 +241,25 @@ export function useForceGraph(
     nodes.value = filteredNodes
     edges.value = filteredEdges
 
-    const g6Data = transformData(filteredNodes, filteredEdges)
+    const degraded = isLargeGraph(filteredNodes.length)
+    if (degraded) {
+      // 大图降级：关动画 + 快收敛布局参数（覆盖 initGraph 的默认配置）
+      graph.set('animate', false)
+      graph.updateLayout({
+        type: 'force',
+        preventOverlap: true,
+        nodeSize: 40,
+        nodeSpacing: 10,
+        linkDistance: 80,
+        nodeStrength: -200,
+        edgeStrength: 0.1,
+        collideStrength: 0.8,
+        alphaDecay: 0.05,
+        alphaMin: 0.01,
+        forceSimulation: null,
+      })
+    }
+    const g6Data = transformData(filteredNodes, filteredEdges, degraded)
     graph.data(g6Data)
     graph.render()
     graph.fitView()
@@ -239,7 +270,7 @@ export function useForceGraph(
     loading.value = true
     try {
       const [data, s] = await Promise.all([
-        fetchGraphData(kbId.value, excludeChunks),
+        fetchGraphData(kbId.value, excludeChunks, queryMaxNodes.value),
         fetchGraphStats(kbId.value),
       ])
 
@@ -388,6 +419,7 @@ export function useForceGraph(
     entityTypes,
     initGraph,
     load,
+    setQueryMaxNodes,
     filterByType,
     toggleChunks,
     expandNeighbors,

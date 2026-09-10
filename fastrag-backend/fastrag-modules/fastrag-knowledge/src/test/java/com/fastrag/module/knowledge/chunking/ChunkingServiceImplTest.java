@@ -7,6 +7,7 @@ import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
 import com.fastrag.module.knowledge.parser.DocNode;
 import com.fastrag.module.knowledge.parser.MarkdownSerializer;
 import com.fastrag.module.platform.entity.SysConfig;
+import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import com.fastrag.module.platform.service.ConfigManageService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,9 @@ import org.mockito.junit.jupiter.MockitoExtension;
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyList;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.when;
 
 /**
@@ -39,12 +43,16 @@ class ChunkingServiceImplTest {
     @Mock
     private EmbeddingService embeddingService;
 
+    @Mock
+    private ModelRecordMapper modelRecordMapper;
+
     private ChunkingServiceImpl chunkingService;
 
     @BeforeEach
     void setUp() {
         StrategyConfigResolver resolver = new StrategyConfigResolver(strategyMapper, configService);
-        chunkingService = new ChunkingServiceImpl(resolver, new MarkdownSerializer(), embeddingService);
+        chunkingService = new ChunkingServiceImpl(resolver, new MarkdownSerializer(), embeddingService,
+                modelRecordMapper);
     }
 
     // ========== 测试数据构造 ==========
@@ -352,7 +360,8 @@ class ChunkingServiceImplTest {
 
         // 句子向量：s0/s1 相似（同主题），s2 与它们迥异（主题突变）
         // [1,0] [0.9,0.1]（与 s0 相似）[0,1]（突变）
-        when(embeddingService.embed("embed-1", List.of("这是第一句。", "这是第二句。", "这是第三句。"))).thenReturn(
+        // 主代码走 4 参 embed(model, sentences, apiUrl, apiKey)，stub 需与之匹配
+        when(embeddingService.embed(eq("embed-1"), anyList(), any(), any())).thenReturn(
                 List.of(
                         List.of(1f, 0f),
                         List.of(0.9f, 0.1f),
@@ -385,7 +394,7 @@ class ChunkingServiceImplTest {
         mockOverlap(0);
         when(strategyMapper.selectById("s1")).thenReturn(
                 strategy("{\"chunk\":{\"strategy\":\"semantic\",\"embeddingModel\":\"embed-1\"}}"));
-        when(embeddingService.embed("embed-1", List.of("这是第一句。", "这是第二句。"))).thenThrow(new RuntimeException("API down"));
+        when(embeddingService.embed(eq("embed-1"), anyList(), any(), any())).thenThrow(new RuntimeException("API down"));
 
         List<ChunkData> chunks = chunkingService.semanticChunk("这是第一句。这是第二句。", "s1", null);
 
@@ -398,7 +407,7 @@ class ChunkingServiceImplTest {
         when(strategyMapper.selectById("s1")).thenReturn(
                 strategy("{\"chunk\":{\"strategy\":\"semantic\",\"semanticThreshold\":50}}"));
         // 策略级未配置 → 使用 KB 级模型
-        when(embeddingService.embed("kb-embed", List.of("这是第一句。", "这是第二句。"))).thenReturn(
+        when(embeddingService.embed(eq("kb-embed"), anyList(), any(), any())).thenReturn(
                 List.of(List.of(1f, 0f), List.of(0f, 1f)));
 
         List<ChunkData> chunks = chunkingService.semanticChunk("这是第一句。这是第二句。", "s1", "kb-embed");

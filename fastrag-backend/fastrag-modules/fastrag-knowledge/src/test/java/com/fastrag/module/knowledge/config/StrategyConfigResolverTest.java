@@ -72,7 +72,7 @@ class StrategyConfigResolverTest {
 
     @Test
     void 策略ID为空时仅使用系统默认值() {
-        ParseStrategyConfig config = resolver.resolve(null);
+        ParseStrategyConfig config = resolver.resolve((String) null);
 
         assertEquals("rule_fixed", config.getChunk().getStrategy());
         assertEquals(1000, config.getChunk().getChunkLength());

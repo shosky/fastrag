@@ -5,12 +5,14 @@ import com.fastrag.module.knowledge.config.StrategyConfigResolver;
 import com.fastrag.module.knowledge.model.ParseStrategyConfig;
 import com.fastrag.module.knowledge.parser.DocNode;
 import com.fastrag.module.knowledge.parser.MarkdownSerializer;
+import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import org.junit.jupiter.api.Test;
 
 import java.util.List;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -22,8 +24,10 @@ class TableModeIgnoreTest {
 
     private ChunkingServiceImpl buildService(ParseStrategyConfig config) {
         StrategyConfigResolver resolver = mock(StrategyConfigResolver.class);
-        when(resolver.resolve(any())).thenReturn(config);
-        return new ChunkingServiceImpl(resolver, new MarkdownSerializer(), mock(EmbeddingService.class));
+        // ChunkingServiceImpl 以 strategyId(String) 调用 resolve，显式指定重载避免 any() 二义性
+        when(resolver.resolve(anyString())).thenReturn(config);
+        return new ChunkingServiceImpl(resolver, new MarkdownSerializer(), mock(EmbeddingService.class),
+                mock(ModelRecordMapper.class));
     }
 
     private DocNode tableNode(String header, String cellValue) {

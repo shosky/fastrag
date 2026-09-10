@@ -96,7 +96,7 @@ CREATE TABLE IF NOT EXISTS kb (
     file_type_config JSON,
     parse_mode VARCHAR(16) DEFAULT 'auto',
     split_mode VARCHAR(16) DEFAULT 'auto',
-    graph_auto_build TINYINT DEFAULT 0 COMMENT '是否自动构建知识图谱（默认关闭）',
+    graph_auto_build TINYINT DEFAULT 1 COMMENT '是否自动构建知识图谱（ADR-0002：默认开启）',
     custom_attr_schema JSON DEFAULT NULL COMMENT 'KB 级自定义属性定义（customAttrs 复活落库）',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
@@ -232,64 +232,8 @@ CREATE TABLE IF NOT EXISTS kb_graph_index (
     build_error TEXT
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
--- 知识图谱实体表（MySQL fallback 存储）
-CREATE TABLE IF NOT EXISTS kb_graph_entity (
-    entity_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
-    kb_id VARCHAR(32) NOT NULL,
-    name VARCHAR(256) NOT NULL COMMENT '原始显示名称',
-    normalized_name VARCHAR(256) NOT NULL COMMENT '标准化名称(小写+空白归一化)',
-    original_name VARCHAR(256) COMMENT '原始名称(同name)',
-    entity_type VARCHAR(64) DEFAULT 'UNKNOWN' COMMENT '实体类型/标签',
-    description TEXT COMMENT '描述/属性(兼容字段)',
-    attributes TEXT COMMENT '实体属性JSON字符串([{"text":"值","label":"属性名"}])',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_kb_entity_identity (kb_id, normalized_name(255), entity_type),
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 知识图谱关系表（MySQL fallback 存储）
-CREATE TABLE IF NOT EXISTS kb_graph_relation (
-    triple_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
-    kb_id VARCHAR(32) NOT NULL,
-    source_id VARCHAR(64) COMMENT '源实体确定性ID(消除按名称引用的悬空/错连问题)',
-    source VARCHAR(256) NOT NULL COMMENT '源实体名称',
-    target_id VARCHAR(64) COMMENT '目标实体确定性ID',
-    target VARCHAR(256) NOT NULL COMMENT '目标实体名称',
-    label VARCHAR(128) NOT NULL COMMENT '关系类型',
-    content TEXT COMMENT '关系显示文本',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_kb_relation (kb_id, source(255), target(255), label(127)),
-    INDEX idx_kb_id (kb_id),
-    INDEX idx_kb_relation_ids (kb_id, source_id, target_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 实体提及追踪表（chunk→entity 引用关系）
-CREATE TABLE IF NOT EXISTS kb_graph_entity_mention (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    entity_id VARCHAR(64) NOT NULL,
-    kb_id VARCHAR(32) NOT NULL,
-    file_id VARCHAR(32) NOT NULL,
-    chunk_id VARCHAR(64) NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_entity_mention (entity_id, chunk_id),
-    INDEX idx_em_kb (kb_id),
-    INDEX idx_em_file (file_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 三元组提及追踪表（chunk→triple 引用关系）
-CREATE TABLE IF NOT EXISTS kb_graph_triple_mention (
-    id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    triple_id VARCHAR(64) NOT NULL,
-    kb_id VARCHAR(32) NOT NULL,
-    file_id VARCHAR(32) NOT NULL,
-    chunk_id VARCHAR(64) NOT NULL,
-    text TEXT COMMENT '关系显示文本',
-    extractor_type VARCHAR(32) COMMENT '提取器类型',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_triple_mention (triple_id, chunk_id),
-    INDEX idx_tm_kb (kb_id),
-    INDEX idx_tm_file (file_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- 知识图谱存储已收敛至 Neo4j（ADR-0002），MySQL 图表（kb_graph_entity/_relation/_entity_mention/_triple_mention）已移除。
+-- 存量部署迁移见 init-scripts/migration-20260905-drop-mysql-graph-store.sql。
 
 CREATE TABLE IF NOT EXISTS kb_benchmark (
     id VARCHAR(32) PRIMARY KEY,
@@ -1451,7 +1395,7 @@ ALTER TABLE app_config ADD COLUMN IF NOT EXISTS retry_times INT DEFAULT 2 COMMEN
 ALTER TABLE app_config ADD COLUMN IF NOT EXISTS max_tokens INT DEFAULT 2048 COMMENT '最大输出token数';
 
 -- kb 表新增字段
-ALTER TABLE kb ADD COLUMN IF NOT EXISTS graph_auto_build TINYINT DEFAULT 0 COMMENT '是否自动构建知识图谱（默认关闭）';
+ALTER TABLE kb ADD COLUMN IF NOT EXISTS graph_auto_build TINYINT DEFAULT 1 COMMENT '是否自动构建知识图谱（ADR-0002：默认开启）';
 
 -- kb_file 表新增字段
 ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS processing_mode VARCHAR(16) DEFAULT 'chunk' COMMENT '处理模式: chunk/qa';

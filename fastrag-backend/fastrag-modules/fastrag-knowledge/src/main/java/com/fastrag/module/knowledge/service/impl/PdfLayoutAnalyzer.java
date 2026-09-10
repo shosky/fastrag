@@ -355,26 +355,55 @@ public final class PdfLayoutAnalyzer {
         }
 
         // ② 跨行聚合成段：行距 ≤ 2×行高 且 水平重叠 ≥ 窄行宽 35%（首行缩进/起点抖动不拆段，
-        //    双栏 x 范围不重叠仍隔开）
-        int k = 0;
-        while (k < rows.size()) {
+        //    双栏 x 范围不重叠仍隔开）。
+        //    双栏/多栏布局下行序按 y 排序左右交错，仅看排序相邻对会让每行各自成块
+        //    （左栏行与右栏行水平不重叠即断链）——这里改为"向后寻找第一行兼容行"聚簇：
+        //    单栏文本行序天然兼容，行为与旧逻辑一致；双栏则各自聚成段（2026-09-07 修复）
+        java.util.BitSet used = new java.util.BitSet(rows.size());
+        for (int k = 0; k < rows.size(); k++) {
+            if (used.get(k)) continue;
+            used.set(k);
+            List<Integer> run = new ArrayList<>();
+            run.add(k);
             int j = k;
-            while (j + 1 < rows.size()) {
+            for (int t = k + 1; t < rows.size(); t++) {
+                if (used.get(t)) continue;
                 float[] ra = rows.get(j).rect();
-                float[] rb = rows.get(j + 1).rect();
+                float[] rb = rows.get(t).rect();
                 float gap = rb[1] - (ra[1] + ra[3]);
                 float overlapW = Math.min(ra[0] + ra[2], rb[0] + rb[2]) - Math.max(ra[0], rb[0]);
                 float minW = Math.min(ra[2], rb[2]);
                 boolean horizOverlap = minW > 0 && overlapW >= minW * 0.35f;
                 if (gap <= lineH * PARA_GAP_RATIO && horizOverlap) {
-                    j++;
-                } else {
-                    break;
+                    run.add(t);
+                    used.set(t);
+                    j = t;
                 }
             }
-            out.add(blockOfLines(rows, k, j, "text", page, pageW, pageH));
-            k = j + 1;
+            out.add(blockOfLineIndexes(rows, run, "text", page, pageW, pageH));
         }
+    }
+
+    /** 行列表直接成块（任意索引子集，按传入顺序拼接） */
+    private static AiChunkLayoutBlock blockOfLineIndexes(List<Line> ls, List<Integer> idxs, String type,
+                                                         int page, float pageW, float pageH) {
+        float x1 = Float.MAX_VALUE, y1 = Float.MAX_VALUE, x2 = -1, y2 = -1;
+        StringBuilder sb = new StringBuilder();
+        for (int k : idxs) {
+            float[] r = ls.get(k).rect();
+            x1 = Math.min(x1, r[0]);
+            y1 = Math.min(y1, r[1]);
+            x2 = Math.max(x2, r[0] + r[2]);
+            y2 = Math.max(y2, r[1] + r[3]);
+            if (ls.get(k).text() != null) {
+                if (sb.length() > 0) sb.append(' ');
+                sb.append(ls.get(k).text().trim());
+            }
+        }
+        String text = sb.length() > 60 ? sb.substring(0, 60) + "…" : sb.toString();
+        return AiChunkLayoutBlock.builder().page(page).type(type)
+                .x(x1 / pageW).y(y1 / pageH).width((x2 - x1) / pageW).height((y2 - y1) / pageH)
+                .text(text).build();
     }
 
     /** 行列表直接成块（作用于同 y 合并后的局部行列表，逻辑与 blockOf 一致） */

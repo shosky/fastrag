@@ -3,7 +3,7 @@ import { Search, Refresh, Setting, Document, Loading, Share } from '@element-plu
 import { useForceGraph } from '@/composables/useForceGraph'
 import type { GraphNode, GraphEdge, GraphBuildStatus } from '@/types/evaluation'
 import { ElMessage } from 'element-plus'
-import { retryGraphBuild } from '@/api'
+import { retryGraphBuild, getGraphSettings } from '@/api'
 
 // --- Props & Emits ---
 const props = defineProps<{
@@ -41,6 +41,7 @@ const {
   entityTypes,
   initGraph,
   load,
+  setQueryMaxNodes,
   filterByType,
   toggleChunks,
   expandNeighbors,
@@ -202,8 +203,15 @@ async function handleBannerRetry() {
 
 // --- Lifecycle ---
 onMounted(() => {
-  nextTick(() => {
+  nextTick(async () => {
     initGraph()
+    // 加载 KB 级图谱设置的 maxNodes（未配置时用默认 500），再拉取图数据
+    try {
+      const s = (await getGraphSettings(kbIdRef.value)) as { maxNodes?: number } | undefined
+      setQueryMaxNodes(s?.maxNodes)
+    } catch {
+      // 设置读取失败不影响默认加载
+    }
     load()
   })
 })

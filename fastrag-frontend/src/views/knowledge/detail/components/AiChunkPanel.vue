@@ -42,11 +42,13 @@ const realError = ref('')
 const objectUrl = ref('')          // PDF blob url
 const isPdf = computed(() => (props.file?.name.split('.').pop() || '').toLowerCase() === 'pdf')
 const isOffice = computed(() => isOfficeFile(props.file?.name || ''))  // OnlyOffice 支持的文件类型
-// PDF 版面框已选中的段落 id（点击框选中/取消 → 「生成分片」落草稿）
+// PDF 已选中内容 id（结构块 paragraphId + 图片盒 img:page:i 共用一个选择集；点击框选中/取消）
 const pdfSelectedIds = ref<Set<string>>(new Set())
 const pdfSelectedCount = computed(() => pdfSelectedIds.value.size)
-/** 「生成分片」按钮可点性：Office 有捕获选区 或 PDF 有版面框/区域选中 */
-const selectedKeysDisabled = computed(() => pdfSelectedCount.value === 0 && pdfRegionsCount.value === 0 && !officeCapturedText.value)
+/** 「生成分片」按钮可点性：Office 有捕获选区 或 PDF 有结构块/图片盒/区域选中 或有文字选区捕获 */
+const selectedKeysDisabled = computed(
+  () => pdfSelectedCount.value === 0 && pdfRegionsCount.value === 0 && !officeCapturedText.value && !pdfCapturedText.value.trim(),
+)
 /** 图片盒 OCR 进行中（生成分片按钮转圈） */
 const ocrLoading = ref(false)
 /** 扫描件延迟解析：打开时探测到无文字层 → 不自动 OCR，等用户点「一键自动分片」 */
@@ -144,17 +146,21 @@ watch([officeCapturedText, pdfSelectedIds], () => {
   })
 })
 
-/** 通用「生成分片」入口：原件渲染 OFFICE 有捕获选区 → 对齐创建；PDF 有版面框选中 → 段创建 */
+/** 通用「生成分片」入口：Office 走捕获选区对齐；PDF 走统一选择合并（结构块 + 文字捕获 + 区域/图片盒 → 一张卡） */
 function handleCreateChunk() {
-  if (officeCapturedText && isOffice.value) {
-    addCapturedToDraft()
-  } else if (pdfRegions.value.length > 0) {
-    createChunksFromRegions()
-  } else if (pdfSelectedIds.value.size > 0) {
-    createManualChunkFromSelection()
-  } else {
-    ElMessage.warning('请先在左侧选中内容（PDF 拖拽框选区域或点图片框，Office 三击/框选文字）')
+  if (isOffice.value) {
+    if (officeCapturedText.value) {
+      addCapturedToDraft()
+    } else {
+      ElMessage.warning('请先在文档中选中内容（三击整段或框选文字）')
+    }
+    return
   }
+  if (pdfRegionsCount.value === 0 && pdfSelectedCount.value === 0 && !pdfCapturedText.value.trim()) {
+    ElMessage.warning('请先在左侧选中内容（点击结构块/图片框、拖拽框选区域或拖选文字）')
+    return
+  }
+  createChunkFromSelection()
 }
 
 /** 区域内容提取结果 → 分片块。OCR 空时含占位块（不跳过——用户选择的对象必有所属卡） */
@@ -178,51 +184,6 @@ function regionBlocksOf(selId: string, page: number, res: any): ChunkBlock[] {
     })
   }
   return contentBlocks
-}
-
-/** 逐区域调后端结构化/OCR 提取，所有块合并为**一张**分片卡（跨页区域按页序+页内位置拼接阅读顺序） */
-async function createChunksFromRegions() {
-  if (!props.kbId || !props.file || pdfRegions.value.length === 0) return
-  snapshotChunks()
-  // 页序 + 页内位置排序 → 合并卡内容按阅读顺序（跨两页就是连续一段）
-  const regions = [...pdfRegions.value].sort((a, b) => a.page - b.page || a.y - b.y)
-  ocrLoading.value = true
-  try {
-    const allBlocks: ChunkBlock[] = []
-    let emptyCount = 0
-    for (const r of regions) {
-      const res: any = await api.aiChunkImageOcr(props.kbId, props.file.id, {
-        page: r.page, x: r.x, y: r.y, width: r.width, height: r.height,
-      })
-      const blocks = regionBlocksOf(r.id, r.page, res)
-      if (blocks.length === 1 && blocks[0].text.startsWith('（该区域未识别到内容')) emptyCount++
-      allBlocks.push(...blocks)
-    }
-    if (allBlocks.length === 0) {
-      ElMessage.warning('所选区域均未识别到内容')
-      return
-    }
-    chunkCards.value.push({
-      id: `chunk_${++chunkSeq}`,
-      index: chunkCards.value.length,
-      source: 'manual',
-      blocks: allBlocks,
-      pageRange: pageRangeOfBlocks(allBlocks),
-    })
-    pdfRegions.value = []
-    status.value = 'done'
-    const pages = [...new Set(regions.map((r) => r.page))].sort((a, b) => a - b)
-    const chars = allBlocks.reduce((n: number, b: ChunkBlock) => n + b.text.length, 0)
-    ElMessage.success(
-      regions.length > 1
-        ? `已创建跨页分片 #${chunkCards.value.length}（第 ${pages.join('、')} 页合并，${allBlocks.length} 块，${chars} 字${emptyCount ? `；${emptyCount} 个区域未识别到内容` : ''}）`
-        : `已创建分片 #${chunkCards.value.length}（${allBlocks.length} 块，${chars} 字）`,
-    )
-  } catch (e: any) {
-    ElMessage.error(`区域内容提取失败：${e?.message || e}`)
-  } finally {
-    ocrLoading.value = false
-  }
 }
 
 /**
@@ -529,6 +490,18 @@ const alignParagraphs = ref<AiChunkParagraph[]>([])
 // PDF 内容图片渲染位置（旁路可视化数据：原件渲染画 image 框，不参与段落对齐模型）
 const imageBoxes = ref<AiChunkResult['imageBoxes']>([])
 
+/**
+ * 结构块（PDF 结构化框选的数据源）：文字层 PDF 的解析段落（含每段归一化 rects）。
+ * 仅对非扫描件启用（pdfScanDeferred 时保持纯截图，即使后来整本解析也不出框）；
+ * image 段落排除——其 rects 是文字锚定失败的兜底横带（位置不可靠），图片统一用 imageBoxes 绿框。
+ */
+const pdfBlocks = computed(() => {
+  if (!isPdf.value || pdfScanDeferred.value) return []
+  return alignParagraphs.value
+    .filter((p) => p.type !== 'image' && (p.anchorText || p.text)?.trim() && p.rects?.length)
+    .map((p) => ({ id: p.id, type: p.type as string, rects: p.rects! }))
+})
+
 // ---- 分片卡图片渲染：/files/{fileId}/images/{key} 带 token 拉取 → objectURL 缓存 ----
 const chunkImageUrls = ref<Record<string, string>>({})
 const chunkImageLoading = new Set<string>()
@@ -787,80 +760,73 @@ function onPdfToggleSelect(paragraphId: string) {
 }
 
   /**
-   * PDF 版面框选中 → 手动分片。段落盒按解析段落成片；
-   * 图片盒（img:page:index）逐张调 OCR 模型识别区域内容后生成图片分片。
+   * 统一「生成分片」：结构块（段落/标题/表格…）直取 anchorText（零 OCR）+ 原生文字捕获
+   * + 区域/图片盒后端结构化提取，全部合并为**一张**分片卡。
+   * 块内容存解析原文（表格为 \t 列文本），分片卡按类型渲染（表格→HTML 表、标题→标题样式）。
    */
-  /** 区域/图片内容提取结果 → 分片卡（单区域：图片盒点选路径）。空结果创建占位卡 */
-  function pushRegionChunk(selId: string, page: number, res: any) {
-    snapshotChunks()
-    const contentBlocks = regionBlocksOf(selId, page, res)
-    const isEmpty = contentBlocks.length === 1 && contentBlocks[0].text.startsWith('（该区域未识别到内容')
-    chunkCards.value.push({
-      id: `chunk_${++chunkSeq}`,
-      index: chunkCards.value.length,
-      source: 'manual',
-      blocks: contentBlocks,
-      pageRange: pageRangeOfBlocks(contentBlocks),
-    })
-    status.value = 'done'
-    if (isEmpty) {
-      ElMessage.warning('该区域未识别到内容，已创建占位分片，可手动编辑')
-    } else {
-      ElMessage.success(`已创建分片 #${chunkCards.value.length}（${contentBlocks.length} 块，${contentBlocks.reduce((n: number, b: ChunkBlock) => n + b.text.length, 0)} 字）`)
-    }
-  }
-
-  /** 文字层命中行 → 分片卡（精确文本，所见即所得；行以 
- 连接为单块） */
-  function pushLinesChunk(selId: string, page: number, lines: Array<{ y: number; text: string }>) {
-    const text = lines.map((l) => l.text).join('\n')
-    chunkCards.value.push({
-      id: `chunk_${++chunkSeq}`,
-      index: chunkCards.value.length,
-      source: 'manual',
-      blocks: [{ paragraphId: selId, type: 'paragraph' as AiChunkParagraphType, text, page }],
-      pageRange: String(page),
-    })
-    status.value = 'done'
-    ElMessage.success(`已创建分片 #${chunkCards.value.length}（${lines.length} 行，${text.length} 字）`)
-  }
-
-  async function createManualChunkFromSelection() {
-    if (pdfSelectedIds.value.size === 0 && !pdfCapturedText.value) return
+  async function createChunkFromSelection() {
     if (!props.kbId || !props.file) return
     snapshotChunks()
-    const ids = [...pdfSelectedIds.value]
-    const imgIds = ids.filter((id) => id.startsWith('img:'))
-    const paraIds = ids.filter((id) => !id.startsWith('img:'))
+    ocrLoading.value = true
+    try {
+      interface SortableBlock { page: number; y: number; block: ChunkBlock }
+      const items: SortableBlock[] = []
 
-    // ① 原生拖选文字（TextLayer 选区）→ 一个文字分片（所见即所得，跨页可选）
-    if (pdfCapturedText.value.trim()) {
-      const page = pdfCapturedPage.value
-      chunkCards.value.push({
-        id: `chunk_${++chunkSeq}`,
-        index: chunkCards.value.length,
-        source: 'manual',
-        blocks: [{ paragraphId: `sel_${Date.now()}`, type: 'paragraph' as AiChunkParagraphType, text: pdfCapturedText.value, page }],
-        pageRange: String(page),
-      })
-      pdfCapturedText.value = ''
-      status.value = 'done'
-      ElMessage.success(`已创建文字分片 #${chunkCards.value.length}（${chunkCards.value[chunkCards.value.length - 1].blocks[0].text.length} 字）`)
-      return
-    }
+      // ① 结构块：按 paragraphId 直取整段（跨页合并块共享 paragraphId，天然去重）。
+      //    内容优先 anchorText（所见即所得，行链路已清理页眉脚），解析全文仅作兜底
+      const paraMap = new Map(alignParagraphs.value.map((p) => [p.id, p]))
+      for (const pid of pdfSelectedIds.value) {
+        if (pid.startsWith('img:')) continue
+        const p = paraMap.get(pid)
+        if (!p) continue
+        const text = (p.anchorText && p.anchorText.trim()) || p.text
+        if (!text.trim()) continue
+        const rect0 = p.rects?.[0]
+        items.push({
+          page: rect0?.page ?? p.page ?? 1,
+          y: rect0?.y ?? 0,
+          block: { paragraphId: p.id, type: (p.type as AiChunkParagraphType) || 'paragraph', text, page: p.page ?? 1 },
+        })
+      }
 
-    // ② 段落盒：按文档顺序取整段（跨页合并块共享 paragraphId，天然去重）。
-    // 内容优先取锚定行文本 anchorText（框住什么就进什么，行链路已清理页眉脚），
-    // 解析全文 text 仅作无锚定信息时的兜底
-    const blocks: ChunkBlock[] = alignParagraphs.value
-      .filter((p) => paraIds.includes(p.id))
-      .map((p) => ({
-        paragraphId: p.id,
-        type: (p.type as AiChunkParagraphType) || 'paragraph',
-        text: (p.anchorText && p.anchorText.trim()) || p.text,
-        page: p.page ?? 1,
-      }))
-    if (blocks.length > 0) {
+      // ② 原生拖选文字捕获（块间空白处的细粒度选择路径）
+      if (pdfCapturedText.value.trim()) {
+        const page = pdfCapturedPage.value
+        items.push({
+          page, y: 0,
+          block: { paragraphId: `sel_${Date.now()}`, type: 'paragraph' as AiChunkParagraphType, text: pdfCapturedText.value, page },
+        })
+      }
+
+      // ③ 区域框选 + 绿色图片盒：调后端三级提取（文字层行 → 内容图直达 → OCR 兜底）
+      const extractJobs = [...pdfRegions.value]
+        .sort((a, b) => a.page - b.page || a.y - b.y)
+        .map((r) => ({ id: r.id, page: r.page, x: r.x, y: r.y, width: r.width, height: r.height }))
+      for (const imgId of pdfSelectedIds.value) {
+        if (!imgId.startsWith('img:')) continue
+        const box = imageBoxes.value?.find((b, i) => `img:${b.page}:${i}` === imgId)
+        if (box) extractJobs.push({ id: imgId, page: box.page, x: box.x, y: box.y, width: box.width, height: box.height })
+      }
+      for (const job of extractJobs) {
+        try {
+          const res: any = await api.aiChunkImageOcr(props.kbId, props.file.id, job)
+          for (const b of regionBlocksOf(job.id, job.page, res)) {
+            items.push({ page: job.page, y: job.y, block: b })
+          }
+        } catch (e: any) {
+          ElMessage.error(`区域内容提取失败：${e?.message || e}`)
+        }
+      }
+
+      if (items.length === 0) {
+        ElMessage.warning('所选内容均未识别到内容')
+        undoStack.value.pop() // 未产生卡片，弹掉本次快照避免空撤销步
+        return
+      }
+
+      // 阅读顺序：页序 → 页内位置（Array.sort 稳定，结构块同键时保持文档序）
+      items.sort((a, b) => a.page - b.page || a.y - b.y)
+      const blocks = items.map((it) => it.block)
       chunkCards.value.push({
         id: `chunk_${++chunkSeq}`,
         index: chunkCards.value.length,
@@ -868,28 +834,19 @@ function onPdfToggleSelect(paragraphId: string) {
         blocks,
         pageRange: pageRangeOfBlocks(blocks),
       })
-      ElMessage.success(`已创建手动分片 #${chunkCards.value.length}（${blocks.length} 段）`)
+      pdfRegions.value = []
+      pdfSelectedIds.value = new Set()
+      pdfCapturedText.value = ''
+      status.value = 'done'
+      const chars = blocks.reduce((n, b) => n + b.text.length, 0)
+      ElMessage.success(
+        extractJobs.length > 0
+          ? `已创建分片 #${chunkCards.value.length}（${blocks.length} 块，${chars} 字，含 ${extractJobs.length} 个区域/图片提取）`
+          : `已创建分片 #${chunkCards.value.length}（${blocks.length} 块，${chars} 字）`,
+      )
+    } finally {
+      ocrLoading.value = false
     }
-
-    // ③ 图片盒：调区域内容提取（结构化优先，图片部分 OCR）
-    for (const imgId of imgIds) {
-      const box = imageBoxes.value?.find((b, i) => `img:${b.page}:${i}` === imgId)
-      if (!box) continue
-      ocrLoading.value = true
-      try {
-        const res: any = await api.aiChunkImageOcr(props.kbId, props.file.id, {
-          page: box.page, x: box.x, y: box.y, width: box.width, height: box.height,
-        })
-        pushRegionChunk(imgId, box.page, res)
-      } catch (e: any) {
-        ElMessage.error(`图片内容提取失败：${e?.message || e}`)
-      } finally {
-        ocrLoading.value = false
-      }
-    }
-
-    pdfSelectedIds.value = new Set()
-    if (chunkCards.value.length > 0) status.value = 'done'
   }
 
 // ===========================================================================
@@ -1286,8 +1243,9 @@ onUnmounted(() => layoutAbort?.abort())
                 <template v-if="chunkCards.length === 0">扫描件：可直接<b>拖拽框选</b>任意区域，点下方<b>生成分片</b>由 OCR 提取内容；或点「一键自动分片」解析全文</template>
                 <template v-else>扫描件已解析：也可继续拖拽框选区域分片；右侧可编辑 / 拆分 / 合并分片后应用</template>
               </template>
-              <template v-else-if="pdfSelectedCount > 0">已选 {{ pdfSelectedCount }} 项，可点下方<b>生成分片</b></template>
-              <template v-else><b>拖拽框选</b>任意区域提取内容（文字层精确提取，图片自动 OCR）；点击绿色图片框生成图片分片；右侧勾选可合并/删除</template>
+              <template v-else-if="pdfSelectedCount > 0">已选 {{ pdfSelectedCount }} 块，可点下方<b>生成分片</b>（多选合并为一个分片）</template>
+              <template v-else-if="pdfBlocks.length > 0"><b>点击</b>蓝/橙结构块或绿色图片框选中（可多选合并）；<b>拖拽</b>框选任意区域截图提取；点下方<b>生成分片</b>；点红色框可取消</template>
+              <template v-else><b>拖拽框选</b>任意区域提取内容（文字层精确提取，图片自动 OCR）；右侧勾选可合并/删除</template>
             </template>
           </span>
         </div>
@@ -1305,7 +1263,9 @@ onUnmounted(() => layoutAbort?.abort())
             :file="file"
             :src="objectUrl"
             :image-boxes="imageBoxes"
-            :selected-image-box-ids="[...pdfSelectedIds]"
+            :blocks="pdfBlocks"
+            :selected-ids="[...pdfSelectedIds]"
+            :active-ids="activePdfIds"
             :regions="pdfRegions"
             @toggle-select="onPdfToggleSelect"
             @region-select="onRegionSelect"
@@ -1338,11 +1298,17 @@ onUnmounted(() => layoutAbort?.abort())
             <template v-if="officeCapturedText && isOffice">
               生成分片（已捕获 {{ officeCapturedText.length }} 字）
             </template>
+            <template v-else-if="pdfSelectedCount > 0 && pdfRegionsCount > 0">
+              生成分片（{{ pdfSelectedCount }} 块 + {{ pdfRegionsCount }} 个区域）
+            </template>
             <template v-else-if="pdfRegionsCount > 0">
               生成分片（{{ pdfRegionsCount }} 个区域 · {{ pdfRegionsChars }} 字）
             </template>
             <template v-else-if="pdfSelectedCount > 0">
               生成分片（已选 {{ pdfSelectedCount }} 块）
+            </template>
+            <template v-else-if="pdfCapturedText.trim()">
+              生成分片（已捕获 {{ pdfCapturedText.length }} 字）
             </template>
             <template v-else>生成分片</template>
           </el-button>

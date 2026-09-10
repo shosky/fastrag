@@ -44,4 +44,10 @@ public interface GraphService {
 
     /** Personalized PageRank 排序（检索增强用） */
     List<Map<String,Object>> rankChunksByPpr(String kbId, List<String> entityNames, int topK);
+
+    /** 同义实体合并候选发现（基于实体 embedding 余弦相似度，仅建议不自动合并） */
+    List<Map<String,Object>> findMergeCandidates(String kbId, double threshold, int limit);
+
+    /** 合并同义实体：source 的边与提及迁移到 target 后删除 source */
+    void mergeEntities(String kbId, String sourceId, String targetId);
 }

@@ -22,7 +22,7 @@ package com.fastrag.module.graph.service.impl;
  *
  * <p>与其他模块的交互：</p>
  * <ul>
- *   <li>{@link com.fastrag.infra.graph.GraphStore} - 图谱数据的底层存储（MySQL/Neo4j）</li>
+ *   <li>{@link com.fastrag.infra.graph.GraphStore} - 图谱数据的底层存储（Neo4j，ADR-0002）</li>
  *   <li>{@link com.fastrag.infra.rabbitmq.MessagePublisher} - 图谱构建消息发布</li>
  *   <li>{@link GraphQueryService} - PPR排序计算</li>
  *   <li>{@link com.fastrag.module.publish.service.LogService} - 操作日志记录</li>
@@ -66,8 +66,9 @@ public class GraphServiceImpl implements GraphService {
         log.info("[GraphQuery] ====== /graph called: kbId={}, maxNodes={}, excludeChunks={}",
                 kbId, maxNodes, excludeChunks);
         long t1 = System.currentTimeMillis();
-        Map<String, Object> data = graphStore.getGraphData(kbId,
-                maxNodes != null ? maxNodes : 100,
+        // 可视化默认 500 节点（此前 100 对 KB 级图谱过小）；参数钳制 [1, 5000] 防御性上限
+        int effectiveMaxNodes = Math.min(Math.max(maxNodes != null ? maxNodes : 500, 1), 5000);
+        Map<String, Object> data = graphStore.getGraphData(kbId, effectiveMaxNodes,
                 excludeChunks != null ? excludeChunks : true);
         List<?> nodes = (List<?>) data.getOrDefault("nodes", List.of());
         List<?> edges = (List<?>) data.getOrDefault("edges", List.of());
@@ -84,7 +85,62 @@ public class GraphServiceImpl implements GraphService {
                         idx.getTotalChunks(), idx.getBuiltChunks());
             }
         }
+        // 可视化过滤孤立点：零边实体在画布上只是噪声（占比可达 25%+），不渲染。
+        // 非破坏性——孤立实体保留在库内，实体搜索/embedding 检索不受影响；
+        // 实体总数口径仍以 /graph/stats 为准
+        filterOrphanNodes(data);
         return data;
+    }
+
+    /**
+     * 过滤图数据中的孤立节点（包级私有静态，可单测）。
+     *
+     * <p>只保留至少出现在一条边中的节点。端点匹配优先用边的 source_id/target_id
+     * （实体确定性 ID），缺失时回退 source/target 名称（兼容存量边）。</p>
+     */
+    static void filterOrphanNodes(Map<String, Object> data) {
+        List<?> nodes = (List<?>) data.getOrDefault("nodes", List.of());
+        List<?> edges = (List<?>) data.getOrDefault("edges", List.of());
+        if (nodes.isEmpty() || edges.isEmpty()) {
+            if (edges.isEmpty()) data.put("nodes", new ArrayList<>());
+            return;
+        }
+        Set<String> connectedIds = new HashSet<>();
+        Set<String> connectedNames = new HashSet<>();
+        for (Object edgeObj : edges) {
+            if (!(edgeObj instanceof Map<?, ?> e)) continue;
+            addEndpoint(connectedIds, connectedNames, e.get("source_id"), e.get("source"));
+            addEndpoint(connectedIds, connectedNames, e.get("target_id"), e.get("target"));
+        }
+        List<Object> kept = new ArrayList<>(nodes.size());
+        int removed = 0;
+        for (Object nodeObj : nodes) {
+            if (!(nodeObj instanceof Map<?, ?> n)) continue;
+            String id = str(n.get("id"));
+            String name = str(n.get("name"));
+            if ((id != null && connectedIds.contains(id)) || (name != null && connectedNames.contains(name))) {
+                kept.add(nodeObj);
+            } else {
+                removed++;
+            }
+        }
+        data.put("nodes", kept);
+        if (removed > 0) {
+            log.info("[GraphQuery] Filtered {} orphan nodes (no edges), kept {} of {}",
+                    removed, kept.size(), nodes.size());
+        }
+    }
+
+    /** 边端点同时登记 ID 与名称（任一维度匹配即视为连通，兼容存量无 source_id 的边） */
+    private static void addEndpoint(Set<String> ids, Set<String> names, Object id, Object name) {
+        String idStr = str(id);
+        String nameStr = str(name);
+        if (idStr != null) ids.add(idStr);
+        if (nameStr != null) names.add(nameStr);
+    }
+
+    private static String str(Object o) {
+        return o == null ? null : o.toString();
     }
 
     @Override
@@ -279,7 +335,7 @@ public class GraphServiceImpl implements GraphService {
             }
         }
         var r = new HashMap<String, Object>();
-        r.put("maxNodes", 100);
+        r.put("maxNodes", 500);
         r.put("searchDepth", 2);
         r.put("excludeChunkNodes", true);
         // KG-07：KB 级实体类型 schema（逗号/换行分隔；空则回退全局白名单）
@@ -383,5 +439,35 @@ public class GraphServiceImpl implements GraphService {
     @Override
     public List<Map<String, Object>> rankChunksByPpr(String kbId, List<String> entityNames, int topK) {
         return graphQueryService.rankChunksByPpr(kbId, entityNames, topK);
+    }
+
+    // ==================== 同义实体合并 ====================
+
+    @Override
+    public List<Map<String, Object>> findMergeCandidates(String kbId, double threshold, int limit) {
+        log.info("[GraphMerge] findMergeCandidates: kb={}, threshold={}, limit={}", kbId, threshold, limit);
+        return graphStore.findMergeCandidates(kbId, threshold, limit);
+    }
+
+    @Override
+    public void mergeEntities(String kbId, String sourceId, String targetId) {
+        log.info("[GraphMerge] mergeEntities: kb={}, source={} -> target={}", kbId, sourceId, targetId);
+        if (sourceId == null || targetId == null || sourceId.equals(targetId)) {
+            throw new IllegalArgumentException("sourceId/targetId 不能为空且不能相同");
+        }
+        graphStore.mergeEntity(kbId, sourceId, targetId);
+        // 合并后实体/关系数变化，刷新索引计数（失败不影响合并结果）
+        try {
+            int entities = (int) graphStore.countEntities(kbId);
+            int relations = (int) graphStore.countRelations(kbId);
+            var idx = indexMapper.selectById(kbId);
+            if (idx != null) {
+                idx.setEntityCount(entities);
+                idx.setRelationCount(relations);
+                indexMapper.updateById(idx);
+            }
+        } catch (Exception e) {
+            log.warn("[GraphMerge] Failed to refresh index counts: {}", e.getMessage());
+        }
     }
 }

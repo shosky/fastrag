@@ -169,9 +169,18 @@ public class RetrievalServiceImpl implements RetrievalService {
         // ---- 图谱通道（方案 A）：固定参与一路图谱召回，与主检索结果 RRF 融合 ----
         // 不再把实体名/关系标签拼入 query 再向量化（避免稀释 embedding），
         // 而是作为独立召回通道（对标 LightRAG kg_query）
+        // 降级显式化（ADR-0002）：整路失败（Neo4j 不可达等）由 graphChannelRecall 返回 null 标记，
+        // 与「正常返回但零命中」区分，状态写入检索日志可查询
+        boolean graphChannelDegraded = false;
         if (Boolean.TRUE.equals(config.getEnableGraphExpand())) {
             int graphCount = config.getGraphRecallCount() != null ? config.getGraphRecallCount() : 5;
             List<SearchResultItem> graphHits = safeSearch(() -> graphChannelRecall(kbId, query, config, graphCount));
+            if (graphHits == null) {
+                graphChannelDegraded = true;
+                graphHits = Collections.emptyList();
+                log.warn("[Retrieval] Graph channel DEGRADED for kb={}, query='{}' — 详情见 [GraphChannel] 告警日志",
+                        kbId, query);
+            }
             if (!graphHits.isEmpty()) {
                 log.info("[Retrieval] Graph channel: {} graph results fused via RRF for kb={}, query='{}'",
                         graphHits.size(), kbId, query);
@@ -246,7 +255,7 @@ public class RetrievalServiceImpl implements RetrievalService {
                 kbId, originalQuery, results.size(), System.currentTimeMillis() - startMs);
 
         // ---- 日志记录 ----
-        recordLog(kbId, originalQuery, config, results, startMs);
+        recordLog(kbId, originalQuery, config, results, startMs, graphChannelDegraded);
 
         return results;
     }
@@ -772,8 +781,10 @@ public class RetrievalServiceImpl implements RetrievalService {
             }
             return results;
         } catch (Exception e) {
-            log.warn("[GraphChannel] Failed for kbId={}", kbId, e);
-            return Collections.emptyList();
+            // 整路失败（Neo4j 不可达等）：返回 null 向调用方标记图谱通道降级（区别于零命中），
+            // 状态会写入检索日志 graphChannel=degraded
+            log.warn("[GraphChannel] DEGRADED (channel failure) for kbId={}", kbId, e);
+            return null;
         }
     }
 
@@ -1725,7 +1736,7 @@ public class RetrievalServiceImpl implements RetrievalService {
     // ========================================================================
 
     private void recordLog(String kbId, String originalQuery, RetrievalRequest.RetrievalConfig config,
-                            List<SearchResultItem> results, long startMs) {
+                            List<SearchResultItem> results, long startMs, boolean graphChannelDegraded) {
         long elapsed = System.currentTimeMillis() - startMs;
         try {
             // 图谱通道命中数（可观测性：日志面板可看图谱贡献）
@@ -1749,10 +1760,11 @@ public class RetrievalServiceImpl implements RetrievalService {
             kbLog.setCategory("retrieval");
             kbLog.setAction("search");
             kbLog.setTarget(originalQuery);
-            kbLog.setDetail("检索完成，命中 " + results.size() + " 条，模式=" + config.getMode());
+            kbLog.setDetail("检索完成，命中 " + results.size() + " 条，模式=" + config.getMode()
+                    + (graphChannelDegraded ? "，图谱通道已降级" : ""));
             kbLog.setOperator(SecurityUtil.getCurrentUser() != null
                     ? SecurityUtil.getCurrentUser().getUsername() : "system");
-            kbLog.setStatus("success");
+            kbLog.setStatus(graphChannelDegraded ? "degraded" : "success");
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("mode", config.getMode());
             extra.put("topK", config.getTopK());
@@ -1760,6 +1772,8 @@ public class RetrievalServiceImpl implements RetrievalService {
             extra.put("duration", elapsed);
             extra.put("graphExpanded", config.getEnableGraphExpand());
             extra.put("graphHits", graphHits);
+            // 图谱通道健康状态：ok / degraded（整路失败，通常为 Neo4j 不可达，见服务端告警日志）
+            extra.put("graphChannel", graphChannelDegraded ? "degraded" : "ok");
             kbLog.setExtra(JSONUtil.toJsonStr(extra));
             kbLog.setTimestamp(LocalDateTime.now());
             kbLogMapper.insert(kbLog);

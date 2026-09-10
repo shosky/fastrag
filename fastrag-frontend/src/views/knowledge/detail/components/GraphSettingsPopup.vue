@@ -24,7 +24,7 @@ interface GraphSettings {
 
 // --- Settings state ---
 const settings = ref<GraphSettings>({
-  maxNodes: 100,
+  maxNodes: 500,
   searchDepth: 2,
   excludeChunkNodes: true,
   entitySchema: '',
@@ -45,7 +45,7 @@ watch(popupVisible, async (val) => {
     try {
       const remote = await getGraphSettings(props.kbId) as Partial<GraphSettings>
       settings.value = {
-        maxNodes: Number(remote.maxNodes) || 100,
+        maxNodes: Number(remote.maxNodes) || 500,
         searchDepth: Number(remote.searchDepth) || 2,
         excludeChunkNodes: remote.excludeChunkNodes !== false,
         entitySchema: remote.entitySchema || '',
@@ -83,7 +83,7 @@ function handleApply() {
             v-model.number="settings.maxNodes"
             type="number"
             :min="10"
-            :max="1000"
+            :max="2000"
           />
         </div>
 

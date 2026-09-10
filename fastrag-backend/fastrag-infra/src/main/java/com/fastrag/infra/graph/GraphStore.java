@@ -6,13 +6,9 @@ package com.fastrag.infra.graph;
  * <p>本接口是知识图谱存储层的核心抽象，上层的知识库处理流水线（知识提取、三元组构建、图谱构建等）
  * 均依赖此接口操作图谱数据，不直接耦合具体存储引擎。
  *
- * <p>提供两种实现，运行时通过 Spring 条件装配自动选择：
- * <ul>
- *   <li>{@link com.fastrag.infra.neo4j.Neo4jGraphStore} — Neo4j 图数据库实现，支持原生图查询、
- *       多跳展开、向量索引检索，适合大规模图谱场景（需配置 {@code neo4j.enabled=true}）</li>
- *   <li>{@link com.fastrag.infra.graph.MysqlGraphStore} — MySQL 关系型降级实现，利用 MySQL 表模拟图结构，
- *       零额外依赖，适合中小规模图谱场景（默认激活，通过 {@code @ConditionalOnMissingBean} 生效）</li>
- * </ul>
+ * <p>唯一实现为 {@link com.fastrag.infra.neo4j.Neo4jGraphStore} — Neo4j 图数据库实现，
+ * 支持原生图查询、多跳展开、向量索引检索（ADR-0002：MySQL 降级实现已移除，
+ * Neo4j 是构建/检索链路的必需依赖，启动时 fail-fast 校验连通性）。
  *
  * <p>接口能力覆盖图谱全生命周期：
  * <ul>
@@ -68,23 +64,29 @@ public interface GraphStore {
      * @param content       关系显示文本
      */
     default void createRelation(String kbId, String tripleId, String source, String target, String label, String content) {
-        createRelation(kbId, tripleId, null, source, null, target, label, content);
+        createRelation(kbId, tripleId, null, source, null, null, target, null, label, content);
     }
 
     /**
-     * 创建关系（完整字段，含端点实体 ID，消除"边按名称引用"的悬空/错连问题）
+     * 创建关系（完整字段，含端点实体 ID，消除"边按名称引用"的悬空/错连问题）。
+     *
+     * <p>端点实体按归一化名 MERGE（节点唯一身份 = normalizedName）：不同原始写法
+     * （"小微 ICT"/"小微ICT"）落到同一端点节点；归一化名传 null 时回退为名称小写。
+     * 端点不存在时创建占位节点（name 取原始名，entityType 不设值 = 无类型投票权）。</p>
      *
      * @param kbId          知识库 ID
      * @param tripleId      确定性三元组 ID（SHA-256 截断）
      * @param sourceId      源实体确定性 ID（可空，为空时按规范化名反查）
      * @param source        源实体名称
+     * @param sourceNorm    源实体归一化名（可空）
      * @param targetId      目标实体确定性 ID（可空，为空时按规范化名反查）
      * @param target        目标实体名称
+     * @param targetNorm    目标实体归一化名（可空）
      * @param label         关系类型
      * @param content       关系显示文本
      */
-    void createRelation(String kbId, String tripleId, String sourceId, String source,
-                        String targetId, String target, String label, String content);
+    void createRelation(String kbId, String tripleId, String sourceId, String source, String sourceNorm,
+                        String targetId, String target, String targetNorm, String label, String content);
 
     // ==================== 图谱查询 ====================
 
@@ -239,13 +241,13 @@ public interface GraphStore {
     // ==================== 实体向量检索（对标 LightRAG entities_vdb）====================
 
     /**
-     * 更新实体 embedding（用于图谱向量检索；维度不符/存储不支持时静默跳过）
+     * 更新实体 embedding（用于图谱向量检索；维度不符时由实现方跳过并告警）
      *
      * @param kbId       知识库 ID
      * @param entityName 实体名（MERGE 键）
      * @param embedding  向量
      */
-    default void updateEntityEmbedding(String kbId, String entityName, List<Float> embedding) {}
+    void updateEntityEmbedding(String kbId, String entityName, List<Float> embedding);
 
     /**
      * 按向量检索实体（语义匹配，对标 LightRAG entities_vdb.query）
@@ -255,9 +257,7 @@ public interface GraphStore {
      * @param topK      返回数量
      * @return 实体列表，每项含 name / entityType / score
      */
-    default List<Map<String, Object>> searchEntitiesByVector(String kbId, List<Float> embedding, int topK) {
-        return Collections.emptyList();
-    }
+    List<Map<String, Object>> searchEntitiesByVector(String kbId, List<Float> embedding, int topK);
 
     /**
      * 查询尚未生成 embedding 的实体名（用于存量回填）
@@ -266,9 +266,7 @@ public interface GraphStore {
      * @param limit 最大返回数量
      * @return 实体名列表
      */
-    default List<String> listEntitiesWithoutEmbedding(String kbId, int limit) {
-        return Collections.emptyList();
-    }
+    List<String> listEntitiesWithoutEmbedding(String kbId, int limit);
 
     /**
      * 清理孤立节点：无任何 chunk 引用的 Entity、无任何 TripleMention 引用的 RELATION
@@ -276,5 +274,51 @@ public interface GraphStore {
      *
      * @param kbId 知识库 ID
      */
-    default void cleanupOrphanNodes(String kbId) {}
+    void cleanupOrphanNodes(String kbId);
+
+    // ==================== 同义实体合并 ====================
+
+    /**
+     * 发现同义实体合并候选：基于实体名 embedding 的两两余弦相似度。
+     *
+     * <p>只做候选建议，不做自动合并——是否真同义需人工/LLM 确认后调用
+     * {@link #mergeEntity}。参与比对的实体数有上限防御（见实现）。</p>
+     *
+     * @param kbId      知识库 ID
+     * @param threshold 相似度阈值（0~1，建议 0.92）
+     * @param limit     最多返回候选对数
+     * @return 候选对列表（降序），每项含 sourceEntityId/sourceName/targetEntityId/targetName/similarity
+     */
+    List<Map<String, Object>> findMergeCandidates(String kbId, double threshold, int limit);
+
+    /**
+     * 合并同义实体：把 source 的关系边、MENTIONS 边迁移到 target 后删除 source
+     * （描述择长、typeCounts 票数累加；迁移产生的 target 自环边直接丢弃）
+     *
+     * @param kbId       知识库 ID
+     * @param sourceId   被合并实体 entityId
+     * @param targetId   保留实体 entityId
+     */
+    void mergeEntity(String kbId, String sourceId, String targetId);
+
+    // ==================== 跨分片框架关系补边 ====================
+
+    /**
+     * 按归一化名查找实体完整上下文（框架补边用）
+     *
+     * @return entityId / name / normalizedName / entityType，不存在返回 null
+     */
+    Map<String, Object> findEntityByNormalizedName(String kbId, String normalizedName);
+
+    /**
+     * 查询某个 chunk 提及的全部实体（该 chunk 抽取出的实体集合，框架补边的成员来源）
+     *
+     * @return 每项含 entityId / name / normalizedName
+     */
+    List<Map<String, Object>> findChunkMembers(String kbId, String chunkId);
+
+    /**
+     * 两实体之间是否存在任意方向、任意标签的 RELATION 边（补边去重判定）
+     */
+    boolean hasRelationBetween(String kbId, String entityIdA, String entityIdB);
 }

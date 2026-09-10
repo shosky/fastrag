@@ -49,6 +49,7 @@ import org.springframework.http.client.reactive.ReactorClientHttpConnector;
 import org.springframework.web.reactive.function.client.ExchangeStrategies;
 import org.springframework.web.reactive.function.client.WebClient;
 import reactor.netty.http.client.HttpClient;
+import java.time.Duration;
 
 @Configuration
 public class AiGatewayConfig {
@@ -64,10 +65,22 @@ public class AiGatewayConfig {
      * 创建带代理支持的 Reactor Netty HttpClient。
      * 当 ai.proxy.enabled=true 时，所有使用此 HttpClient 的 WebClient 都会走代理；
      * 命中 non-proxy-hosts 的域名直连（代理对部分服务不稳定/不通时可在此绕过）。
+     *
+     * <p>连接池必须配置空闲淘汰（maxIdleTime + evictInBackground）：远端网关/跨境 NAT
+     * 会静默掐掉空闲数十秒的 keep-alive 连接，若复用已死连接会在读响应时报
+     * Connection reset（解析分片等长流程中连接空闲几十秒后必现）。</p>
      */
     @Bean
     public HttpClient aiHttpClient() {
-        HttpClient client = HttpClient.create();
+        reactor.netty.resources.ConnectionProvider provider = reactor.netty.resources.ConnectionProvider
+                .builder("ai-gateway")
+                .maxIdleTime(Duration.ofSeconds(20))
+                .maxLifeTime(Duration.ofMinutes(5))
+                .evictInBackground(Duration.ofSeconds(30))
+                .lifo()
+                .build();
+        HttpClient client = HttpClient.create(provider)
+                .option(io.netty.channel.ChannelOption.CONNECT_TIMEOUT_MILLIS, 10_000);
         if (proxyEnabled && proxyHost != null && !proxyHost.isBlank() && proxyPort > 0) {
             client = client.proxy(proxySpec -> {
                 reactor.netty.transport.ProxyProvider.Builder builder = proxySpec

@@ -1,6 +1,8 @@
 package com.fastrag.module.knowledge.service.impl;
 
+import com.fastrag.common.exception.BusinessException;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
+import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
 import com.fastrag.module.knowledge.model.ParseStrategyDto;
 import com.fastrag.module.knowledge.model.ParseStrategyRequest;
@@ -29,9 +31,12 @@ class ParseStrategyServiceImplTest {
     @Mock
     private KbParseStrategyMapper mapper;
 
+    @Mock
+    private KbFileMapper fileMapper;
+
     @Test
     void create保存advanced含分片策略字段并可读回() {
-        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper);
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
 
         ParseStrategyRequest req = new ParseStrategyRequest();
         req.setName("父子切片策略");
@@ -76,7 +81,7 @@ class ParseStrategyServiceImplTest {
 
     @Test
     void update替换advanced为新字段配置() {
-        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper);
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
 
         // 已存在的旧策略（无 strategy 字段）
         KbParseStrategy existing = new KbParseStrategy();
@@ -108,7 +113,7 @@ class ParseStrategyServiceImplTest {
 
     @Test
     void create拒绝空名称() {
-        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper);
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
 
         ParseStrategyRequest req = new ParseStrategyRequest();
         req.setName(" ");
@@ -116,12 +121,12 @@ class ParseStrategyServiceImplTest {
         req.setParseMethod("default");
         req.setExtensions(List.of(".md"));
 
-        assertThrows(IllegalArgumentException.class, () -> svc.create("kb_1", req));
+        assertThrows(BusinessException.class, () -> svc.create("kb_1", req));
     }
 
     @Test
     void create拒绝缺失扩展名字段() {
-        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper);
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
 
         ParseStrategyRequest req = new ParseStrategyRequest();
         req.setName("策略");
@@ -129,12 +134,12 @@ class ParseStrategyServiceImplTest {
         req.setParseMethod("default");
         req.setExtensions(null);
 
-        assertThrows(IllegalArgumentException.class, () -> svc.create("kb_1", req));
+        assertThrows(BusinessException.class, () -> svc.create("kb_1", req));
     }
 
     @Test
     void create拒绝空扩展名列表() {
-        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper);
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
 
         ParseStrategyRequest req = new ParseStrategyRequest();
         req.setName("策略");
@@ -142,12 +147,12 @@ class ParseStrategyServiceImplTest {
         req.setParseMethod("default");
         req.setExtensions(List.of());
 
-        assertThrows(IllegalArgumentException.class, () -> svc.create("kb_1", req));
+        assertThrows(BusinessException.class, () -> svc.create("kb_1", req));
     }
 
     @Test
     void update拒绝提供空名称() {
-        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper);
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
 
         KbParseStrategy existing = new KbParseStrategy();
         existing.setId("strategy_001");
@@ -160,12 +165,12 @@ class ParseStrategyServiceImplTest {
         ParseStrategyRequest req = new ParseStrategyRequest();
         req.setName("");
 
-        assertThrows(IllegalArgumentException.class, () -> svc.update("kb_1", "strategy_001", req));
+        assertThrows(BusinessException.class, () -> svc.update("kb_1", "strategy_001", req));
     }
 
     @Test
     void update拒绝提供空扩展名列表() {
-        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper);
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
 
         KbParseStrategy existing = new KbParseStrategy();
         existing.setId("strategy_001");
@@ -178,6 +183,6 @@ class ParseStrategyServiceImplTest {
         ParseStrategyRequest req = new ParseStrategyRequest();
         req.setExtensions(List.of());
 
-        assertThrows(IllegalArgumentException.class, () -> svc.update("kb_1", "strategy_001", req));
+        assertThrows(BusinessException.class, () -> svc.update("kb_1", "strategy_001", req));
     }
 }

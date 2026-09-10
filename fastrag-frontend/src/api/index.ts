@@ -557,8 +557,8 @@ export async function applyQueryRules(query: string): Promise<string> {
 // 知识图谱 API
 // ===========================================================================
 
-export async function fetchGraphData(kbId: string, excludeChunks: boolean = true): Promise<GraphData> {
-  return request.get(`/kb/${kbId}/graph`, { params: { excludeChunks } })
+export async function fetchGraphData(kbId: string, excludeChunks: boolean = true, maxNodes: number = 500): Promise<GraphData> {
+  return request.get(`/kb/${kbId}/graph`, { params: { excludeChunks, maxNodes } })
 }
 
 /** 图谱邻居展开（检索增强）：以实体为种子展开 1-2 跳子图 */

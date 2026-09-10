@@ -16,6 +16,7 @@ import com.fastrag.module.knowledge.entity.KnowledgeBase;
 import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
+import com.fastrag.module.knowledge.util.OcrNoiseFilter;
 import com.fastrag.module.knowledge.model.FileProcessRequest;
 import com.fastrag.module.knowledge.model.ParseStrategyConfig;
 import com.fastrag.module.knowledge.parser.DocumentParser;
@@ -305,7 +306,11 @@ public class IngestionConsumer implements IngestionHandler {
                                                 log.warn("OCR failed for image {}, skipping: {}", fImageKey, e.getMessage());
                                             }
                                             if (ocrText != null && !ocrText.isBlank()) {
-                                                ocrResults.put(fImageKey, ocrText.trim());
+                                                // 嵌入图片 OCR 噪声过滤：截图界面残留（按钮/表单占位/搜索框）不入正文
+                                                String sanitized = OcrNoiseFilter.sanitize(ocrText);
+                                                if (!sanitized.isBlank()) {
+                                                    ocrResults.put(fImageKey, sanitized);
+                                                }
                                             }
                                         } catch (Exception e) {
                                             log.warn("Failed to process image {}: {}", fImageKey, e.getMessage());
@@ -388,7 +393,11 @@ public class IngestionConsumer implements IngestionHandler {
                                     log.warn("OCR failed for image {}, skipping: {}", fImgKey, e.getMessage());
                                 }
                                 if (ocrText != null && !ocrText.isBlank()) {
-                                    ocrResults.put(fImgKey, ocrText.trim());
+                                    // 同上：嵌入图片 OCR 噪声过滤
+                                    String sanitized = OcrNoiseFilter.sanitize(ocrText);
+                                    if (!sanitized.isBlank()) {
+                                        ocrResults.put(fImgKey, sanitized);
+                                    }
                                 }
                             } catch (Exception e) {
                                 log.warn("Failed to process image {}: {}", fImgKey, e.getMessage());

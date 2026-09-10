@@ -113,10 +113,11 @@ public final class ExtractionNormalizer {
 
             Entity existing = entityMap.get(key);
             if (existing != null) {
-                // 合并属性 + 补全描述（已有非空描述不覆盖）
+                // 合并属性 + description 择长（同 gleaning 补捞合并语义：更长的描述通常信息更全）
                 mergeAttributes(existing, entity);
-                if ((existing.getDescription() == null || existing.getDescription().isBlank())
-                        && entity.getDescription() != null && !entity.getDescription().isBlank()) {
+                if (entity.getDescription() != null && !entity.getDescription().isBlank()
+                        && (existing.getDescription() == null || existing.getDescription().isBlank()
+                            || entity.getDescription().length() > existing.getDescription().length())) {
                     existing.setDescription(entity.getDescription());
                 }
             } else {

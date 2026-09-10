@@ -1,16 +1,21 @@
 <script setup lang="ts">
 /**
- * AI分片 原件预览 overlay（pdf.js 渲染 + 原生文字选区 + 图片框点选）。
+ * AI分片 原件预览 overlay（pdf.js 渲染 + 结构块点选 + 原生文字选区 + 图片框点选 + 区域框选）。
  *
- * <p>交互模型（极简）：
+ * <p>交互模型：
  * <ul>
- *   <li>pdf.js TextLayer 文字层：像普通 PDF 阅读器一样拖选文字（文字层与渲染像素级对齐，
- *       由 pdf.js 官方定位逻辑保证），松开鼠标 → emit text-select，
- *       父组件以选中文本直接生成文字分片（所见即所得，零 OCR、零坐标转换）；</li>
- *   <li>绿色图片框：点选 → 生成分片时对该图片区域 OCR（内容图/截图）；</li>
+ *   <li>结构块（文字层 PDF 的解析段落：段落/标题/表格/列表/代码）：常显淡框按类型着色，
+ *       hover 几何命中高亮，纯点击切换选中（可多选）→ 面板「生成分片」按 anchorText
+ *       直取内容成卡（零 OCR）；显/隐开关在右上角图例条；</li>
+ *   <li>绿色图片框：点选 → 生成分片时对该图片区域结构化/OCR（内容图/截图）；</li>
+ *   <li>拖拽（≥4px）：区域框选（红色虚线草稿，跨页 + 边缘自动翻页），生成分片时由后端
+ *       三级提取（文字层行 → 内容图直达 → OCR 兜底）；</li>
+ *   <li>块外空白纯点击/双击：退化为原生文字拖选 → text-select 文字分片；</li>
+ *   <li>右侧分片卡 hover/点击 → activeIds 联动高亮对应结构块；</li>
  *   <li>文字层探测：打开时统计无文字层的页占比 → 扫描件延迟解析（不自动整本 OCR）。</li>
  * </ul>
- * 文字/标题/表格的几何碎框已移除（对设计型/表格型页面是噪声）。
+ * 结构块只在面板传入 blocks（非扫描件的解析段落）时启用；扫描件保持纯截图交互。
+ * 块框 pointer-events:none，hover/点击走 JS 几何命中测试，不拦截文字层与拖拽。
  */
 import { storage } from "@/utils/storage"
 import type { KnowledgeFile } from '@/types/knowledge'
@@ -21,14 +26,23 @@ const props = defineProps<{
   src?: string
   /** 内容图片盒（归一化 0~1，与渲染同坐标系），点选可生成图片分片 */
   imageBoxes?: Array<{ page: number; x: number; y: number; width: number; height: number }>
-  /** 已选中（待「生成分片」）的图片盒 id */
-  selectedImageBoxIds?: string[]
+  /** 结构块（解析段落：段落/标题/表格/列表/代码；image 段落 rects 为兜底横带不传），
+   *  hover 高亮、纯点击切换选中；空 = 非 PDF 或扫描件（保持纯截图交互） */
+  blocks?: Array<{
+    id: string
+    type: string
+    rects: Array<{ page: number; x: number; y: number; width: number; height: number }>
+  }>
+  /** 已选中 id（结构块 paragraphId 与图片盒 img:page:i 共用一个选择集） */
+  selectedIds?: string[]
+  /** 右侧分片卡联动：激活卡覆盖的段落 id → 对应结构块高亮 */
+  activeIds?: string[]
   /** 已框选的区域（红色高亮，待「生成分片」统一成片）；点框可取消 */
   regions?: Array<{ id: string; page: number; x: number; y: number; width: number; height: number; chars?: number }>
 }>()
 
 const emit = defineEmits<{
-  /** 点击图片盒：切换选中态（生成分片时对该区域 OCR） */
+  /** 点击图片盒/结构块：切换选中态（生成分片时合并成卡） */
   (e: 'toggle-select', boxId: string): void
   /** 原生拖选文字完成（≥2 字符） */
   (e: 'text-select', payload: { text: string; page: number }): void
@@ -41,10 +55,31 @@ const emit = defineEmits<{
 }>()
 
 /** 图片盒框样式 */
-const BOX_STYLE = { color: '#10b981', label: 'image' }
+const BOX_STYLE = { color: '#10b981', label: '图片' }
+
+/** 结构块配色：段落/标题/列表/代码/题注 = 蓝，表格 = 橙（图片 = 绿，见 BOX_STYLE） */
+function blockStyleOf(type: string): { color: string; bg: string } {
+  return type === 'table'
+    ? { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.16)' }
+    : { color: '#3b82f6', bg: 'rgba(59, 130, 246, 0.14)' }
+}
+
+function blockLabelOf(type: string): string {
+  const m: Record<string, string> = { paragraph: '段落', heading: '标题', table: '表格', code: '代码', list: '列表', caption: '题注' }
+  return m[type] ?? '段落'
+}
+
+/** 结构框显/隐开关（默认开）：关 = 不画框且不参与点击命中，回到纯截图/文字交互 */
+const blocksOn = ref(true)
 
 const legendItems = computed<Array<[string, { color: string; label: string }]>>(() => {
-  return props.imageBoxes?.length ? [['image', BOX_STYLE]] : []
+  const items: Array<[string, { color: string; label: string }]> = []
+  if (props.blocks?.length) {
+    items.push(['paragraph', { color: '#3b82f6', label: '段落' }])
+    if (props.blocks.some((b) => b.type === 'table')) items.push(['table', { color: '#f59e0b', label: '表格' }])
+  }
+  if (props.imageBoxes?.length) items.push(['image', BOX_STYLE])
+  return items
 })
 
 function layerOf(page: number): HTMLElement | null {
@@ -59,11 +94,10 @@ const renderError = ref("")
 let disposed = false
 let rendering = false
 
-/** 画图片盒：可点击选中（选中态高亮 + 提示） */
+/** 画图片盒：可点击选中（选中态高亮 + 提示）；选中态由 syncBlockStates 统一按 selectedIds 打 */
 function makeBox(
   rect: { x: number; y: number; width: number; height: number },
   pid: string,
-  selected: boolean,
 ): HTMLElement {
   const box = document.createElement('div')
   box.className = 'ai-pdf-box'
@@ -77,13 +111,121 @@ function makeBox(
   label.textContent = BOX_STYLE.label
   box.appendChild(label)
   box.classList.add('is-selectable')
+  box.dataset.bid = pid
   box.title = '点击选中/取消该图片（生成分片时自动 OCR 识别内容）'
   box.addEventListener('click', (e) => {
     e.stopPropagation()
     emit('toggle-select', pid)
   })
-  if (selected) box.classList.add('is-selected')
   return box
+}
+
+/** 画结构块框：pointer-events:none，hover/点击由几何命中测试驱动（不拦截文字层与拖拽） */
+function makeBlockEl(
+  rect: { x: number; y: number; width: number; height: number },
+  block: { id: string; type: string },
+): HTMLElement {
+  const el = document.createElement('div')
+  el.className = 'ai-pdf-block'
+  el.dataset.bid = block.id
+  const s = blockStyleOf(block.type)
+  el.style.setProperty('--block-color', s.color)
+  el.style.setProperty('--block-bg', s.bg)
+  el.style.left = `${rect.x * 100}%`
+  el.style.top = `${rect.y * 100}%`
+  el.style.width = `${rect.width * 100}%`
+  el.style.height = `${rect.height * 100}%`
+  const label = document.createElement('span')
+  label.className = 'ai-pdf-block__label'
+  label.textContent = blockLabelOf(block.type)
+  el.appendChild(label)
+  return el
+}
+
+/** 重画结构块层（块数据或开关变化时全量重建；选中/联动态由 syncBlockStates 补打） */
+function redrawBlocks() {
+  wrapRef.value?.querySelectorAll('.ai-pdf-block').forEach((n) => n.remove())
+  if (!blocksOn.value) {
+    setHoverBlock(null)
+    return
+  }
+  for (const b of props.blocks ?? []) {
+    for (const r of b.rects) {
+      if (r.width <= 0 || r.height <= 0) continue
+      layerOf(r.page)?.appendChild(makeBlockEl(r, b))
+    }
+  }
+  syncBlockStates()
+}
+
+/** 选中态（selectedIds）与右侧联动态（activeIds）同步到已画框上，不重建 DOM */
+function syncBlockStates() {
+  const root = wrapRef.value
+  if (!root) return
+  const sel = new Set(props.selectedIds ?? [])
+  const act = new Set(props.activeIds ?? [])
+  root.querySelectorAll<HTMLElement>('.ai-pdf-block, .ai-pdf-box').forEach((el) => {
+    const id = el.dataset.bid
+    el.classList.toggle('is-selected', !!id && sel.has(id))
+    if (el.classList.contains('ai-pdf-block')) el.classList.toggle('is-active', !!id && act.has(id))
+  })
+}
+
+// ---- 结构块 hover 命中测试（几何计算，零 pointer-events 遮罩） ----
+let hoverBlockId: string | null = null
+let hoverPageWrap: HTMLElement | null = null
+
+/** hover/选中样式与页面光标切换；wrap 变化时复位旧页光标 */
+function setHoverBlock(id: string | null, wrap?: HTMLElement | null) {
+  const root = wrapRef.value
+  if (hoverBlockId !== id && root) {
+    root.querySelectorAll('.ai-pdf-block.is-hover').forEach((el) => el.classList.remove('is-hover'))
+    hoverBlockId = id
+    if (id) root.querySelectorAll(`.ai-pdf-block[data-bid="${CSS.escape(id)}"]`).forEach((el) => el.classList.add('is-hover'))
+  }
+  if (hoverPageWrap && hoverPageWrap !== wrap) hoverPageWrap.style.cursor = ''
+  hoverPageWrap = wrap ?? null
+  if (wrap) wrap.style.cursor = id ? 'pointer' : ''
+}
+
+/** 命中测试：页内归一化坐标 → 覆盖它的最小结构块（嵌套时小块优先，点击精度最好） */
+function hitBlockAt(page: number, nx: number, ny: number): string | null {
+  if (!blocksOn.value) return null
+  let bestId: string | null = null
+  let bestArea = Infinity
+  for (const b of props.blocks ?? []) {
+    for (const r of b.rects) {
+      if (r.page !== page) continue
+      if (nx < r.x || nx > r.x + r.width || ny < r.y || ny > r.y + r.height) continue
+      const area = r.width * r.height
+      if (area < bestArea) {
+        bestArea = area
+        bestId = b.id
+      }
+    }
+  }
+  return bestId
+}
+
+/** 容器级 mousemove：定位所在页 → 归一化 → 命中结构块 → hover 高亮 + pointer 光标 */
+function onOverlayMouseMove(e: MouseEvent) {
+  if (regionDrag || !blocksOn.value) {
+    setHoverBlock(null)
+    return
+  }
+  const wrap = (e.target as HTMLElement)?.closest?.('.ai-pdf-page-wrap') as HTMLElement | null
+  if (!wrap || !wrap.dataset.page) {
+    setHoverBlock(null)
+    return
+  }
+  const r = wrap.getBoundingClientRect()
+  if (!r.width || !r.height) return
+  const bid = hitBlockAt(Number(wrap.dataset.page), (e.clientX - r.left) / r.width, (e.clientY - r.top) / r.height)
+  setHoverBlock(bid, wrap)
+}
+
+function onOverlayMouseLeave() {
+  setHoverBlock(null)
 }
 
 function redraw() {
@@ -95,7 +237,7 @@ function redraw() {
     const r = props.imageBoxes![i]
     if (r.width <= 0 || r.height <= 0) continue
     const pid = `img:${r.page}:${i}`
-    const box = makeBox(r, pid, (props.selectedImageBoxIds ?? []).includes(pid))
+    const box = makeBox(r, pid)
     if (box) layerOf(r.page)?.appendChild(box)
   }
   // 已框选区域：红色实线持久高亮（待「生成分片」统一成片；点框取消）
@@ -118,11 +260,15 @@ function redraw() {
     })
     layerOf(r.page)?.appendChild(box)
   }
+  syncBlockStates()
 }
 
-watch(() => props.selectedImageBoxIds, () => redraw(), { deep: true })
 watch(() => props.imageBoxes, () => redraw(), { deep: true })
 watch(() => props.regions, () => redraw(), { deep: true })
+watch(() => props.blocks, () => redrawBlocks(), { deep: true })
+watch(() => props.selectedIds, () => syncBlockStates(), { deep: true })
+watch(() => props.activeIds, () => syncBlockStates(), { deep: true })
+watch(blocksOn, () => redrawBlocks())
 
 interface PageRect {
   wrap: HTMLElement
@@ -198,6 +344,8 @@ function onWrapMouseDown(e: MouseEvent, page: number) {
     }
   })
   regionDrag = { startPage: page, startX: start.x, startY: start.y, pages, divs: new Map(), moved: false }
+  // 进入拖拽：复位结构块 hover 高亮与 pointer 光标（拖拽语义回到区域框选）
+  setHoverBlock(null)
 
   let lastMouseX = e.clientX
   let lastMouseY = e.clientY
@@ -314,7 +462,19 @@ function onWrapMouseDown(e: MouseEvent, page: number) {
       emitted++
     }
     if (emitted > 0) return
-    // 未成区域（点击/小拖拽）→ 退化为原生文字选中 → 文字分片
+    // 纯点击（未拖动）：命中结构块 → 切换选中（逐块点击多选）；未命中 → 退化为原生文字选中 → 文字分片
+    if (!drag.moved) {
+      const hitPage = drag.pages.find(
+        (p) => cur.x >= p.left && cur.x <= p.right && cur.y >= p.top && cur.y <= p.bottom,
+      )
+      const bid = hitPage
+        ? hitBlockAt(hitPage.page, (cur.x - hitPage.left) / hitPage.width, (cur.y - hitPage.top) / hitPage.height)
+        : null
+      if (bid) {
+        emit('toggle-select', bid)
+        return
+      }
+    }
     const sel = window.getSelection()
     const text = sel ? sel.toString().trim() : ""
     if (text.length >= 2) emit("text-select", { text, page: drag.startPage })
@@ -420,6 +580,7 @@ async function render() {
     }
     renderedPages.value = pdfDoc.numPages
     redraw()
+    redrawBlocks()
     probeTextLayer()
   } catch (e: any) {
     if (disposed) return
@@ -472,10 +633,13 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div ref="wrapRef" class="ai-chunk-pdf-overlay">
+  <div ref="wrapRef" class="ai-chunk-pdf-overlay" @mousemove="onOverlayMouseMove" @mouseleave="onOverlayMouseLeave">
     <div v-if="renderedPages > 0 && legendItems.length" class="ai-chunk-pdf-overlay__legend">
       <span v-for="[type, s] in legendItems" :key="type" class="ai-chunk-pdf-overlay__legend-item">
         <i :style="{ background: s.color }"></i>{{ s.label }}
+      </span>
+      <span v-if="blocks?.length" class="ai-chunk-pdf-overlay__legend-switch" title="关闭后隐藏结构块框（截图/文字选择不受影响）">
+        <el-switch v-model="blocksOn" size="small" /><span>结构框</span>
       </span>
     </div>
     <el-empty v-if="renderError" :description="renderError" :image-size="80" />
@@ -545,6 +709,55 @@ onUnmounted(() => {
       background: rgba(16, 185, 129, 0.2);
       box-shadow: 0 0 0 2px rgba(16, 185, 129, 0.45);
       z-index: 5;
+    }
+  }
+
+  // 结构块框（解析段落：段落/标题/表格/列表/代码）：常显淡框，hover/选中/联动加深；
+  // pointer-events:none —— hover/点击由 JS 几何命中测试驱动，不拦截文字层与拖拽
+  :deep(.ai-pdf-block) {
+    position: absolute;
+    border: 1px solid var(--block-color, #3b82f6);
+    border-radius: 2px;
+    background: transparent;
+    pointer-events: none;
+    opacity: 0.4;
+    transition: opacity 0.1s, background 0.1s;
+    // 与文字层同层：图片盒(3)/区域框(5)/草稿(6)都在其上
+    z-index: 2;
+
+    &.is-hover,
+    &.is-selected,
+    &.is-active {
+      opacity: 1;
+      border-width: 2px;
+      background: var(--block-bg, rgba(59, 130, 246, 0.14));
+      z-index: 3;
+    }
+
+    &.is-selected {
+      box-shadow: 0 0 0 1.5px var(--block-color, #3b82f6);
+    }
+
+    // 类型角标：hover/选中/联动时显示（平时只有框线，密集页不噪声）
+    .ai-pdf-block__label {
+      display: none;
+      position: absolute;
+      top: -1px;
+      left: -1px;
+      background: var(--block-color, #3b82f6);
+      color: #fff;
+      font-size: 10px;
+      line-height: 1;
+      font-weight: 500;
+      padding: 2px 5px;
+      border-radius: 2px 0 3px 0;
+      white-space: nowrap;
+    }
+
+    &.is-hover .ai-pdf-block__label,
+    &.is-selected .ai-pdf-block__label,
+    &.is-active .ai-pdf-block__label {
+      display: block;
     }
   }
 
@@ -652,6 +865,13 @@ onUnmounted(() => {
         height: 8px;
         border-radius: 2px;
       }
+    }
+
+    &-switch {
+      margin-left: auto;
+      display: inline-flex;
+      align-items: center;
+      gap: 4px;
     }
   }
 }
