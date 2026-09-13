@@ -7,8 +7,6 @@ import org.junit.jupiter.api.Test;
 import java.util.ArrayList;
 import java.util.List;
 
-import java.util.Set;
-
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
@@ -33,7 +31,7 @@ class GraphBuildConsumerPromptTest {
     @Test
     void build_normalText_containsCoreRulesAndWhitelist() {
         String prompt = GraphBuildConsumer.buildExtractionPromptText(
-                "小微ICT业务包含全光组网、视频监控等场景。", null, null, EntityTypeNormalizer.DEFAULT_WHITELIST);
+                "小微ICT业务包含全光组网、视频监控等场景。", EntityTypeNormalizer.DEFAULT_WHITELIST);
 
         assertTrue(prompt.contains("从文本中提取实体和实体间的关系"));
         assertTrue(prompt.contains("小微ICT业务"));
@@ -41,10 +39,12 @@ class GraphBuildConsumerPromptTest {
         // 模板规则文本不含该词，可作为类型提示排除性的探针）
         assertTrue(prompt.contains("套餐"));
         assertFalse(prompt.contains("阈值"));
-        // 非表格文本应带流程/方法论抽取规则 + 章节标题框架实体规则（跨 chunk 框架关系，2026-09-07）
+        // 非表格文本应带流程/方法论抽取规则 + 章节标题框架实体规则
         assertTrue(prompt.contains("六步法"));
         assertTrue(prompt.contains("章节标题"));
         assertTrue(prompt.contains("属于"));
+        // 命名一致性约束（跨单元实体对齐靠 prompt 纪律 + 归一化名合并兜底）
+        assertTrue(prompt.contains("同一个名称"));
         // 不应带表格专用规则
         assertFalse(prompt.contains("价目表格"));
     }
@@ -52,7 +52,7 @@ class GraphBuildConsumerPromptTest {
     @Test
     void build_tableDominantText_switchesToTableRules() {
         String prompt = GraphBuildConsumer.buildExtractionPromptText(
-                BOM_TABLE, null, null, EntityTypeNormalizer.DEFAULT_WHITELIST);
+                BOM_TABLE, EntityTypeNormalizer.DEFAULT_WHITELIST);
 
         assertTrue(prompt.contains("价目表格"));
         assertTrue(prompt.contains("套餐→设备"));
@@ -61,21 +61,11 @@ class GraphBuildConsumerPromptTest {
     }
 
     @Test
-    void build_headingPathInjectedAsContext() {
-        String prompt = GraphBuildConsumer.buildExtractionPromptText(
-                "一备：做好准备。二问：黄金四问。", "小微ICT业务营销六步法", "营销六步法",
-                EntityTypeNormalizer.DEFAULT_WHITELIST);
-
-        assertTrue(prompt.contains("本文本是《小微ICT业务营销六步法》章节的内容"));
-        assertTrue(prompt.contains("最近标题：营销六步法"));
-    }
-
-    @Test
     void build_percentSignInText_neverThrowsAndStaysIntact() {
         // 事故场景回归：文档文本含 % 时（利润率、补贴比例），纯拼接必须原样保留且不抛异常
         String text = "利润率≧70%系数=2；按原合同金额5%签订维保续费1年合同；补贴金额为套餐费的30%。";
         String prompt = GraphBuildConsumer.buildExtractionPromptText(
-                text, null, null, EntityTypeNormalizer.DEFAULT_WHITELIST);
+                text, EntityTypeNormalizer.DEFAULT_WHITELIST);
 
         assertTrue(prompt.contains("利润率≧70%系数=2"));
         assertTrue(prompt.contains("30%"));
@@ -83,14 +73,14 @@ class GraphBuildConsumerPromptTest {
     }
 
     @Test
-    void build_longText_truncatedTo3000Chars() {
-        String longText = "全光组网".repeat(2000);
+    void build_longText_truncatedTo8000Chars() {
+        String longText = "全光组网".repeat(3000);
         String prompt = GraphBuildConsumer.buildExtractionPromptText(
-                longText, null, null, EntityTypeNormalizer.DEFAULT_WHITELIST);
+                longText, EntityTypeNormalizer.DEFAULT_WHITELIST);
 
-        // 3000 字符截断（"全光组网"4 字符 × 750 = 3000）+ prompt 固定部分；文本部分不应全量进入
+        // 8000 字符截断（"全光组网"4 字符 × 2000 = 8000）+ prompt 固定部分；超出部分不进入
         int occurrences = prompt.split("全光组网", -1).length - 1;
-        assertEquals(750, occurrences);
+        assertEquals(2000, occurrences);
     }
 
     @Test
@@ -99,7 +89,7 @@ class GraphBuildConsumerPromptTest {
         // 故输入只覆盖含 % 但不含 %s 的场景）
         for (String text : new String[]{BOM_TABLE, "小微ICT%", "利润率70%以上", "100%纯文本"}) {
             String prompt = GraphBuildConsumer.buildExtractionPromptText(
-                    text, "章节>A", "A", EntityTypeNormalizer.DEFAULT_WHITELIST);
+                    text, EntityTypeNormalizer.DEFAULT_WHITELIST);
             assertFalse(prompt.contains("%s"), "prompt 含残留 %s 占位符, input=" + text);
         }
     }

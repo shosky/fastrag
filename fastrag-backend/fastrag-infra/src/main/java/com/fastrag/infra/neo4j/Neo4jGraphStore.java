@@ -43,6 +43,7 @@ import org.neo4j.driver.Driver;
 import org.neo4j.driver.Record;
 import org.neo4j.driver.Result;
 import org.neo4j.driver.Session;
+import org.neo4j.driver.Transaction;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -711,17 +712,8 @@ public class Neo4jGraphStore implements GraphStore {
                             p("kbId", kbId, "ids", chunkIds));
                 }
 
-                // 4. 回收孤立的 RELATION（没有任何 TripleMention 引用 = 不再被任何 chunk 提及）
-                tx.run("MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
-                        "WHERE NOT EXISTS { MATCH (:TripleMention {kbId: r.kbId, tripleId: r.tripleId}) } " +
-                        "DELETE r",
-                        p("kbId", kbId));
-
-                // 5. 回收孤立的 Entity（不再被任何 Chunk MENTIONS）
-                tx.run("MATCH (e:Entity {kbId: $kbId}) " +
-                        "WHERE NOT (e)-[:MENTIONS]-(:Chunk) " +
-                        "DETACH DELETE e",
-                        p("kbId", kbId));
+                // 4. 回收孤立 RELATION / Entity（与 deleteChunkGraph/cleanupOrphanNodes 共用同一实现）
+                pruneOrphans(tx, kbId);
 
                 return null;
             });
@@ -735,27 +727,58 @@ public class Neo4jGraphStore implements GraphStore {
     public void deleteChunkGraph(String kbId, String chunkId) {
         try (Session session = neo4jDriver.session()) {
             session.writeTransaction(tx -> {
+                // 0. 删除该 chunk 的关系溯源节点（TripleMention）——对齐 deleteFileGraph：
+                //    只被该 chunk 提及的关系在下一步孤儿回收中才能真正被判为孤儿。
+                //    历史缺陷：此处遗漏且第 3 步用 RELATION 出边模式 `(r)-[:MENTIONS]->(:Chunk)`
+                //    （关系类型不能有出边，Cypher 不成立），导致分片删除后关系与溯源残留。
+                tx.run("MATCH (tm:TripleMention {kbId: $kbId, chunkId: $chunkId}) DELETE tm",
+                        p("kbId", kbId, "chunkId", chunkId));
+
                 // 1. 删除该 Chunk 节点及其所有 MENTIONS 关系
                 tx.run("MATCH (c:Chunk {kbId: $kbId, chunkId: $chunkId}) DETACH DELETE c",
                         p("kbId", kbId, "chunkId", chunkId));
 
-                // 2. 回收孤立的 Entity（不再被任何 Chunk MENTIONS）
-                tx.run("MATCH (e:Entity {kbId: $kbId}) " +
-                        "WHERE NOT (e)-[:MENTIONS]-(:Chunk) " +
-                        "DETACH DELETE e",
-                        p("kbId", kbId));
-
-                // 3. 回收孤立的 RELATION（没有 MENTIONS 到任何 Chunk）
-                tx.run("MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
-                        "WHERE NOT EXISTS { MATCH (r)-[:MENTIONS]->(:Chunk) } " +
-                        "DELETE r",
-                        p("kbId", kbId));
+                // 2. 回收孤立 RELATION / Entity（与 deleteFileGraph/cleanupOrphanNodes 共用同一实现）
+                pruneOrphans(tx, kbId);
 
                 return null;
             });
             log.info("Deleted chunk graph data in Neo4j: kb={}, chunk={}", kbId, chunkId);
         } catch (Exception e) {
             log.error("Neo4j deleteChunkGraph failed: kb={}, chunk={}, error={}", kbId, chunkId, e.getMessage(), e);
+        }
+    }
+
+    /**
+     * 回收孤立图谱数据（deleteFileGraph / deleteChunkGraph / cleanupOrphanNodes 三处共用）。
+     *
+     * <p>步骤：① 回填边端点实体 ID（KG-01：跨 chunk 占位/存量边端点 ID 可能为空，从端点节点回填）；
+     * ② 删除无任何 TripleMention 引用的 RELATION；③ DETACH DELETE 无任何 MENTIONS 的 Entity。</p>
+     *
+     * <p>调用方必须先清理引用来源：两个删除方法在调用前删除对应 TripleMention 节点，
+     * 使"只被被删 chunk/文件提及"的关系在此处成为孤儿；构建收尾的 cleanupOrphanNodes 直接调用。
+     * 删除数量计入日志——计数塌陷类问题（2026-09-11）必须可归因。</p>
+     */
+    private void pruneOrphans(Transaction tx, String kbId) {
+        tx.run("MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
+                        "WHERE r.sourceId IS NULL OR r.targetId IS NULL " +
+                        "SET r.sourceId = coalesce(r.sourceId, s.entityId), " +
+                        "r.targetId = coalesce(r.targetId, t.entityId)",
+                p("kbId", kbId));
+        Result relDel = tx.run("MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
+                        "WHERE NOT EXISTS { MATCH (:TripleMention {kbId: r.kbId, tripleId: r.tripleId}) } " +
+                        "DELETE r",
+                p("kbId", kbId));
+        long relationsDeleted = relDel.consume().counters().relationshipsDeleted();
+        Result entDel = tx.run("MATCH (e:Entity {kbId: $kbId}) " +
+                        "WHERE NOT (e)-[:MENTIONS]-(:Chunk) " +
+                        "DETACH DELETE e",
+                p("kbId", kbId));
+        long entitiesDeleted = entDel.consume().counters().nodesDeleted();
+        if (relationsDeleted > 0 || entitiesDeleted > 0) {
+            log.info("[GraphStore] orphan prune: kb={}, relationsDeleted={}, entitiesDeleted={} " +
+                            "（数量异常偏大时优先排查：占位端点实体 / MENTIONS 证据链是否完整）",
+                    kbId, relationsDeleted, entitiesDeleted);
         }
     }
 
@@ -774,6 +797,10 @@ public class Neo4jGraphStore implements GraphStore {
                         "FOREACH (idx IN range(0, size(entityMentions)-1) | " +
                         "  MERGE (entityNodes[idx])-[:MENTIONS {kbId: $kbId, createdAt: entityMentions[idx].createdAt}]->(new)) " +
                         "DETACH DELETE old",
+                        p("kbId", kbId, "oldChunkId", oldChunkId, "newChunkId", newChunkId));
+                // 2. 同步关系溯源节点（TripleMention）的 chunkId——否则改名后关系溯源断裂，
+                //    后续 deleteChunkGraph/cleanupOrphanNodes 会把这个 chunk 提及的关系误判为孤儿
+                tx.run("MATCH (tm:TripleMention {kbId: $kbId, chunkId: $oldChunkId}) SET tm.chunkId = $newChunkId",
                         p("kbId", kbId, "oldChunkId", oldChunkId, "newChunkId", newChunkId));
                 return null;
             });
@@ -931,23 +958,9 @@ public class Neo4jGraphStore implements GraphStore {
     public void cleanupOrphanNodes(String kbId) {
         try (Session session = neo4jDriver.session()) {
             session.writeTransaction(tx -> {
-                // 0. 边端点实体 ID 回填（KG-01）：跨 chunk 引用且端点实体从未被单独提取时，
-                //    关系边的 sourceId/targetId 可能为空，从端点节点属性回填
-                tx.run("MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
-                        "WHERE r.sourceId IS NULL OR r.targetId IS NULL " +
-                        "SET r.sourceId = coalesce(r.sourceId, s.entityId), " +
-                        "r.targetId = coalesce(r.targetId, t.entityId)",
-                        p("kbId", kbId));
-                // 1. 回收孤立的 RELATION（无任何 TripleMention 引用 = 不再被任何 chunk 提及）
-                tx.run("MATCH (s:Entity {kbId: $kbId})-[r:RELATION {kbId: $kbId}]->(t:Entity {kbId: $kbId}) " +
-                        "WHERE NOT EXISTS { MATCH (:TripleMention {kbId: r.kbId, tripleId: r.tripleId}) } " +
-                        "DELETE r",
-                        p("kbId", kbId));
-                // 2. 回收孤立的 Entity（不再被任何 Chunk MENTIONS）
-                tx.run("MATCH (e:Entity {kbId: $kbId}) " +
-                        "WHERE NOT (e)-[:MENTIONS]-(:Chunk) " +
-                        "DETACH DELETE e",
-                        p("kbId", kbId));
+                // 与 deleteFileGraph/deleteChunkGraph 共用同一回收实现：
+                // ① 端点 ID 回填 ② 无 TripleMention 的 RELATION ③ 无 MENTIONS 的 Entity
+                pruneOrphans(tx, kbId);
                 return null;
             });
             log.info("Neo4j orphan cleanup done for kb={}", kbId);
@@ -1141,6 +1154,67 @@ public class Neo4jGraphStore implements GraphStore {
             log.error("Neo4j hasRelationBetween failed: kb={}, a={}, b={}, error={}",
                     kbId, entityIdA, entityIdB, e.getMessage(), e);
             return false;
+        }
+    }
+
+    @Override
+    public String createDirectedRelation(String kbId, String tripleId, String sourceId, String source, String sourceNorm,
+                                         String targetId, String target, String targetNorm,
+                                         String label, String content, List<String> chunkIds, String fileId) {
+        if (source == null || target == null || source.isBlank() || target.isBlank()) return null;
+        String relLabel = label != null ? label : "RELATED";
+        String relContent = content != null ? content : (source.trim() + " -> " + relLabel + " -> " + target.trim());
+        String sNorm = sourceNorm != null && !sourceNorm.isBlank() ? sourceNorm : source.trim().toLowerCase();
+        String tNorm = targetNorm != null && !targetNorm.isBlank() ? targetNorm : target.trim().toLowerCase();
+        // 构建写入：不捕获异常，失败由调用方决定是否降级（缝合失败仅告警，不阻塞构建）
+        try (Session session = neo4jDriver.session()) {
+            return session.writeTransaction(tx -> {
+                // 冲突消解（Q7·先建者胜）：同 label 反向边已存在 → 不新建边，
+                // 把本次证据 chunk 并入既有边的 TripleMention 溯源，返回既有 tripleId
+                Result rev = tx.run(
+                        "MATCH (t:Entity {kbId: $kbId, normalizedName: $tNorm})-[r:RELATION {kbId: $kbId, label: $label}]->" +
+                                "(s:Entity {kbId: $kbId, normalizedName: $sNorm}) " +
+                                "RETURN r.tripleId AS tripleId LIMIT 1",
+                        p("kbId", kbId, "tNorm", tNorm, "sNorm", sNorm, "label", relLabel));
+                if (rev.hasNext()) {
+                    String winnerTripleId = rev.next().get("tripleId").asString(null);
+                    addTripleMentions(tx, kbId, winnerTripleId, chunkIds, fileId);
+                    log.debug("[GraphStore] Reverse relation conflict resolved (first-wins): {} kept, merged mentions from triple={}",
+                            winnerTripleId, tripleId);
+                    return winnerTripleId;
+                }
+                // 无反向边：建边（端点 MERGE 语义与 createRelation 一致）
+                tx.run("MERGE (s:Entity {kbId: $kbId, normalizedName: $sNorm}) " +
+                                "ON CREATE SET s.name = $source, s.entityId = $sourceId, s.createdAt = datetime() " +
+                                "MERGE (t:Entity {kbId: $kbId, normalizedName: $tNorm}) " +
+                                "ON CREATE SET t.name = $target, t.entityId = $targetId, t.createdAt = datetime() " +
+                                "MERGE (s)-[r:RELATION {kbId: $kbId, label: $label}]->(t) " +
+                                "ON CREATE SET r.tripleId = $tripleId, " +
+                                "r.sourceId = coalesce($sourceId, s.entityId), r.targetId = coalesce($targetId, t.entityId), " +
+                                "r.content = $content, r.createdAt = datetime() " +
+                                "ON MATCH SET r.tripleId = coalesce(r.tripleId, $tripleId), " +
+                                "r.sourceId = coalesce(r.sourceId, $sourceId, s.entityId), " +
+                                "r.targetId = coalesce(r.targetId, $targetId, t.entityId), " +
+                                "r.content = coalesce(r.content, $content)",
+                        p("kbId", kbId, "tripleId", tripleId, "sourceId", sourceId, "targetId", targetId,
+                                "source", source.trim(), "target", target.trim(),
+                                "sNorm", sNorm, "tNorm", tNorm,
+                                "label", relLabel, "content", relContent));
+                addTripleMentions(tx, kbId, tripleId, chunkIds, fileId);
+                return tripleId;
+            });
+        }
+    }
+
+    /** 为 tripleId 批量建立 TripleMention 溯源（幂等 MERGE；空 chunkId 过滤） */
+    private void addTripleMentions(Transaction tx, String kbId, String tripleId,
+                                  List<String> chunkIds, String fileId) {
+        if (tripleId == null || chunkIds == null || chunkIds.isEmpty()) return;
+        for (String chunkId : chunkIds) {
+            if (chunkId == null || chunkId.isBlank()) continue;
+            tx.run("MERGE (tm:TripleMention {kbId: $kbId, tripleId: $tripleId, chunkId: $chunkId}) " +
+                            "ON CREATE SET tm.fileId = $fileId, tm.createdAt = datetime()",
+                    p("kbId", kbId, "tripleId", tripleId, "chunkId", chunkId, "fileId", fileId));
         }
     }
 }

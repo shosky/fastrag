@@ -15,6 +15,7 @@ import com.fastrag.module.graph.util.EntityTypeNormalizer;
 import com.fastrag.module.graph.util.ExtractionNormalizer;
 import com.fastrag.module.graph.util.GraphIdHashing;
 import com.fastrag.module.graph.util.NameNormalizer;
+import com.fastrag.module.knowledge.chunking.ExtractionUnitAssembler;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
@@ -24,9 +25,13 @@ import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.graph.entity.KbGraphIndex;
+import com.fastrag.module.graph.entity.KbGraphUnit;
 import com.fastrag.module.graph.mapper.KbGraphIndexMapper;
+import com.fastrag.module.graph.mapper.KbGraphUnitMapper;
 import com.fastrag.module.platform.entity.ModelRecord;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
+import jakarta.annotation.PostConstruct;
+import jakarta.annotation.PreDestroy;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -34,54 +39,38 @@ import org.springframework.amqp.rabbit.annotation.RabbitListener;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
+import java.time.LocalDateTime;
 import java.util.*;
 import java.util.concurrent.*;
-import java.util.concurrent.atomic.*;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Collectors;
 
 /**
- * 知识图谱构建消费者（RabbitMQ Consumer），从文档 chunks 中提取实体和关系并写入图数据库。
+ * 知识图谱构建消费者（RabbitMQ Consumer）——v1.2 单元抽取架构。
  *
- * <p>核心职责：
+ * <p>核心思路（LightRAG/GraphRAG 开源共识，docs/design/cross-chunk-graph-extraction.md §14）：
+ * <b>抽取单元与检索分片解耦</b>。检索层保持 500 字分片（服务向量检索精度）；图谱层把文件
+ * 全部分片按 chunkIndex 顺序重组为 ~2000 字符的"抽取单元"（ExtractionUnit），
+ * 单次 LLM 调用抽取一个单元的实体与关系。语义完整的章节（如"营销六步法"标题+六个步骤）
+ * 天然落在同一单元内，跨分片关系在单元内直接抽出。</p>
+ *
+ * <p>跨单元一致性只靠两件事（开源共识，无补丁层）：</p>
  * <ul>
- *   <li>监听 RabbitMQ 队列 {@code fastrag.graph-build.queue}，消费图谱构建消息</li>
- *   <li>支持单文件（fileId/fileIds）和全库（kbId）两种构建模式，以及 full（重建）和 incremental（增量）两种模式</li>
- *   <li>使用 LLM 对每个 chunk 进行实体和关系抽取，经 ExtractionNormalizer 规范化去重后写入 GraphStore</li>
- *   <li>使用确定性 ID 哈希（SHA-256）替代自增 ID，保证跨批次幂等</li>
- *   <li>使用 Mention 追踪表记录实体/三元组与 Chunk 的关联关系</li>
- *   <li>为实体批量生成 Embedding 向量，支持图谱中的语义检索</li>
- *   <li>构建完成后自动清理孤立实体/关系，回填缺失 embedding</li>
+ *   <li>确定性 ID + 归一化名合并（{@link NameNormalizer} + {@link GraphIdHashing}，Neo4j MERGE）</li>
+ *   <li>证据追踪（MENTIONS / TripleMention 按名字包含归属到底层分片，支撑删除回收与 PPR）</li>
  * </ul>
  *
- * <p>消息格式（Map）：
- * <ul>
- *   <li>{@code kbId} — 知识库 ID（必填）</li>
- *   <li>{@code fileId} — 单个文件 ID（可选，兼容旧格式）</li>
- *   <li>{@code fileIds} — 多个文件 ID 列表（可选，新格式）</li>
- *   <li>{@code mode} — 构建模式：full（全量重建）/ incremental（增量，默认）/ replay（零 LLM 成本，
- *       重放 kb_chunk.extraction_result 持久化的抽取结果，用于 Neo4j 收敛迁移与图谱修复）</li>
- * </ul>
+ * <p>v1.2 移除的历史补丁层：链式携带（carry）、文件级缝合（stitch）、headingPath 框架补边
+ * （backfill）——它们的职责全部被"更大的抽取单元"天然覆盖。</p>
  *
- * <p>关键实现逻辑：
+ * <p>其他职责：</p>
  * <ul>
- *   <li>RabbitMQ concurrency=5，通过线程池并行处理 chunks，并发数可配（默认 max=15，按 total/3 自动调整）</li>
- *   <li>跳过内容过短（< 50 字符）的 chunk，直接标记完成</li>
- *   <li>LLM 提取使用自定义 Prompt 限制实体类型白名单，收敛类型爆炸问题</li>
- *   <li>JSON 解析失败时使用正则兜底提取实体和关系</li>
- *   <li>graph_indexed 三态：0=待提取，1=已提取，2=失败待重试——抽取失败（LLM 超时/响应不可解析）
- *       与图谱写入失败（Neo4j 不可达等，Store 构建写方法抛出异常）都标记为 2，增量构建自动重试，
- *       不再误标为已构建导致永久丢失；构建结束时失败数 > 0 打 ERROR 告警</li>
- *   <li>构建进度实时更新到 kb_graph_index 表（status、progress、entityCount、relationCount）</li>
- *   <li>LLM 配置从文件的 parse strategy 中解析（llmModel → ModelRecord online）；replay 模式跳过</li>
- * </ul>
- *
- * <p>与其他模块的交互：
- * <ul>
- *   <li>graph 模块（{@link GraphStore}）— 实体/关系/Chunk 节点的 CRUD 操作</li>
- *   <li>graph 模块（{@link ExtractionNormalizer}、{@link EntityTypeNormalizer}、{@link NameNormalizer}）— 实体规范化</li>
- *   <li>ai 模块（{@link LlmService}、{@link EmbeddingService}）— LLM 调用和 Embedding 生成</li>
- *   <li>publish 模块（{@link LogService}）— 构建日志记录</li>
- *   <li>platform 模块（{@link ModelRecordMapper}）— 查询 LLM/Embedding 模型配置</li>
+ *   <li>MQ 即时 ack + 应用内执行器（graph-build-worker）+ KB 级构建互斥（防重投并发）</li>
+ *   <li>单元级缓存（kb_graph_unit.content_hash）：内容未变化的单元零 LLM 跳过；
+ *       replay 模式重放持久化的抽取结果</li>
+ *   <li>退化抽取兜底（有关系但全部缺端点 → 重试一次择优）；gleaning 补捞（默认开）</li>
+ *   <li>失败单元构建内自动重试一轮</li>
+ *   <li>构建完成后：embedding 回填、孤立实体/关系清理</li>
  * </ul>
  */
 @Slf4j
@@ -93,6 +82,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     private final GraphStore graphStore;
     private final LlmService llmService;
     private final KbGraphIndexMapper graphIndexMapper;
+    private final KbGraphUnitMapper unitMapper;
     private final KbFileMapper fileMapper;
     private final KbParseStrategyMapper parseStrategyMapper;
     private final ModelRecordMapper modelRecordMapper;
@@ -100,7 +90,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     private final EmbeddingService embeddingService;
     private final KnowledgeBaseMapper kbMapper;
 
-    /** 图谱构建最大并发数（可通过配置文件调整） */
+    /** 图谱构建最大并发数（单元级并行） */
     @Value("${graph.build.concurrency:15}")
     private int maxGraphBuildConcurrency;
 
@@ -108,20 +98,36 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     @Value("${graph.build.llm-timeout:180}")
     private int graphBuildLlmTimeoutSeconds;
 
-    /** gleaning 补捞开关（LightRAG 同款，默认开：对"有实体零关系"的 chunk 补一轮，约 +10-20% 总调用成本换关系密度；yml graph.build.gleaning=false 可关） */
+    /**
+     * 图谱抽取 LLM 输出上限（tokens，0=不限制）。生产观测：500 字符的 OCR 噪声分片曾回 5000+ 字符
+     * 长 JSON，单次生成 60~175s；限制输出可显著压时延（2026-09-11）。
+     */
+    @Value("${graph.build.llm-max-tokens:4096}")
+    private int graphBuildLlmMaxTokens;
+
+    /** gleaning 补捞开关（LightRAG 同款，默认开：对"有实体零关系"的单元补一轮） */
     @Value("${graph.build.gleaning:true}")
     private boolean gleaningEnabled;
 
-    /** gleaning 输入护栏（字符近似 token，LightRAG MAX_EXTRACT_INPUT_TOKENS=20480 的保守换算）：超长跳过补捞 */
+    /** gleaning 输入护栏（字符近似 token）：超长跳过补捞 */
     private static final int GLEANING_MAX_INPUT_CHARS = 16000;
 
-    /** 跳过内容过短的 chunk（不调 LLM），单位字符数 */
-    private static final int MIN_CHUNK_LENGTH_FOR_EXTRACTION = 50;
+    /** 抽取单元字符预算（≈ LightRAG chunk_token_size=1200 token 的中文字符换算） */
+    @Value("${graph.build.unit-max-chars:2000}")
+    private int unitMaxChars;
 
-    /** kb_chunk.graph_indexed 三态：已提取（replay 只重放该状态的 chunk） */
+    /** 跳过内容过短的单元（不调 LLM），单位字符数 */
+    private static final int MIN_UNIT_LENGTH_FOR_EXTRACTION = 50;
+
+    /** kb_chunk.graph_indexed 三态：已提取 */
     private static final int GRAPH_INDEXED_DONE = 1;
     /** kb_chunk.graph_indexed 三态：抽取/写入失败，增量构建自动重试 */
     private static final int GRAPH_INDEXED_FAILED = 2;
+
+    /** kb_graph_unit.status：待抽取 / 已完成 / 失败 */
+    private static final int UNIT_STATUS_TODO = 0;
+    private static final int UNIT_STATUS_DONE = 1;
+    private static final int UNIT_STATUS_FAILED = 2;
 
     /** 类型提示排除集：值型/时间型类型会诱导 LLM 把数值、日期、编号抽成实体（应作为 attributes） */
     private static final Set<String> VALUE_TYPE_EXCLUDE = Set.of(
@@ -140,16 +146,77 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     /** 白名单缓存（懒加载） */
     private volatile Set<String> entityTypeWhitelistCache;
 
+    /** 构建工作线程数：实际构建在应用内执行器跑，MQ 消费者只做调度与即时 ack */
+    @Value("${graph.build.workers:3}")
+    private int buildWorkers;
+
+    /** 构建执行器（应用内，独立于 MQ 消费者线程；@PostConstruct 初始化） */
+    private ExecutorService buildExecutor;
+
+    /** 按 KB 的构建互斥集合：同 KB 并发构建（MQ 重投/用户连点）只允许一个执行 */
+    private final Set<String> runningKbs = ConcurrentHashMap.newKeySet();
+
+    @PostConstruct
+    void initBuildExecutor() {
+        buildExecutor = Executors.newFixedThreadPool(Math.max(1, buildWorkers), r -> {
+            Thread t = new Thread(r, "graph-build-worker");
+            t.setDaemon(true);
+            return t;
+        });
+    }
+
+    @PreDestroy
+    void shutdownBuildExecutor() {
+        if (buildExecutor != null) {
+            buildExecutor.shutdownNow();
+        }
+    }
+
     /**
-     * 图谱构建消费者。
-     * RabbitMQ concurrency=5：5 个消费者线程并行消费队列消息，每个文件处理完后取下一条。
-     * 若需调整并发数，在 application.yml 中配置：
-     *   spring.rabbitmq.listener.simple.concurrency=5
-     *   spring.rabbitmq.listener.simple.max-concurrency=10
+     * MQ 消费入口：只做调度与即时 ack，实际构建提交到应用内执行器（graph-build-worker）。
+     *
+     * <p>背景（2026-09-11 生产事故）：整库构建曾在本方法内同步执行，文件内串行链使单条消息
+     * 处理时长超过 RabbitMQ consumer_timeout（默认 30min），channel ack 超时触发消息重投，
+     * 而原执行线程不会被中断——同一 KB 出现 2~3 个并发构建，各自的孤儿清理互相踩踏，
+     * 实体/关系计数塌陷。修复：消息即时 ack、长任务移出消费者、KB 级互斥。</p>
      */
     @Override
     @RabbitListener(queues = "fastrag.graph-build.queue", concurrency = "5")
     public void handleGraphBuild(Map<String, Object> message) {
+        Object kbIdObj = message != null ? message.get("kbId") : null;
+        String kbId = kbIdObj != null ? kbIdObj.toString() : null;
+        if (kbId == null || kbId.isBlank()) {
+            log.warn("[GraphBuild] message without kbId, dropped: {}", message);
+            return;
+        }
+        // KB 互斥：同一 KB 同时只允许一个构建（MQ 重投/用户连点/多文件连发的重复消息直接跳过）
+        if (!runningKbs.add(kbId)) {
+            log.warn("[GraphBuild] kb={} is already building, duplicate build message skipped", kbId);
+            return;
+        }
+        try {
+            buildExecutor.submit(() -> {
+                try {
+                    runGraphBuild(message);
+                } catch (Exception e) {
+                    // 不向 MQ 抛异常（消息已即时 ack）；失败单元已标 graph_indexed=2，下次增量构建自动重试
+                    log.error("[GraphBuild] build error for kb={}: {}", kbId, e.getMessage(), e);
+                    try {
+                        logService.addLog(kbId, LogCategory.operation, ActionType.graph_build_failed,
+                                "", "构建异常: " + e.getMessage(), "system", "failed", null);
+                    } catch (Exception ignored) { }
+                } finally {
+                    runningKbs.remove(kbId);
+                }
+            });
+        } catch (RejectedExecutionException e) {
+            runningKbs.remove(kbId);
+            log.warn("[GraphBuild] build executor rejected task, build skipped for kb={}", kbId);
+        }
+    }
+
+    /** 实际构建流程（运行在 graph-build-worker 线程，不占用 MQ 消费者） */
+    private void runGraphBuild(Map<String, Object> message) {
         String kbId = (String) message.get("kbId");
         // 兼容新旧消息格式：支持单 fileId 和多 fileIds
         String fileId = (String) message.get("fileId");
@@ -160,19 +227,19 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                 fileIds = ((List<?>) raw).stream().map(Object::toString).collect(Collectors.toList());
             }
         }
-        // 若只有单 fileId，转为列表统一处理
         if (fileId != null && !fileId.isEmpty() && fileIds == null) {
             fileIds = List.of(fileId);
         }
 
         String mode = message.containsKey("mode") ? String.valueOf(message.get("mode")) : "full";
-        // replay：零 LLM 成本重建——重放 kb_chunk.extraction_result 持久化的抽取结果（ADR-0002 存量迁移）
+        // replay：零 LLM 成本重建——重放 kb_graph_unit 持久化的抽取结果
         boolean replayMode = "replay".equals(mode);
+        // full 全量重建：忽略单元缓存强制重抽（retryBuild 已先清图）
+        boolean ignoreCache = "full".equals(mode);
 
         log.info("========== [GraphBuild] Start ==========");
         log.info("kbId={}, fileId={}, fileIds={}, mode={}", kbId, fileId, fileIds, mode);
 
-        // 记录图谱构建开始日志
         try {
             logService.addLog(kbId, LogCategory.operation, ActionType.graph_build_started,
                     "", "开始构建图谱，模式: " + mode + ", 文件数: " + (fileIds != null ? fileIds.size() : 1),
@@ -184,7 +251,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         // 获取 LLM 配置（用于实体/关系提取）；replay 模式重放持久化结果，无需 LLM
         LlmConfig llmConfig = null;
         if (replayMode) {
-            log.info("[GraphBuild] replay mode: skip LLM config resolution, replaying persisted extraction_result");
+            log.info("[GraphBuild] replay mode: replay persisted unit extraction results");
         } else {
             llmConfig = resolveLlmConfig(kbId, fileIds);
             log.info("[GraphBuild] Resolved LLM config: model={}, apiUrl={}, apiKeySet={}",
@@ -193,13 +260,12 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                     llmConfig.getApiKey() != null ? "***provided***" : "null");
         }
 
-        // LLM 不可用时标记构建失败（而非静默跳过所有 chunk）
+        // LLM 不可用时标记构建失败（而非静默跳过所有单元）
         if (!replayMode && (llmConfig.getApiUrl() == null || llmConfig.getApiUrl().isBlank())) {
             log.error("[GraphBuild] LLM not configured (apiUrl is null/blank). Graph build cannot proceed. " +
                     "Ensure the file's parse strategy has a valid LLM model that is 'online' in model_config.");
             try {
                 updateGraphStatus(kbId, "failed", 0, 0, 0, 0, 0, 0);
-                // 记录具体错误原因
                 var idx = graphIndexMapper.selectById(kbId);
                 if (idx != null) {
                     idx.setBuildError("LLM not configured: no valid apiUrl found. " +
@@ -215,226 +281,94 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         }
 
         try {
-            // lambda 内需引用的配置快照（replay 模式为 null）
             final LlmConfig buildLlmConfig = llmConfig;
-
-            // replay 前置清理：历史上失败被误标为已构建（graphIndexed=1 但无抽取结果）的 chunk 重置为待提取，
-            // 后续增量构建自动重新抽取（过短 chunk 会被重置后再次快速跳过，无 LLM 开销）
-            if (replayMode) {
-                int reset = resetEmptyExtractionChunks(kbId, fileIds);
-                log.info("[GraphBuild-Replay] Reset {} stale graphIndexed=1 chunks (empty extraction_result) for kb={}",
-                        reset, kbId);
-            }
-
-            // 查询需要处理的 chunks（仅处理未提取的）
-            List<KbChunk> chunks = queryChunks(kbId, fileIds, mode);
-            int total = chunks.size();
-
-            // 实体类型白名单：KB 级 schema（kg_graph_index.settings.entitySchema）优先，
-            // 其次 yml 全局配置，最后默认集合（KG-07 可配置化）
             final Set<String> entityTypeWhitelist = resolveEntityTypeWhitelist(kbId);
-            log.info("[GraphBuild] Entity type whitelist for kb={}: {} types (schema configured={})",
-                    kbId, entityTypeWhitelist.size(), entityTypeWhitelist != EntityTypeNormalizer.DEFAULT_WHITELIST
-                            && !entityTypeWhitelist.equals(EntityTypeNormalizer.DEFAULT_WHITELIST));
+            log.info("[GraphBuild] Entity type whitelist for kb={}: {} types", kbId, entityTypeWhitelist.size());
 
-            // 全库 chunk 统计（索引管理的 totalChunks 应为整个知识库的值，
-            // 而非本次构建范围——单文件增量构建不应覆盖全库统计）
-            long kbTotalChunks = chunkMapper.selectCount(
-                    new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getKbId, kbId));
-            long kbBuiltChunks = chunkMapper.selectCount(
-                    new LambdaQueryWrapper<KbChunk>()
-                            .eq(KbChunk::getKbId, kbId)
-                            .eq(KbChunk::getGraphIndexed, 1));
-
-            if (total == 0) {
+            // 查询范围内全部分片（单元组装需要完整文件内容；增量/全量的差异由单元缓存承担）
+            List<KbChunk> chunks = queryChunks(kbId, fileIds);
+            if (chunks.isEmpty()) {
                 log.info("No chunks found for graph build, kb: {}, fileIds: {}", kbId, fileIds);
-                updateGraphStatus(kbId, "completed", 100, 0, 0,
-                        (int) kbTotalChunks, (int) kbBuiltChunks, 0);
+                updateGraphStatus(kbId, "completed", 100, 0, 0, 0, 0, 0);
                 return;
             }
+            long kbTotalChunks = chunkMapper.selectCount(
+                    new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getKbId, kbId));
 
-            updateGraphStatus(kbId, "building", 0, 0, 0, (int) kbTotalChunks, (int) kbBuiltChunks, 0);
+            // 单元组装：文件内按 chunkIndex 顺序重组为 ~unit-max-chars 的抽取单元
+            Map<String, List<KbChunk>> fileGroups = groupChunksByFile(chunks);
+            List<String> orderedFileIds = new ArrayList<>(fileGroups.keySet());
+            List<List<ExtractionUnitAssembler.ExtractionUnit>> fileUnits = new ArrayList<>(fileGroups.size());
+            int totalUnits = 0;
+            for (String fid : orderedFileIds) {
+                List<ExtractionUnitAssembler.ExtractionUnit> units =
+                        ExtractionUnitAssembler.assemble(fileGroups.get(fid), unitMaxChars, GraphIdHashing::hashstr32);
+                fileUnits.add(units);
+                totalUnits += units.size();
+            }
+            log.info("[GraphBuild] {} chunks across {} files -> {} extraction units (unit-max-chars={}, mode={})",
+                    chunks.size(), fileGroups.size(), totalUnits, unitMaxChars,
+                    replayMode ? "replay" : (ignoreCache ? "full(no-cache)" : "incremental(cache)"));
 
-            // 并行处理 chunks（并发数可配，默认 max=15，按 total/3 自动调整）
-            int concurrency = Math.min(maxGraphBuildConcurrency, Math.max(1, total / 3));
-            log.info("[GraphBuild] Processing {} chunks with concurrency={} (max={})",
-                    total, concurrency, maxGraphBuildConcurrency);
-            AtomicInteger processed = new AtomicInteger(0);
-            AtomicInteger entityCount = new AtomicInteger(0);
-            AtomicInteger relationCount = new AtomicInteger(0);
-            AtomicInteger skippedChunks = new AtomicInteger(0);
-            AtomicInteger failedChunks = new AtomicInteger(0);
-            AtomicInteger valueSkipped = new AtomicInteger(0);
+            UnitRun run = new UnitRun(kbId, buildLlmConfig, entityTypeWhitelist, replayMode, ignoreCache, totalUnits);
 
+            int concurrency = Math.min(maxGraphBuildConcurrency, Math.max(1, totalUnits / 2));
             ThreadPoolExecutor executor = new ThreadPoolExecutor(
                     concurrency, concurrency, 60, TimeUnit.SECONDS,
-                    new LinkedBlockingQueue<>(total));
-            List<CompletableFuture<Void>> futures = new ArrayList<>(total);
+                    new LinkedBlockingQueue<>(Math.max(totalUnits, 1)));
+            List<CompletableFuture<Void>> futures = new ArrayList<>(totalUnits);
 
-            for (KbChunk chunk : chunks) {
-                String chunkId = chunk.getId();
-                String content = chunk.getContent();
-
-                // 跳过过短文本（< 50 字符），直接标记完成
-                if (content == null || content.trim().length() < MIN_CHUNK_LENGTH_FOR_EXTRACTION) {
-                    // 过短 chunk 无需抽取：标记已提取并写入空抽取结果，保持
-                    // 「graphIndexed=1 ⟹ extraction_result 非空」不变量（replay 前置清理依赖它区分失败 chunk）
-                    markChunkGraphState(chunkId, GRAPH_INDEXED_DONE,
-                            JSONUtil.toJsonStr(new ExtractionNormalizer.ExtractionResult()));
-                    skippedChunks.incrementAndGet();
-                    int done = processed.incrementAndGet();
-                    if (done % 10 == 0 || done == total) {
-                        updateGraphProgress(kbId, done, total, kbTotalChunks, kbBuiltChunks,
-                                entityCount.get(), relationCount.get(), failedChunks.get());
-                    }
-                    continue;
+            for (int f = 0; f < orderedFileIds.size(); f++) {
+                String groupFileId = orderedFileIds.get(f);
+                List<ExtractionUnitAssembler.ExtractionUnit> units = fileUnits.get(f);
+                Map<Integer, KbGraphUnit> existingRows = loadUnitRows(kbId, groupFileId, units.size());
+                for (ExtractionUnitAssembler.ExtractionUnit unit : units) {
+                    KbGraphUnit row = existingRows.get(unit.index());
+                    futures.add(CompletableFuture.runAsync(() -> processUnit(run, groupFileId, unit, row, true), executor));
                 }
-
-                futures.add(CompletableFuture.runAsync(() -> {
-                    try {
-                        // 提取实体和关系（KG-03/KG-06：实体带 description 与 attributes）
-                        // replay 模式重放持久化的抽取结果；普通模式调 LLM，返回 null 表示瞬态失败
-                        ExtractionNormalizer.ExtractionResult result = replayMode
-                                ? deserializeExtractionResult(chunk.getExtractionResult())
-                                : extractWithNormalization(
-                                        chunk, buildLlmConfig.getModel(), buildLlmConfig.getApiUrl(),
-                                        buildLlmConfig.getApiKey(), entityTypeWhitelist);
-                        if (result == null) {
-                            // 抽取/重放失败：标记 graphIndexed=2 待重试，不再误标为已构建（ADR-0002 显式失败语义）
-                            markChunkGraphState(chunkId, GRAPH_INDEXED_FAILED, null);
-                            failedChunks.incrementAndGet();
-                            log.warn("[GraphBuild] Chunk extraction failed, marked graphIndexed={} for retry: chunk={}, replay={}",
-                                    GRAPH_INDEXED_FAILED, chunkId, replayMode);
-                            return;
-                        }
-
-                        // 写入实体（使用确定性 ID；实体类型经白名单归一，收敛类型爆炸）
-                        List<ExtractionNormalizer.Entity> entities = result.getEntities();
-                        List<String> entityNamesForEmbed = new ArrayList<>();
-                        // 本 chunk 提取实体的 ID 映射（normalized_name -> entity_id），
-                        // 关系写入时用实体 ID 引用端点，消除"边按名称引用"的悬空/错连问题（KG-01）
-                        Map<String, String> entityIdByNormalizedName = new HashMap<>();
-                        if (entities != null) {
-                            for (ExtractionNormalizer.Entity entity : entities) {
-                                // 类型先归一（白名单），闸门借类型拦截属性型实体（截图表单字段残留）
-                                String type = EntityTypeNormalizer.normalize(entity.getLabel(), entityTypeWhitelist);
-                                // 垃圾实体闸门：值型内容/键值对残留/OCR乱码/表头泛化词/属性型实体不入图，
-                                // 应作为相关实体的 attributes（replay 重放历史结果同样过闸）
-                                if (isJunkEntityName(entity.getText(), type)) {
-                                    valueSkipped.incrementAndGet();
-                                    continue;
-                                }
-                                String normalizedName = NameNormalizer.normalize(entity.getText());
-                                String entityId = GraphIdHashing.entityId(kbId, normalizedName);
-                                String description = entity.getDescription();
-                                String attributesJson = (entity.getAttributes() != null && !entity.getAttributes().isEmpty())
-                                        ? JSONUtil.toJsonStr(entity.getAttributes()) : null;
-                                graphStore.createEntity(kbId, entityId, entity.getText(), normalizedName, type,
-                                        description, attributesJson);
-                                graphStore.createEntityMention(kbId, entity.getText(), entityId, chunkId, chunk.getFileId());
-                                entityIdByNormalizedName.put(normalizedName, entityId);
-                                entityNamesForEmbed.add(entity.getText());
-                                entityCount.incrementAndGet();
-                            }
-                        }
-
-                        // 写入关系（使用确定性 ID + 端点实体 ID）
-                        List<ExtractionNormalizer.Relation> relations = result.getRelations();
-                        if (relations != null) {
-                            for (ExtractionNormalizer.Relation rel : relations) {
-                                String sourceName = rel.getSource() != null ? rel.getSource().toString() : "";
-                                String targetName = rel.getTarget() != null ? rel.getTarget().toString() : "";
-                                if (sourceName.isEmpty() || targetName.isEmpty()) continue;
-
-                                // 垃圾端点的关系整体跳过（如 "99元" 包含 "399档商务专线"、"总价" 汇聚边）
-                                if (isJunkEntityName(sourceName, null) || isJunkEntityName(targetName, null)) {
-                                    continue;
-                                }
-
-                                // 自环防护（KG-05）：规范化后同名即视为自环，跳过
-                                String sourceNorm = NameNormalizer.normalize(sourceName);
-                                String targetNorm = NameNormalizer.normalize(targetName);
-                                if (sourceNorm.equals(targetNorm)) {
-                                    log.debug("[GraphBuild] Skipping self-loop relation: {} -> {}, label={}",
-                                            sourceName, targetName, rel.getLabel());
-                                    continue;
-                                }
-
-                                String tripleId = GraphIdHashing.tripleId(
-                                        kbId, sourceName, "Entity", rel.getLabel(), targetName, "Entity");
-                                String relContent = sourceName + " -> " + rel.getLabel() + " -> " + targetName;
-                                // 端点实体 ID：先查本 chunk 提取结果，再查库（跨 chunk 已存在实体），
-                                // 最后创建 UNKNOWN 占位实体——保证边始终引用有效实体 ID（KG-01）
-                                String sourceId = resolveRelationEndpointId(kbId, sourceName, sourceNorm,
-                                        entityIdByNormalizedName);
-                                String targetId = resolveRelationEndpointId(kbId, targetName, targetNorm,
-                                        entityIdByNormalizedName);
-                                graphStore.createRelation(kbId, tripleId, sourceId, sourceName, sourceNorm,
-                                        targetId, targetName, targetNorm, rel.getLabel(), relContent);
-                                graphStore.createTripleMention(kbId, tripleId, chunkId, chunk.getFileId());
-                                relationCount.incrementAndGet();
-                            }
-                        }
-
-                        // 在 Neo4j 中创建 Chunk 节点（携带 fileId 用于按文件删除）
-                        graphStore.createChunk(kbId, chunkId, chunk.getFileId(), content);
-
-                        // 标记 chunk 已完成图谱提取（extraction_result 持久化，供 replay 零成本重放）
-                        markChunkGraphState(chunkId, GRAPH_INDEXED_DONE, JSONUtil.toJsonStr(result));
-
-                        // 为实体生成 embedding（向量检索用；失败仅告警，不影响构建）
-                        updateEntityEmbeddings(kbId, entityNamesForEmbed);
-
-                    } catch (Exception e) {
-                        // 图谱写入失败（Neo4j 不可达/约束冲突等）：标记 graphIndexed=2 待重试，不静默吞掉
-                        markChunkGraphState(chunkId, GRAPH_INDEXED_FAILED, null);
-                        failedChunks.incrementAndGet();
-                        log.warn("Failed to process chunk {}, marked graphIndexed={} for retry: {}",
-                                chunkId, GRAPH_INDEXED_FAILED, e.getMessage());
-                    } finally {
-                        int done = processed.incrementAndGet();
-                        if (done % 10 == 0 || done == total) {
-                            updateGraphProgress(kbId, done, total, kbTotalChunks, kbBuiltChunks,
-                                    entityCount.get(), relationCount.get(), failedChunks.get());
-                        }
-                    }
-                }, executor));
             }
-
-            // 等待所有任务完成
             CompletableFuture.allOf(futures.toArray(new CompletableFuture[0])).join();
+
+            // 失败单元构建内自动重试一轮：LLM 瞬态超时/输出退化大多可恢复
+            if (!run.failedUnitsList.isEmpty()) {
+                List<UnitAttempt> failedOnce = new ArrayList<>(run.failedUnitsList);
+                log.warn("[GraphBuild] Retrying {} failed unit(s) once within this build", failedOnce.size());
+                List<CompletableFuture<Void>> retryFutures = new ArrayList<>(failedOnce.size());
+                for (UnitAttempt attempt : failedOnce) {
+                    retryFutures.add(CompletableFuture.runAsync(() -> {
+                        int before = run.failedUnits.get();
+                        processUnit(run, attempt.fileId(), attempt.unit(), attempt.row(), false);
+                        if (run.failedUnits.get() < before) {
+                            log.info("[GraphBuild] Unit recovered on in-build retry: file={}, unit={}",
+                                    attempt.fileId(), attempt.unit().index());
+                        }
+                    }, executor));
+                }
+                CompletableFuture.allOf(retryFutures.toArray(new CompletableFuture[0])).join();
+            }
             executor.shutdown();
 
-            int finalEntityCount = entityCount.get();
-            int finalRelationCount = relationCount.get();
-            int finalFailed = failedChunks.get();
-            int finalSkipped = skippedChunks.get();
-
-            // 使用实时查询获取全库统计（而非本次构建的局部计数，避免多文件分批构建后数字被覆盖）
+            // 使用实时查询获取全库统计
             long liveEntityCount = 0;
             long liveRelationCount = 0;
             try {
                 liveEntityCount = graphStore.countEntities(kbId);
                 liveRelationCount = graphStore.countRelations(kbId);
             } catch (Exception e) {
-                log.warn("[GraphBuild] Failed to get live counts, falling back to local counters: {}", e.getMessage());
-                liveEntityCount = entityCount.get();
-                liveRelationCount = relationCount.get();
+                log.warn("[GraphBuild] Failed to get live counts: {}", e.getMessage());
             }
-            // 完成后重新统计全库已构建 chunk 数（包含此前其他文件已构建的部分）
             long finalBuiltChunks = chunkMapper.selectCount(
                     new LambdaQueryWrapper<KbChunk>()
                             .eq(KbChunk::getKbId, kbId)
                             .eq(KbChunk::getGraphIndexed, 1));
             updateGraphStatus(kbId, "completed", 100, (int) liveEntityCount, (int) liveRelationCount,
-                    total, total - finalFailed - finalSkipped, finalFailed);
-            log.info("Graph build completed for kb: {}, entities: {}, relations: {}, " +
-                            "failed: {}/{}, skipped: {}, valueSkipped: {}",
-                    kbId, liveEntityCount, liveRelationCount, finalFailed, total, finalSkipped,
-                    valueSkipped.get());
-            if (finalFailed > 0) {
-                log.error("[GraphBuild] {} chunk(s) failed extraction/write for kb={} — 已标记 graphIndexed=2，" +
-                        "下次增量构建将自动重试；若持续失败请检查 LLM/Neo4j 配置", finalFailed, kbId);
+                    (int) kbTotalChunks, (int) finalBuiltChunks, run.failedUnits.get());
+            log.info("Graph build completed for kb: {}, entities: {}, relations: {}, units: {}/{} (cached={}, failed={})",
+                    kbId, liveEntityCount, liveRelationCount,
+                    totalUnits - run.failedUnits.get(), totalUnits, run.cachedUnits.get(), run.failedUnits.get());
+            if (run.failedUnits.get() > 0) {
+                log.error("[GraphBuild] {} unit(s) failed extraction/write for kb={} — 已标记 graph_indexed=2，" +
+                        "下次增量构建将自动重试；若持续失败请检查 LLM/Neo4j 配置", run.failedUnits.get(), kbId);
             }
 
             // 回填存量实体 embedding（新增实体已在构建时生成，这里只补历史缺失）
@@ -443,20 +377,14 @@ public class GraphBuildConsumer implements GraphBuildHandler {
             // 清理孤立实体/关系（删除文件或编辑 chunk 后残留的无引用数据）
             graphStore.cleanupOrphanNodes(kbId);
 
-            // 框架关系兜底（跨分片整合，方案A）：LLM 在某分片漏抽"成员→属于→框架"边时
-            // 按 chunk 标题确定性补齐——合并层只做同名收敛，不做缺边补全
-            int backfilled = backfillFrameworkRelations(kbId);
-            if (backfilled > 0) {
-                log.info("[GraphBuild] Framework relation backfill: {} edges added for kb={}", backfilled, kbId);
-                try {
-                    var idx = graphIndexMapper.selectById(kbId);
-                    if (idx != null) {
-                        idx.setRelationCount((int) graphStore.countRelations(kbId));
-                        graphIndexMapper.updateById(idx);
-                    }
-                } catch (Exception e) {
-                    log.warn("[GraphBuild] Failed to refresh relationCount after backfill: {}", e.getMessage());
-                }
+            // 记录图谱构建完成日志
+            try {
+                logService.addLog(kbId, LogCategory.operation, ActionType.graph_build_completed,
+                        "", "实体: " + liveEntityCount + ", 关系: " + liveRelationCount
+                                + ", 单元: " + (totalUnits - run.failedUnits.get()) + "/" + totalUnits,
+                        "system", "success", null);
+            } catch (Exception e) {
+                log.warn("[Log] Failed to record graph build complete log for kb={}", kbId);
             }
 
             // 观测实体类型分布（UNKNOWN 占比反映类型归一效果）
@@ -469,16 +397,6 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                         kbId, typeCounts.size(), unknown, pct, entityTotal);
             } catch (Exception e) {
                 log.warn("[GraphBuild] Failed to collect entity type distribution for kb={}", kbId);
-            }
-
-            // 记录图谱构建完成日志
-            try {
-                logService.addLog(kbId, LogCategory.operation, ActionType.graph_build_completed,
-                        "", "实体: " + liveEntityCount + ", 关系: " + liveRelationCount +
-                                ", 失败: " + finalFailed + "/" + total + ", 跳过: " + finalSkipped,
-                        "system", "success", null);
-            } catch (Exception e) {
-                log.warn("[Log] Failed to record graph build complete log for kb={}", kbId);
             }
 
         } catch (Exception e) {
@@ -494,166 +412,319 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         }
     }
 
+    // ==================== 单元处理 ====================
+
+    /** 单次构建的共享运行时状态 */
+    private static final class UnitRun {
+        final String kbId;
+        final LlmConfig llmConfig;
+        final Set<String> whitelist;
+        final boolean replay;
+        final boolean ignoreCache;
+        final int totalUnits;
+        final AtomicInteger processed = new AtomicInteger();
+        final AtomicInteger cachedUnits = new AtomicInteger();
+        final AtomicInteger failedUnits = new AtomicInteger();
+        final AtomicInteger valueSkipped = new AtomicInteger();
+        final List<UnitAttempt> failedUnitsList = Collections.synchronizedList(new ArrayList<>());
+
+        UnitRun(String kbId, LlmConfig llmConfig, Set<String> whitelist,
+                boolean replay, boolean ignoreCache, int totalUnits) {
+            this.kbId = kbId;
+            this.llmConfig = llmConfig;
+            this.whitelist = whitelist;
+            this.replay = replay;
+            this.ignoreCache = ignoreCache;
+            this.totalUnits = totalUnits;
+        }
+    }
+
+    /** 失败单元引用（构建内重试用） */
+    private record UnitAttempt(String fileId, ExtractionUnitAssembler.ExtractionUnit unit, KbGraphUnit row) {
+    }
+
+    /** 加载文件现有单元行（unitIndex → row），并删除越界的旧行 */
+    private Map<Integer, KbGraphUnit> loadUnitRows(String kbId, String fileId, int unitCount) {
+        List<KbGraphUnit> rows = unitMapper.selectList(new LambdaQueryWrapper<KbGraphUnit>()
+                .eq(KbGraphUnit::getKbId, kbId)
+                .eq(KbGraphUnit::getFileId, fileId));
+        Map<Integer, KbGraphUnit> byIndex = new HashMap<>();
+        for (KbGraphUnit row : rows) {
+            if (row.getUnitIndex() == null || row.getUnitIndex() >= unitCount) {
+                unitMapper.deleteById(row.getId()); // 旧行越界（文件分片变少）：清理
+            } else {
+                byIndex.put(row.getUnitIndex(), row);
+            }
+        }
+        return byIndex;
+    }
+
     /**
-     * 解析 LLM 配置：优先从 file 对应的 parse strategy 获取，fallback 到默认网关。
-     * full 重建（无 fileIds）时回退到该知识库的任意文件解析，避免"清空后全量重建"必然失败。
+     * 处理单个抽取单元：缓存命中跳过 / LLM 抽取（或 replay 重放）/ 写库 / 单元行与 chunk 状态回写。
+     *
+     * @param firstAttempt 首次尝试（计入失败统计与重试清单）；构建内重试传 false
      */
-    private LlmConfig resolveLlmConfig(String kbId, List<String> fileIds) {
-        log.info("[GraphBuild-LlmConfig] Resolving LLM config for kb={}, fileIds={}", kbId, fileIds);
-
-        if (fileIds == null || fileIds.isEmpty()) {
-            log.warn("[GraphBuild-LlmConfig] fileIds is null/empty, falling back to first file of kb={}", kbId);
-            KbFile anyFile = fileMapper.selectOne(
-                    new LambdaQueryWrapper<KbFile>()
-                            .eq(KbFile::getKbId, kbId)
-                            .isNull(KbFile::getDeletedAt)
-                            .last("LIMIT 1"));
-            if (anyFile == null) {
-                log.warn("[GraphBuild-LlmConfig] No file found for kb={} -> returning empty config", kbId);
-                return new LlmConfig(null, null, null);
+    private void processUnit(UnitRun run, String fileId, ExtractionUnitAssembler.ExtractionUnit unit,
+                             KbGraphUnit row, boolean firstAttempt) {
+        try {
+            // 过短单元（< 50 字符）无需抽取：写空结果并标完成
+            if (unit.content().trim().length() < MIN_UNIT_LENGTH_FOR_EXTRACTION) {
+                upsertUnitRow(run.kbId, fileId, unit, row,
+                        new ExtractionNormalizer.ExtractionResult(), UNIT_STATUS_DONE);
+                markUnitChunks(unit, GRAPH_INDEXED_DONE);
+                return;
             }
-            fileIds = List.of(anyFile.getId());
-        }
 
-        // 取第一个文件对应的策略
-        KbFile file = fileMapper.selectById(fileIds.get(0));
-        if (file == null) {
-            log.warn("[GraphBuild-LlmConfig] File not found for id={} -> returning empty config", fileIds.get(0));
-            return new LlmConfig(null, null, null);
-        }
-        log.info("[GraphBuild-LlmConfig] File found: name={}, parseStrategyId={}", file.getName(), file.getParseStrategyId());
-
-        if (file.getParseStrategyId() != null) {
-            KbParseStrategy strategy = parseStrategyMapper.selectById(file.getParseStrategyId());
-            if (strategy == null) {
-                log.warn("[GraphBuild-LlmConfig] Parse strategy not found for id={}", file.getParseStrategyId());
-                return new LlmConfig(null, null, null);
-            }
-            log.info("[GraphBuild-LlmConfig] Strategy found: name={}, llmModel={}", strategy.getName(), strategy.getLlmModel());
-
-            if (strategy.getLlmModel() != null && !strategy.getLlmModel().isEmpty()) {
-                String llmModel = strategy.getLlmModel();
-                log.info("[GraphBuild-LlmConfig] Looking up ModelRecord for code={}, status=online", llmModel);
-                ModelRecord modelRecord = modelRecordMapper.selectOne(
-                        new LambdaQueryWrapper<ModelRecord>()
-                                .eq(ModelRecord::getCode, llmModel)
-                                .eq(ModelRecord::getStatus, "online")
-                                .last("LIMIT 1"));
-                if (modelRecord != null) {
-                    log.info("[GraphBuild-LlmConfig] ModelRecord found: model={}, apiUrl={}, apiKeyRef length={}",
-                            llmModel, modelRecord.getApiUrl(),
-                            modelRecord.getApiKeyRef() != null ? modelRecord.getApiKeyRef().length() : 0);
-                    return new LlmConfig(llmModel, modelRecord.getApiUrl(), modelRecord.getApiKeyRef());
+            ExtractionNormalizer.ExtractionResult result = null;
+            boolean fromCache = false;
+            if (run.replay) {
+                if (row != null && row.getExtractionResult() != null && !row.getExtractionResult().isBlank()) {
+                    result = deserializeExtractionResult(row.getExtractionResult());
+                }
+                if (result == null) {
+                    log.warn("[GraphBuild-Replay] unit file={}, index={} has no persisted result, marked failed (needs LLM build)",
+                            fileId, unit.index());
+                    markUnitChunks(unit, GRAPH_INDEXED_FAILED);
+                    upsertUnitRow(run.kbId, fileId, unit, row, null, UNIT_STATUS_FAILED);
+                    run.failedUnits.incrementAndGet();
+                    return;
+                }
+            } else if (!run.ignoreCache && row != null
+                    && Integer.valueOf(UNIT_STATUS_DONE).equals(row.getStatus())
+                    && unit.contentHash().equals(row.getContentHash())
+                    && row.getExtractionResult() != null && !row.getExtractionResult().isBlank()) {
+                // 单元级缓存命中：内容未变化的单元直接跳过（零 LLM 成本）
+                result = deserializeExtractionResult(row.getExtractionResult());
+                if (result != null) {
+                    fromCache = true;
+                    run.cachedUnits.incrementAndGet();
                 } else {
-                    log.warn("[GraphBuild-LlmConfig] ModelRecord NOT FOUND for code={} with status=online. " +
-                            "Check model_config table: the model code '{}' must exist and be 'online'", llmModel, llmModel);
+                    log.warn("[GraphBuild] cached unit result corrupted, re-extracting: file={}, unit={}",
+                            fileId, unit.index());
                 }
-            } else {
-                log.warn("[GraphBuild-LlmConfig] Strategy's llmModel is null/empty, cannot resolve LLM config");
             }
-        } else {
-            log.warn("[GraphBuild-LlmConfig] File's parseStrategyId is null, no strategy associated with file");
-        }
 
-        // Fallback: 查 KB 级 graphLlmModel（parse strategy 未配置 LLM 时的兜底）
-        log.info("[GraphBuild-LlmConfig] Strategy LLM not available, trying KB-level graphLlmModel for kb={}", kbId);
-        KnowledgeBase kb = kbMapper.selectById(kbId);
-        if (kb != null && kb.getGraphLlmModel() != null && !kb.getGraphLlmModel().isBlank()) {
-            String llmModel = kb.getGraphLlmModel();
-            log.info("[GraphBuild-LlmConfig] KB graphLlmModel={}, looking up ModelRecord", llmModel);
-            ModelRecord modelRecord = modelRecordMapper.selectOne(
-                    new LambdaQueryWrapper<ModelRecord>()
-                            .eq(ModelRecord::getCode, llmModel)
-                            .eq(ModelRecord::getStatus, "online")
-                            .last("LIMIT 1"));
-            if (modelRecord != null) {
-                log.info("[GraphBuild-LlmConfig] KB-level ModelRecord found: model={}, apiUrl={}",
-                        llmModel, modelRecord.getApiUrl());
-                return new LlmConfig(llmModel, modelRecord.getApiUrl(), modelRecord.getApiKeyRef());
-            } else {
-                log.warn("[GraphBuild-LlmConfig] KB-level ModelRecord NOT FOUND for code={}", llmModel);
+            if (!fromCache) {
+                result = extractWithNormalization(unit.content(), run.llmConfig.getModel(), run.llmConfig.getApiUrl(),
+                        run.llmConfig.getApiKey(), run.whitelist);
+                if (result == null) {
+                    // 抽取失败：单元 chunk 标 graph_indexed=2，单元行标失败
+                    markUnitChunks(unit, GRAPH_INDEXED_FAILED);
+                    upsertUnitRow(run.kbId, fileId, unit, row, null, UNIT_STATUS_FAILED);
+                    if (firstAttempt) {
+                        run.failedUnits.incrementAndGet();
+                        run.failedUnitsList.add(new UnitAttempt(fileId, unit, row));
+                    }
+                    log.warn("[GraphBuild] Unit extraction failed, marked for retry: file={}, unit={}",
+                            fileId, unit.index());
+                    return;
+                }
+                upsertUnitRow(run.kbId, fileId, unit, row, result, UNIT_STATUS_DONE);
+            }
+
+            writeUnitGraph(run.kbId, unit, result, run);
+            markUnitChunks(unit, GRAPH_INDEXED_DONE);
+
+        } catch (Exception e) {
+            // 图谱写入失败（Neo4j 不可达/约束冲突等）：标记失败待重试，不静默吞掉
+            markUnitChunks(unit, GRAPH_INDEXED_FAILED);
+            upsertUnitRow(run.kbId, fileId, unit, row, null, UNIT_STATUS_FAILED);
+            if (firstAttempt) {
+                run.failedUnits.incrementAndGet();
+                run.failedUnitsList.add(new UnitAttempt(fileId, unit, row));
+            }
+            log.warn("Failed to process unit file={}, unit={}: {}", fileId, unit.index(), e.getMessage());
+        } finally {
+            int done = run.processed.incrementAndGet();
+            if (done % 5 == 0 || done == run.totalUnits) {
+                updateGraphProgress(run.kbId, done, run.totalUnits, run.failedUnits.get());
             }
         }
-
-        log.warn("[GraphBuild-LlmConfig] Returning empty LLM config -> graph build will skip LLM extraction");
-        return new LlmConfig(null, null, null);
     }
 
     /**
-     * 查询需要构建图谱的 chunks（过滤已完成的，支持增量构建与 replay 重放）
+     * 单元图谱写入：实体（垃圾闸门 + 确定性 ID + 证据按名字包含归属到分片）、
+     * 关系（端点解析 + 自环防护 + TripleMention 归属）、Chunk 节点、embedding。
      */
-    private List<KbChunk> queryChunks(String kbId, List<String> fileIds, String mode) {
-        boolean replay = "replay".equals(mode);
-        if (fileIds != null && !fileIds.isEmpty()) {
-            List<KbChunk> allChunks = new ArrayList<>();
-            for (String fid : fileIds) {
-                LambdaQueryWrapper<KbChunk> wrapper = new LambdaQueryWrapper<KbChunk>()
-                        .eq(KbChunk::getKbId, kbId)
-                        .eq(KbChunk::getFileId, fid);
-                if (replay) {
-                    // replay：重放已持久化抽取结果的 chunk（零 LLM 成本）
-                    wrapper.eq(KbChunk::getGraphIndexed, GRAPH_INDEXED_DONE)
-                            .isNotNull(KbChunk::getExtractionResult)
-                            .ne(KbChunk::getExtractionResult, "");
-                } else if (!"full".equals(mode)) {
-                    // 增量：未提取（null/0）+ 历史失败（graphIndexed=2）自动重试
-                    wrapper.and(w -> w.isNull(KbChunk::getGraphIndexed).or().eq(KbChunk::getGraphIndexed, 0)
-                            .or().eq(KbChunk::getGraphIndexed, GRAPH_INDEXED_FAILED));
+    private void writeUnitGraph(String kbId, ExtractionUnitAssembler.ExtractionUnit unit,
+                                ExtractionNormalizer.ExtractionResult result, UnitRun run) {
+        List<String> entityNamesForEmbed = new ArrayList<>();
+        Map<String, String> entityIdByNormalizedName = new HashMap<>();
+        if (result.getEntities() != null) {
+            for (ExtractionNormalizer.Entity entity : result.getEntities()) {
+                String type = EntityTypeNormalizer.normalize(entity.getLabel(), run.whitelist);
+                // 垃圾实体闸门：值型内容/键值对残留/OCR乱码/表头泛化词/属性型实体不入图
+                if (isJunkEntityName(entity.getText(), type)) {
+                    run.valueSkipped.incrementAndGet();
+                    continue;
                 }
-                allChunks.addAll(chunkMapper.selectList(wrapper));
+                String normalizedName = NameNormalizer.normalize(entity.getText());
+                String entityId = GraphIdHashing.entityId(kbId, normalizedName);
+                String attributesJson = (entity.getAttributes() != null && !entity.getAttributes().isEmpty())
+                        ? JSONUtil.toJsonStr(entity.getAttributes()) : null;
+                graphStore.createEntity(kbId, entityId, entity.getText(), normalizedName, type,
+                        entity.getDescription(), attributesJson);
+                // 证据归属：单元内名字包含命中的分片都挂 MENTIONS（删除回收/PPR 的依据）
+                attributeEntityMentions(kbId, entity.getText(), normalizedName, entityId, unit);
+                entityIdByNormalizedName.put(normalizedName, entityId);
+                entityNamesForEmbed.add(entity.getText());
             }
-            return allChunks;
         }
 
-        // 全库模式
-        if ("full".equals(mode)) {
-            // full 模式：处理所有 chunk（用于重建场景）
-            return chunkMapper.selectList(
-                    new LambdaQueryWrapper<KbChunk>()
-                            .eq(KbChunk::getKbId, kbId));
+        if (result.getRelations() != null) {
+            for (ExtractionNormalizer.Relation rel : result.getRelations()) {
+                String sourceName = rel.getSource() != null ? rel.getSource().toString() : "";
+                String targetName = rel.getTarget() != null ? rel.getTarget().toString() : "";
+                if (sourceName.isEmpty() || targetName.isEmpty()) continue;
+                if (isJunkEntityName(sourceName, null) || isJunkEntityName(targetName, null)) continue;
+
+                String sourceNorm = NameNormalizer.normalize(sourceName);
+                String targetNorm = NameNormalizer.normalize(targetName);
+                if (sourceNorm.equals(targetNorm)) continue; // 自环防护（KG-05）
+
+                String tripleId = GraphIdHashing.tripleId(kbId, sourceName, "Entity", rel.getLabel(), targetName, "Entity");
+                String relContent = sourceName + " -> " + rel.getLabel() + " -> " + targetName;
+                String sourceId = resolveRelationEndpointId(kbId, sourceName, sourceNorm,
+                        entityIdByNormalizedName, unit);
+                String targetId = resolveRelationEndpointId(kbId, targetName, targetNorm,
+                        entityIdByNormalizedName, unit);
+                graphStore.createRelation(kbId, tripleId, sourceId, sourceName, sourceNorm,
+                        targetId, targetName, targetNorm, rel.getLabel(), relContent);
+                attributeTripleMention(kbId, tripleId, sourceName, sourceNorm, targetName, targetNorm, unit, fileIdOf(unit));
+                entityNamesForEmbed.add(sourceName);
+                entityNamesForEmbed.add(targetName);
+            }
         }
 
-        if (replay) {
-            return chunkMapper.selectList(
-                    new LambdaQueryWrapper<KbChunk>()
-                            .eq(KbChunk::getKbId, kbId)
-                            .eq(KbChunk::getGraphIndexed, GRAPH_INDEXED_DONE)
-                            .isNotNull(KbChunk::getExtractionResult)
-                            .ne(KbChunk::getExtractionResult, ""));
+        // 在 Neo4j 中创建 Chunk 节点（携带 fileId 用于按文件删除）
+        for (KbChunk c : unit.chunks()) {
+            graphStore.createChunk(kbId, c.getId(), c.getFileId(),
+                    c.getContent() != null && c.getContent().length() > 200
+                            ? c.getContent().substring(0, 200) : c.getContent());
         }
 
-        // 默认增量模式：只查未提取 + 失败待重试的 chunks
-        return chunkMapper.selectList(
-                new LambdaQueryWrapper<KbChunk>()
-                        .eq(KbChunk::getKbId, kbId)
-                        .and(w -> w.isNull(KbChunk::getGraphIndexed).or().eq(KbChunk::getGraphIndexed, 0)
-                                .or().eq(KbChunk::getGraphIndexed, GRAPH_INDEXED_FAILED)));
+        // 为实体生成 embedding（向量检索用；失败仅告警，不影响构建）
+        updateEntityEmbeddings(kbId, entityNamesForEmbed);
     }
 
+    private String fileIdOf(ExtractionUnitAssembler.ExtractionUnit unit) {
+        return unit.chunks().isEmpty() ? null : unit.chunks().get(0).getFileId();
+    }
+
+    /** 单元内证据归属：实体名（原文/归一化名）包含命中的分片都挂 MENTIONS；全不命中挂单元首个分片 */
+    private void attributeEntityMentions(String kbId, String displayName, String normalizedName, String entityId,
+                                         ExtractionUnitAssembler.ExtractionUnit unit) {
+        boolean matched = false;
+        for (KbChunk c : unit.chunks()) {
+            String content = c.getContent();
+            if (content == null) continue;
+            if (content.contains(displayName)
+                    || (!normalizedName.isEmpty() && content.toLowerCase().contains(normalizedName))) {
+                graphStore.createEntityMention(kbId, displayName, entityId, c.getId(), c.getFileId());
+                matched = true;
+            }
+        }
+        if (!matched && !unit.chunks().isEmpty()) {
+            KbChunk first = unit.chunks().get(0);
+            graphStore.createEntityMention(kbId, displayName, entityId, first.getId(), first.getFileId());
+        }
+    }
+
+    /** TripleMention 归属：关系两端名字都被分片内容包含的分片；全不命中挂单元首个分片 */
+    private void attributeTripleMention(String kbId, String tripleId, String srcName, String srcNorm,
+                                        String tgtName, String tgtNorm,
+                                        ExtractionUnitAssembler.ExtractionUnit unit, String fileId) {
+        boolean matched = false;
+        for (KbChunk c : unit.chunks()) {
+            String content = c.getContent();
+            if (content == null) continue;
+            String lower = content.toLowerCase();
+            boolean hasSrc = content.contains(srcName) || (!srcNorm.isEmpty() && lower.contains(srcNorm));
+            boolean hasTgt = content.contains(tgtName) || (!tgtNorm.isEmpty() && lower.contains(tgtNorm));
+            if (hasSrc && hasTgt) {
+                graphStore.createTripleMention(kbId, tripleId, c.getId(), fileId);
+                matched = true;
+            }
+        }
+        if (!matched && !unit.chunks().isEmpty()) {
+            KbChunk first = unit.chunks().get(0);
+            graphStore.createTripleMention(kbId, tripleId, first.getId(), fileId);
+        }
+    }
+
+    /** 单元行 upsert（status/结果/哈希），缓存命中的单元不重写 */
+    private void upsertUnitRow(String kbId, String fileId, ExtractionUnitAssembler.ExtractionUnit unit,
+                               KbGraphUnit existing, ExtractionNormalizer.ExtractionResult result, int status) {
+        String chunkIdsJson = JSONUtil.toJsonStr(unit.chunks().stream().map(KbChunk::getId).toList());
+        String resultJson = result != null ? JSONUtil.toJsonStr(result) : null;
+        if (existing != null && existing.getId() != null) {
+            existing.setContentHash(unit.contentHash());
+            existing.setChunkIds(chunkIdsJson);
+            existing.setExtractionResult(resultJson);
+            existing.setStatus(status);
+            existing.setUpdatedAt(LocalDateTime.now());
+            unitMapper.updateById(existing);
+        } else {
+            KbGraphUnit u = new KbGraphUnit();
+            u.setKbId(kbId);
+            u.setFileId(fileId);
+            u.setUnitIndex(unit.index());
+            u.setContentHash(unit.contentHash());
+            u.setChunkIds(chunkIdsJson);
+            u.setExtractionResult(resultJson);
+            u.setStatus(status);
+            u.setCreatedAt(LocalDateTime.now());
+            unitMapper.insert(u);
+        }
+    }
+
+    private void markUnitChunks(ExtractionUnitAssembler.ExtractionUnit unit, int state) {
+        for (KbChunk c : unit.chunks()) {
+            markChunkGraphState(c.getId(), state, null);
+        }
+    }
+
+    /** 按文件分组并组内按 chunkIndex 排序（单元组装的基础顺序） */
+    static Map<String, List<KbChunk>> groupChunksByFile(List<KbChunk> chunks) {
+        Map<String, List<KbChunk>> groups = new LinkedHashMap<>();
+        for (KbChunk c : chunks) {
+            String fid = c.getFileId() != null ? c.getFileId() : "";
+            groups.computeIfAbsent(fid, k -> new ArrayList<>()).add(c);
+        }
+        for (List<KbChunk> list : groups.values()) {
+            list.sort(Comparator
+                    .comparing(KbChunk::getChunkIndex, Comparator.nullsLast(Comparator.naturalOrder()))
+                    .thenComparing(c -> c.getId() != null ? c.getId() : ""));
+        }
+        return groups;
+    }
+
+    /** 查询范围内的全部分片（单元组装需要完整文件内容；增量/全量的差异由单元缓存承担） */
+    private List<KbChunk> queryChunks(String kbId, List<String> fileIds) {
+        LambdaQueryWrapper<KbChunk> w = new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getKbId, kbId);
+        if (fileIds != null && !fileIds.isEmpty()) {
+            w.in(KbChunk::getFileId, fileIds);
+        }
+        return chunkMapper.selectList(w);
+    }
+
+    // ==================== LLM 抽取 ====================
+
     /**
-     * 从 chunk 中提取实体和关系（调用 LLM + ExtractionNormalizer 规范化）。
+     * 从单元文本中提取实体和关系（调用 LLM + ExtractionNormalizer 规范化）。
      *
-     * <p>利用 chunk 元数据增强抽取：headingPath/title 注入 prompt 补全章节上下文
-     * （方法论类内容如"营销六步法"依赖标题才能抽出框架实体）；表格型 chunk
-     * （BOM 价目表）切换专用 prompt，价格/数量走 attributes 而非实体。</p>
-     *
-     * @param chunk 待抽取的知识块（使用 content/title/headingPath/chunkType）
-     * @param whitelist 实体类型白名单（KB 级 schema 或全局配置解析结果，参与 prompt 与类型归一）
      * @return 规范化结果（可能为空，表示 LLM 正常返回但未提取到实体/关系，非失败）；
-     *         LLM 调用失败/超时/响应不可解析等瞬态失败返回 null，调用方标记 chunk graphIndexed=2 待重试
+     *         LLM 调用失败/超时/响应不可解析等瞬态失败返回 null
      */
     private ExtractionNormalizer.ExtractionResult extractWithNormalization(
-            KbChunk chunk, String llmModel, String apiUrl, String apiKey, Set<String> whitelist) {
-        // 未配置 LLM 时跳过抽取
+            String text, String llmModel, String apiUrl, String apiKey, Set<String> whitelist) {
         if (apiUrl == null || apiUrl.isBlank()) {
-            log.warn("[GraphBuild-Extract] LLM not configured (apiUrl is null/blank) -> skipping entity extraction for this chunk. " +
+            log.warn("[GraphBuild-Extract] LLM not configured (apiUrl is null/blank) -> skipping extraction. " +
                     "Set LLM model in parsing strategy or ensure model is 'online' in model_config.");
             return null;
         }
-
-        String text = chunk.getContent();
         String model = llmModel != null ? llmModel : "default";
-        String prompt = buildExtractionPrompt(chunk, whitelist);
+        String prompt = buildExtractionPromptText(text, whitelist);
         log.info("[GraphBuild-Extract] Calling LLM model={} for entity extraction, text length={}", model, text.length());
 
         try {
@@ -661,15 +732,29 @@ public class GraphBuildConsumer implements GraphBuildHandler {
             if (response == null) return null;
             ExtractionNormalizer.ExtractionResult normalized = parseLlmExtractionJson(response);
             if (normalized == null) return null;
+
+            // 截断/格式退化兜底：有关系但全部缺端点（输出被截断或格式退化）——重试一次，按实体+关系总数择优
+            if (isDegenerateExtraction(normalized)) {
+                log.warn("[GraphBuild-Extract] Degenerate extraction detected (all relations lack endpoints), retrying once, textLen={}",
+                        text.length());
+                String retryResponse = callExtractionLlm(model, prompt, apiUrl, apiKey);
+                if (retryResponse != null) {
+                    ExtractionNormalizer.ExtractionResult retried = parseLlmExtractionJson(retryResponse);
+                    if (retried != null && extractionScore(retried) > extractionScore(normalized)) {
+                        normalized = retried;
+                        log.info("[GraphBuild-Extract] Degenerate extraction replaced by retry: {} entities, {} relations",
+                                retried.getEntities() != null ? retried.getEntities().size() : 0,
+                                retried.getRelations() != null ? retried.getRelations().size() : 0);
+                    }
+                }
+            }
             log.info("[GraphBuild-Extract] After normalization: {} entities, {} relations",
                     normalized.getEntities() != null ? normalized.getEntities().size() : 0,
                     normalized.getRelations() != null ? normalized.getRelations().size() : 0);
 
-            // Gleaning 补捞（graph.build.gleaning 开启时生效）：首轮抽到实体但零关系的 chunk
-            // 追加一轮"只补漏不重复"，对症列举句（"支持A、B、C"）与跨句关系漏抽
+            // Gleaning 补捞（LightRAG 同款）：抽到实体但零关系的单元追加一轮"只补漏不重复"
             if (gleaningEnabled && shouldGlean(normalized)) {
-                ExtractionNormalizer.ExtractionResult gleaned =
-                        gleanRelations(text, model, apiUrl, apiKey, normalized);
+                ExtractionNormalizer.ExtractionResult gleaned = gleanRelations(text, model, apiUrl, apiKey, normalized);
                 if (gleaned != null) {
                     normalized = mergeExtractionResults(normalized, gleaned);
                     log.info("[GraphBuild-Glean] After gleaning: {} entities, {} relations",
@@ -684,13 +769,18 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         }
     }
 
-    /** 调抽取 LLM（流式 + 关闭 thinking + 自定义超时）；失败/空响应返回 null */
+    /** 调抽取 LLM（流式 + 关闭 thinking + 自定义超时/输出上限）；失败/空响应返回 null */
     private String callExtractionLlm(String model, String prompt, String apiUrl, String apiKey) {
         String response;
         try {
             // 关闭 thinking 避免 Qwen3 等模型输出大量 <think...> 推理文本导致超时
-            response = llmService.chatWithTimeout(model, prompt, apiUrl, apiKey,
-                    false, graphBuildLlmTimeoutSeconds);
+            if (graphBuildLlmMaxTokens > 0) {
+                response = llmService.chatWithTimeout(model, prompt, apiUrl, apiKey,
+                        false, graphBuildLlmTimeoutSeconds, graphBuildLlmMaxTokens);
+            } else {
+                response = llmService.chatWithTimeout(model, prompt, apiUrl, apiKey,
+                        false, graphBuildLlmTimeoutSeconds);
+            }
         } catch (Exception e) {
             log.warn("[GraphBuild-Extract] LLM call failed (timeout={}s): {}",
                     graphBuildLlmTimeoutSeconds, e.getMessage());
@@ -712,7 +802,6 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         if (json.startsWith("```")) {
             json = json.replaceAll("```json?|```", "").trim();
         }
-        // 清理 LLM 有时输出的多余文本（模型在 JSON 前后添加的对话内容）
         int braceStart = json.indexOf('{');
         if (braceStart > 0) {
             json = json.substring(braceStart);
@@ -725,14 +814,12 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         try {
             rawResult = JSONUtil.toBean(json, ExtractionNormalizer.ExtractionResult.class);
         } catch (Exception je) {
-            // JSON 解析失败时尝试正则提取 JSON 数组内容（处理 LLM 输出格式异常）
             log.warn("[GraphBuild-Extract] JSON parse failed, trying regex fallback: {}", je.getMessage());
             rawResult = parseExtractionResultWithFallback(json);
         }
         log.info("[GraphBuild-Extract] Parsed result: {} entities, {} relations",
                 rawResult.getEntities() != null ? rawResult.getEntities().size() : 0,
                 rawResult.getRelations() != null ? rawResult.getRelations().size() : 0);
-        // 规范化：去重、默认值、端点解析
         return ExtractionNormalizer.normalize(rawResult);
     }
 
@@ -744,13 +831,34 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     }
 
     /**
+     * 抽取结果退化判定：有关系但全部缺端点（LLM 输出被截断/格式退化的典型症状，
+     * 2026-09-11 生产观测：含"营销六步法"整段的分片只抽出 1 实体 + 4 条空 RELATED_TO）。
+     */
+    static boolean isDegenerateExtraction(ExtractionNormalizer.ExtractionResult result) {
+        if (result == null || result.getRelations() == null || result.getRelations().isEmpty()) return false;
+        for (ExtractionNormalizer.Relation r : result.getRelations()) {
+            String s = r.getSource() != null ? String.valueOf(r.getSource()).trim() : "";
+            String t = r.getTarget() != null ? String.valueOf(r.getTarget()).trim() : "";
+            if (!s.isEmpty() && !t.isEmpty()) return false;
+        }
+        return true;
+    }
+
+    /** 抽取结果质量评分（实体+关系总数），退化重试时择优用 */
+    static int extractionScore(ExtractionNormalizer.ExtractionResult result) {
+        if (result == null) return 0;
+        int entities = result.getEntities() != null ? result.getEntities().size() : 0;
+        int relations = result.getRelations() != null ? result.getRelations().size() : 0;
+        return entities + relations;
+    }
+
+    /**
      * gleaning 补捞（LightRAG entity_continue_extraction 同款）：把首轮结果连同原文再问一次，
      * 只补漏不重复。返回 null 表示跳过（输入超护栏/LLM 失败/结果不可解析），调用方沿用首轮结果。
      */
     private ExtractionNormalizer.ExtractionResult gleanRelations(
             String text, String model, String apiUrl, String apiKey, ExtractionNormalizer.ExtractionResult first) {
         String firstJson = JSONUtil.toJsonStr(first);
-        // 输入护栏：系统提示+历史+补捞指令超长时跳过（LightRAG 超过 MAX_EXTRACT_INPUT_TOKENS 跳过 gleaning 同款）
         if (text.length() + firstJson.length() > GLEANING_MAX_INPUT_CHARS) {
             log.info("[GraphBuild-Glean] Skip gleaning: input too long ({} chars)",
                     text.length() + firstJson.length());
@@ -798,54 +906,6 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     }
 
     /**
-     * 更新 chunk 图谱提取状态（kb_chunk.graph_indexed 三态：0=待提取，1=已提取，2=失败待重试）。
-     * extractionResultJson 传 null 时不清空已有值（MyBatis-Plus updateById 忽略 null 字段）。
-     */
-    private void markChunkGraphState(String chunkId, int state, String extractionResultJson) {
-        KbChunk toUpdate = new KbChunk();
-        toUpdate.setId(chunkId);
-        toUpdate.setGraphIndexed(state);
-        toUpdate.setExtractionResult(extractionResultJson);
-        chunkMapper.updateById(toUpdate);
-    }
-
-    /**
-     * replay 前置清理：将「graphIndexed=1 但 extraction_result 为空」的失败遗留 chunk 重置为待提取。
-     * 这些 chunk 是修复前「失败仍标已构建」缺陷的历史产物，重置后由增量构建自动重新抽取。
-     */
-    private int resetEmptyExtractionChunks(String kbId, List<String> fileIds) {
-        LambdaUpdateWrapper<KbChunk> wrapper = new LambdaUpdateWrapper<KbChunk>()
-                .eq(KbChunk::getKbId, kbId)
-                .eq(KbChunk::getGraphIndexed, GRAPH_INDEXED_DONE)
-                .and(w -> w.isNull(KbChunk::getExtractionResult).or().eq(KbChunk::getExtractionResult, ""))
-                .set(KbChunk::getGraphIndexed, 0);
-        if (fileIds != null && !fileIds.isEmpty()) {
-            wrapper.in(KbChunk::getFileId, fileIds);
-        }
-        return chunkMapper.update(null, wrapper);
-    }
-
-    /**
-     * 反序列化持久化的抽取结果（replay 模式）。
-     *
-     * @return 解析成功返回规范化结果（含空结果）；JSON 损坏返回 null（chunk 标记 graphIndexed=2，
-     *         后续增量构建重新抽取）
-     */
-    private ExtractionNormalizer.ExtractionResult deserializeExtractionResult(String extractionResultJson) {
-        if (extractionResultJson == null || extractionResultJson.isBlank()) return null;
-        try {
-            ExtractionNormalizer.ExtractionResult result = JSONUtil.toBean(
-                    extractionResultJson, ExtractionNormalizer.ExtractionResult.class);
-            // 兜底填充 null 集合，防止下游 NPE
-            ExtractionNormalizer.normalize(result);
-            return result;
-        } catch (Exception e) {
-            log.warn("[GraphBuild-Replay] Failed to deserialize extraction result: {}", e.getMessage());
-            return null;
-        }
-    }
-
-    /**
      * JSON 解析兜底：当 JSONUtil.toBean 失败时，尝试正则提取 entities 和 relations 数组
      */
     private ExtractionNormalizer.ExtractionResult parseExtractionResultWithFallback(String json) {
@@ -853,18 +913,15 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         result.setEntities(new ArrayList<>());
         result.setRelations(new ArrayList<>());
         try {
-            // 尝试提取 entities 数组（宽松匹配，容忍缺少冒号等格式问题）
             java.util.regex.Matcher entityMatcher = java.util.regex.Pattern.compile(
                     "\"entities\"\\s*[:=]?\\s*\\[(.*?)\\]", java.util.regex.Pattern.DOTALL).matcher(json);
             if (entityMatcher.find()) {
                 String entityContent = entityMatcher.group(1).trim();
                 if (!entityContent.isEmpty()) {
-                    // 宽松匹配：提取每个 "text":"value" 对
                     java.util.regex.Matcher textMatcher = java.util.regex.Pattern.compile(
                             "\"text\"\\s*[:=]?\\s*\"([^\"]+)\"").matcher(entityContent);
                     java.util.regex.Matcher labelMatcher = java.util.regex.Pattern.compile(
                             "\"label\"\\s*[:=]?\\s*\"([^\"]+)\"").matcher(entityContent);
-                    // 使用 text 和 label 交替匹配
                     List<String> texts = new ArrayList<>();
                     List<String> labels = new ArrayList<>();
                     while (textMatcher.find()) texts.add(textMatcher.group(1));
@@ -879,13 +936,11 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                 }
             }
 
-            // 尝试提取 relations 数组（宽松匹配）
             java.util.regex.Matcher relMatcher = java.util.regex.Pattern.compile(
                     "\"relations\"\\s*[:=]?\\s*\\[(.*?)\\]", java.util.regex.Pattern.DOTALL).matcher(json);
             if (relMatcher.find()) {
                 String relContent = relMatcher.group(1).trim();
                 if (!relContent.isEmpty()) {
-                    // 宽松匹配 source/target/label
                     java.util.regex.Matcher sourceMatcher = java.util.regex.Pattern.compile(
                             "\"source\"\\s*[:=]?\\s*\"([^\"]+)\"").matcher(relContent);
                     java.util.regex.Matcher targetMatcher = java.util.regex.Pattern.compile(
@@ -917,7 +972,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         return result;
     }
 
-    /** 表格型 chunk 判定：以 | 开头的行数占比达到阈值视为 BOM 价目表/清单 */
+    /** 表格型内容判定：以 | 开头的行数占比达到阈值视为 BOM 价目表/清单 */
     private static boolean isTableDominant(String text) {
         if (text == null) return false;
         String[] lines = text.split("\n");
@@ -929,43 +984,16 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     }
 
     /**
-     * 构建 LLM 提取 Prompt（强调关系提取，参考 Yuxi 经验；实体附带 description 与 attributes）。
+     * 构建 LLM 提取 Prompt（强调关系提取；实体附带 description 与 attributes）。
      *
-     * <p>约束设计对齐 LightRAG 抽取 prompt 的经验（docs/research/lightrag-implementation-analysis.md §2.2）：
-     * 禁止值型/单据号实体、名称保持原文、description 不得照抄名称、关系方向从主体指向客体、
-     * 禁止输出互为反向的重复关系。</p>
-     *
-     * <p>上下文增强：chunk 的 headingPath/title 注入 prompt 头部——截断的 chunk 丢失了
-     * "它属于哪一章"，方法论/清单类内容（如"营销六步法"的六个步骤）没有章节框架就抽不出
-     * 框架实体。表格型 chunk（BOM 价目表）切换专用指令：型号是实体、价格/数量是 attributes、
-     * 表头词（总价/价格/工费/辅材）禁止成实体。</p>
+     * <p>约束设计对齐 LightRAG 抽取 prompt 的经验：禁止值型/单据号实体、名称保持原文、
+     * description 不得照抄名称、关系方向从主体指向客体、禁止输出互为反向的重复关系、
+     * 命名一致性（跨单元实体对齐主要靠归一化名合并兜底）。</p>
      */
-    private String buildExtractionPrompt(KbChunk chunk, Set<String> whitelist) {
-        return buildExtractionPromptText(
-                chunk.getContent() != null ? chunk.getContent() : "",
-                chunk.getHeadingPath(), chunk.getTitle(), whitelist);
-    }
-
-    /**
-     * 组装抽取 Prompt（包级私有静态，纯字符串拼接，可单测）。
-     *
-     * <p>禁止改用 {@code String.format/formatted}：模板与文档文本都含 {@code %} 字符
-     * （如"利润率≧70%"），占位符数量一旦对不上会抛 MissingFormatArgumentException，
-     * 导致全部 chunk 抽取失败（2026-09-07 生产事故）。</p>
-     */
-    static String buildExtractionPromptText(String text, String headingPath, String title, Set<String> whitelist) {
-        // 保留更多文本上下文以利于关系提取
-        String truncated = text.substring(0, Math.min(text.length(), 3000));
-        // 章节上下文（结构感知分块产出；为空说明未启用 headingPath，跳过）
-        StringBuilder contextHeader = new StringBuilder();
-        if (headingPath != null && !headingPath.isBlank()) {
-            contextHeader.append("本文本是《").append(headingPath).append("》章节的内容。");
-            if (title != null && !title.isBlank()) {
-                contextHeader.append("最近标题：").append(title).append("。");
-            }
-            contextHeader.append('\n');
-        }
-        // 类型白名单提示（限制 LLM 输出类型集合，收敛类型爆炸）：
+    static String buildExtractionPromptText(String text, Set<String> whitelist) {
+        // 保留完整单元文本以利于关系提取（单元本身已按预算组装，不再二次截断）
+        String truncated = text.substring(0, Math.min(text.length(), 8000));
+        // 类型白名单提示（限制 LLM 输出类型集合，收敛类型爆炸）；
         // 排除值型/时间型类型（避免与"禁止值型实体"约束自相矛盾）；
         // 排序保证提示稳定——Set 无序，截断会导致每次构建的类型提示随机漂移
         String typeHint = whitelist.stream()
@@ -989,12 +1017,12 @@ public class GraphBuildConsumer implements GraphBuildHandler {
             flowRules = """
                     - 每个关系必须连接两个文本中出现的不同实体，方向从主体指向客体（如"产品包"包含"设备"、"人员"属于"组织"、"方法"包含"步骤"）
                     - 有序方法/流程（如"一备、二问、三看"六步法）要把框架整体和每个步骤都抽为实体，步骤与框架之间输出"属于"关系并保持原文序号
-                    - 文本开头的章节标题（# 开头的 Markdown 行，如"# 小微ICT业务营销六步法"）是有业务意义的框架概念时，必须抽为实体，并为其与正文中从属于该框架的步骤/条目实体建立"属于"关系（方向：条目→框架）
+                    - 文本中的章节标题（如"XX业务营销六步法"这类独立成行的标题行）是有业务意义的框架概念时，必须抽为实体，并为其与正文中从属于该框架的步骤/条目实体建立"属于"关系（方向：条目→框架）
+                    - 实体命名保持一致：同一事物在全文中用同一个名称
                     """;
         }
 
         return "从文本中提取实体和实体间的关系，返回JSON。\n\n"
-                + contextHeader
                 + "先找出所有实体，再找出实体之间的明确关系。\n\n"
                 + """
                 {"entities":[{"text":"实体名称","label":"实体类型","description":"一句话描述","attributes":[{"text":"属性值","label":"属性名"}]}],"relations":[{"source":"实体名称","target":"实体名称","label":"关系类型"}]}
@@ -1022,95 +1050,112 @@ public class GraphBuildConsumer implements GraphBuildHandler {
                 + truncated;
     }
 
-    // ==================== 跨分片框架关系兜底（方案A） ====================
-
-    /** 框架标题实体允许的类型（补边降噪约束；"业务/场景"等宽泛类型不触发，避免普通章节成员误连） */
-    private static final Set<String> FRAMEWORK_TITLE_TYPES = Set.of("方法", "业务流程", "流程", "步骤", "方案");
-
-    /** 补边使用的固定关系标签 */
-    private static final String FRAMEWORK_REL_LABEL = "属于";
-
-    /** headingPath 末级标题（"A > B > C" → "C"，跳过空段）；无有效段返回 null */
-    static String frameworkTitleOf(String headingPath) {
-        if (headingPath == null || headingPath.isBlank()) return null;
-        String[] parts = headingPath.split(">");
-        for (int i = parts.length - 1; i >= 0; i--) {
-            String t = parts[i].trim();
-            if (!t.isEmpty()) return t;
-        }
-        return null;
-    }
-
-    /** 标题实体类型是否可作为补边框架 */
-    static boolean isFrameworkType(String entityType) {
-        return entityType != null && FRAMEWORK_TITLE_TYPES.contains(entityType);
-    }
+    // ==================== 解析 LLM 配置 ====================
 
     /**
-     * 框架关系兜底（确定性补边）：对每个带 headingPath 的 chunk，取末级标题对应的框架
-     * 实体（类型属框架类），把该 chunk 提及、且尚未与框架以任意方向连边的成员实体
-     * 补上"属于"边。
-     *
-     * <p>解决跨分片整合的结构性缺口：合并层只做同名收敛，某分片 LLM 漏抽
-     * "步骤→属于→框架"时该边永久缺失——此兜底把 LLM 服从率从等式中拿掉。
-     * 全库幂等：已有任意方向边的成员跳过；补出的边挂 TripleMention，
-     * 不会被孤儿清理回收。</p>
-     *
-     * @return 补出的边数
+     * 解析 LLM 配置：优先从 file 对应的 parse strategy 获取，fallback 到 KB 级 graphLlmModel。
+     * 全库重建（无 fileIds）时回退到该知识库的任意文件解析，避免"清空后全量重建"必然失败。
      */
-    private int backfillFrameworkRelations(String kbId) {
-        List<KbChunk> chunks = chunkMapper.selectList(new LambdaQueryWrapper<KbChunk>()
-                .eq(KbChunk::getKbId, kbId)
-                .isNotNull(KbChunk::getHeadingPath)
-                .ne(KbChunk::getHeadingPath, ""));
-        int added = 0;
-        for (KbChunk chunk : chunks) {
-            String title = frameworkTitleOf(chunk.getHeadingPath());
-            if (title == null) continue;
-            String frameworkNorm = NameNormalizer.normalize(title);
-            if (frameworkNorm.length() < 2) continue;
-            Map<String, Object> framework = graphStore.findEntityByNormalizedName(kbId, frameworkNorm);
-            if (framework == null || !isFrameworkType((String) framework.get("entityType"))) continue;
-            String frameworkId = (String) framework.get("entityId");
-            String frameworkName = (String) framework.get("name");
-            for (Map<String, Object> member : graphStore.findChunkMembers(kbId, chunk.getId())) {
-                String memberId = (String) member.get("entityId");
-                String memberName = (String) member.get("name");
-                if (memberId == null || memberId.equals(frameworkId)) continue;
-                if (graphStore.hasRelationBetween(kbId, memberId, frameworkId)) continue;
-                String tripleId = GraphIdHashing.tripleId(kbId, memberName, "Entity",
-                        FRAMEWORK_REL_LABEL, frameworkName, "Entity");
-                graphStore.createRelation(kbId, tripleId, memberId, memberName,
-                        (String) member.get("normalizedName"), frameworkId, frameworkName, frameworkNorm,
-                        FRAMEWORK_REL_LABEL, memberName + " -> " + FRAMEWORK_REL_LABEL + " -> " + frameworkName);
-                graphStore.createTripleMention(kbId, tripleId, chunk.getId(), chunk.getFileId());
-                added++;
+    private LlmConfig resolveLlmConfig(String kbId, List<String> fileIds) {
+        log.info("[GraphBuild-LlmConfig] Resolving LLM config for kb={}, fileIds={}", kbId, fileIds);
+
+        if (fileIds == null || fileIds.isEmpty()) {
+            log.warn("[GraphBuild-LlmConfig] fileIds is null/empty, falling back to first file of kb={}", kbId);
+            KbFile anyFile = fileMapper.selectOne(
+                    new LambdaQueryWrapper<KbFile>()
+                            .eq(KbFile::getKbId, kbId)
+                            .isNull(KbFile::getDeletedAt)
+                            .last("LIMIT 1"));
+            if (anyFile == null) {
+                log.warn("[GraphBuild-LlmConfig] No file found for kb={} -> returning empty config", kbId);
+                return new LlmConfig(null, null, null);
+            }
+            fileIds = List.of(anyFile.getId());
+        }
+
+        KbFile file = fileMapper.selectById(fileIds.get(0));
+        if (file == null) {
+            log.warn("[GraphBuild-LlmConfig] File not found for id={} -> returning empty config", fileIds.get(0));
+            return new LlmConfig(null, null, null);
+        }
+
+        if (file.getParseStrategyId() != null) {
+            KbParseStrategy strategy = parseStrategyMapper.selectById(file.getParseStrategyId());
+            if (strategy != null && strategy.getLlmModel() != null && !strategy.getLlmModel().isEmpty()) {
+                String llmModel = strategy.getLlmModel();
+                ModelRecord modelRecord = modelRecordMapper.selectOne(
+                        new LambdaQueryWrapper<ModelRecord>()
+                                .eq(ModelRecord::getCode, llmModel)
+                                .eq(ModelRecord::getStatus, "online")
+                                .last("LIMIT 1"));
+                if (modelRecord != null) {
+                    log.info("[GraphBuild-LlmConfig] ModelRecord found: model={}, apiUrl={}",
+                            llmModel, modelRecord.getApiUrl());
+                    return new LlmConfig(llmModel, modelRecord.getApiUrl(), modelRecord.getApiKeyRef());
+                }
+                log.warn("[GraphBuild-LlmConfig] ModelRecord NOT FOUND for code={} with status=online", llmModel);
             }
         }
-        return added;
+
+        // Fallback: 查 KB 级 graphLlmModel（parse strategy 未配置 LLM 时的兜底）
+        log.info("[GraphBuild-LlmConfig] Strategy LLM not available, trying KB-level graphLlmModel for kb={}", kbId);
+        KnowledgeBase kb = kbMapper.selectById(kbId);
+        if (kb != null && kb.getGraphLlmModel() != null && !kb.getGraphLlmModel().isBlank()) {
+            String llmModel = kb.getGraphLlmModel();
+            ModelRecord modelRecord = modelRecordMapper.selectOne(
+                    new LambdaQueryWrapper<ModelRecord>()
+                            .eq(ModelRecord::getCode, llmModel)
+                            .eq(ModelRecord::getStatus, "online")
+                            .last("LIMIT 1"));
+            if (modelRecord != null) {
+                log.info("[GraphBuild-LlmConfig] KB-level ModelRecord found: model={}, apiUrl={}",
+                        llmModel, modelRecord.getApiUrl());
+                return new LlmConfig(llmModel, modelRecord.getApiUrl(), modelRecord.getApiKeyRef());
+            }
+            log.warn("[GraphBuild-LlmConfig] KB-level ModelRecord NOT FOUND for code={}", llmModel);
+        }
+
+        log.warn("[GraphBuild-LlmConfig] Returning empty LLM config -> graph build will skip LLM extraction");
+        return new LlmConfig(null, null, null);
     }
 
+    // ==================== 状态与辅助 ====================
+
     /**
-     * 解析关系端点实体 ID（KG-01）：
-     * 1. 本 chunk 提取实体映射；2. 图库按规范化名反查（跨 chunk 已存在）；3. 创建 UNKNOWN 占位实体。
-     */    private String resolveRelationEndpointId(String kbId, String rawName, String normalizedName,
-                                             Map<String, String> entityIdByNormalizedName) {
+     * 解析关系端点实体 ID（KG-01 + 端点身份统一）：
+     * 1. 本单元提取实体映射；2. 图库按规范化名反查（跨单元已存在）；
+     * 3. 登记为带 MENTIONS 证据的 UNKNOWN 实体。
+     */
+    private String resolveRelationEndpointId(String kbId, String rawName, String normalizedName,
+                                             Map<String, String> entityIdByNormalizedName,
+                                             ExtractionUnitAssembler.ExtractionUnit unit) {
         String id = entityIdByNormalizedName.get(normalizedName);
         if (id != null) return id;
         id = graphStore.findEntityId(kbId, normalizedName);
         if (id != null) return id;
-        // 端点实体在任何 chunk 都未被提取：创建 UNKNOWN 占位实体，保证边引用有效
+        // 端点实体在任何单元都未被提取：登记为带 MENTIONS 证据的 UNKNOWN 实体，保证边引用有效且有证据
         String placeholderId = GraphIdHashing.entityId(kbId, normalizedName);
         graphStore.createEntity(kbId, placeholderId, rawName, normalizedName, EntityTypeNormalizer.UNKNOWN, null, null);
-        log.debug("[GraphBuild] Created UNKNOWN placeholder entity for relation endpoint: {}", rawName);
+        attributeEntityMentions(kbId, rawName, normalizedName, placeholderId, unit);
+        entityIdByNormalizedName.put(normalizedName, placeholderId);
+        log.debug("[GraphBuild] Registered relation endpoint as evidence-backed UNKNOWN entity: {}", rawName);
         return placeholderId;
     }
 
     /**
+     * 更新 chunk 图谱提取状态（kb_chunk.graph_indexed 三态）。
+     * extractionResultJson 传 null 时不清空已有值（MyBatis-Plus updateById 忽略 null 字段）。
+     */
+    private void markChunkGraphState(String chunkId, int state, String extractionResultJson) {
+        KbChunk toUpdate = new KbChunk();
+        toUpdate.setId(chunkId);
+        toUpdate.setGraphIndexed(state);
+        toUpdate.setExtractionResult(extractionResultJson);
+        chunkMapper.updateById(toUpdate);
+    }
+
+    /**
      * 解析实体类型白名单（优先级：KB 级 schema 配置 → yml 全局配置 → 默认集合）。
-     *
-     * <p>KB 级 schema 存放在 kb_graph_index.settings 的 entitySchema 字段（逗号/换行分隔），
-     * 由前端图谱设置面板写入（KG-07）。未配置时回退全局逻辑。</p>
      */
     private Set<String> resolveEntityTypeWhitelist(String kbId) {
         try {
@@ -1135,9 +1180,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
         return resolveEntityTypeWhitelist();
     }
 
-    /**
-     * 解析实体类型白名单（yml 配置优先，空则用默认集合；懒加载缓存）
-     */
+    /** 解析实体类型白名单（yml 配置优先，空则用默认集合；懒加载缓存） */
     private Set<String> resolveEntityTypeWhitelist() {
         Set<String> cached = entityTypeWhitelistCache;
         if (cached != null) return cached;
@@ -1154,7 +1197,7 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     }
 
     /**
-     * 更新图谱构建状态（UPSERT）
+     * 更新图谱构建状态（UPSERT）。
      */
     private void updateGraphStatus(String kbId, String status, int progress,
                                    int entityCount, int relationCount, int totalChunks,
@@ -1188,27 +1231,31 @@ public class GraphBuildConsumer implements GraphBuildHandler {
     }
 
     /**
-     * 更新构建进度。
-     *
-     * @param kbId            知识库 ID
-     * @param processed       本次构建已处理 chunk 数（用于进度百分比）
-     * @param total           本次构建范围 chunk 总数（用于进度百分比）
-     * @param kbTotalChunks   全库 chunk 总数（索引管理展示用）
-     * @param kbBuiltChunks   构建开始前全库已构建 chunk 数（基准）
-     * @param entityCount     本次新增实体数
-     * @param relationCount   本次新增关系数
-     * @param failedChunks    本次失败 chunk 数
+     * 更新构建进度：只更新状态/进度，不覆盖 entityCount/relationCount（KB 总量口径，
+     * 构建完成时才以 live 计数刷新——避免构建中显示误导性小数字）。
      */
-    private void updateGraphProgress(String kbId, int processed, int total,
-                                     long kbTotalChunks, long kbBuiltChunks,
-                                     int entityCount, int relationCount, int failedChunks) {
+    private void updateGraphProgress(String kbId, int processed, int total, int failedUnits) {
         int progress = total > 0 ? (int) ((double) processed / total * 100) : 0;
-        // builtChunks = 全库已构建基准 + 本次已处理（progress 使用全库口径，避免覆盖）
-        long built = kbBuiltChunks + processed;
-        updateGraphStatus(kbId, "building", progress, entityCount, relationCount,
-                (int) kbTotalChunks, (int) built, failedChunks);
-        log.info("[GraphBuild-Progress] kb={}, progress={}% ({}/{}) entities={} relations={} failed={}",
-                kbId, progress, processed, total, entityCount, relationCount, failedChunks);
+        try {
+            KbGraphIndex index = graphIndexMapper.selectById(kbId);
+            if (index == null) {
+                index = new KbGraphIndex();
+                index.setKbId(kbId);
+                index.setStatus("building");
+                index.setBuildProgress(progress);
+                index.setEntityCount(0);
+                index.setRelationCount(0);
+                graphIndexMapper.insert(index);
+            } else {
+                index.setStatus("building");
+                index.setBuildProgress(progress);
+                graphIndexMapper.updateById(index);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to update graph progress: {}", e.getMessage());
+        }
+        log.info("[GraphBuild-Progress] kb={}, progress={}% ({}/{} units) failed={}",
+                kbId, progress, processed, total, failedUnits);
     }
 
     /**
@@ -1283,6 +1330,25 @@ public class GraphBuildConsumer implements GraphBuildHandler {
             return new LlmConfig(modelCode, modelRecord.getApiUrl(), modelRecord.getApiKeyRef());
         } catch (Exception e) {
             log.warn("[GraphBuild-Embed] Failed to resolve embedding model for kb={}", kbId);
+            return null;
+        }
+    }
+
+    /**
+     * 反序列化持久化的抽取结果（replay / 单元缓存）。
+     *
+     * @return 解析成功返回规范化结果（含空结果）；JSON 损坏返回 null
+     */
+    private ExtractionNormalizer.ExtractionResult deserializeExtractionResult(String extractionResultJson) {
+        if (extractionResultJson == null || extractionResultJson.isBlank()) return null;
+        try {
+            ExtractionNormalizer.ExtractionResult result = JSONUtil.toBean(
+                    extractionResultJson, ExtractionNormalizer.ExtractionResult.class);
+            // 兜底填充 null 集合，防止下游 NPE
+            ExtractionNormalizer.normalize(result);
+            return result;
+        } catch (Exception e) {
+            log.warn("[GraphBuild] Failed to deserialize extraction result: {}", e.getMessage());
             return null;
         }
     }

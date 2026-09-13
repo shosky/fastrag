@@ -308,6 +308,65 @@ public class SchemaInitializer {
         addColumnIfNotExists("kb_chunk", "title", "VARCHAR(255) DEFAULT NULL COMMENT '所属最近标题' AFTER chunk_type");
         addColumnIfNotExists("kb_chunk", "heading_path", "VARCHAR(1024) DEFAULT NULL COMMENT '层级路径，如 第一章 > 1.1 背景' AFTER title");
 
+        // --- 跨分片图谱抽取：缝合输出与合并审计表（docs/design/cross-chunk-graph-extraction.md）---
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS kb_graph_stitch (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    kb_id VARCHAR(64) NOT NULL COMMENT '知识库ID',
+                    file_id VARCHAR(64) COMMENT '文件ID',
+                    stitch_type VARCHAR(32) NOT NULL COMMENT 'relation=缝合关系 / merge=合并候选',
+                    payload TEXT NOT NULL COMMENT 'JSON载荷',
+                    status TINYINT NOT NULL DEFAULT 0 COMMENT '0=待应用(人工候选) 1=已应用(可replay) 2=跳过',
+                    chunk_source VARCHAR(64) COMMENT '关系归属分片ID',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_stitch (kb_id, file_id, status)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='图谱缝合输出与合并候选'
+            """);
+            log.info("Table kb_graph_stitch OK");
+        } catch (Exception e) {
+            log.error("Failed to create kb_graph_stitch: {}", e.getMessage());
+        }
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS kb_graph_unit (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    kb_id VARCHAR(64) NOT NULL COMMENT '知识库ID',
+                    file_id VARCHAR(64) NOT NULL COMMENT '文件ID',
+                    unit_index INT NOT NULL COMMENT '单元序号',
+                    content_hash VARCHAR(64) NOT NULL COMMENT '单元内容SHA-256截断哈希(缓存键)',
+                    chunk_ids TEXT NOT NULL COMMENT '组成单元的分片ID JSON数组',
+                    extraction_result MEDIUMTEXT COMMENT '抽取结果JSON',
+                    status TINYINT NOT NULL DEFAULT 0 COMMENT '0=待抽取 1=已完成 2=失败',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+                    UNIQUE KEY uk_unit (kb_id, file_id, unit_index),
+                    KEY idx_unit_hash (kb_id, file_id, content_hash)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='图谱抽取单元(单元级缓存与replay)'
+            """);
+            log.info("Table kb_graph_unit OK");
+        } catch (Exception e) {
+            log.error("Failed to create kb_graph_unit: {}", e.getMessage());
+        }
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS kb_graph_merge_audit (
+                    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+                    kb_id VARCHAR(64) NOT NULL COMMENT '知识库ID',
+                    src_entity_id VARCHAR(64) NOT NULL COMMENT '被合并实体ID',
+                    tgt_entity_id VARCHAR(64) NOT NULL COMMENT '保留实体ID',
+                    src_snapshot TEXT NOT NULL COMMENT 'source完整属性JSON(回滚重建用)',
+                    edge_snapshot TEXT NOT NULL COMMENT '迁移边与mentions清单(回滚用)',
+                    operator VARCHAR(64) COMMENT '执行人/系统',
+                    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    INDEX idx_audit (kb_id, src_entity_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='图谱同义实体合并审计'
+            """);
+            log.info("Table kb_graph_merge_audit OK");
+        } catch (Exception e) {
+            log.error("Failed to create kb_graph_merge_audit: {}", e.getMessage());
+        }
+
         // ==================== 应用/工具/运营数据归属列（组织隔离） ====================
         // 存量数据回填为系统级（creator='system' / is_builtin=1），保持全员可见现状；
         // 新数据由创建服务写入真实 creator + org_id

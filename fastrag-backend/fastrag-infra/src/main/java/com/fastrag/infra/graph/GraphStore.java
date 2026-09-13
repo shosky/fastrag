@@ -321,4 +321,20 @@ public interface GraphStore {
      * 两实体之间是否存在任意方向、任意标签的 RELATION 边（补边去重判定）
      */
     boolean hasRelationBetween(String kbId, String entityIdA, String entityIdB);
+
+    /**
+     * 缝合写边（跨分片关系补边专用，含冲突消解）。
+     *
+     * <p>冲突消解规则（Q7·先建者胜）：若 <code>target → label → source</code> 的同 label 反向边
+     * 已存在，则<b>不新建边</b>，把本次的 chunkIds 并入既有边的 TripleMention 溯源，返回既有边
+     * tripleId；否则按与 {@link #createRelation} 一致的 MERGE 语义建边，并为 chunkIds 建立
+     * TripleMention 溯源，返回新 tripleId。非破坏性、确定性、可重入（replay 幂等）。</p>
+     *
+     * @param chunkIds 该关系证据分片 ID 列表（TripleMention 归属；可空或含空串，内部过滤）
+     * @param fileId   证据所属文件 ID（TripleMention.fileId 记录）
+     * @return 胜出（存在）边的 tripleId；输入非法返回 null
+     */
+    String createDirectedRelation(String kbId, String tripleId, String sourceId, String source, String sourceNorm,
+                                  String targetId, String target, String targetNorm,
+                                  String label, String content, List<String> chunkIds, String fileId);
 }
