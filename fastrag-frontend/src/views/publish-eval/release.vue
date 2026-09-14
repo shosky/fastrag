@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 
@@ -20,6 +20,10 @@ const formData = ref<any>({})
 const STATUS_LABELS: Record<string, string> = { draft: '草稿', released: '已发布', rolled_back: '已回滚', pending: '待发布' }
 const STATUS_COLORS: Record<string, string> = { draft: 'info', released: 'success', rolled_back: 'danger', pending: 'warning' }
 
+// 当前线上版本 = 已发布记录中版本号最大的一条
+const onlineVersion = computed(() => Math.max(0, ...dataList.value.filter((d: any) => d.status === 'released').map((d: any) => Number(d.version) || 0)))
+function isOnline(row: any) { return row.status === 'released' && Number(row.version) === onlineVersion.value && onlineVersion.value > 0 }
+
 const appList = ref<any[]>([])
 const selectedAppId = ref('')
 async function loadAppList() {
@@ -38,15 +42,6 @@ async function loadData() {
     dataList.value = Array.isArray(res) ? res : (res?.list || [])
     total.value = dataList.value.length
   } finally { loading.value = false }
-  if (!dataList.value.length) {
-    dataList.value = [
-      { id: 'r1', version: 'v2.0.0', environment: 'production', status: 'released', releaseNotes: '新增智能问答功能', createdAt: '2026-06-29 10:00:00', isCurrent: true },
-      { id: 'r2', version: 'v1.9.0', environment: 'production', status: 'rolled_back', releaseNotes: '修复若干Bug', createdAt: '2026-06-27 14:00:00', isCurrent: false },
-      { id: 'r3', version: 'v2.1.0-beta', environment: 'staging', status: 'pending', releaseNotes: '测试新功能', createdAt: '2026-06-28 16:00:00', isCurrent: false },
-      { id: 'r4', version: 'v1.8.0', environment: 'production', status: 'released', releaseNotes: '性能优化', createdAt: '2026-06-25 09:00:00', isCurrent: false },
-    ]
-    total.value = dataList.value.length
-  }
 }
 
 onMounted(async () => { await loadAppList(); loadData(); loadPlans(); loadPermissions() })
@@ -58,11 +53,13 @@ function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1
 function handleAdd() { editingId.value = null; formData.value = {}; dialogTitle.value = '新增发布记录'; showDialog.value = true }
 function handleEdit(row: any) { editingId.value = row.id; formData.value = { ...row }; dialogTitle.value = '编辑发布记录'; showDialog.value = true }
 async function handleDelete(row: any) {
-  try { await ElMessageBox.confirm('确定要删除该记录吗？', '提示', { type: 'warning' }) } catch { return }
-  dataList.value = dataList.value.filter((d: any) => d.id !== row.id)
-  total.value = dataList.value.length
-  try { await api.revokeKnowledge(selectedAppId.value, row.id) } catch {}
-  ElMessage.success('删除成功')
+  try { await ElMessageBox.confirm('确定要删除该记录吗？已上线的版本将先下线。', '提示', { type: 'warning' }) } catch { return }
+  try {
+    if (row.status === 'released') await api.revokeAppPublish(selectedAppId.value, row.id)
+    dataList.value = dataList.value.filter((d: any) => d.id !== row.id)
+    total.value = dataList.value.length
+    ElMessage.success('删除成功')
+  } catch { ElMessage.error('删除失败') }
 }
 async function handleSave() {
   if (!formData.value.version) { ElMessage.warning('请填写版本号'); return }
@@ -77,23 +74,24 @@ async function handleSave() {
   showDialog.value = false
 }
 async function handlePublish(row: any) {
-  row.status = 'released'; row.isCurrent = true
-  dataList.value.forEach((d: any) => { if (d.id !== row.id) d.isCurrent = false })
-  try { await api.publishApp(selectedAppId.value, { version: row.version }) } catch {}
-  ElMessage.success('已发布')
+  try {
+    await api.publishApp(selectedAppId.value, { id: row.id, version: row.version })
+    ElMessage.success('已发布'); loadData()
+  } catch { ElMessage.error('发布失败') }
 }
 async function handleRevoke(row: any) {
-  try { await ElMessageBox.confirm('确认撤回该版本？', '撤回确认', { type: 'warning' }) } catch { return }
-  row.status = 'rolled_back'; row.isCurrent = false
-  try { await api.revokeKnowledge(selectedAppId.value, row.id) } catch {}
-  ElMessage.success('已撤回')
+  try { await ElMessageBox.confirm('确认撤回该版本？撤回后机器人将下线。', '撤回确认', { type: 'warning' }) } catch { return }
+  try {
+    await api.revokeAppPublish(selectedAppId.value, row.id)
+    ElMessage.success('已撤回'); loadData()
+  } catch { ElMessage.error('撤回失败') }
 }
 async function handleReset(row: any) {
-  try { await ElMessageBox.confirm('确认重置为上一版本？', '重置确认', { type: 'warning' }) } catch { return }
-  row.status = 'published'; row.isCurrent = true
-  dataList.value.forEach((d: any) => { if (d.id !== row.id) d.isCurrent = false })
-  try { await api.publishApp(selectedAppId.value, { version: row.version, rollback: true }) } catch {}
-  ElMessage.success('已重置')
+  try { await ElMessageBox.confirm('确认重新上线该版本？', '重置确认', { type: 'warning' }) } catch { return }
+  try {
+    await api.publishApp(selectedAppId.value, { id: row.id, version: row.version })
+    ElMessage.success('已重置上线'); loadData()
+  } catch { ElMessage.error('重置失败') }
 }
 
 // ===== 发布计划 CRUD (#4841) =====
@@ -129,7 +127,6 @@ async function handleDeletePlan(row: any) {
 }
 async function handleExecutePlan(row: any) {
   row.status = 'active'
-  try { await api.publishApp(selectedAppId.value, { version: 'plan_' + Date.now(), planId: row.id }) } catch {}
   ElMessage.success('计划已执行')
 }
 
@@ -189,7 +186,7 @@ async function handleDeletePerm(row: any) {
             <el-table-column label="版本" width="110">
               <template #default="{ row }">
                 <span>{{ row.version || '-' }}</span>
-                <el-tag v-if="row.isCurrent" type="success" size="small" style="margin-left:4px">线上</el-tag>
+                <el-tag v-if="isOnline(row)" type="success" size="small" style="margin-left:4px">线上</el-tag>
                 <el-tag v-else-if="row.status==='rolled_back'" type="danger" size="small" style="margin-left:4px">下线</el-tag>
               </template>
             </el-table-column>
@@ -202,8 +199,8 @@ async function handleDeletePerm(row: any) {
             <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }">
                 <el-button v-if="row.status==='pending'||row.status==='draft'" link type="success" size="small" @click="handlePublish(row)">发布</el-button>
-                <el-button v-if="row.status==='released'&&row.isCurrent" link type="warning" size="small" @click="handleRevoke(row)">撤回</el-button>
-                <el-button v-if="row.status==='rolled_back'||(row.status==='released'&&!row.isCurrent)" link type="primary" size="small" @click="handleReset(row)">重置</el-button>
+                <el-button v-if="isOnline(row)" link type="warning" size="small" @click="handleRevoke(row)">撤回</el-button>
+                <el-button v-if="row.status==='rolled_back'||(row.status==='released'&&!isOnline(row))" link type="primary" size="small" @click="handleReset(row)">重置</el-button>
                 <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
                 <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
               </template>
@@ -223,7 +220,7 @@ async function handleDeletePerm(row: any) {
           <div class="section-header"><div class="section-title">发布计划</div><el-button type="primary" @click="handleAddPlan">新建计划</el-button></div>
           <el-table :data="plans" stripe size="small">
             <el-table-column prop="name" label="计划名称" min-width="160" />
-            <el-table-column prop="strategy" label="策略" width="100"><template #default="{row}">{{ {immediate:'立即',scheduled:'定时',incremental:'增量',full:'全量'}[row.strategy]||row.strategy }}</template></el-table-column>
+            <el-table-column prop="strategy" label="策略" width="100"><template #default="{row}">{{ ({immediate:'立即',scheduled:'定时',incremental:'增量',full:'全量'} as Record<string,string>)[row.strategy]||row.strategy }}</template></el-table-column>
             <el-table-column prop="scheduledTime" label="计划时间" width="150" />
             <el-table-column prop="scope" label="范围" width="80" />
             <el-table-column label="状态" width="80"><template #default="{row}"><el-tag :type="row.status==='active'?'success':'info'" size="small">{{ row.status==='active'?'执行中':'待执行' }}</el-tag></template></el-table-column>

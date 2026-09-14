@@ -1,0 +1,10 @@
+[2026-09-11T12:23:20.058] [WARN] [localhost] [docId] [userId] nodeJS - num of CPUs: 8; availableParallelism: undefined
+[2026-09-11T12:23:20.062] [WARN] [localhost] [docId] [userId] nodeJS - update cluster with 1 workers
+[2026-09-11T12:23:20.073] [WARN] [localhost] [docId] [userId] nodeJS - worker 1026 started.
+[2026-09-11T12:23:20.075] [WARN] [localhost] [docId] [userId] nodeJS - num of CPUs: 8; availableParallelism: undefined
+[2026-09-11T12:23:20.077] [WARN] [localhost] [docId] [userId] nodeJS - update cluster with 1 workers
+[2026-09-11T12:23:57.832] [WARN] [localhost] [docId] [userId] nodeJS - num of CPUs: 8; availableParallelism: undefined
+[2026-09-11T12:23:57.840] [WARN] [localhost] [docId] [userId] nodeJS - update cluster with 1 workers
+[2026-09-11T12:23:57.856] [WARN] [localhost] [docId] [userId] nodeJS - worker 1204 started.
+[2026-09-11T12:23:57.858] [WARN] [localhost] [docId] [userId] nodeJS - num of CPUs: 8; availableParallelism: undefined
+[2026-09-11T12:23:57.859] [WARN] [localhost] [docId] [userId] nodeJS - update cluster with 1 workers

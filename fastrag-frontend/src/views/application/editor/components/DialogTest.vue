@@ -121,9 +121,32 @@ async function handleSave() {
 async function handleDelete(row: any) {
   try { await ElMessageBox.confirm('确认删除？', '确认', { type: 'warning' }); await api.deleteAppDialogTest(appId(), row.id); await loadData(); ElMessage.success('已删除') } catch {}
 }
+
+// 运行测试案例（单条/全部）
+const runningId = ref('')
+const runResult = ref<any>(null)
+const showRunDialog = ref(false)
+const runningAll = ref(false)
+async function handleRun(row: any) {
+  runningId.value = row.id
+  try {
+    const r: any = await api.runAppDialogTest(appId(), row.id)
+    runResult.value = { name: row.name, ...r }
+    showRunDialog.value = true
+    await loadData()
+  } catch { ElMessage.error('运行失败') } finally { runningId.value = '' }
+}
+async function handleRunAll() {
+  runningAll.value = true
+  try {
+    const r: any = await api.runAllAppDialogTests(appId())
+    ElMessage.success(`批量执行完成（共 ${r?.length ?? 0} 条）`)
+    await loadData()
+  } catch { ElMessage.error('批量执行失败') } finally { runningAll.value = false }
+}
 async function handleExport() {
   try {
-    const blob = await api.exportAppDialogTests(appId()) as Blob
+    const blob = await api.exportAppDialogTests(appId()) as unknown as Blob
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `test_report_${Date.now()}.csv`; a.click(); URL.revokeObjectURL(url); ElMessage.success('已导出')
   } catch { ElMessage.error('导出失败') }
 }
@@ -136,6 +159,7 @@ onMounted(loadData)
         <div class="section-title">对话测试</div>
         <div style="display:flex;gap:8px">
           <el-button size="small" @click="openRecorder">录制测试</el-button>
+          <el-button size="small" type="success" :loading="runningAll" @click="handleRunAll">全部运行</el-button>
           <el-button size="small" @click="showImportDialog = true">批量导入</el-button>
           <el-button size="small" @click="handleExport">导出CSV</el-button>
           <el-button type="primary" size="small" @click="openAdd">新增测试</el-button>
@@ -146,7 +170,13 @@ onMounted(loadData)
         <el-table-column prop="query" label="问题" show-overflow-tooltip min-width="180" />
         <el-table-column prop="expectedAnswer" label="期望答案" show-overflow-tooltip min-width="180" />
         <el-table-column prop="tags" label="标签" width="100"><template #default="{row}"><el-tag v-if="row.tags" size="small">{{ parseTag(row.tags) }}</el-tag></template></el-table-column>
-        <el-table-column label="操作" width="130"><template #default="{row}"><el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button><el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button></template></el-table-column>
+        <el-table-column label="结果" width="90" align="center">
+          <template #default="{row}">
+            <el-tag v-if="row.matched !== null && row.matched !== undefined" :type="row.matched === 1 ? 'success' : 'danger'" size="small">{{ row.matched === 1 ? '通过' : '未通过' }}</el-tag>
+            <span v-else style="color:#c0c4cc;font-size:12px">未运行</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="190"><template #default="{row}"><el-button link type="success" size="small" :loading="runningId===row.id" @click="handleRun(row)">运行</el-button><el-button link type="primary" size="small" @click="openEdit(row)">编辑</el-button><el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button></template></el-table-column>
       </el-table>
       <div style="display:flex;justify-content:center;margin-top:12px">
         <el-pagination v-if="testList.length > pageSize" v-model:current-page="page" :page-size="pageSize" :total="testList.length" layout="prev, pager, next" small />
@@ -191,6 +221,18 @@ onMounted(loadData)
         <el-button @click="showRecorder=false">取消</el-button>
         <el-button type="success" @click="handleSaveRecorded" :disabled="!recordedQA">保存为测试案例</el-button>
       </template>
+    </el-dialog>
+
+    <!-- 运行结果弹窗 -->
+    <el-dialog v-model="showRunDialog" :title="'运行结果：' + (runResult?.name || '')" width="520px">
+      <el-descriptions v-if="runResult" :column="1" border size="small">
+        <el-descriptions-item label="实际回答">{{ runResult.actualAnswer || runResult.answer || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="是否匹配">
+          <el-tag :type="runResult.matched === 1 ? 'success' : 'danger'" size="small">{{ runResult.matched === 1 ? '通过' : '未通过' }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="相似度">{{ runResult.similarity != null ? (runResult.similarity * 100).toFixed(1) + '%' : '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <template #footer><el-button type="primary" @click="showRunDialog=false">关闭</el-button></template>
     </el-dialog>
 
     <!-- 批量导入弹窗 -->

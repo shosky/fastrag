@@ -11,4 +11,7 @@ public interface ModelService {
     Map<String,Object> createPreset(Map<String,Object> preset);
     Map<String,Object> updatePreset(String id, Map<String,Object> preset);
     void deletePreset(String id);
+    // 模型调用（真实 LLM 推理）+ 调用日志
+    Map<String,Object> invoke(String id,Map<String,Object> params);
+    List<ModelCallLog> listCallLogs(String id);
 }

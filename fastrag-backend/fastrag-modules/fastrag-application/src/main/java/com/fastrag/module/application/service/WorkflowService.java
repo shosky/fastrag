@@ -22,6 +22,18 @@ public interface WorkflowService {
     // 调试
     Map<String,Object> getDebugInfo(String wfId);
     Map<String,Object> saveDebugConfig(String wfId, Map<String,Object> cfg);
+    // 节点日志（查看/清理）+ 调试日志导出
+    List<WfDebugLog> listNodeLogs(String wfId, String nodeKey);
+    void clearNodeLogs(String wfId, String nodeKey);
+    // 清空业务流全部调试日志
+    void clearAllLogs(String wfId);
+    void exportDebugLogs(String wfId, jakarta.servlet.http.HttpServletResponse resp) throws Exception;
+    // 测试案例运行
+    Map<String,Object> runTestCase(String wfId, String tcId);
+    // 优化扩展：分析 / 测试效果 / 导出
+    Map<String,Object> analyzeOptimization(String wfId);
+    Map<String,Object> testOptimization(String optId);
+    void exportOptimizations(String wfId, jakarta.servlet.http.HttpServletResponse resp) throws Exception;
     // 优化
     List<WfOptimization> listOptimizations(String wfId);
     WfOptimization createOptimization(String wfId, WfOptimization o);

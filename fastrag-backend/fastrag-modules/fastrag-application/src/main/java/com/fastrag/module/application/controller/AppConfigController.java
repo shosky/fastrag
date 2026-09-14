@@ -129,4 +129,9 @@ public class AppConfigController {
     @DeleteMapping("/{appId}/debug/logs") public ApiResponse<?> clearDebugLogs(@PathVariable String appId) { svc.clearDebugLogs(appId); return ApiResponse.success(); }
     // 知识更新
     @PostMapping("/{appId}/knowledge-update") public ApiResponse<?> knowledgeUpdate(@PathVariable String appId,@RequestBody Map<String,Object> cfg) { return ApiResponse.success(svc.triggerKnowledgeUpdate(appId,cfg)); }
+    // 自动更新配置（读取/保存）
+    @GetMapping("/{appId}/knowledge-update") public ApiResponse<?> getAutoUpdate(@PathVariable String appId) { return ApiResponse.success(svc.getAutoKnowledgeUpdate(appId)); }
+    @PutMapping("/{appId}/knowledge-update") public ApiResponse<?> saveAutoUpdate(@PathVariable String appId,@RequestBody Map<String,Object> cfg) { return ApiResponse.success(svc.saveAutoKnowledgeUpdate(appId,cfg)); }
+    // 重置对话配置：恢复默认
+    @PostMapping("/{appId}/dialog/reset") public ApiResponse<?> resetDialog(@PathVariable String appId) { return ApiResponse.success(svc.resetDialog(appId)); }
 }

@@ -2,13 +2,14 @@ package com.fastrag.module.knowledge.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.knowledge.entity.*; import com.fastrag.module.knowledge.mapper.*;
 import com.fastrag.module.knowledge.service.PublishManageService;
-import com.fastrag.module.publish.entity.KbUpdateLog;
-import com.fastrag.module.publish.mapper.KbUpdateLogMapper;
-import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
-import java.time.LocalDateTime; import java.util.*;
+import com.fastrag.module.publish.entity.KbReviewTask; import com.fastrag.module.publish.entity.KbUpdateLog;
+import com.fastrag.module.publish.mapper.KbReviewTaskMapper; import com.fastrag.module.publish.mapper.KbUpdateLogMapper;
+import lombok.RequiredArgsConstructor; import lombok.extern.slf4j.Slf4j; import org.springframework.stereotype.Service;
+import java.net.URI; import java.net.http.HttpClient; import java.net.http.HttpRequest; import java.net.http.HttpResponse;
+import java.time.Duration; import java.time.LocalDateTime; import java.time.format.DateTimeFormatter; import java.util.*;
 import java.util.regex.Pattern;
 import org.springframework.transaction.annotation.Transactional;
-@Service @RequiredArgsConstructor
+@Slf4j @Service @RequiredArgsConstructor
 public class PublishManageServiceImpl implements PublishManageService {
     private final KbPublishHistoryMapper2 phMapper; private final KbPublishPlanMapper ppMapper;
     private final KbReviewStrategyMapper rsMapper; private final KbComplianceRuleMapper crMapper; private final KbQualityRuleMapper qrMapper;
@@ -16,6 +17,7 @@ public class PublishManageServiceImpl implements PublishManageService {
     private final KbListenerMapper liMapper; private final KbListenerLogMapper llMapper;
     private final KbResetConfigMapper rcMapper; private final KbKnowledgeMapper kmMapper; private final KbKnowledgeUpdateMapper kmUpdateMapper;
     private final KbUpdateLogMapper kbUpdateLogMapper;
+    private final KbReviewTaskMapper reviewTaskMapper;
     // ===== 发布管理 =====
     @Override public List<KbPublishHistory> listPublishHistory(String kbId,String knowledgeId) {
         var w=new LambdaQueryWrapper<KbPublishHistory>();
@@ -101,7 +103,7 @@ public class PublishManageServiceImpl implements PublishManageService {
     @Override public void deleteListener(String id) { liMapper.deleteById(id); }
     @Override public List<KbListenerLog> listListenerLogs(String listenerId, String level, int page, int pageSize) {
         var w=new LambdaQueryWrapper<KbListenerLog>().eq(KbListenerLog::getListenerId,listenerId);
-        if(level!=null&&!level.isEmpty()) w.eq(KbListenerLog::getLevel,level);
+        // 注意：level 为 @TableField(exist=false)，不能作为 SQL 过滤条件（原实现传 level 会运行时报错）
         return llMapper.selectList(w.orderByDesc(KbListenerLog::getCreatedAt).last("LIMIT "+pageSize+" OFFSET "+((page-1)*pageSize)));
     }
     @Override public void clearListenerLogs(String id, String beforeDate) {
@@ -109,14 +111,34 @@ public class PublishManageServiceImpl implements PublishManageService {
         if(beforeDate!=null&&!beforeDate.isEmpty()) w.le(KbListenerLog::getCreatedAt, LocalDateTime.parse(beforeDate+"T00:00:00"));
         llMapper.delete(w);
     }
+    // 监听执行统计：按 kb_listener_log 真实聚合
     @Override public Map<String,Object> getListenerStats(String id) {
-        Map<String,Object> r=new LinkedHashMap<>(); r.put("listenerId",id); r.put("totalExecutions",1250); r.put("successRate",99.2);
-        r.put("avgLatencyMs",45); r.put("lastRunAt",LocalDateTime.now().minusMinutes(5)); return r;
+        long total=llMapper.selectCount(new LambdaQueryWrapper<KbListenerLog>().eq(KbListenerLog::getListenerId,id));
+        long success=llMapper.selectCount(new LambdaQueryWrapper<KbListenerLog>().eq(KbListenerLog::getListenerId,id).eq(KbListenerLog::getStatus,"success"));
+        var l=liMapper.selectById(id);
+        Map<String,Object> r=new LinkedHashMap<>();
+        r.put("listenerId",id);
+        r.put("totalExecutions",total);
+        r.put("successRate",total==0?0.0:Math.round(success*1000.0/total)/10.0);
+        r.put("lastRunAt",l!=null?l.getLastRunAt():null);
+        return r;
     }
+    // 监听执行趋势：按天聚合最近 N 天执行次数
     @Override public List<Map<String,Object>> getListenerTrends(String id, int days) {
+        var logs=llMapper.selectList(new LambdaQueryWrapper<KbListenerLog>()
+            .eq(KbListenerLog::getListenerId,id)
+            .ge(KbListenerLog::getCreatedAt,LocalDateTime.now().minusDays(days)));
+        Map<String,Long> byDate=new TreeMap<>();
+        for(var g:logs) {
+            String d=g.getCreatedAt()==null?"-":g.getCreatedAt().format(DateTimeFormatter.ofPattern("yyyy-MM-dd"));
+            byDate.merge(d,1L,Long::sum);
+        }
         List<Map<String,Object>> trends=new ArrayList<>();
-        for(int i=days-1;i>=0;i--){
-            Map<String,Object> point=new LinkedHashMap<>(); point.put("date",LocalDateTime.now().minusDays(i).toLocalDate()); point.put("count",(int)(Math.random()*50+10)); trends.add(point);
+        for(int i=days-1;i>=0;i--) {
+            String d=LocalDateTime.now().minusDays(i).toLocalDate().toString();
+            Map<String,Object> point=new LinkedHashMap<>();
+            point.put("date",d); point.put("count",byDate.getOrDefault(d,0L));
+            trends.add(point);
         }
         return trends;
     }
@@ -138,10 +160,21 @@ public class PublishManageServiceImpl implements PublishManageService {
         Map<String,Object> r=new LinkedHashMap<>(); r.put("offlineCount",list.size()); r.put("versions",list);
         return r;
     }
+    // 审核策略执行历史：按策略所属 KB 聚合真实审核任务（原为硬编码）
     @Override public List<Map<String,Object>> getReviewHistory(String strategyId) {
+        var s=rsMapper.selectById(strategyId);
+        var w=new LambdaQueryWrapper<KbReviewTask>().orderByDesc(KbReviewTask::getCreatedAt).last("LIMIT 50");
+        if(s!=null&&s.getKbId()!=null&&!s.getKbId().isEmpty()) w.eq(KbReviewTask::getKbId,s.getKbId());
         List<Map<String,Object>> history=new ArrayList<>();
-        Map<String,Object> h1=new LinkedHashMap<>(); h1.put("strategyId",strategyId); h1.put("action","created"); h1.put("operator","admin"); h1.put("time",LocalDateTime.now().minusDays(7)); history.add(h1);
-        Map<String,Object> h2=new LinkedHashMap<>(); h2.put("strategyId",strategyId); h2.put("action","updated"); h2.put("operator","admin"); h2.put("time",LocalDateTime.now().minusDays(1)); history.add(h2);
+        for(var t:reviewTaskMapper.selectList(w)) {
+            Map<String,Object> h=new LinkedHashMap<>();
+            h.put("strategyId",strategyId);
+            h.put("action",t.getStatus());
+            h.put("operator",t.getReviewer()!=null?t.getReviewer():t.getApplicant());
+            h.put("comment",t.getComment());
+            h.put("time",t.getReviewedAt()!=null?t.getReviewedAt():t.getCreatedAt());
+            history.add(h);
+        }
         return history;
     }
     @Override public Map<String,Object> setReviewTimeout(String strategyId, Map<String,Object> config) {
@@ -433,5 +466,69 @@ public class PublishManageServiceImpl implements PublishManageService {
         copy.setOrderNum(newOrder);
         rnMapper.insert(copy);
         return copy;
+    }
+    // ===== 监听器分发：向启用的监听器 URL 推送事件，写执行日志 =====
+    private static final HttpClient HTTP_CLIENT = HttpClient.newBuilder().connectTimeout(Duration.ofSeconds(3)).build();
+    @Override public Map<String,Object> dispatchListeners(String kbId, String eventType, String message) {
+        var listeners=liMapper.selectList(new LambdaQueryWrapper<KbListener>()
+            .eq(KbListener::getKbId,kbId).eq(KbListener::getStatus,"enabled"));
+        int success=0,failed=0;
+        for(var l:listeners) {
+            if(l.getTarget()==null||l.getTarget().isBlank()) continue;
+            // config(JSON) 非空时要求包含事件类型，空视为订阅全部事件
+            if(l.getConfig()!=null&&!l.getConfig().isBlank()&&!l.getConfig().contains(eventType)) continue;
+            boolean ok=false; String detail;
+            try {
+                HttpRequest req=HttpRequest.newBuilder(URI.create(l.getTarget()))
+                    .timeout(Duration.ofSeconds(5))
+                    .header("Content-Type","application/json")
+                    .POST(HttpRequest.BodyPublishers.ofString("{\"eventType\":\""+eventType+"\",\"message\":\""+
+                        (message==null?"":message.replace("\\","\\\\").replace("\"","\\\""))+"\"}"))
+                    .build();
+                HttpResponse<String> resp=HTTP_CLIENT.send(req,HttpResponse.BodyHandlers.ofString());
+                ok=resp.statusCode()>=200&&resp.statusCode()<300;
+                detail="HTTP "+resp.statusCode();
+            } catch (Exception e) {
+                detail=e.getClass().getSimpleName()+": "+(e.getMessage()==null?"":e.getMessage().substring(0,Math.min(e.getMessage().length(),120)));
+            }
+            try {
+                var g=new KbListenerLog();
+                g.setListenerId(l.getId()); g.setEventType(eventType);
+                g.setMessage((message==null?"":message)+" ["+detail+"]");
+                g.setStatus(ok?"success":"failed");
+                g.setCreatedAt(LocalDateTime.now());
+                llMapper.insert(g);
+            } catch (Exception ignore) { }
+            var upd=new KbListener(); upd.setId(l.getId()); upd.setLastRunAt(LocalDateTime.now()); liMapper.updateById(upd);
+            if(ok) success++; else failed++;
+        }
+        Map<String,Object> r=new LinkedHashMap<>();
+        r.put("eventType",eventType); r.put("notified",listeners.size()); r.put("success",success); r.put("failed",failed);
+        return r;
+    }
+    // ===== 知识质量趋势：按月聚合审核任务与发布记录 =====
+    @Override public List<Map<String,Object>> getQualityTrend(String kbId, int months) {
+        List<Map<String,Object>> trend=new ArrayList<>();
+        var tasks=reviewTaskMapper.selectList(new LambdaQueryWrapper<KbReviewTask>().eq(KbReviewTask::getKbId,kbId));
+        var pubs=phMapper.selectList(new LambdaQueryWrapper<KbPublishHistory>().eq(KbPublishHistory::getKbId,kbId));
+        DateTimeFormatter fmt=DateTimeFormatter.ofPattern("yyyy-MM");
+        for(int i=months-1;i>=0;i--) {
+            String month=LocalDateTime.now().minusMonths(i).format(fmt);
+            long total=0,approved=0,published=0;
+            for(var t:tasks) {
+                String m=t.getCreatedAt()!=null?t.getCreatedAt().format(fmt):null;
+                if(month.equals(m)) { total++; if("approved".equals(t.getStatus())) approved++; }
+            }
+            for(var p:pubs) {
+                String m=p.getCreatedAt()!=null?p.getCreatedAt().format(fmt):null;
+                if(month.equals(m)&&"published".equals(p.getStatus())) published++;
+            }
+            Map<String,Object> point=new LinkedHashMap<>();
+            point.put("month",month); point.put("reviewTotal",total);
+            point.put("passRate",total==0?0:Math.round(approved*100.0/total));
+            point.put("published",published);
+            trend.add(point);
+        }
+        return trend;
     }
 }

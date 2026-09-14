@@ -276,7 +276,63 @@ async function handleResetDefault(row: any) {
   } catch { /* cancelled */ }
 }
 
-onMounted(() => { loadPolicies(); loadStrategies(); loadConfigs() })
+onMounted(() => { loadPolicies(); loadStrategies(); loadConfigs(); loadKbs(); loadBinding(); loadStatuses() })
+
+// ============================================================================
+// 4. 审核流程绑定 + 发布/审核状态
+// ============================================================================
+const kbOptions = ref<any[]>([])
+const templateOptions = ref<any[]>([])
+const bindingForm = ref({ kbId: '', templateId: '', enabled: true })
+const bindingSaving = ref(false)
+const publishStatus = ref<any>(null)
+const reviewStatus = ref<any>(null)
+
+async function loadKbs() {
+  try {
+    const res: any = await api.getKnowledgeBases()
+    kbOptions.value = Array.isArray(res) ? res : res?.list || []
+  } catch { kbOptions.value = [] }
+}
+async function loadTemplates(kbId: string) {
+  try {
+    const res: any = await api.getReviewTemplates(kbId)
+    templateOptions.value = Array.isArray(res) ? res : res?.list || []
+  } catch { templateOptions.value = [] }
+}
+async function handleBindingKbChange(kbId: string) { bindingForm.value.templateId = ''; await loadTemplates(kbId) }
+async function loadBinding() {
+  try {
+    const res: any = await api.getReviewFlowBinding()
+    const b = typeof res === 'string' ? JSON.parse(res) : (res || {})
+    bindingForm.value = { kbId: b.kbId || '', templateId: b.templateId || '', enabled: b.enabled !== false }
+    if (bindingForm.value.kbId) await loadTemplates(bindingForm.value.kbId)
+  } catch { /* 首次无配置 */ }
+}
+async function handleSaveBinding() {
+  if (!bindingForm.value.kbId) { ElMessage.warning('请选择知识库'); return }
+  if (!bindingForm.value.templateId) { ElMessage.warning('请选择审核流程模板'); return }
+  bindingSaving.value = true
+  try {
+    await api.updateReviewFlowBinding({ ...bindingForm.value })
+    ElMessage.success('审核流程绑定已保存')
+  } catch { ElMessage.error('保存失败') } finally { bindingSaving.value = false }
+}
+function parseStatus(v: any) { try { return typeof v === 'string' ? JSON.parse(v) : (v || null) } catch { return null } }
+async function loadStatuses() {
+  try { publishStatus.value = parseStatus(await api.getPublishStatus()) } catch { publishStatus.value = null }
+  try { reviewStatus.value = parseStatus(await api.getReviewStatus()) } catch { reviewStatus.value = null }
+}
+async function handleTogglePublish(val: boolean) {
+  await api.updatePublishSwitch({ enabled: val })
+  await loadStatuses()
+  ElMessage.success('发布开关已更新')
+}
+async function handleToggleReview(val: boolean) {
+  await api.updateReviewSwitch({ enabled: val })
+  await loadStatuses()
+  ElMessage.success('审核开关已更新')
+}
 </script>
 
 <template>
@@ -383,11 +439,44 @@ onMounted(() => { loadPolicies(); loadStrategies(); loadConfigs() })
         </div>
       </el-tab-pane>
 
-      <!-- ===== Tab 4: 审核流程选择（保留原有） ===== -->
+      <!-- ===== Tab 4: 审核流程绑定 + 发布/审核状态 ===== -->
       <el-tab-pane label="审核流程" name="review">
+        <div class="card-panel" style="margin-bottom:16px">
+          <div class="section-title" style="margin-bottom:12px">发布 / 审核状态</div>
+          <div style="display:flex;gap:24px;flex-wrap:wrap">
+            <div style="display:flex;align-items:center;gap:10px">
+              <span>发布状态</span>
+              <el-tag :type="publishStatus?.enabled ? 'success' : 'info'" size="small">{{ publishStatus?.enabled ? '已开启' : '已关闭' }}</el-tag>
+              <el-switch :model-value="!!publishStatus?.enabled" size="small" @change="(v: any) => handleTogglePublish(!!v)" />
+            </div>
+            <div style="display:flex;align-items:center;gap:10px">
+              <span>审核状态</span>
+              <el-tag :type="reviewStatus?.enabled ? 'success' : 'info'" size="small">{{ reviewStatus?.enabled ? '已开启' : '已关闭' }}</el-tag>
+              <el-switch :model-value="!!reviewStatus?.enabled" size="small" @change="(v: any) => handleToggleReview(!!v)" />
+            </div>
+          </div>
+        </div>
         <div class="card-panel">
-          <div class="section-title">审核流程选择</div>
-          <p class="desc-text">审核流程配置详见「知识审核」模块的流程设计页面</p>
+          <div class="section-title" style="margin-bottom:12px">绑定审核流程</div>
+          <el-form label-width="110px" style="max-width:520px">
+            <el-form-item label="知识库" required>
+              <el-select v-model="bindingForm.kbId" filterable placeholder="选择知识库" style="width:100%" @change="handleBindingKbChange">
+                <el-option v-for="k in kbOptions" :key="k.id" :label="k.name" :value="k.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="流程模板" required>
+              <el-select v-model="bindingForm.templateId" filterable placeholder="选择审核流程模板" style="width:100%" :disabled="!bindingForm.kbId">
+                <el-option v-for="t in templateOptions" :key="t.id" :label="t.name || t.templateName" :value="t.id" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="启用绑定">
+              <el-switch v-model="bindingForm.enabled" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="bindingSaving" @click="handleSaveBinding">保存绑定</el-button>
+            </el-form-item>
+            <p class="desc-text">绑定后，该知识库的版本发布将按所选审核流程执行；流程节点在「知识审核 → 流程设计」中维护。</p>
+          </el-form>
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -462,7 +551,7 @@ onMounted(() => { loadPolicies(); loadStrategies(); loadConfigs() })
       <el-timeline v-if="historyList.length">
         <el-timeline-item v-for="h in historyList" :key="h.id" :timestamp="h.timestamp" placement="top">
           <p style="margin:0">
-            <el-tag :type="CHANGE_TYPE_TAG[h.changeType] || 'info'" size="small">{{ CHANGE_TYPE_LABEL[h.changeType] || h.changeType }}</el-tag>
+            <el-tag :type="(CHANGE_TYPE_TAG[h.changeType] || 'info') as any" size="small">{{ CHANGE_TYPE_LABEL[h.changeType] || h.changeType }}</el-tag>
             <span style="margin-left:8px;font-size:12px;color:#909399">操作人：{{ h.operator || '-' }}</span>
           </p>
           <div v-if="h.oldValue" style="margin-top:4px;font-size:12px">

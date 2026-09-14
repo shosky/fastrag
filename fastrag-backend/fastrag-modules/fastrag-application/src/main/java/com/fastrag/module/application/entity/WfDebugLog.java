@@ -1,7 +1,7 @@
 package com.fastrag.module.application.entity;
 import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.time.LocalDateTime;
 @Data @TableName("wf_debug_log") public class WfDebugLog {
-    @TableId(type=IdType.ASSIGN_ID) private String id;
+    @TableId(type=IdType.AUTO) private Long id;
     private String appId,workflowId,dbId,module,nodeKey,nodeType;
     private String name,description,type,status,operator,varType,varKey;
     private String alias,scopeType,scopeValue,configSnapshot,suggestionType;

@@ -3,7 +3,7 @@ import com.fastrag.common.response.ApiResponse; import com.fastrag.module.knowle
 import com.fastrag.module.knowledge.service.KnowledgeEditService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;
-import java.util.Map;
+import java.util.List; import java.util.Map;
 @RestController @RequestMapping("/api/kb/{kbId}/knowledge-edits") @RequiredArgsConstructor
 public class KnowledgeEditController {
     private final KnowledgeEditService svc;
@@ -12,6 +12,11 @@ public class KnowledgeEditController {
     @GetMapping("/export") public void export(@PathVariable String kbId,@RequestParam(required=false) String ids,@RequestParam(required=false) String status,@RequestParam(required=false) String editor,HttpServletResponse resp) throws Exception { svc.exportCsv(kbId,ids,status,editor,resp); }
     @GetMapping("/{id}") public ApiResponse<?> get(@PathVariable String id) { return ApiResponse.success(svc.get(id)); }
     @PostMapping public ApiResponse<?> create(@PathVariable String kbId,@RequestBody KbKnowledgeEdit edit) { edit.setKbId(kbId); return ApiResponse.success(svc.create(edit)); }
+    // 批量导入采编记录（JSON 数组），与 /media/{type}/import 同构
+    @PostMapping("/import") public ApiResponse<?> importEdits(@PathVariable String kbId,@RequestBody List<KbKnowledgeEdit> items) {
+        int imported=0; for(var item:items){ item.setId(null); item.setKbId(kbId); svc.create(item); imported++; }
+        return ApiResponse.success(Map.of("imported",imported));
+    }
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@RequestBody KbKnowledgeEdit edit) { return ApiResponse.success(svc.update(id,edit)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }
     @PostMapping("/{id}/submit") public ApiResponse<?> submit(@PathVariable String id) { return ApiResponse.success(svc.submit(id)); }

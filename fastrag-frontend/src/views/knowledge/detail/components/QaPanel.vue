@@ -1,14 +1,12 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { getQaPairs, addQaPair, updateQaPair, deleteQaPair, confirmQaPair, extractQaFromChunks } from '@/mock/qa-pairs'
-import { getFiles } from '@/mock/files'
-import type { QaPair } from '@/types/knowledge'
+import * as api from '@/api'
 
 const props = defineProps<{ kbId: string }>()
 
 const loading = ref(false)
-const dataList = ref<QaPair[]>([])
+const dataList = ref<any[]>([])
 const total = ref(0)
 const currentPage = ref(1)
 const pageSize = ref(20)
@@ -28,21 +26,13 @@ const extractFileIds = ref<string[]>([])
 const fileList = ref<any[]>([])
 const extracting = ref(false)
 
-// 扩展字段（FAQ增强）
-const categories = ['常见问题', '账户相关', '支付相关', '物流相关', '技术问题', '投诉建议']
-const answerTypes = [
-  { label: '纯文本', value: 'text' },
-  { label: '富文本', value: 'rich' },
-  { label: '表格', value: 'table' },
-]
+// 状态选项与标签
 const statusOptions = [
   { label: '草稿', value: 'draft' },
   { label: '已确认', value: 'confirmed' },
-  { label: '启用', value: 'active' },
-  { label: '停用', value: 'disabled' },
 ]
-const STATUS_LABELS: Record<string, string> = { draft: '草稿', confirmed: '已确认', active: '启用', disabled: '停用' }
-const STATUS_COLORS: Record<string, string> = { draft: 'info', confirmed: 'warning', active: 'success', disabled: 'danger' }
+const STATUS_LABELS: Record<string, string> = { draft: '草稿', confirmed: '已确认' }
+const STATUS_COLORS: Record<string, string> = { draft: 'info', confirmed: 'warning' }
 const SOURCE_LABELS: Record<string, string> = { manual: '手动录入', ai: 'AI抽取' }
 
 const filteredList = computed(() => {
@@ -61,8 +51,8 @@ const filteredList = computed(() => {
 async function loadData() {
   loading.value = true
   try {
-    const pairs = getQaPairs(props.kbId)
-    dataList.value = pairs || []
+    const res: any = await api.getQaPairs(props.kbId)
+    dataList.value = res || []
     total.value = dataList.value.length
   } finally { loading.value = false }
 }
@@ -70,30 +60,26 @@ onMounted(loadData)
 
 function handleAdd() {
   editingId.value = null
-  formData.value = { status: 'draft', source: 'manual', answerType: 'text', keywords: '', similarQuestions: '', priority: 5 }
+  formData.value = { question: '', answer: '' }
   dialogTitle.value = '新增问答对'
   showDialog.value = true
 }
-function handleEdit(row: QaPair) {
+function handleEdit(row: any) {
   editingId.value = row.id
-  formData.value = {
-    ...row,
-    keywords: (row as any).keywords?.join(', ') || '',
-    similarQuestions: (row as any).similarQuestions?.join(', ') || '',
-  }
+  formData.value = { question: row.question || '', answer: row.answer || '' }
   dialogTitle.value = '编辑问答对'
   showDialog.value = true
 }
-async function handleDelete(row: QaPair) {
+async function handleDelete(row: any) {
   try {
     await ElMessageBox.confirm('确定要删除该问答对吗？', '提示', { type: 'warning' })
-    deleteQaPair(props.kbId, row.id)
+    await api.deleteQaPair(props.kbId, row.id)
     ElMessage.success('删除成功')
     loadData()
   } catch {}
 }
-async function handleConfirm(row: QaPair) {
-  confirmQaPair(props.kbId, row.id)
+async function handleConfirm(row: any) {
+  await api.confirmQaPair(props.kbId, row.id)
   ElMessage.success('已确认')
   loadData()
 }
@@ -101,27 +87,23 @@ async function handleSave() {
   if (!formData.value.question) { ElMessage.warning('请输入问题'); return }
   if (!formData.value.answer) { ElMessage.warning('请输入答案'); return }
   try {
-    const data = {
-      ...formData.value,
-      keywords: formData.value.keywords ? formData.value.keywords.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
-      similarQuestions: formData.value.similarQuestions ? formData.value.similarQuestions.split(',').map((s: string) => s.trim()).filter(Boolean) : [],
-    }
+    const data = { question: formData.value.question, answer: formData.value.answer }
     if (editingId.value) {
-      updateQaPair(props.kbId, editingId.value, data)
+      await api.updateQaPair(props.kbId, editingId.value, data)
       ElMessage.success('更新成功')
     } else {
-      addQaPair(props.kbId, data)
+      await api.createQaPair(props.kbId, { ...data, source: 'manual' })
       ElMessage.success('创建成功')
     }
     showDialog.value = false
     loadData()
-  } catch {}
+  } catch { ElMessage.error('保存失败') }
 }
 
 // AI抽取
 async function handleOpenExtract() {
-  const files = getFiles(props.kbId)
-  fileList.value = files?.filter((f: any) => f.status === 'completed') || []
+  const res: any = await api.getFiles(props.kbId)
+  fileList.value = (res?.list || res || []).filter((f: any) => f.status === 'completed')
   extractFileIds.value = []
   showExtractDialog.value = true
 }
@@ -129,11 +111,11 @@ async function handleExtract() {
   if (extractFileIds.value.length === 0) { ElMessage.warning('请选择文件'); return }
   extracting.value = true
   try {
-    extractQaFromChunks(props.kbId, extractFileIds.value)
+    await api.qaExtract(props.kbId, extractFileIds.value)
     ElMessage.success('抽取完成')
     showExtractDialog.value = false
     loadData()
-  } finally { extracting.value = false }
+  } catch { ElMessage.error('抽取失败') } finally { extracting.value = false }
 }
 
 function handleSearch() { currentPage.value = 1 }
@@ -195,62 +177,15 @@ function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1
     </div>
 
     <!-- 新增/编辑对话框 -->
-    <el-dialog v-model="showDialog" :title="dialogTitle" width="700px" :close-on-click-modal="false">
-      <el-form label-width="100px">
+    <el-dialog v-model="showDialog" :title="dialogTitle" width="600px" :close-on-click-modal="false">
+      <el-form label-width="80px">
         <el-form-item label="问题" required>
           <el-input v-model="formData.question" placeholder="请输入问题" />
         </el-form-item>
         <el-form-item label="答案" required>
-          <el-input v-model="formData.answer" type="textarea" :rows="4" placeholder="请输入答案" />
+          <el-input v-model="formData.answer" type="textarea" :rows="5" placeholder="请输入答案" />
         </el-form-item>
-        <el-row :gutter="16">
-          <el-col :span="12">
-            <el-form-item label="分类">
-              <el-select v-model="formData.category" placeholder="选择分类" clearable style="width: 100%">
-                <el-option v-for="c in categories" :key="c" :label="c" :value="c" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="答案类型">
-              <el-select v-model="formData.answerType" style="width: 100%">
-                <el-option v-for="opt in answerTypes" :key="opt.value" :label="opt.label" :value="opt.value" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-form-item label="触发关键词">
-          <el-input v-model="formData.keywords" placeholder="多个关键词用逗号分隔" />
-        </el-form-item>
-        <el-form-item label="相似问法">
-          <el-input v-model="formData.similarQuestions" placeholder="多个相似问法用逗号分隔" />
-        </el-form-item>
-        <el-row :gutter="16">
-          <el-col :span="12">
-            <el-form-item label="优先级">
-              <el-input-number v-model="formData.priority" :min="1" :max="10" style="width: 100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="状态">
-              <el-select v-model="formData.status" style="width: 100%">
-                <el-option v-for="opt in statusOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
-              </el-select>
-            </el-form-item>
-          </el-col>
-        </el-row>
-        <el-row :gutter="16">
-          <el-col :span="12">
-            <el-form-item label="生效时间">
-              <el-date-picker v-model="formData.effectiveTime" type="datetime" placeholder="选择生效时间" style="width: 100%" />
-            </el-form-item>
-          </el-col>
-          <el-col :span="12">
-            <el-form-item label="失效时间">
-              <el-date-picker v-model="formData.expireTime" type="datetime" placeholder="选择失效时间" style="width: 100%" />
-            </el-form-item>
-          </el-col>
-        </el-row>
+        <p style="font-size:12px;color:#909399;">新建后状态为「草稿」，可在列表中确认；AI 抽取的问答对来源于所选文件。</p>
       </el-form>
       <template #footer>
         <el-button @click="showDialog = false">取消</el-button>

@@ -8,6 +8,8 @@ import com.baomidou.mybatisplus.annotation.*; import com.fasterxml.jackson.annot
     private Integer version,viewCount;
     private Double qualityScore;
     private LocalDateTime createdAt,updatedAt;
+    // 回收站软删除标记：null=正常，非 null=已删除（可恢复）
+    @JsonIgnore private LocalDateTime deletedAt;
 
     @JsonProperty public void setTags(Object tags) { if(tags==null) this.tags=null; else if(tags instanceof CharSequence) this.tags=tags.toString(); else try{this.tags=MAPPER.writeValueAsString(tags);}catch(Exception e){this.tags=tags.toString();} }
 }

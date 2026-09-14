@@ -57,6 +57,7 @@ public class RetrievalServiceImpl implements RetrievalService {
             item.setSimilarity(1.0);
             item.setDistance(0.0);
             item.setSource("mysql");
+            applyHighlight(item, query);
             results.add(item);
         }
 
@@ -102,5 +103,33 @@ public class RetrievalServiceImpl implements RetrievalService {
     public long getChunkCount(String kbId) {
         return chunkMapper.selectCount(
                 new LambdaQueryWrapper<KbChunk>().eq(KbChunk::getKbId, kbId));
+    }
+
+    // 高亮定位：提取 query 命中的关键词（highlights）并生成带 <mark> 的预览片段（previewSnippet）
+    private void applyHighlight(SearchResultItem item, String query) {
+        String content = item.getContent() == null ? "" : item.getContent();
+        LinkedHashSet<String> tokens = new LinkedHashSet<>();
+        if (query != null && !query.isBlank()) {
+            tokens.add(query.trim());
+            for (String p : query.trim().split("[\\s]+")) {
+                if (p.length() >= 2) tokens.add(p);
+            }
+        }
+        List<String> hits = new ArrayList<>();
+        for (String t : tokens) {
+            if (t.length() >= 2 && content.contains(t) && hits.size() < 8) hits.add(t);
+        }
+        item.setHighlights(hits);
+        if (!hits.isEmpty()) {
+            String first = hits.get(0);
+            int pos = content.indexOf(first);
+            int start = Math.max(0, pos - 50);
+            int end = Math.min(content.length(), pos + first.length() + 70);
+            String snippet = content.substring(start, end);
+            for (String t : hits) snippet = snippet.replace(t, "<mark>" + t + "</mark>");
+            item.setPreviewSnippet((start > 0 ? "..." : "") + snippet + (end < content.length() ? "..." : ""));
+        } else {
+            item.setPreviewSnippet(content.length() > 120 ? content.substring(0, 120) + "..." : content);
+        }
     }
 }

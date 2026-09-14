@@ -18,18 +18,45 @@ const dialogForm = ref({
   showAvatar: 1,
   showFeedback: 1,
   showSuggestions: 1,
+  suggestions: '',
 })
+// 兜底话术（走全局策略 fallback 端点）
+const fallbackText = ref('')
 
 async function loadDialog() {
   try {
     const r: any = await api.getAppDialogConfig(appId())
     if (r) Object.assign(dialogForm.value, r)
   } catch { /* ignore */ }
+  try {
+    const p: any = await api.getAppGlobalPolicy(appId())
+    if (p?.fallbackText) fallbackText.value = p.fallbackText
+  } catch { /* ignore */ }
 }
 
 async function saveDialog() {
   await api.saveAppDialogConfig(appId(), dialogForm.value)
   ElMessage.success('对话配置已保存')
+}
+
+// 保存兜底话术（PUT /global-policy/fallback）
+const savingFallback = ref(false)
+async function saveFallback() {
+  savingFallback.value = true
+  try {
+    await api.saveAppFallback(appId(), { fallbackText: fallbackText.value })
+    ElMessage.success('兜底话术已保存')
+  } catch { ElMessage.error('保存失败') } finally { savingFallback.value = false }
+}
+
+// 重置对话配置（恢复默认）
+async function handleResetDialog() {
+  try {
+    await ElMessageBox.confirm('确认重置对话配置？所有自定义设置将恢复为默认值。', '重置确认', { type: 'warning' })
+    await api.resetAppDialogConfig(appId())
+    await loadDialog()
+    ElMessage.success('对话配置已重置')
+  } catch { /* cancelled */ }
 }
 
 async function handleExportDialog() {
@@ -189,6 +216,7 @@ onMounted(() => {
         <div class="section-actions">
           <el-button size="small" :icon="Download" @click="handleExportDialog">导出</el-button>
           <el-button size="small" :icon="UploadFilled" @click="handleImportDialog">导入</el-button>
+          <el-button size="small" type="warning" @click="handleResetDialog">重置</el-button>
         </div>
       </div>
       <el-form label-width="120px" style="margin-top:16px">
@@ -204,8 +232,28 @@ onMounted(() => {
         <el-form-item label="显示推荐">
           <el-switch v-model="dialogForm.showSuggestions" />
         </el-form-item>
+        <el-form-item label="答复后建议">
+          <el-input
+            v-model="dialogForm.suggestions"
+            type="textarea" :rows="3"
+            placeholder="开启「显示推荐」后展示的建议话术，每行一条，如：&#10;如何查询办理进度？&#10;还有哪些相关产品？"
+          />
+        </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="saveDialog">保存</el-button>
+        </el-form-item>
+      </el-form>
+      <el-divider style="margin: 8px 0 16px" />
+      <el-form label-width="120px">
+        <el-form-item label="兜底话术">
+          <el-input
+            v-model="fallbackText"
+            type="textarea" :rows="3"
+            placeholder="未匹配到答案时给用户的兜底回复，如：抱歉，我还没有学习到相关知识，您可以换个问法或联系人工客服。"
+          />
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" :loading="savingFallback" @click="saveFallback">保存兜底话术</el-button>
         </el-form-item>
       </el-form>
     </div>

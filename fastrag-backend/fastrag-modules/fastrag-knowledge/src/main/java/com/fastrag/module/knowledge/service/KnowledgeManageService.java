@@ -6,6 +6,11 @@ public interface KnowledgeManageService {
     KbKnowledge create(KbKnowledge knowledge);
     KbKnowledge update(String id,KbKnowledge knowledge);
     void delete(String id);
+    // 知识回收站：回收列表/恢复/彻底删除/清空（delete 为软删）
+    List<KbKnowledge> listDeleted(String kbId);
+    void restore(String id);
+    void permanentDelete(String id);
+    void emptyRecycleBin(String kbId);
     // AI 能力：更新封面图、获取内容
     void updateCoverImage(String id, String objectKey);
     String getContent(String id);

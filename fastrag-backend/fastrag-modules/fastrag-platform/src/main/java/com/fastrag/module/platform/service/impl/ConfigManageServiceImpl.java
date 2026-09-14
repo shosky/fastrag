@@ -1,5 +1,6 @@
 package com.fastrag.module.platform.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fastrag.ai.llm.LlmService;
 import com.fastrag.module.platform.entity.*; import com.fastrag.module.platform.mapper.*;
 import com.fastrag.module.platform.service.ConfigManageService;
 import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
@@ -9,6 +10,8 @@ public class ConfigManageServiceImpl implements ConfigManageService {
     private final SysConfigMapper configMapper; private final SysConfigHistoryMapper historyMapper;
     private final ModelTrainingMapper trainingMapper; private final ModelTestReportMapper testMapper;
     private final ModelRecordMapper modelMapper;
+    private final ModelCallLogMapper callLogMapper;
+    private final LlmService llmService;
     private final SysSecurityPolicyMapper securityPolicyMapper;
     private final SysPublishStrategyMapper publishStrategyMapper;
     // ===== 模型训练/测试 =====
@@ -20,13 +23,31 @@ public class ConfigManageServiceImpl implements ConfigManageService {
         t.setMetrics("{\"loss\":0.32,\"accuracy\":0.91}");
         trainingMapper.insert(t); return t;
     }
+    // 模型测试：真实调用 LLM（prompt 可由前端传入），计时并写调用日志
     @Override public ModelTestReport test(String modelId,Map<String,Object> params) {
         var model=modelMapper.selectById(modelId);
         var r=new ModelTestReport(); r.setModelId(modelId); r.setModelName(model!=null?model.getName():modelId);
-        r.setTestDataset((String)params.get("testDataset")); r.setStatus("completed");
-        r.setTestCount(params.get("testCount") instanceof Number?((Number)params.get("testCount")).intValue():100);
-        r.setScore("0.92"); r.setMetrics("{\"accuracy\":0.92,\"f1\":0.89,\"latency\":280}");
-        testMapper.insert(r); return r;
+        r.setTestDataset((String)params.get("testDataset"));
+        String prompt=params.get("prompt")!=null&&!params.get("prompt").toString().isBlank()
+            ?params.get("prompt").toString():"你好，请用一句话做自我介绍";
+        long start=System.currentTimeMillis();
+        String resp=model!=null?llmService.chat(model.getCode(),prompt,model.getApiUrl(),model.getApiKeyRef()):"模型不存在";
+        long latency=System.currentTimeMillis()-start;
+        boolean ok=model!=null&&resp!=null&&!resp.startsWith("模型调用失败");
+        r.setStatus(ok?"completed":"failed");
+        r.setTestCount(params.get("testCount") instanceof Number?((Number)params.get("testCount")).intValue():1);
+        r.setScore(ok?"1.00":"0.00");
+        String metrics="{\"success\":"+(ok?"true":"false")+",\"latency\":"+latency+",\"response\":\""+
+            (resp==null?"":resp.replace("\\","\\\\").replace("\"","\\\"")).substring(0,Math.min(resp==null?0:resp.length(),500))+"\"}";
+        r.setMetrics(metrics);
+        testMapper.insert(r);
+        try {
+            var log=new ModelCallLog(); log.setModelId(modelId); log.setCaller("test");
+            log.setStatus(ok?"success":"failed"); log.setDuration((int)Math.min(latency,Integer.MAX_VALUE));
+            log.setTokens(resp==null?0:resp.length()); log.setTimestamp(LocalDateTime.now());
+            callLogMapper.insert(log);
+        } catch (Exception ignore) { }
+        return r;
     }
     @Override public List<ModelTraining> listTrainings(String modelId) { return trainingMapper.selectList(new LambdaQueryWrapper<ModelTraining>().eq(modelId!=null&&!modelId.isEmpty(),ModelTraining::getModelId,modelId).orderByDesc(ModelTraining::getCreatedAt)); }
     @Override public List<ModelTestReport> listTestReports(String modelId) { return testMapper.selectList(new LambdaQueryWrapper<ModelTestReport>().eq(modelId!=null&&!modelId.isEmpty(),ModelTestReport::getModelId,modelId).orderByDesc(ModelTestReport::getCreatedAt)); }

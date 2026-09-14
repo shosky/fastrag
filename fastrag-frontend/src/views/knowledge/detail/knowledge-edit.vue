@@ -24,15 +24,31 @@ async function loadEdits() {
   } finally {
     loading.value = false
   }
-  if (!editList.value.length) {
-    editList.value = [
-      { id: 'e1', title: '新增云电脑产品FAQ', content: '整理云电脑产品的常见问题及解答，包括部署、使用、运维等方面', editType: 'create', status: 'draft', editor: '张编辑', tags: '云电脑,FAQ', createdAt: '2026-06-29 10:00:00' },
-      { id: 'e2', title: '更新ICT办理流程', content: '根据最新政策更新小微企业ICT业务办理流程，增加线上申请渠道说明', editType: 'update', status: 'submitted', editor: '李采编', tags: 'ICT,流程', createdAt: '2026-06-28 15:30:00' },
-      { id: 'e3', title: '合并产品目录与定价表', content: '将企业宽带、云电脑、专线三类产品的目录与定价合并为一份文档', editType: 'merge', status: 'approved', editor: '王编辑', reviewer: '赵主管', tags: '产品,定价', createdAt: '2026-06-27 09:00:00' },
-      { id: 'e4', title: '拆分技术方案文档', content: '将综合技术方案拆分为网络方案、安全方案、运维方案三篇独立文档', editType: 'split', status: 'submitted', editor: '陈技术', tags: '技术方案', createdAt: '2026-06-26 14:20:00' },
-      { id: 'e5', title: '修订安全规范', content: '根据最新安全生产法修订施工安全规范相关条款，增加高空作业安全要求', editType: 'update', status: 'rejected', editor: '刘安全', reviewer: '周审核', tags: '安全,规范', createdAt: '2026-06-25 11:00:00' },
-      { id: 'e6', title: '新增5G行业案例集', content: '收集整理5G在智慧港口、智慧工厂、智慧医疗等行业的典型应用案例', editType: 'create', status: 'draft', editor: '张编辑', tags: '5G,案例', createdAt: '2026-06-24 16:45:00' },
-    ]
+}
+
+// ===== 导入采编（JSON 数组批量导入） =====
+const showImportDialog = ref(false)
+const importItems = ref('')
+function handleImport() {
+  importItems.value = ''
+  showImportDialog.value = true
+}
+async function handleImportSubmit() {
+  let items: any[] = []
+  try {
+    items = JSON.parse(importItems.value)
+    if (!Array.isArray(items)) throw new Error()
+  } catch {
+    ElMessage.warning('请输入有效的JSON数组')
+    return
+  }
+  try {
+    await api.importKnowledgeEdits(kbId, items)
+    showImportDialog.value = false
+    await loadEdits()
+    ElMessage.success(`成功导入 ${items.length} 条采编记录`)
+  } catch {
+    ElMessage.error('导入失败')
   }
 }
 
@@ -114,14 +130,19 @@ const validateList = ref<any[]>([])
 async function loadValidates() {
   const res: any = await api.getKnowledgeValidates(kbId)
   validateList.value = res || []
-  if (!validateList.value.length) {
-    validateList.value = [
-      { id: 'v1', validateType: 'duplicate', targetScope: '知识库全部文档', totalCount: 156, passedCount: 148, warningCount: 6, failedCount: 2, status: '已完成', completedAt: '2026-06-29 10:00:00' },
-      { id: 'v2', validateType: 'expired', targetScope: '产品资料分类', totalCount: 42, passedCount: 35, warningCount: 5, failedCount: 2, status: '已完成', completedAt: '2026-06-28 16:30:00' },
-      { id: 'v3', validateType: 'quality', targetScope: '技术文档分类', totalCount: 68, passedCount: 52, warningCount: 12, failedCount: 4, status: '已完成', completedAt: '2026-06-27 14:00:00' },
-      { id: 'v4', validateType: 'consistency', targetScope: '业务流程分类', totalCount: 28, passedCount: 22, warningCount: 4, failedCount: 2, status: '进行中', completedAt: '' },
-    ]
+}
+
+// 校验明细查看
+const VALIDATE_STATUS: Record<string, string> = { completed: '已完成', running: '进行中', pending: '待执行', failed: '失败' }
+const showResultDialog = ref(false)
+const resultDetail = ref<any>(null)
+function handleViewResult(row: any) {
+  try {
+    resultDetail.value = row.result ? JSON.parse(row.result) : null
+  } catch {
+    resultDetail.value = { raw: row.result }
   }
+  showResultDialog.value = true
 }
 
 const showCheckDialog = ref(false)
@@ -138,9 +159,84 @@ async function handleStartCheck() {
   ElMessage.success('校验完成')
 }
 
+// ===== 知识工单（新增/查看/编辑/删除） =====
+const TICKET_STATUS: Record<string, string> = { open: '待处理', processing: '处理中', resolved: '已解决', closed: '已关闭' }
+const TICKET_STATUS_COLOR: Record<string, string> = { open: 'warning', processing: 'primary', resolved: 'success', closed: 'info' }
+const TICKET_TYPE: Record<string, string> = { create: '新建知识', update: '更新知识', review: '内容纠错', offline: '下线知识', other: '其他' }
+const PRIORITY: Record<string, string> = { high: '高', medium: '中', low: '低' }
+
+const ticketList = ref<any[]>([])
+const ticketQuery = ref({ status: '', ticketType: '', keyword: '' })
+const ticketLoading = ref(false)
+async function loadTickets() {
+  ticketLoading.value = true
+  try {
+    const res: any = await api.getKnowledgeTickets(kbId, {
+      status: ticketQuery.value.status || undefined,
+      ticketType: ticketQuery.value.ticketType || undefined,
+      keyword: ticketQuery.value.keyword || undefined,
+    })
+    ticketList.value = res || []
+  } catch {
+    ticketList.value = []
+  } finally {
+    ticketLoading.value = false
+  }
+}
+
+const showTicketDialog = ref(false)
+const editingTicketId = ref<string | null>(null)
+const ticketForm = ref({ title: '', description: '', ticketType: 'update', priority: 'medium', knowledgeId: '', assignee: '', status: 'open', remark: '' })
+function handleAddTicket() {
+  editingTicketId.value = null
+  ticketForm.value = { title: '', description: '', ticketType: 'update', priority: 'medium', knowledgeId: '', assignee: '', status: 'open', remark: '' }
+  showTicketDialog.value = true
+}
+function handleEditTicket(row: any) {
+  editingTicketId.value = row.id
+  ticketForm.value = {
+    title: row.title || '', description: row.description || '', ticketType: row.ticketType || 'update',
+    priority: row.priority || 'medium', knowledgeId: row.knowledgeId || '', assignee: row.assignee || '',
+    status: row.status || 'open', remark: row.remark || '',
+  }
+  showTicketDialog.value = true
+}
+async function handleSaveTicket() {
+  if (!ticketForm.value.title) { ElMessage.warning('请输入工单标题'); return }
+  try {
+    if (editingTicketId.value) await api.updateKnowledgeTicket(kbId, editingTicketId.value, ticketForm.value)
+    else await api.createKnowledgeTicket(kbId, ticketForm.value)
+    showTicketDialog.value = false
+    await loadTickets()
+    ElMessage.success('保存成功')
+  } catch {
+    ElMessage.error('保存失败')
+  }
+}
+// 查看工单详情
+const showTicketViewDialog = ref(false)
+const viewingTicket = ref<any>(null)
+async function handleViewTicket(row: any) {
+  try {
+    viewingTicket.value = (await api.getKnowledgeTicket(kbId, row.id)) || row
+  } catch {
+    viewingTicket.value = row
+  }
+  showTicketViewDialog.value = true
+}
+async function handleDeleteTicket(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除工单「${row.title}」？`, '删除确认', { type: 'warning' })
+    await api.deleteKnowledgeTicket(kbId, row.id)
+    await loadTickets()
+    ElMessage.success('删除成功')
+  } catch {}
+}
+
 onMounted(() => {
   loadEdits()
   loadValidates()
+  loadTickets()
 })
 </script>
 
@@ -152,6 +248,7 @@ onMounted(() => {
           <div class="section-header">
             <div class="section-title">知识采编管理</div>
             <div>
+              <el-button @click="handleImport">导入</el-button>
               <el-button @click="handleExportEdits">导出</el-button>
               <el-button type="primary" @click="handleAddEdit">新增采编</el-button>
             </div>
@@ -190,6 +287,51 @@ onMounted(() => {
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="知识工单" name="ticket">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">知识工单</div>
+            <el-button type="primary" @click="handleAddTicket">新增工单</el-button>
+          </div>
+          <div class="filter-bar">
+            <el-input v-model="ticketQuery.keyword" placeholder="搜索标题" clearable style="width: 200px" @keyup.enter="loadTickets" />
+            <el-select v-model="ticketQuery.ticketType" placeholder="工单类型" clearable style="width: 140px" @change="loadTickets">
+              <el-option v-for="(label, key) in TICKET_TYPE" :key="key" :label="label" :value="key" />
+            </el-select>
+            <el-select v-model="ticketQuery.status" placeholder="状态" clearable style="width: 120px" @change="loadTickets">
+              <el-option v-for="(label, key) in TICKET_STATUS" :key="key" :label="label" :value="key" />
+            </el-select>
+            <el-button type="primary" @click="loadTickets">查询</el-button>
+          </div>
+          <el-table :data="ticketList" stripe v-loading="ticketLoading">
+            <el-table-column prop="title" label="工单标题" show-overflow-tooltip />
+            <el-table-column prop="ticketType" label="类型" width="100">
+              <template #default="{ row }">{{ TICKET_TYPE[row.ticketType] || row.ticketType }}</template>
+            </el-table-column>
+            <el-table-column prop="priority" label="优先级" width="80">
+              <template #default="{ row }">
+                <el-tag :type="row.priority === 'high' ? 'danger' : (row.priority === 'low' ? 'info' : 'warning')" size="small">{{ PRIORITY[row.priority] || row.priority }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="assignee" label="处理人" width="100" />
+            <el-table-column prop="status" label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="(TICKET_STATUS_COLOR[row.status] || 'info') as any" size="small">{{ TICKET_STATUS[row.status] || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createdAt" label="创建时间" width="160" />
+            <el-table-column label="操作" width="160">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleViewTicket(row)">查看</el-button>
+                <el-button link type="primary" size="small" @click="handleEditTicket(row)">编辑</el-button>
+                <el-button link type="danger" size="small" @click="handleDeleteTicket(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!ticketList.length && !ticketLoading" description="暂无知识工单" />
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="存量校验" name="validate">
         <div class="card-panel">
           <div class="section-header">
@@ -206,9 +348,14 @@ onMounted(() => {
             <el-table-column prop="warningCount" label="警告" width="80" align="center" />
             <el-table-column prop="failedCount" label="失败" width="80" align="center" />
             <el-table-column prop="status" label="状态" width="90">
-              <template #default="{ row }"><el-tag type="success" size="small">{{ row.status }}</el-tag></template>
+              <template #default="{ row }"><el-tag :type="row.status === 'completed' ? 'success' : 'info'" size="small">{{ VALIDATE_STATUS[row.status] || row.status }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="completedAt" label="完成时间" width="160" />
+            <el-table-column label="操作" width="100">
+              <template #default="{ row }">
+                <el-button v-if="row.result" link type="primary" size="small" @click="handleViewResult(row)">查看明细</el-button>
+              </template>
+            </el-table-column>
           </el-table>
           <el-empty v-if="!validateList.length" description="暂无校验记录" />
         </div>
@@ -261,6 +408,85 @@ onMounted(() => {
       <template #footer>
         <el-button @click="showCheckDialog = false">取消</el-button>
         <el-button type="primary" @click="handleStartCheck">开始校验</el-button>
+      </template>
+    </el-dialog>
+    <!-- 导入采编弹窗 -->
+    <el-dialog v-model="showImportDialog" title="导入知识采编" width="600px">
+      <el-form label-width="80px">
+        <el-form-item label="采编JSON">
+          <el-input v-model="importItems" type="textarea" :rows="8" placeholder='[{"title":"新增产品FAQ","content":"整理常见问题","editType":"create","tags":"FAQ"}]' />
+        </el-form-item>
+        <p style="font-size:12px;color:#909399;">JSON数组格式，每项含 title（必填）/content/editType(create/update/merge/split)/tags/editor 字段</p>
+      </el-form>
+      <template #footer>
+        <el-button @click="showImportDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleImportSubmit">导入</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 工单新增/编辑弹窗 -->
+    <el-dialog v-model="showTicketDialog" :title="editingTicketId ? '编辑工单' : '新增工单'" width="600px">
+      <el-form label-width="90px">
+        <el-form-item label="工单标题" required><el-input v-model="ticketForm.title" /></el-form-item>
+        <el-form-item label="工单类型">
+          <el-select v-model="ticketForm.ticketType" style="width: 160px">
+            <el-option v-for="(label, key) in TICKET_TYPE" :key="key" :label="label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="优先级">
+          <el-select v-model="ticketForm.priority" style="width: 160px">
+            <el-option v-for="(label, key) in PRIORITY" :key="key" :label="label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="关联知识ID"><el-input v-model="ticketForm.knowledgeId" placeholder="可选，关联的知识条目ID" /></el-form-item>
+        <el-form-item label="处理人"><el-input v-model="ticketForm.assignee" /></el-form-item>
+        <el-form-item v-if="editingTicketId" label="状态">
+          <el-select v-model="ticketForm.status" style="width: 160px">
+            <el-option v-for="(label, key) in TICKET_STATUS" :key="key" :label="label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="问题描述"><el-input v-model="ticketForm.description" type="textarea" :rows="4" /></el-form-item>
+        <el-form-item label="备注"><el-input v-model="ticketForm.remark" type="textarea" :rows="2" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showTicketDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveTicket">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 工单查看弹窗 -->
+    <el-dialog v-model="showTicketViewDialog" title="工单详情" width="560px">
+      <el-descriptions v-if="viewingTicket" :column="1" border>
+        <el-descriptions-item label="工单标题">{{ viewingTicket.title }}</el-descriptions-item>
+        <el-descriptions-item label="工单类型">{{ TICKET_TYPE[viewingTicket.ticketType] || viewingTicket.ticketType }}</el-descriptions-item>
+        <el-descriptions-item label="优先级">{{ PRIORITY[viewingTicket.priority] || viewingTicket.priority }}</el-descriptions-item>
+        <el-descriptions-item label="状态">{{ TICKET_STATUS[viewingTicket.status] || viewingTicket.status }}</el-descriptions-item>
+        <el-descriptions-item label="关联知识ID">{{ viewingTicket.knowledgeId || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="处理人">{{ viewingTicket.assignee || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="报告人">{{ viewingTicket.reporter || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="问题描述">{{ viewingTicket.description || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="备注">{{ viewingTicket.remark || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ viewingTicket.createdAt || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="解决时间">{{ viewingTicket.resolvedAt || '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button type="primary" @click="showTicketViewDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 校验明细弹窗 -->
+    <el-dialog v-model="showResultDialog" title="校验结果明细" width="680px">
+      <template v-if="resultDetail">
+        <el-alert v-if="resultDetail.issueCount" :title="`共发现 ${resultDetail.issueCount} 个问题`" type="warning" :closable="false" style="margin-bottom: 12px" />
+        <el-alert v-else title="未发现问题" type="success" :closable="false" style="margin-bottom: 12px" />
+        <el-table v-if="resultDetail.issues?.length" :data="resultDetail.issues" stripe size="small" max-height="400">
+          <el-table-column prop="title" label="知识标题" show-overflow-tooltip />
+          <el-table-column prop="reason" label="问题" show-overflow-tooltip min-width="220" />
+        </el-table>
+        <pre v-else-if="resultDetail.raw" style="background:#f5f7fa;padding:12px;border-radius:6px;font-size:13px;white-space:pre-wrap;">{{ resultDetail.raw }}</pre>
+      </template>
+      <template #footer>
+        <el-button type="primary" @click="showResultDialog = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>

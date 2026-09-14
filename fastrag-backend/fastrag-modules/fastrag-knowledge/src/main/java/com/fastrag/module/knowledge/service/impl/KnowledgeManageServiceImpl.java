@@ -1,9 +1,10 @@
 package com.fastrag.module.knowledge.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.fastrag.module.knowledge.entity.*; import com.fastrag.module.knowledge.mapper.*;
 import com.fastrag.module.knowledge.service.KnowledgeManageService;
 import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
-import java.util.*;
+import java.time.LocalDateTime; import java.util.*;
 @Service @RequiredArgsConstructor
 public class KnowledgeManageServiceImpl implements KnowledgeManageService {
     private final KbKnowledgeMapper knowledgeMapper; private final KbKnowledgeTestMapper testMapper; private final KbKnowledgeDialogMapper dialogMapper;
@@ -12,6 +13,8 @@ public class KnowledgeManageServiceImpl implements KnowledgeManageService {
         if(kbId!=null&&!kbId.isEmpty()) w.eq(KbKnowledge::getKbId,kbId);
         if(keyword!=null&&!keyword.isEmpty()) w.like(KbKnowledge::getTitle,keyword);
         if(category!=null&&!category.isEmpty()) w.eq(KbKnowledge::getCategory,category);
+        // 回收站中的条目不在正常列表出现
+        w.isNull(KbKnowledge::getDeletedAt);
         return knowledgeMapper.selectList(w.orderByDesc(KbKnowledge::getCreatedAt));
     }
     @Override public KbKnowledge get(String id) {
@@ -29,7 +32,24 @@ public class KnowledgeManageServiceImpl implements KnowledgeManageService {
     @Override public KbKnowledge update(String id,KbKnowledge knowledge) {
         knowledge.setId(id); knowledgeMapper.updateById(knowledge); return knowledgeMapper.selectById(id);
     }
-    @Override public void delete(String id) { knowledgeMapper.deleteById(id); }
+    // 删除为软删：置 deleted_at，可从回收站恢复
+    @Override public void delete(String id) {
+        var k=knowledgeMapper.selectById(id);
+        if(k!=null){ k.setDeletedAt(LocalDateTime.now()); knowledgeMapper.updateById(k); }
+    }
+    @Override public List<KbKnowledge> listDeleted(String kbId) {
+        var w=new LambdaQueryWrapper<KbKnowledge>().isNotNull(KbKnowledge::getDeletedAt);
+        if(kbId!=null&&!kbId.isEmpty()) w.eq(KbKnowledge::getKbId,kbId);
+        return knowledgeMapper.selectList(w.orderByDesc(KbKnowledge::getDeletedAt));
+    }
+    @Override public void restore(String id) {
+        // updateById 默认忽略 null 字段，恢复必须用 UpdateWrapper 显式置 null
+        knowledgeMapper.update(null,new LambdaUpdateWrapper<KbKnowledge>().eq(KbKnowledge::getId,id).set(KbKnowledge::getDeletedAt,null));
+    }
+    @Override public void permanentDelete(String id) { knowledgeMapper.deleteById(id); }
+    @Override public void emptyRecycleBin(String kbId) {
+        knowledgeMapper.delete(new LambdaQueryWrapper<KbKnowledge>().isNotNull(KbKnowledge::getDeletedAt).eq(KbKnowledge::getKbId,kbId));
+    }
     @Override public void updateCoverImage(String id, String objectKey) {
         var k = new KbKnowledge();
         k.setId(id);

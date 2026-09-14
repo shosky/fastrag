@@ -19,12 +19,10 @@ export function useSynonyms() {
    */
   async function expandQuery(query: string): Promise<string> {
     try {
-      const synonyms = await api.expandSynonyms(query)
-      addedTerms.value = (synonyms as string[]) || []
-      matchedTerms.value = (synonyms as string[]) || []
-      expandedQuery.value = synonyms.length > 0
-        ? `${query} ${synonyms.join(' ')}`
-        : query
+      const res = await api.expandSynonyms(query)
+      addedTerms.value = res?.addedTerms || []
+      matchedTerms.value = res?.matchedTerms || []
+      expandedQuery.value = res?.expandedQuery || query
     } catch {
       expandedQuery.value = query
     }

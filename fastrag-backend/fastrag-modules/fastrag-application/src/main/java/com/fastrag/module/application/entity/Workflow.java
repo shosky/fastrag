@@ -3,5 +3,7 @@ import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.ti
 @Data @TableName("workflow") public class Workflow {
     @TableId(type=IdType.ASSIGN_ID) private String id;
     private String name,description,status,nodes,edges,createdBy;
+    // 业务流级调试级别（debug/info/warn/error）
+    private String debugLevel;
     private LocalDateTime createdAt,updatedAt;
 }

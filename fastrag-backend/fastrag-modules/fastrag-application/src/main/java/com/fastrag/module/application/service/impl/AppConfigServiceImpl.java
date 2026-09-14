@@ -12,6 +12,8 @@ public class AppConfigServiceImpl implements AppConfigService {
     private final AppGlobalPolicyMapper policyMapper; private final AppVariableMapper varMapper; private final AppKbBindingMapper kbMapper;
     private final AppDbBindingMapper dbMapper; private final AppPublishRecordMapper pubMapper; private final AppDialogTestMapper testMapper;
     private final AppOptimizationMapper optMapper; private final AppConfigMapper configMapper; private final AppDebugLogMapper debugLogMapper;
+    private final AppKbAutoUpdateConfigMapper autoUpdateMapper;
+    private final com.fastrag.module.publish.mapper.KbUpdateLogMapper kbUpdateLogMapper;
     private final ObjectMapper objectMapper; private final com.fastrag.module.application.service.AppService appService;
     // 基础配置
     @Override public AppBasicConfig getBasic(String appId) { return basicMapper.selectOne(new LambdaQueryWrapper<AppBasicConfig>().eq(AppBasicConfig::getAppId,appId)); }
@@ -345,8 +347,58 @@ public class AppConfigServiceImpl implements AppConfigService {
         Map<String,Object> r=new LinkedHashMap<>(saved); r.put("appId",appId); r.put("updatedAt",LocalDateTime.now()); return r;
     }
     @Override public void clearDebugLogs(String appId) { debugLogMapper.delete(new LambdaQueryWrapper<AppDebugLog>().eq(AppDebugLog::getAppId,appId)); }
+    // 手动触发知识更新：对应用绑定的每个知识库写入真实更新日志（kb_update_log，publish 模块经传递依赖可用）
     @Override public Map<String,Object> triggerKnowledgeUpdate(String appId, Map<String,Object> cfg) {
-        Map<String,Object> r=new LinkedHashMap<>(cfg); r.put("appId",appId); r.put("status","triggered"); r.put("triggeredAt",LocalDateTime.now()); return r;
+        List<AppKbBinding> bindings = listKbBindings(appId);
+        int updated = 0; List<String> kbIds = new ArrayList<>();
+        for (var b : bindings) {
+            if (b.getEnabled() != null && b.getEnabled() == 0) continue;
+            kbIds.add(b.getKbId());
+            try {
+                var g = new com.fastrag.module.publish.entity.KbUpdateLog();
+                g.setKbId(b.getKbId()); g.setUpdateType("manual");
+                g.setTarget("知识库"); g.setDetail("应用「" + appId + "」手动触发知识更新");
+                g.setOperator("system"); g.setTimestamp(LocalDateTime.now());
+                kbUpdateLogMapper.insert(g);
+                updated++;
+            } catch (Exception ignore) { }
+        }
+        Map<String,Object> r=new LinkedHashMap<>(cfg);
+        r.put("appId",appId); r.put("status",updated>0?"completed":"no_kbs");
+        r.put("kbCount",kbIds.size()); r.put("updated",updated);
+        r.put("triggeredAt",LocalDateTime.now());
+        return r;
+    }
+    // 重置对话配置：删除自定义配置记录，恢复默认
+    @Override public AppDialogConfig resetDialog(String appId) {
+        var e = getDialog(appId);
+        if (e != null) dialogMapper.deleteById(e.getId());
+        var fresh = new AppDialogConfig();
+        fresh.setAppId(appId); fresh.setBackgroundColor("#ffffff"); fresh.setBubbleStyle("round");
+        fresh.setShowAvatar(1); fresh.setShowFeedback(1); fresh.setShowSuggestions(1);
+        dialogMapper.insert(fresh);
+        return fresh;
+    }
+    // 自动更新配置：app_kb_auto_update_config 表（cron/通知等明细存 config JSON）
+    @Override public Map<String,Object> getAutoKnowledgeUpdate(String appId) {
+        var c = autoUpdateMapper.selectOne(new LambdaQueryWrapper<AppKbAutoUpdateConfig>().eq(AppKbAutoUpdateConfig::getAppId,appId));
+        Map<String,Object> r = new LinkedHashMap<>();
+        r.put("appId",appId); r.put("enabled", c != null && c.getEnabled() != null && c.getEnabled() == 1);
+        if (c != null && c.getConfig() != null && !c.getConfig().isBlank()) {
+            try { r.putAll(objectMapper.readValue(c.getConfig(), Map.class)); } catch (Exception ignore) { }
+        }
+        return r;
+    }
+    @Override public Map<String,Object> saveAutoKnowledgeUpdate(String appId, Map<String,Object> cfg) {
+        var c = autoUpdateMapper.selectOne(new LambdaQueryWrapper<AppKbAutoUpdateConfig>().eq(AppKbAutoUpdateConfig::getAppId,appId));
+        if (c == null) { c = new AppKbAutoUpdateConfig(); c.setAppId(appId); }
+        Object enabled = cfg.remove("enabled");
+        c.setEnabled(Boolean.TRUE.equals(enabled) || "true".equals(String.valueOf(enabled)) ? 1 : 0);
+        try { c.setConfig(objectMapper.writeValueAsString(cfg)); } catch (Exception ignore) { }
+        if (c.getId() == null) autoUpdateMapper.insert(c); else autoUpdateMapper.updateById(c);
+        Map<String,Object> r = new LinkedHashMap<>(cfg);
+        r.put("appId",appId); r.put("enabled", c.getEnabled() == 1); r.put("updatedAt", LocalDateTime.now());
+        return r;
     }
 
     // ===== 监控管理 =====

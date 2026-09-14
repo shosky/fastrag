@@ -31,6 +31,11 @@ public class ConfigManageController {
     @PutMapping("/config/review-flow") public ApiResponse<?> reviewFlow(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("review_flow",toJson(body),"review","审核流程","admin")); }
     @PutMapping("/config/doc-guide") public ApiResponse<?> docGuide(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("doc_guide",toJson(body),"doc_guide","文档导读","admin")); }
     @PutMapping("/config/review-flow-binding") public ApiResponse<?> reviewFlowBinding(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("review_flow_binding",toJson(body),"review","审核流程绑定","admin")); }
+    // 读取审核流程绑定配置
+    @GetMapping("/config/review-flow-binding") public ApiResponse<?> getReviewFlowBinding() { var c=svc.getConfig("review_flow_binding"); return ApiResponse.success(c!=null?c.getConfigValue():"{}"); }
+    // 审核流程通知配置：读取/保存（存 sys_config，configType=notification）
+    @GetMapping("/config/notification") public ApiResponse<?> getNotificationConfig() { var c=svc.getConfig("notification_config"); return ApiResponse.success(c!=null?c.getConfigValue():"{}"); }
+    @PutMapping("/config/notification") public ApiResponse<?> saveNotificationConfig(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("notification_config",toJson(body),"notification","审核流程通知配置","admin")); }
     @GetMapping("/config/publish-status") public ApiResponse<?> publishStatus() { var c=svc.getConfig("publish_switch"); return ApiResponse.success(c!=null?c.getConfigValue():"{}"); }
     @GetMapping("/config/review-status") public ApiResponse<?> reviewStatus() { var c=svc.getConfig("review_switch"); return ApiResponse.success(c!=null?c.getConfigValue():"{}"); }
     @PutMapping("/config/publish-settings") public ApiResponse<?> publishSettings(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("publish_settings",toJson(body),"publish","发布设置","admin")); }

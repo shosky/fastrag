@@ -7,6 +7,11 @@ public interface AppConfigService {
     // 对话配置
     AppDialogConfig getDialog(String appId);
     AppDialogConfig saveDialog(String appId,AppDialogConfig config);
+    // 重置对话配置：删除自定义配置，恢复默认
+    AppDialogConfig resetDialog(String appId);
+    // 知识更新：自动更新配置读取/保存 + 手动触发（写真实更新日志）
+    Map<String,Object> getAutoKnowledgeUpdate(String appId);
+    Map<String,Object> saveAutoKnowledgeUpdate(String appId, Map<String,Object> cfg);
     List<AppTrigger> listTriggers(String appId);
     AppTrigger createTrigger(String appId,AppTrigger t);
     AppTrigger updateTrigger(String id,AppTrigger t);

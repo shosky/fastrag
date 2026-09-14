@@ -11,6 +11,10 @@ public class ModelController {
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.update(id,f)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }
     @PostMapping("/{id}/toggle") public ApiResponse<?> toggle(@PathVariable String id) { svc.toggle(id); return ApiResponse.success(); }
+    // 模型调用（真实 LLM 推理）
+    @PostMapping("/{id}/invoke") public ApiResponse<?> invoke(@PathVariable String id,@RequestBody Map<String,Object> params) { return ApiResponse.success(svc.invoke(id,params)); }
+    // 模型调用日志
+    @GetMapping("/{id}/call-logs") public ApiResponse<?> callLogs(@PathVariable String id) { return ApiResponse.success(svc.listCallLogs(id)); }
     @PostMapping("/import") public ApiResponse<?> importModels(@RequestBody List<Map<String,Object>> models) { return ApiResponse.success(svc.importModels(models)); }
     // ===== M4 模型预置 =====
     @GetMapping("/presets") public ApiResponse<?> presets() { return ApiResponse.success(svc.listPresets()); }

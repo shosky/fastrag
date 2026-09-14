@@ -29,7 +29,7 @@ async function loadData() {
   if (!selectedKbId.value) return
   loading.value = true
   try {
-    ruleList.value = (await api.getQualityRules(selectedKbId.value)) as any[] || []
+    ruleList.value = (await api.getQualityRules(selectedKbId.value)) as unknown as any[] || []
   } catch {
     ruleList.value = []
   } finally {
@@ -61,7 +61,12 @@ const scoreResult = ref<any>(null)
 const scoring = ref(false)
 async function handleRunScore() {
   scoring.value = true
-  await new Promise(r => setTimeout(r, 800)) // 模拟耗时
+  // 质量趋势：按月聚合真实审核任务与发布记录（GET /kb/{kbId}/quality-trend）
+  let trend: any[] = []
+  try {
+    const res: any = await api.getQualityTrend(selectedKbId.value, 6)
+    trend = (Array.isArray(res) ? res : []).map((p: any) => ({ month: p.month, score: p.passRate, reviewTotal: p.reviewTotal, published: p.published }))
+  } catch { trend = [] }
   const total = 120
   const levels = ['excellent', 'good', 'fair', 'poor']
   const counts = [45, 48, 20, 7]
@@ -75,10 +80,11 @@ async function handleRunScore() {
       { dimension: 'relevance', label: '相关性', score: 88.9 },
     ],
     overallScore: 86.3,
-    trend: [{ month: '4月', score: 82.1 }, { month: '5月', score: 84.5 }, { month: '6月', score: 86.3 }],
+    trend,
   }
   scoring.value = false
   showScoreDialog.value = true
+  if (!trend.length) ElMessage.info('暂无质量趋势数据（需有审核任务记录）')
 }
 
 // ===== 优化质量评估规则 =====

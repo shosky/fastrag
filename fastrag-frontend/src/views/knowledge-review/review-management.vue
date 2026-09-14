@@ -6,7 +6,17 @@ import { useRouter } from 'vue-router'
 
 const router = useRouter()
 const loading = ref(false)
-const kbId = 'kb_sample'
+// 知识库选择（原硬编码 'kb_sample'，改为下拉选择）
+const kbId = ref('')
+const kbList = ref<any[]>([])
+async function loadKbList() {
+  try {
+    const res: any = await api.getKnowledgeBases()
+    kbList.value = Array.isArray(res) ? res : (res?.list || res?.records || [])
+    if (kbList.value.length && !kbId.value) kbId.value = kbList.value[0].id
+  } catch { kbList.value = [] }
+}
+function handleKbChange() { loadPublishHistory(); loadPlans(); loadResetHistory(); loadStrategyEffect() }
 
 // ============================================================================
 // 发布历史 — 展示知识的线上/线下版本状态
@@ -36,7 +46,7 @@ async function loadPublishHistory() {
   loading.value = true
   // 仅从后端加载真实数据
   try {
-    const res: any = await api.getPublishHistory(kbId)
+    const res: any = await api.getPublishHistory(kbId.value)
     const list = Array.isArray(res) ? res : (res?.list || [])
     if (list.length) {
       // 将后端数据映射为前端格式
@@ -60,22 +70,22 @@ async function loadPublishHistory() {
 }
 
 // 发布/撤回操作
-async function handlePublish(row: PublishRecord) {
+async function handlePublish(row: any) {
   try {
     await ElMessageBox.confirm(`确定发布「${row.knowledgeTitle}」(版本 ${row.version})？`, '发布确认', { type: 'info' })
-    await api.publishApp(kbId, { version: row.version, knowledgeId: row.knowledgeId })
+    await api.publishApp(kbId.value, { version: row.version, knowledgeId: row.knowledgeId })
     row.status = 'online'; row.operator = '当前用户'; row.publishedAt = new Date().toISOString().slice(0, 19).replace('T', ' ')
     ElMessage.success(`「${row.knowledgeTitle}」已发布上线`)
   } catch { /* 取消或失败 */ }
 }
 
-async function handleRevoke(row: PublishRecord) {
+async function handleRevoke(row: any) {
   try {
     await ElMessageBox.confirm(
       `确定撤回「${row.knowledgeTitle}」(版本 ${row.version})？撤回后该知识将恢复为未发布状态。`,
       '撤回确认', { type: 'warning', confirmButtonText: '确认撤回', cancelButtonText: '取消' },
     )
-    await api.revokeKnowledge(kbId, row.knowledgeId)
+    await api.revokeKnowledge(kbId.value, row.knowledgeId)
     row.status = 'offline'
     ElMessage.success(`「${row.knowledgeTitle}」已撤回`)
     await loadPublishHistory()
@@ -118,7 +128,7 @@ const planForm = ref({ name: '', strategy: 'incremental', scope: 'all', schedule
 async function loadPlans() {
   planList.value = []
   try {
-    const res: any = await api.getPublishPlans(kbId)
+    const res: any = await api.getPublishPlans(kbId.value)
     if (Array.isArray(res) && res.length) {
       planList.value = res.map((item: any) => ({
         id: item.id,
@@ -143,7 +153,7 @@ async function handleSavePlan() {
       strategy: planForm.value.strategy,
       scheduledTime: planForm.value.scheduleTime || null,
     }
-    const res: any = await api.createPublishPlan(kbId, data)
+    const res: any = await api.createPublishPlan(kbId.value, data)
     if (res) {
       ElMessage.success('发布计划已创建')
       planDialogVisible.value = false
@@ -172,7 +182,7 @@ const strategyEffect = ref({
 
 async function loadStrategyEffect() {
   try {
-    const res: any = await api.getPublishStrategyEffect(kbId)
+    const res: any = await api.getPublishStrategyEffect(kbId.value)
     if (res) {
       const total = res.totalPublish ?? 0
       const success = res.successCount ?? 0
@@ -201,7 +211,7 @@ async function loadResetHistory() {
   resetHistory.value = []
   // 从发布历史中提取重置记录（publish_type='revoke' 的记录）
   try {
-    const res: any = await api.getPublishHistory(kbId)
+    const res: any = await api.getPublishHistory(kbId.value)
     const list = Array.isArray(res) ? res : (res?.list || [])
     const revokeRecords = list.filter((r: any) => r.publishType === 'revoke' || r.status === 'revoked')
     if (revokeRecords.length) {
@@ -248,7 +258,7 @@ function handleSaveResetLimit() {
 const resetDialogVisible = ref(false)
 const resetTarget = ref<any>(null)
 const resetReason = ref('')
-function showResetDialog(row: PublishRecord) {
+function showResetDialog(row: any) {
   // 找到该知识的上一版本（status=offline 且发布时间最近的）
   const prevVersion = publishHistory.value
     .filter(r => r.knowledgeId === row.knowledgeId && r.status === 'offline')
@@ -262,7 +272,7 @@ async function handleConfirmReset() {
   if (!resetReason.value.trim()) { ElMessage.warning('请输入重置原因'); return }
   const target = resetTarget.value
   try {
-    await api.resetKnowledge(kbId, target.current.knowledgeId)
+    await api.resetKnowledge(kbId.value, target.current.knowledgeId)
     // 模拟状态变更
     target.current.status = 'offline'
     if (target.previous) target.previous.status = 'online'
@@ -291,16 +301,23 @@ async function handleConfirmReset() {
 // ============================================================================
 const planDetailVisible = ref(false)
 const planDetail = ref<any>(null)
-function showPlanDetail(row: PublishPlan) {
+function showPlanDetail(row: any) {
   planDetail.value = row
   planDetailVisible.value = true
 }
 
-onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory(); loadStrategyEffect() })
+onMounted(async () => { await loadKbList(); loadPublishHistory(); loadPlans(); loadResetHistory(); loadStrategyEffect() })
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
+    <!-- 知识库选择 -->
+    <div class="card-panel" style="margin-bottom:16px;display:flex;align-items:center;gap:12px">
+      <span class="section-title">发布策略效果</span>
+      <el-select v-model="kbId" filterable placeholder="选择知识库" style="width:240px" @change="handleKbChange">
+        <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
+      </el-select>
+    </div>
     <!-- 策略效果统计 -->
     <div class="metric-cards">
       <div class="metric-card">
@@ -334,14 +351,14 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory(); loadStr
         <el-table-column prop="name" label="计划名称" width="140" />
         <el-table-column prop="strategy" label="发布策略" width="100">
           <template #default="{ row }">
-            <el-tag size="small">{{ { incremental: '增量', full: '全量', immediate: '即时' }[row.strategy] || row.strategy }}</el-tag>
+            <el-tag size="small">{{ ({ incremental: '增量', full: '全量', immediate: '即时' } as Record<string,string>)[row.strategy] || row.strategy }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="scope" label="发布范围" show-overflow-tooltip min-width="140" />
         <el-table-column prop="executionStatus" label="状态" width="90">
           <template #default="{ row }">
             <el-tag :type="row.executionStatus === 'completed' ? 'success' : (row.executionStatus === 'running' ? 'warning' : 'info')" size="small">
-              {{ { completed: '已完成', running: '执行中', pending: '待执行', idle: '待触发' }[row.executionStatus] || row.executionStatus }}
+              {{ ({ completed: '已完成', running: '执行中', pending: '待执行', idle: '待触发' } as Record<string,string>)[row.executionStatus] || row.executionStatus }}
             </el-tag>
           </template>
         </el-table-column>
@@ -502,11 +519,11 @@ onMounted(() => { loadPublishHistory(); loadPlans(); loadResetHistory(); loadStr
       <template v-if="planDetail">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="计划名称">{{ planDetail.name }}</el-descriptions-item>
-          <el-descriptions-item label="发布策略">{{ { incremental: '增量（仅变更内容）', full: '全量（全部内容）', immediate: '即时（手动触发）' }[planDetail.strategy] || planDetail.strategy }}</el-descriptions-item>
+          <el-descriptions-item label="发布策略">{{ ({ incremental: '增量（仅变更内容）', full: '全量（全部内容）', immediate: '即时（手动触发）' } as Record<string,string>)[planDetail.strategy] || planDetail.strategy }}</el-descriptions-item>
           <el-descriptions-item label="发布范围" :span="2">{{ planDetail.scope }}</el-descriptions-item>
           <el-descriptions-item label="执行状态">
             <el-tag :type="planDetail.executionStatus === 'completed' ? 'success' : (planDetail.executionStatus === 'running' ? 'warning' : 'info')" size="small">
-              {{ { completed: '已完成', running: '执行中', pending: '待执行', idle: '待触发' }[planDetail.executionStatus] || planDetail.executionStatus }}
+              {{ ({ completed: '已完成', running: '执行中', pending: '待执行', idle: '待触发' } as Record<string,string>)[planDetail.executionStatus] || planDetail.executionStatus }}
             </el-tag>
           </el-descriptions-item>
           <el-descriptions-item label="成功 / 失败数">

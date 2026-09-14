@@ -32,16 +32,6 @@ async function loadData() {
   try {
     dataList.value = (await api.getListeners(selectedKbId.value)) as any || []
   } finally { loading.value = false }
-  if (!dataList.value.length) {
-    dataList.value = [
-      { id: 'l1', name: '知识审核通过通知', url: 'https://webhook.example.com/hooks/review-approved', events: ['review.approved'], enabled: true, status: 'enabled', triggerCount: 128, lastRunAt: '2026-06-29 10:30:00', lastStatus: 'success' },
-      { id: 'l2', name: '知识变更同步到门户', url: 'https://portal.example.com/api/sync/kb-update', events: ['publish.online', 'publish.offline'], enabled: true, status: 'enabled', triggerCount: 56, lastRunAt: '2026-06-29 09:15:00', lastStatus: 'success' },
-      { id: 'l3', name: '审核超时告警通知', url: 'https://alert.example.com/api/webhook/review-timeout', events: ['review.timeout'], enabled: true, status: 'enabled', triggerCount: 23, lastRunAt: '2026-06-29 08:00:00', lastStatus: 'success' },
-      { id: 'l4', name: '发布广播-企业微信', url: 'https://qyapi.weixin.qq.com/cgi-bin/webhook/send?key=xxx', events: ['publish.online'], enabled: false, status: 'disabled', triggerCount: 156, lastRunAt: '2026-06-27 16:00:00', lastStatus: 'failed' },
-      { id: 'l5', name: '质量评估结果通知', url: 'https://webhook.example.com/hooks/quality-report', events: ['review.approved', 'review.rejected'], enabled: true, status: 'enabled', triggerCount: 89, lastRunAt: '2026-06-28 18:00:00', lastStatus: 'success' },
-      { id: 'l6', name: '定时知识巡检', url: 'internal://scheduler/kb-audit', events: ['listener.error'], enabled: false, status: 'disabled', triggerCount: 12, lastRunAt: '2026-06-25 02:00:00', lastStatus: 'failed' },
-    ]
-  }
 }
 onMounted(async () => { await loadKbList(); loadData() })
 
@@ -126,10 +116,30 @@ async function handleClearLogs() {
 
 // 数据趋势 & 告警 (#4888~4891)
 const showTrendDialog = ref(false)
-const trendData = ref({ labels: ['周一','周二','周三','周四','周五','周六','周日'], values: [12,19,8,15,22,10,5] })
+const trendData = ref({ labels: [] as string[], values: [] as number[] })
 const alertConfig = ref({ enabled: false, threshold: 100, notifyChannel: 'in_app', cooldownMinutes: 60 })
 const showAlertDialog = ref(false)
-function handleShowTrend() { showTrendDialog.value = true }
+// 趋势：聚合知识库下所有监听器最近 7 天的真实执行日志（GET /listeners/{id}/trends）
+async function handleShowTrend() {
+  const labels: string[] = []
+  const values: number[] = []
+  const byDate = new Map<string, number>()
+  for (const l of dataList.value.slice(0, 20)) {
+    try {
+      const res: any = await api.getListenerTrends(selectedKbId.value, l.id, 7)
+      for (const p of Array.isArray(res) ? res : []) {
+        byDate.set(p.date, (byDate.get(p.date) || 0) + (p.count || 0))
+      }
+    } catch { /* 单个监听器失败忽略 */ }
+  }
+  for (let i = 6; i >= 0; i--) {
+    const d = new Date(Date.now() - i * 86400000).toISOString().slice(0, 10)
+    labels.push(d.slice(5))
+    values.push(byDate.get(d) || 0)
+  }
+  trendData.value = { labels, values }
+  showTrendDialog.value = true
+}
 async function handleShowAlert() {
   try {
     const saved = localStorage.getItem('listener_alert_config_' + selectedKbId.value)
@@ -245,7 +255,7 @@ function handleBatchResolve() {
         <el-table-column prop="lastRunAt" label="最后触发" width="160" show-overflow-tooltip />
         <el-table-column label="最后执行" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.lastStatus==='success'?'success':row.lastStatus==='failed'?'danger':'info'" size="small">{{ {success:'成功',failed:'失败',pending:'执行中'}[row.lastStatus]||'-' }}</el-tag>
+            <el-tag :type="row.lastStatus==='success'?'success':row.lastStatus==='failed'?'danger':'info'" size="small">{{ ({success:'成功',failed:'失败',pending:'执行中'} as Record<string,string>)[row.lastStatus]||'-' }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="380" fixed="right">
@@ -374,7 +384,7 @@ function handleBatchResolve() {
         <el-table-column label="类型" width="100">
           <template #default="{ row }">
             <el-tag :type="row.type === 'threshold' ? 'danger' : row.type === 'error_rate' ? 'warning' : 'info'" size="small">
-              {{ { threshold: '阈值告警', error_rate: '错误率', timeout: '超时告警' }[row.type] || row.type }}
+              {{ ({ threshold: '阈值告警', error_rate: '错误率', timeout: '超时告警' } as Record<string, string>)[row.type] || row.type }}
             </el-tag>
           </template>
         </el-table-column>

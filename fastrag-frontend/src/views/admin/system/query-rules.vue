@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { Plus, Delete, Edit } from '@element-plus/icons-vue'
+import { Plus, Delete, Edit, View } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 
+// 后端 query_rule 实体：action=替换/扩写内容，enabled=1/0，ruleType=rewrite|expand
 interface QueryRule {
   id: string
   name: string
   pattern: string
-  replacement: string
+  action: string
   priority: number
-  status: string
-  type: string
+  enabled: number
+  ruleType: string
+  description?: string
+  createdAt?: string
 }
 
 const activeTab = ref('rewrite')
@@ -44,7 +47,7 @@ function handleAdd() {
 function handleEdit(rule: QueryRule) {
   isEditing.value = true
   editingId.value = rule.id
-  form.value = { name: rule.name, pattern: rule.pattern, replacement: rule.replacement, priority: rule.priority, status: rule.status }
+  form.value = { name: rule.name, pattern: rule.pattern, replacement: rule.action, priority: rule.priority ?? 5, status: rule.enabled === 1 ? 'enabled' : 'disabled' }
   showDialog.value = true
 }
 
@@ -53,14 +56,23 @@ async function handleSave() {
     ElMessage.warning('请填写完整信息')
     return
   }
+  const payload = { ...form.value, type: activeTab.value }
   if (isEditing.value) {
-    await api.createQueryRule({ id: editingId.value, ...form.value, type: activeTab.value })
+    await api.updateQueryRule(editingId.value, payload)
   } else {
-    await api.createQueryRule({ ...form.value, type: activeTab.value })
+    await api.createQueryRule(payload)
   }
   showDialog.value = false
   await refresh()
   ElMessage.success('保存成功')
+}
+
+// 查看规则详情
+const showViewDialog = ref(false)
+const viewingRule = ref<QueryRule | null>(null)
+function handleView(rule: QueryRule) {
+  viewingRule.value = rule
+  showViewDialog.value = true
 }
 
 async function handleDelete(rule: QueryRule) {
@@ -77,17 +89,24 @@ async function handleToggleStatus(rule: QueryRule) {
   await refresh()
 }
 
-// 测试规则
+// 测试规则：调用真实规则引擎
 const testQuery = ref('')
-const testResult = ref('')
+const testResult = ref<{ rewritten: string; appliedRules: string[] } | null>(null)
+const testLoading = ref(false)
 
-function handleTest() {
-  // 测试逻辑通过 mock 层的 applyQueryRules 实现
+async function handleTest() {
   if (!testQuery.value.trim()) {
     ElMessage.warning('请输入测试查询')
     return
   }
-  ElMessage.info('测试结果请在检索调试中查看')
+  testLoading.value = true
+  try {
+    testResult.value = await api.applyQueryRules(testQuery.value)
+  } catch {
+    ElMessage.error('测试失败')
+  } finally {
+    testLoading.value = false
+  }
 }
 </script>
 
@@ -105,38 +124,65 @@ function handleTest() {
       <el-tab-pane label="扩写规则" name="expand" />
     </el-tabs>
 
-    <el-table :data="rules" stripe>
+    <el-table :data="rules" stripe v-loading="loading">
       <el-table-column prop="name" label="规则名称" min-width="150" />
       <el-table-column prop="pattern" label="匹配模式" width="150" />
-      <el-table-column prop="replacement" label="替换/扩写" min-width="200" show-overflow-tooltip />
+      <el-table-column prop="action" label="替换/扩写" min-width="200" show-overflow-tooltip />
       <el-table-column prop="priority" label="优先级" width="80" align="center" />
-      <el-table-column prop="status" label="状态" width="80" align="center">
+      <el-table-column label="状态" width="80" align="center">
         <template #default="{ row }">
           <el-switch
-            :model-value="row.status === 'enabled'"
+            :model-value="row.enabled === 1"
             size="small"
             @change="handleToggleStatus(row as QueryRule)"
           />
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="150" align="center">
+      <el-table-column label="操作" width="190" align="center">
         <template #default="{ row }">
+          <el-button link type="primary" size="small" :icon="View" @click="handleView(row as QueryRule)">查看</el-button>
           <el-button link type="primary" size="small" @click="handleEdit(row as QueryRule)">编辑</el-button>
           <el-button link type="danger" size="small" @click="handleDelete(row as QueryRule)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-empty v-if="rules.length === 0" description="暂无规则" />
+    <el-empty v-if="rules.length === 0 && !loading" description="暂无规则" />
 
     <!-- 测试区 -->
     <div class="qr-test">
       <h4>规则测试</h4>
       <div class="qr-test__input">
-        <el-input v-model="testQuery" placeholder="输入查询内容测试规则效果" clearable />
-        <el-button type="primary" @click="handleTest">测试</el-button>
+        <el-input v-model="testQuery" placeholder="输入查询内容测试规则效果" clearable @keyup.enter="handleTest" />
+        <el-button type="primary" :loading="testLoading" @click="handleTest">测试</el-button>
+      </div>
+      <div v-if="testResult" class="qr-test__result">
+        <div>改写结果：<b>{{ testResult.rewritten }}</b></div>
+        <div v-if="testResult.appliedRules?.length" style="margin-top:6px;color:#909399">
+          命中规则：{{ testResult.appliedRules.join('；') }}
+        </div>
+        <div v-else style="margin-top:6px;color:#909399">未命中任何规则</div>
       </div>
     </div>
+
+    <!-- 查看规则详情对话框 -->
+    <el-dialog v-model="showViewDialog" title="规则详情" width="520px">
+      <el-descriptions v-if="viewingRule" :column="1" border>
+        <el-descriptions-item label="规则名称">{{ viewingRule.name }}</el-descriptions-item>
+        <el-descriptions-item label="规则类型">{{ viewingRule.ruleType === 'rewrite' ? '查询重写' : '查询扩写' }}</el-descriptions-item>
+        <el-descriptions-item label="匹配模式">{{ viewingRule.pattern }}</el-descriptions-item>
+        <el-descriptions-item label="替换/扩写内容">{{ viewingRule.action }}</el-descriptions-item>
+        <el-descriptions-item label="优先级">{{ viewingRule.priority }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag :type="viewingRule.enabled === 1 ? 'success' : 'info'" size="small">{{ viewingRule.enabled === 1 ? '启用' : '禁用' }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="描述">{{ viewingRule.description || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ viewingRule.createdAt || '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button type="primary" @click="showViewDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 新建/编辑对话框 -->
     <el-dialog v-model="showDialog" :title="isEditing ? '编辑规则' : '新建规则'" width="480px">
@@ -182,6 +228,16 @@ function handleTest() {
   &__input {
     display: flex;
     gap: $spacing-sm;
+  }
+
+  &__result {
+    margin-top: $spacing-sm;
+    padding: $spacing-sm;
+    background: var(--el-fill-color-light);
+    border-radius: $radius-base;
+    font-size: 13px;
+    line-height: 1.6;
+    word-break: break-all;
   }
 }
 </style>

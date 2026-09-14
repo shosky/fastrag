@@ -60,6 +60,10 @@ public class PublishManageController {
     // 审核流程细化
     @GetMapping("/review-strategies/{id}/history") public ApiResponse<?> reviewHistory(@PathVariable String id) { return ApiResponse.success(svc.getReviewHistory(id)); }
     @PutMapping("/review-strategies/{id}/timeout") public ApiResponse<?> reviewTimeout(@PathVariable String id, @RequestBody Map<String,Object> config) { return ApiResponse.success(svc.setReviewTimeout(id, config)); }
+    // 监听器分发：向启用的监听器 URL 推送事件（审核通过/驳回后由前端触发，也可手动调用）
+    @PostMapping("/listeners/dispatch") public ApiResponse<?> dispatchListeners(@PathVariable String kbId, @RequestBody Map<String,String> body) { return ApiResponse.success(svc.dispatchListeners(kbId, body.getOrDefault("eventType","review.updated"), body.get("message"))); }
+    // 知识质量趋势
+    @GetMapping("/quality-trend") public ApiResponse<?> qualityTrend(@PathVariable String kbId, @RequestParam(required=false,defaultValue="6") int months) { return ApiResponse.success(svc.getQualityTrend(kbId, months)); }
     // 审核报告/导出
     @GetMapping("/publish/report") public ApiResponse<?> publishReport(@PathVariable String kbId) { return ApiResponse.success(svc.generatePublishReport(kbId)); }
     @GetMapping("/publish/export") public ApiResponse<?> publishExport(@PathVariable String kbId,

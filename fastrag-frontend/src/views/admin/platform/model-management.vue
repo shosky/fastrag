@@ -58,9 +58,8 @@ async function loadLifecycle(modelId: string) {
     ])
     trainingRecords.value = Array.isArray(trainings) ? trainings : (trainings as any)?.list || []
     testReports.value = Array.isArray(reports) ? reports : (reports as any)?.list || []
-    // 调用日志 — 从 mock 模拟获取
-    const { getCallLogs } = await import('@/mock/models')
-    callLogs.value = getCallLogs(modelId)
+    // 调用日志（真实读取 model_call_log 表）
+    callLogs.value = ((await api.getModelCallLogs(modelId)) as any) || []
   } catch {
     trainingRecords.value = []
     testReports.value = []
@@ -109,17 +108,73 @@ async function handleSubmitTrain() {
 }
 
 async function handleStartTrain() {
-  await api.trainModel(selectedModelId.value!)
+  await api.trainModel(selectedModelId.value!, {})
   ElMessage.success('训练任务已提交')
   const trainings = await api.getModelTrainings(selectedModelId.value!)
   trainingRecords.value = Array.isArray(trainings) ? trainings : (trainings as any)?.list || []
 }
 
 async function handleStartTest() {
-  await api.testModel(selectedModelId.value!)
+  await api.testModel(selectedModelId.value!, {})
   ElMessage.success('测试任务已提交')
   const reports = await api.getModelTestReports(selectedModelId.value!)
   testReports.value = Array.isArray(reports) ? reports : (reports as any)?.list || []
+}
+
+// ===== 对话测试（真实调用 LLM） =====
+const showChatTestDialog = ref(false)
+const chatTestPrompt = ref('')
+const chatTestResult = ref<{ response: string; latency: number; success: boolean } | null>(null)
+const chatTestLoading = ref(false)
+
+function handleShowChatTest() {
+  chatTestPrompt.value = '你好，请用一句话做自我介绍'
+  chatTestResult.value = null
+  showChatTestDialog.value = true
+}
+
+async function handleRunChatTest() {
+  if (!chatTestPrompt.value.trim()) { ElMessage.warning('请输入测试提示词'); return }
+  chatTestLoading.value = true
+  try {
+    const res: any = await api.testModel(selectedModelId.value!, { prompt: chatTestPrompt.value })
+    let response = '', latency = 0, success = false
+    try {
+      const m = typeof res?.metrics === 'string' ? JSON.parse(res.metrics) : (res?.metrics || {})
+      response = m.response || ''; latency = m.latency || 0; success = !!m.success
+    } catch { /* metrics 解析失败按原样展示 */ }
+    if (!response && typeof res?.metrics === 'string') response = res.metrics
+    chatTestResult.value = { response, latency, success }
+    const reports = await api.getModelTestReports(selectedModelId.value!)
+    testReports.value = Array.isArray(reports) ? reports : (reports as any)?.list || []
+    ElMessage.success(success ? '测试完成' : '测试失败，请检查模型配置')
+  } catch {
+    ElMessage.error('测试请求失败')
+  } finally { chatTestLoading.value = false }
+}
+
+// ===== 模型调用（真实调用 LLM 并写调用日志） =====
+const showInvokeDialog = ref(false)
+const invokePrompt = ref('')
+const invokeResult = ref<{ response: string; durationMs: number; success: boolean } | null>(null)
+const invokeLoading = ref(false)
+
+function handleShowInvoke() {
+  invokePrompt.value = ''
+  invokeResult.value = null
+  showInvokeDialog.value = true
+}
+
+async function handleInvoke() {
+  if (!invokePrompt.value.trim()) { ElMessage.warning('请输入调用内容'); return }
+  invokeLoading.value = true
+  try {
+    invokeResult.value = (await api.invokeModel(selectedModelId.value!, { prompt: invokePrompt.value })) as any
+    // 刷新调用日志
+    if (activeTab.value === 'lifecycle') callLogs.value = ((await api.getModelCallLogs(selectedModelId.value!)) as any) || []
+  } catch {
+    ElMessage.error('调用失败')
+  } finally { invokeLoading.value = false }
 }
 
 const showDialog = ref(false)
@@ -265,6 +320,7 @@ async function handleSave() {
         <div class="card-footer">
           <el-button size="small" @click="handleEdit(model)">编辑</el-button>
           <el-button size="small" @click="loadLifecycle(model.id)">生命周期</el-button>
+          <el-button size="small" type="success" @click="selectedModelId = model.id; handleShowInvoke()">调用</el-button>
           <el-button size="small" type="danger" @click="handleDelete(model)">删除</el-button>
           <el-switch
             :model-value="model.status === 'online'"
@@ -320,7 +376,10 @@ async function handleSave() {
         <el-tab-pane label="测试报告">
           <div class="section-header">
             <div class="section-title">测试报告</div>
-            <el-button size="small" type="primary" @click="handleStartTest">开始测试</el-button>
+            <div style="display:flex;gap:8px">
+              <el-button size="small" type="success" @click="handleShowChatTest">对话测试</el-button>
+              <el-button size="small" type="primary" @click="handleStartTest">开始测试</el-button>
+            </div>
           </div>
           <el-table :data="testReports" stripe size="small">
             <el-table-column prop="testSet" label="测试集" min-width="150" />
@@ -345,10 +404,9 @@ async function handleSave() {
         <el-tab-pane label="调用日志">
           <el-table :data="callLogs" stripe size="small">
             <el-table-column prop="caller" label="调用方" min-width="120" />
-            <el-table-column prop="inputTokens" label="输入Token" width="90" align="right" />
-            <el-table-column prop="outputTokens" label="输出Token" width="90" align="right" />
-            <el-table-column prop="duration" label="耗时(ms)" width="80" align="right" />
-            <el-table-column prop="status" label="状态" width="70" align="center">
+            <el-table-column prop="tokens" label="Token数" width="90" align="right" />
+            <el-table-column prop="duration" label="耗时(ms)" width="90" align="right" />
+            <el-table-column prop="status" label="状态" width="80" align="center">
               <template #default="{ row }">
                 <el-tag :type="row.status === 'success' ? 'success' : 'danger'" size="small">
                   {{ row.status === 'success' ? '成功' : '失败' }}
@@ -357,7 +415,7 @@ async function handleSave() {
             </el-table-column>
             <el-table-column prop="timestamp" label="时间" width="170" />
           </el-table>
-          <el-empty v-if="callLogs.length === 0" description="暂无调用日志" :image-size="60" />
+          <el-empty v-if="callLogs.length === 0" description="暂无调用日志（模型调用/对话测试后自动记录）" :image-size="60" />
         </el-tab-pane>
       </el-tabs>
     </div>
@@ -413,6 +471,46 @@ async function handleSave() {
       <template #footer>
         <el-button @click="showImportDialog = false">取消</el-button>
         <el-button type="primary" @click="handleImport">导入</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 对话测试弹窗（真实调用 LLM） -->
+    <el-dialog v-model="showChatTestDialog" title="模型对话测试" width="560px">
+      <el-form label-width="80px">
+        <el-form-item label="提示词">
+          <el-input v-model="chatTestPrompt" type="textarea" :rows="3" />
+        </el-form-item>
+      </el-form>
+      <div v-if="chatTestResult" class="chat-test-result">
+        <div><b>响应：</b></div>
+        <div style="white-space:pre-wrap;margin-top:4px">{{ chatTestResult.response || '（空响应）' }}</div>
+        <div style="margin-top:8px;color:#909399;font-size:12px">
+          耗时 {{ chatTestResult.latency }}ms · {{ chatTestResult.success ? '成功' : '失败' }}
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showChatTestDialog = false">关闭</el-button>
+        <el-button type="primary" :loading="chatTestLoading" @click="handleRunChatTest">开始测试</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 模型调用弹窗（真实调用 LLM，写调用日志） -->
+    <el-dialog v-model="showInvokeDialog" :title="'调用模型：' + (models.find(m => m.id === selectedModelId)?.name || '')" width="560px">
+      <el-form label-width="80px">
+        <el-form-item label="输入内容">
+          <el-input v-model="invokePrompt" type="textarea" :rows="3" placeholder="输入要发送给模型的内容" />
+        </el-form-item>
+      </el-form>
+      <div v-if="invokeResult" class="chat-test-result">
+        <div><b>响应：</b></div>
+        <div style="white-space:pre-wrap;margin-top:4px">{{ invokeResult.response || '（空响应）' }}</div>
+        <div style="margin-top:8px;color:#909399;font-size:12px">
+          耗时 {{ invokeResult.durationMs }}ms · {{ invokeResult.success ? '成功' : '失败' }}（已写入调用日志）
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showInvokeDialog = false">关闭</el-button>
+        <el-button type="primary" :loading="invokeLoading" @click="handleInvoke">调用</el-button>
       </template>
     </el-dialog>
 
@@ -515,5 +613,15 @@ async function handleSave() {
   background: $bg-white;
   border-radius: $radius-base;
   padding: $spacing-lg;
+}
+
+.chat-test-result {
+  margin-top: $spacing-sm;
+  padding: $spacing-sm;
+  background: var(--el-fill-color-light);
+  border-radius: $radius-base;
+  font-size: 13px;
+  line-height: 1.7;
+  word-break: break-all;
 }
 </style>

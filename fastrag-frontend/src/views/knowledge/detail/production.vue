@@ -3,6 +3,7 @@ import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+import { storage } from '@/utils/storage'
 
 const route = useRoute()
 const kbId = (route.params.id as string) || 'kb_sample'
@@ -40,6 +41,74 @@ function handlePageChange(p: number) {
   loadData()
 }
 
+// ===== 上传文件（真实落盘，后端 /storage/{type}/upload） =====
+const uploadInputRef = ref<HTMLInputElement>()
+function handleUpload() {
+  uploadInputRef.value?.click()
+}
+async function handleUploadChange(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  input.value = ''
+  if (!file) return
+  loading.value = true
+  try {
+    await api.uploadStorageFile(kbId, STORAGE_TYPE[activeTab.value], file)
+    await loadData()
+    ElMessage.success(`已上传「${file.name}」`)
+  } catch {
+    ElMessage.error('上传失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+// ===== 编辑多媒体（名称/描述/标签/状态，调 PUT /storage/{type}/{id}） =====
+const showEditDialog = ref(false)
+const editForm = ref({ id: '', name: '', description: '', tags: '', status: 'uploaded' })
+function handleEdit(row: any) {
+  editForm.value = { id: row.id, name: row.name || '', description: row.description || '', tags: row.tags || '', status: row.status || 'uploaded' }
+  showEditDialog.value = true
+}
+async function handleSaveEdit() {
+  if (!editForm.value.name) { ElMessage.warning('请输入名称'); return }
+  try {
+    await api.updateStorage(kbId, STORAGE_TYPE[activeTab.value], editForm.value.id, {
+      name: editForm.value.name,
+      description: editForm.value.description,
+      tags: editForm.value.tags,
+      status: editForm.value.status,
+    })
+    showEditDialog.value = false
+    await loadData()
+    ElMessage.success('保存成功')
+  } catch {
+    ElMessage.error('保存失败')
+  }
+}
+
+// ===== 下载（/api/** 需带 Authorization，浏览器 a.click() 不带，用 fetch 取流再下载） =====
+async function handleDownload(row: any) {
+  try {
+    const token = storage.get<string>('token') || ''
+    const resp = await fetch(api.getStorageDownloadUrl(kbId, STORAGE_TYPE[activeTab.value], row.id), {
+      headers: token ? { Authorization: `Bearer ${token}` } : {},
+    })
+    if (!resp.ok) throw new Error(`HTTP ${resp.status}`)
+    const blob = await resp.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = row.name || row.id
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    setTimeout(() => URL.revokeObjectURL(url), 1000)
+  } catch {
+    ElMessage.error('下载失败')
+  }
+}
+
 // 导入弹窗
 const showImportDialog = ref(false)
 const importItems = ref('')
@@ -69,10 +138,29 @@ async function handleImportSubmit() {
   ElMessage.success(`成功导入 ${items.length} 项`)
 }
 
+// 导出：后端返回 JSON 列表，前端转 CSV 触发真实下载
 async function handleExport() {
-  const isDoc = activeTab.value === 'document'
-  const res: any = isDoc ? await api.exportDocuments(kbId) : await api.exportMedia(kbId, activeTab.value)
-  ElMessage.success(`导出 ${res?.length || 0} 项（${MEDIA_MAP[activeTab.value]}）`)
+  try {
+    const isDoc = activeTab.value === 'document'
+    const res: any = isDoc ? await api.exportDocuments(kbId) : await api.exportMedia(kbId, activeTab.value)
+    const list = Array.isArray(res) ? res : res?.list || []
+    if (!list.length) { ElMessage.warning('没有可导出的数据'); return }
+    const esc = (v: any) => `"${String(v ?? '').replace(/"/g, '""')}"`
+    const csv = '\ufeff' + ['名称,格式,大小,状态,描述,创建时间',
+      ...list.map((r: any) => [esc(r.name), esc(r.extension), r.size ?? 0, esc(r.status), esc(r.description), esc(r.createdAt)].join(',')),
+    ].join('\n')
+    const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }))
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${MEDIA_MAP[activeTab.value]}资源_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出 ${list.length} 项`)
+  } catch {
+    ElMessage.error('导出失败')
+  }
 }
 
 async function handleDelete(row: any) {
@@ -182,7 +270,9 @@ onMounted(() => {
         <div class="section-title">{{ MEDIA_MAP[activeTab] }}资源管理</div>
         <div>
           <el-button @click="handleExport">导出</el-button>
+          <el-button @click="handleUpload">上传文件</el-button>
           <el-button type="primary" @click="handleImport">导入{{ MEDIA_MAP[activeTab] }}</el-button>
+          <input ref="uploadInputRef" type="file" style="display: none" @change="handleUploadChange" />
         </div>
       </div>
 
@@ -210,8 +300,10 @@ onMounted(() => {
         </el-table-column>
         <el-table-column prop="description" label="描述" show-overflow-tooltip />
         <el-table-column prop="createdAt" label="创建时间" width="160" />
-        <el-table-column label="操作" width="80">
+        <el-table-column label="操作" width="150">
           <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
+            <el-button link type="success" size="small" @click="handleDownload(row)">下载</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -246,6 +338,27 @@ onMounted(() => {
         </el-table-column>
       </el-table>
     </div>
+
+    <!-- 编辑多媒体弹窗 -->
+    <el-dialog v-model="showEditDialog" title="编辑多媒体" width="520px">
+      <el-form label-width="80px">
+        <el-form-item label="名称" required><el-input v-model="editForm.name" /></el-form-item>
+        <el-form-item label="描述"><el-input v-model="editForm.description" type="textarea" :rows="3" /></el-form-item>
+        <el-form-item label="标签"><el-input v-model="editForm.tags" placeholder="逗号分隔" /></el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="editForm.status" style="width: 160px">
+            <el-option label="已上传" value="uploaded" />
+            <el-option label="处理中" value="processing" />
+            <el-option label="已完成" value="completed" />
+            <el-option label="失败" value="failed" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showEditDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveEdit">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 导入弹窗 -->
     <el-dialog v-model="showImportDialog" :title="`导入${MEDIA_MAP[activeTab]}`" width="600px">

@@ -31,6 +31,11 @@ public class WorkflowController {
     @GetMapping("/{id}/test-cases") public ApiResponse<?> testCases(@PathVariable String id) { return ApiResponse.success(svc.listTestCases(id)); }
     @PostMapping("/{id}/test-cases") public ApiResponse<?> createTC(@PathVariable String id,@RequestBody WfTestCase tc) { return ApiResponse.success(svc.createTestCase(id,tc)); }
     @DeleteMapping("/{id}/test-cases/{tcId}") public ApiResponse<?> deleteTC(@PathVariable String tcId) { svc.deleteTestCase(tcId); return ApiResponse.success(); }
+    // 运行测试案例
+    @PostMapping("/{id}/test-cases/{tcId}/run") public ApiResponse<?> runTC(@PathVariable String id,@PathVariable String tcId) { return ApiResponse.success(svc.runTestCase(id,tcId)); }
+    // ===== 节点日志（查看/清理） =====
+    @GetMapping("/{id}/nodes/{nodeKey}/logs") public ApiResponse<?> nodeLogs(@PathVariable String id,@PathVariable String nodeKey) { return ApiResponse.success(svc.listNodeLogs(id,nodeKey)); }
+    @DeleteMapping("/{id}/nodes/{nodeKey}/logs") public ApiResponse<?> clearNodeLogs(@PathVariable String id,@PathVariable String nodeKey) { svc.clearNodeLogs(id,nodeKey); return ApiResponse.success(); }
     // ===== 模板 =====
     @GetMapping("/templates") public ApiResponse<?> templates() { return ApiResponse.success(svc.listTemplates()); }
     @PostMapping("/templates") public ApiResponse<?> createTemplate(@RequestBody WfTemplate t) { return ApiResponse.success(svc.createTemplate(t)); }
@@ -39,10 +44,18 @@ public class WorkflowController {
     // ===== 调试 =====
     @GetMapping("/{id}/debug") public ApiResponse<?> debugInfo(@PathVariable String id) { return ApiResponse.success(svc.getDebugInfo(id)); }
     @PostMapping("/{id}/debug") public ApiResponse<?> saveDebug(@PathVariable String id,@RequestBody Map<String,Object> cfg) { return ApiResponse.success(svc.saveDebugConfig(id,cfg)); }
+    // 导出调试日志
+    @GetMapping("/{id}/debug/export") public void exportDebug(@PathVariable String id, jakarta.servlet.http.HttpServletResponse resp) throws Exception { svc.exportDebugLogs(id,resp); }
+    // 清空全部调试日志
+    @DeleteMapping("/{id}/debug") public ApiResponse<?> clearDebug(@PathVariable String id) { svc.clearAllLogs(id); return ApiResponse.success(); }
     // ===== 优化 =====
     @GetMapping("/{id}/optimizations") public ApiResponse<?> wfOpts(@PathVariable String id) { return ApiResponse.success(svc.listOptimizations(id)); }
     @PostMapping("/{id}/optimizations") public ApiResponse<?> createWfOpt(@PathVariable String id,@RequestBody WfOptimization o) { return ApiResponse.success(svc.createOptimization(id,o)); }
     @PostMapping("/{id}/optimizations/{optId}/apply") public ApiResponse<?> applyWfOpt(@PathVariable String optId) { return ApiResponse.success(svc.applyOptimization(optId)); }
+    // 分析对话数据 / 测试优化效果 / 导出优化报告
+    @PostMapping("/{id}/optimizations/analyze") public ApiResponse<?> analyzeWfOpt(@PathVariable String id) { return ApiResponse.success(svc.analyzeOptimization(id)); }
+    @PostMapping("/optimizations/{optId}/test") public ApiResponse<?> testWfOpt(@PathVariable String optId) { return ApiResponse.success(svc.testOptimization(optId)); }
+    @GetMapping("/{id}/optimizations/export") public void exportWfOpts(@PathVariable String id, jakarta.servlet.http.HttpServletResponse resp) throws Exception { svc.exportOptimizations(id,resp); }
     // ===== 迁移 =====
     @GetMapping("/migrations") public ApiResponse<?> migrations() { return ApiResponse.success(svc.listMigrations()); }
     @PostMapping("/migrations") public ApiResponse<?> createMigration(@RequestBody WfMigration m) { return ApiResponse.success(svc.createMigration(m)); }

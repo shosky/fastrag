@@ -7,6 +7,8 @@ public class QueryRuleController {
     private final QueryRuleService svc;
     @GetMapping public ApiResponse<?> list(@RequestParam(required=false) String type) { return ApiResponse.success(svc.list(type)); }
     @PostMapping public ApiResponse<?> create(@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.create(f)); }
+    // 编辑查询重写/扩写规则
+    @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String id,@RequestBody Map<String,Object> f) { return ApiResponse.success(svc.update(id,f)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }
     @PostMapping("/{id}/toggle") public ApiResponse<?> toggle(@PathVariable String id) { svc.toggle(id); return ApiResponse.success(); }
 }

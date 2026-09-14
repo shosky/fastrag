@@ -49,7 +49,8 @@ async function handleRetrievalSearch() {
 
     // 查询重写
     try {
-      const rewritten = await apiApplyQueryRules(effectiveQuery)
+      const res = await apiApplyQueryRules(effectiveQuery)
+      const rewritten = res?.rewritten
       if (rewritten && rewritten !== effectiveQuery) {
         effectiveQuery = rewritten
       }

@@ -10,32 +10,59 @@ const updateLogs = ref<any[]>([])
 const autoUpdateConfig = ref({ enabled: false, schedule: '0 0 2 * * ?', incremental: true })
 const showAutoConfig = ref(false)
 
-async function loadUpdateLogs() {
-  try { updateLogs.value = ((await api.getKnowledgeUpdateLogs(appId())) as any) || [] } catch { updateLogs.value = [] }
-  if (!updateLogs.value.length) {
-    updateLogs.value = [
-      { id: 'u1', updateType: 'auto', status: 'completed', summary: '增量更新：新增3个文档', detail: '新增：产品手册v2.docx、技术规格.pdf、API文档.md', operator: '系统', createdAt: '2026-06-29 02:00:00' },
-      { id: 'u2', updateType: 'manual', status: 'completed', summary: '手动更新：重新导入知识库', detail: '重新导入全部文档，共12个文件', operator: '管理员', createdAt: '2026-06-28 15:30:00' },
-      { id: 'u3', updateType: 'incremental', status: 'running', summary: '增量更新进行中', detail: '正在处理2个新增文件', operator: '系统', createdAt: '2026-06-29 10:00:00' },
-    ]
-  }
+// 知识库选择：更新日志/比较走真实 kb 级端点，需要选定知识库
+const kbList = ref<any[]>([])
+const selectedKbId = ref('')
+async function loadKbList() {
+  try {
+    const res: any = await api.getAppKbBindings(appId())
+    const bindings = Array.isArray(res) ? res : res?.list || []
+    // 绑定记录只有 kbId，需要换名称时直接展示 kbId
+    kbList.value = bindings.map((b: any) => ({ id: b.kbId, name: b.kbName || b.kbId }))
+    if (kbList.value.length && !selectedKbId.value) selectedKbId.value = kbList.value[0].id
+  } catch { kbList.value = [] }
 }
+
+async function loadUpdateLogs() {
+  if (!selectedKbId.value) { updateLogs.value = []; return }
+  loading.value = true
+  try {
+    const res: any = await api.getKnowledgeUpdateLogs(selectedKbId.value, 1, 50)
+    updateLogs.value = res?.list || []
+  } catch { updateLogs.value = [] } finally { loading.value = false }
+}
+const loading = ref(false)
+
 async function loadAutoConfig() {
-  try { const r: any = await api.getAutoKnowledgeUpdate(appId()); if (r) Object.assign(autoUpdateConfig.value, r) } catch {}
+  try {
+    const r: any = await api.getAutoKnowledgeUpdate(appId())
+    if (r) Object.assign(autoUpdateConfig.value, { schedule: r.schedule || '0 0 2 * * ?', incremental: r.incremental !== false, enabled: !!r.enabled })
+  } catch {}
 }
 async function handleManualUpdate() {
   try {
     const { value } = await ElMessageBox.prompt('确认手动更新知识库？输入备注说明', '手动更新', { inputPlaceholder: '更新备注' })
-    if (value !== null) { await api.triggerAppKnowledgeUpdate(appId(), { remark: value }); ElMessage.success('更新任务已提交'); await loadUpdateLogs() }
+    if (value !== null) {
+      const r: any = await api.triggerAppKnowledgeUpdate(appId(), { remark: value })
+      ElMessage.success(`更新已完成（${r?.updated ?? 0} 个知识库已记录）`)
+      await loadUpdateLogs()
+    }
   } catch {}
 }
 async function handleSaveAutoConfig() {
-  await api.setAutoKnowledgeUpdate(appId(), autoUpdateConfig.value); showAutoConfig.value = false; ElMessage.success('自动更新配置已保存')
+  await api.setAutoKnowledgeUpdate(appId(), autoUpdateConfig.value)
+  showAutoConfig.value = false; ElMessage.success('自动更新配置已保存')
 }
+async function handleKbChange() { await loadUpdateLogs() }
 async function handleCompare(row: any) {
-  try { const r: any = await api.compareKnowledgeContent(appId(), row.oldId || row.id, row.newId || row.id); ElMessageBox.alert(JSON.stringify(r, null, 2), '内容比较') } catch { ElMessage.error('获取比较内容失败') }
+  if (!row.oldKnowledgeId && !row.newKnowledgeId) { ElMessage.info('该记录无新旧版本信息'); return }
+  try {
+    const r: any = await api.compareKnowledgeContent(selectedKbId.value, row.oldKnowledgeId, row.newKnowledgeId)
+    const diff = `旧版：${r?.oldVersion?.title || '-'}（${r?.oldLength ?? 0} 字）\n新版：${r?.newVersion?.title || '-'}（${r?.newLength ?? 0} 字）\n标题变更：${r?.titleChanged ? '是' : '否'}；内容变更：${r?.contentChanged ? '是' : '否'}`
+    ElMessageBox.alert(diff, '内容比较')
+  } catch { ElMessage.error('获取比较内容失败') }
 }
-onMounted(() => { loadUpdateLogs(); loadAutoConfig() })
+onMounted(async () => { await loadKbList(); loadUpdateLogs(); loadAutoConfig() })
 </script>
 <template>
   <div class="config-section">
@@ -46,16 +73,21 @@ onMounted(() => { loadUpdateLogs(); loadAutoConfig() })
           <el-button size="small" type="primary" @click="handleManualUpdate">手动更新</el-button>
         </div>
       </div>
-      <el-table :data="updateLogs" stripe size="small" style="margin-top:12px">
-        <el-table-column prop="updateType" label="类型" width="100"><template #default="{row}">{{ {auto:'自动',manual:'手动',incremental:'增量'}[row.updateType]||row.updateType }}</template></el-table-column>
-        <el-table-column prop="status" label="状态" width="80"><template #default="{row}"><el-tag :type="row.status==='completed'?'success':'warning'" size="small">{{row.status}}</el-tag></template></el-table-column>
-        <el-table-column prop="summary" label="摘要" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
+      <div class="filter-bar">
+        <el-select v-model="selectedKbId" placeholder="选择知识库" style="width:240px" @change="handleKbChange">
+          <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
+        </el-select>
+        <span style="font-size:12px;color:#909399">更新日志按知识库记录，请先选择知识库</span>
+      </div>
+      <el-table :data="updateLogs" stripe size="small" style="margin-top:12px" v-loading="loading">
+        <el-table-column prop="updateType" label="类型" width="100"><template #default="{row}">{{ ({auto:'自动',manual:'手动',incremental:'增量'} as Record<string,string>)[row.updateType]||row.updateType }}</template></el-table-column>
+        <el-table-column prop="target" label="目标" width="120" show-overflow-tooltip />
+        <el-table-column prop="detail" label="详情" min-width="220" show-overflow-tooltip />
         <el-table-column prop="operator" label="操作人" width="100" />
-        <el-table-column prop="createdAt" label="时间" width="160" />
+        <el-table-column prop="timestamp" label="时间" width="160" />
         <el-table-column label="操作" width="80"><template #default="{row}"><el-button link type="primary" size="small" @click="handleCompare(row)">比较</el-button></template></el-table-column>
       </el-table>
-      <el-empty v-if="!updateLogs.length" description="暂无更新记录" :image-size="60" />
+      <el-empty v-if="!updateLogs.length && !loading" description="暂无更新记录（手动更新后可见）" :image-size="60" />
     </div>
     <el-dialog v-model="showAutoConfig" title="自动更新配置" width="480px">
       <el-form label-width="120px">
@@ -69,7 +101,8 @@ onMounted(() => { loadUpdateLogs(); loadAutoConfig() })
 </template>
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
-.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; gap:8px; }
-.section-title { font-size: 15px; font-weight: 600; }
+.section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom:$spacing-base; gap:8px; }
+.section-title { font-size:15px; font-weight:600; }
+.filter-bar { display: flex; align-items: center; gap: 12px; margin-top: 8px; }
 .card-panel { background: var(--el-bg-color-overlay); border-radius: 8px; padding: 20px; border: 1px solid var(--el-border-color-light); }
 </style>

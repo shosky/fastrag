@@ -31,6 +31,12 @@ public class KnowledgeManageController {
     @PutMapping("/knowledge/{id}") public ApiResponse<?> update(@PathVariable String id, @RequestBody KbKnowledge knowledge) { return ApiResponse.success(svc.update(id,knowledge)); }
     @DeleteMapping("/knowledge/{id}") public ApiResponse<?> delete(@PathVariable String id) { svc.delete(id); return ApiResponse.success(); }
 
+    // ===== 知识回收站（条目级软删） =====
+    @GetMapping("/knowledge/deleted") public ApiResponse<?> deleted(@PathVariable String kbId) { return ApiResponse.success(svc.listDeleted(kbId)); }
+    @PostMapping("/knowledge/{id}/restore") public ApiResponse<?> restore(@PathVariable String id) { svc.restore(id); return ApiResponse.success(); }
+    @DeleteMapping("/knowledge/{id}/permanent") public ApiResponse<?> permanentDelete(@PathVariable String id) { svc.permanentDelete(id); return ApiResponse.success(); }
+    @DeleteMapping("/knowledge/recycle-bin") public ApiResponse<?> emptyRecycleBin(@PathVariable String kbId) { svc.emptyRecycleBin(kbId); return ApiResponse.success(); }
+
     // ===== AI 能力：封面图生成 =====
     @PostMapping("/knowledge/{id}/cover-image/generate")
     public ApiResponse<?> generateCoverImage(@PathVariable String kbId,

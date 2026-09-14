@@ -10,7 +10,7 @@ const showDialog = ref(false)
 const dialogTitle = ref('')
 const editingId = ref<string | null>(null)
 const formData = ref<any>({})
-const steps = ref<{ name: string; reviewerRole: string; timeoutHours: number }[]>([])
+const steps = ref<{ name: string; reviewerRole: string; timeoutHours: number; listenerIds?: string[] }[]>([])
 const roleOptions = ['知识编辑', '知识管理员', '部门主管', '质量管理员']
 
 // 流程模板库
@@ -108,6 +108,8 @@ async function loadData() {
   if (!selectedKbId.value) return
   loading.value = true
   try {
+    // 加载监听器（供节点绑定选择）
+    try { listeners.value = ((await api.getListeners(selectedKbId.value)) as any) || [] } catch { listeners.value = [] }
     const res = await api.getReviewTemplates(selectedKbId.value)
     const rawList = Array.isArray(res) ? res : (res as any)?.list || []
     // 将后端数据转换为前端格式（flowConfig JSON 字符串 → steps 数组）
@@ -128,16 +130,19 @@ async function loadData() {
     loading.value = false
   }
 }
+// 监听器（节点可绑定，随流程配置存入 flowConfig）
+const listeners = ref<any[]>([])
+function listenerName(id: string) { return listeners.value.find((l: any) => l.id === id)?.name || id }
 onMounted(async () => { await loadKbList(); loadData() })
 
 function handleAdd() {
   editingId.value = null; formData.value = { name: '', description: '', status: 'draft' }
-  steps.value = [{ name: '审核', reviewerRole: '知识管理员', timeoutHours: 24 }]
+  steps.value = [{ name: '审核', reviewerRole: '知识管理员', timeoutHours: 24, listenerIds: [] }]
   dialogTitle.value = '新增审核流程'; showDialog.value = true
 }
 function handleEdit(row: any) {
   editingId.value = row.id; formData.value = { name: row.name, description: row.description, status: row.status }
-  steps.value = getSteps(row).map((s: any) => ({ name: s.name, reviewerRole: s.reviewerRole, timeoutHours: s.timeoutHours }))
+  steps.value = getSteps(row).map((s: any) => ({ name: s.name, reviewerRole: s.reviewerRole, timeoutHours: s.timeoutHours, listenerIds: s.listenerIds || [] }))
   dialogTitle.value = '编辑审核流程'; showDialog.value = true
 }
 async function handleDelete(row: any) {
@@ -147,7 +152,7 @@ async function handleDelete(row: any) {
     ElMessage.success('删除成功'); loadData()
   } catch (e: any) { ElMessage.error(e?.message || '删除失败') }
 }
-function addStep() { steps.value.push({ name: `步骤${steps.value.length + 1}`, reviewerRole: '知识管理员', timeoutHours: 24 }) }
+function addStep() { steps.value.push({ name: `步骤${steps.value.length + 1}`, reviewerRole: '知识管理员', timeoutHours: 24, listenerIds: [] }) }
 function removeStep(idx: number) { if (steps.value.length <= 1) { ElMessage.warning('至少需要一个步骤'); return }; steps.value.splice(idx, 1) }
 function copyStep(idx: number) { const src = steps.value[idx]; steps.value.splice(idx + 1, 0, { ...src, name: src.name + '(副本)' }) }
 async function handleSave() {
@@ -458,12 +463,15 @@ async function handleApplySuggestion(sug: any) {
           <el-select v-model="formData.status" style="width: 200px"><el-option label="草稿" value="draft" /><el-option label="启用" value="active" /></el-select>
         </el-form-item>
         <el-divider content-position="left">审核步骤</el-divider>
-        <div v-for="(step, idx) in steps" :key="idx" style="display: flex; gap: 12px; margin-bottom: 12px; align-items: center; background: #f5f7fa; padding: 12px; border-radius: 6px">
+        <div v-for="(step, idx) in steps" :key="idx" style="display: flex; gap: 12px; margin-bottom: 12px; align-items: center; flex-wrap: wrap; background: #f5f7fa; padding: 12px; border-radius: 6px">
           <span style="color: #909399; font-size: 13px; min-width: 50px">步骤{{ idx + 1 }}</span>
-          <el-input v-model="step.name" placeholder="步骤名称" style="width: 150px" />
-          <el-select v-model="step.reviewerRole" placeholder="审核角色" style="width: 150px"><el-option v-for="r in roleOptions" :key="r" :label="r" :value="r" /></el-select>
-          <el-input-number v-model="step.timeoutHours" :min="1" :max="168" style="width: 130px" />
+          <el-input v-model="step.name" placeholder="步骤名称" style="width: 140px" />
+          <el-select v-model="step.reviewerRole" placeholder="审核角色" style="width: 140px"><el-option v-for="r in roleOptions" :key="r" :label="r" :value="r" /></el-select>
+          <el-input-number v-model="step.timeoutHours" :min="1" :max="168" style="width: 120px" />
           <span style="font-size: 12px; color: #909399">小时超时</span>
+          <el-select v-model="step.listenerIds" multiple collapse-tags placeholder="监听器(可多选)" style="min-width: 180px; flex: 1">
+            <el-option v-for="l in listeners" :key="l.id" :label="l.name" :value="l.id" />
+          </el-select>
           <el-button link type="danger" @click="removeStep(idx)">删除</el-button>
           <el-button link type="primary" @click="copyStep(idx)">复制</el-button>
         </div>
@@ -483,6 +491,9 @@ async function handleApplySuggestion(sug: any) {
             <div style="background:#409eff;color:#fff;padding:12px 24px;border-radius:8px;text-align:center;min-width:200px">
               <div style="font-size:14px;font-weight:600">{{ step.name }}</div>
               <div style="font-size:12px;opacity:0.8;margin-top:4px">审核人：{{ step.reviewerRole }} | 超时：{{ step.timeoutHours }}h</div>
+              <div v-if="(step.listenerIds || []).length" style="font-size:12px;opacity:0.85;margin-top:2px">
+                监听器：{{ (step.listenerIds || []).map((id: string) => listenerName(id)).join('、') }}
+              </div>
             </div>
             <div v-if="idx < (getSteps(flowChartData) || []).length - 1" style="color:#c0c4cc;font-size:20px">↓</div>
           </template>
@@ -507,7 +518,7 @@ async function handleApplySuggestion(sug: any) {
           <div style="font-size:12px;color:#909399;margin-bottom:6px">{{ tpl.description }}</div>
           <div style="font-size:12px;color:#409eff">
             {{ tpl.steps.length }} 个步骤：
-            <template v-for="(s, i) in tpl.steps" :key="i">{{ s.name }}<span v-if="i < tpl.steps.length - 1"> → </span></template>
+            <template v-for="(s, i) in tpl.steps" :key="i">{{ s.name }}<span v-if="Number(i) < tpl.steps.length - 1"> → </span></template>
           </div>
           <div style="margin-top:8px"><el-button size="small" type="primary" @click.stop="handleApplyTemplate(tpl)">应用此模板</el-button></div>
         </div>

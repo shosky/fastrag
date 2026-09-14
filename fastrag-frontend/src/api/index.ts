@@ -185,7 +185,7 @@ export async function getQaPairs(kbId: string, params?: { page?: number; pageSiz
   return request.get(`/kb/${kbId}/qa-pairs`, { params })
 }
 
-export async function createQaPair(kbId: string, data: { question: string; answer: string }) {
+export async function createQaPair(kbId: string, data: { question: string; answer: string; source?: string; fileId?: string }) {
   return request.post(`/kb/${kbId}/qa-pairs`, data)
 }
 
@@ -201,8 +201,8 @@ export async function confirmQaPair(kbId: string, id: string) {
   return request.post(`/kb/${kbId}/qa-pairs/${id}/confirm`)
 }
 
-export async function qaExtract(kbId: string, data: { fileId?: string }) {
-  return request.post(`/kb/${kbId}/qa-pairs/qa-extract`, data)
+export async function qaExtract(kbId: string, fileIds: string[]) {
+  return request.post(`/kb/${kbId}/qa-pairs/qa-extract`, { fileIds })
 }
 
 // ===========================================================================
@@ -270,11 +270,11 @@ export async function querySuggest(query: string): Promise<string> {
   return request.post('/query/suggest', { query })
 }
 
-export async function expandSynonyms(query: string): Promise<string[]> {
+export async function expandSynonyms(query: string): Promise<{ expandedQuery: string; matchedTerms: string[]; addedTerms: string[] }> {
   return request.post('/query/expand-synonyms', { query })
 }
 
-export async function applyQueryRules(query: string): Promise<string> {
+export async function applyQueryRules(query: string): Promise<{ rewritten: string; appliedRules: string[] }> {
   return request.post('/query-rules/apply', { query })
 }
 
@@ -404,12 +404,41 @@ export async function submitForReview(data: Record<string, unknown>) {
   return request.post('/reviews', data)
 }
 
-export async function approveReview(reviewId: string) {
-  return request.post(`/reviews/${reviewId}/approve`)
+export async function approveReview(reviewId: string, comment?: string) {
+  return request.post(`/reviews/${reviewId}/approve`, { comment })
 }
 
 export async function rejectReview(reviewId: string, reason?: string) {
-  return request.post(`/reviews/${reviewId}/reject`, { reason })
+  // 后端 PublishController 读取 comment 字段（原传 reason 导致备注丢失）
+  return request.post(`/reviews/${reviewId}/reject`, { comment: reason })
+}
+
+// 模型调用（真实 LLM 推理）
+export async function invokeModel(modelId: string, data: { prompt: string; temperature?: number }) {
+  return request.post(`/models/${modelId}/invoke`, data)
+}
+
+// 模型调用日志
+export async function getModelCallLogs(modelId: string) {
+  return request.get(`/models/${modelId}/call-logs`)
+}
+
+// 审核流程绑定（读取/保存）
+export async function getReviewFlowBinding() {
+  return request.get('/config/review-flow-binding')
+}
+export async function updateReviewFlowBinding(data: Record<string, unknown>) {
+  return request.put('/config/review-flow-binding', data)
+}
+
+// 知识质量趋势
+export async function getQualityTrend(kbId: string, months?: number) {
+  return request.get(`/kb/${kbId}/quality-trend`, { params: { months } })
+}
+
+// 监听器分发（审核通过/驳回后触发监听回调）
+export async function dispatchListeners(kbId: string, eventType: string, message?: string) {
+  return request.post(`/kb/${kbId}/listeners/dispatch`, { eventType, message })
 }
 
 // ===========================================================================
@@ -634,6 +663,10 @@ export async function getQueryRules(params?: { type?: string }) {
 
 export async function createQueryRule(data: Record<string, unknown>) {
   return request.post('/query-rules', data)
+}
+
+export async function updateQueryRule(id: string, data: Record<string, unknown>) {
+  return request.put(`/query-rules/${id}`, data)
 }
 
 export async function deleteQueryRule(id: string) {
@@ -1171,6 +1204,70 @@ export async function checkKnowledgeValidate(kbId: string, data: Record<string, 
   return request.post(`/kb/${kbId}/knowledge-validate/check`, data)
 }
 
+// 采编批量导入
+export async function importKnowledgeEdits(kbId: string, items: Record<string, unknown>[]) {
+  return request.post(`/kb/${kbId}/knowledge-edits/import`, items)
+}
+
+// 知识工单（新增/查看/编辑/删除）
+export async function getKnowledgeTickets(kbId: string, params?: { status?: string; ticketType?: string; keyword?: string }) {
+  return request.get(`/kb/${kbId}/knowledge-tickets`, { params })
+}
+
+export async function getKnowledgeTicket(kbId: string, id: string) {
+  return request.get(`/kb/${kbId}/knowledge-tickets/${id}`)
+}
+
+export async function createKnowledgeTicket(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/knowledge-tickets`, data)
+}
+
+export async function updateKnowledgeTicket(kbId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/kb/${kbId}/knowledge-tickets/${id}`, data)
+}
+
+export async function deleteKnowledgeTicket(kbId: string, id: string) {
+  return request.delete(`/kb/${kbId}/knowledge-tickets/${id}`)
+}
+
+// 事项知识关联管理（新增/查看/编辑/删除）
+export async function getMatterKnowledgeRels(kbId: string, params?: { matterName?: string; keyword?: string }) {
+  return request.get(`/kb/${kbId}/matter-knowledge-rels`, { params })
+}
+
+export async function getMatterKnowledgeRel(kbId: string, id: string) {
+  return request.get(`/kb/${kbId}/matter-knowledge-rels/${id}`)
+}
+
+export async function createMatterKnowledgeRel(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/matter-knowledge-rels`, data)
+}
+
+export async function updateMatterKnowledgeRel(kbId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/kb/${kbId}/matter-knowledge-rels/${id}`, data)
+}
+
+export async function deleteMatterKnowledgeRel(kbId: string, id: string) {
+  return request.delete(`/kb/${kbId}/matter-knowledge-rels/${id}`)
+}
+
+// 知识回收站（条目级：回收列表/恢复/彻底删除/清空）
+export async function getDeletedKnowledges(kbId: string) {
+  return request.get(`/kb/${kbId}/knowledge/deleted`)
+}
+
+export async function restoreKnowledge(kbId: string, id: string) {
+  return request.post(`/kb/${kbId}/knowledge/${id}/restore`)
+}
+
+export async function permanentDeleteKnowledge(kbId: string, id: string) {
+  return request.delete(`/kb/${kbId}/knowledge/${id}/permanent`)
+}
+
+export async function emptyKnowledgeRecycleBin(kbId: string) {
+  return request.delete(`/kb/${kbId}/knowledge/recycle-bin`)
+}
+
 // ===========================================================================
 // M9 知识存储管理（标签类型 / 标签 / 笔记）
 // ===========================================================================
@@ -1582,8 +1679,11 @@ export async function saveAppBasicConfig(appId: string, data: Record<string, unk
 export async function getAppDialogConfig(appId: string) {
   return request.get(`/apps/${appId}/dialog`)
 }
-export async function saveAppDialogConfig(appId: string, data: Record<string, unknown>) {
-  return request.put(`/apps/${appId}/dialog/background`, data)
+export async function saveAppDialogConfig(appId: string, data: Record<string, unknown>) {  return request.put(`/apps/${appId}/dialog/background`, data)
+}
+// 重置对话配置（恢复默认）
+export async function resetAppDialogConfig(appId: string) {
+  return request.post(`/apps/${appId}/dialog/reset`, {})
 }
 export async function getAppTriggers(appId: string) {
   return request.get(`/apps/${appId}/triggers`)
@@ -1755,6 +1855,10 @@ export async function getWorkflowNodeLogs(wfId: string, nodeKey: string) {
 export async function clearWorkflowNodeLogs(wfId: string, nodeKey: string) {
   return request.delete(`/workflows/${wfId}/nodes/${nodeKey}/logs`)
 }
+// 清空业务流全部调试日志
+export async function clearWorkflowDebugLogs(wfId: string) {
+  return request.delete(`/workflows/${wfId}/debug`)
+}
 export async function executeWorkflow(wfId: string, inputs?: Record<string, unknown>) {
   return request.post(`/workflows/${wfId}/execute`, inputs || {})
 }
@@ -1772,6 +1876,31 @@ export async function getWorkflowTestCases(wfId: string) {
 }
 export async function createWorkflowTestCase(wfId: string, data: Record<string, unknown>) {
   return request.post(`/workflows/${wfId}/test-cases`, data)
+}
+export async function deleteWorkflowTestCase(wfId: string, tcId: string) {
+  return request.delete(`/workflows/${wfId}/test-cases/${tcId}`)
+}
+// 运行业务流测试案例
+export async function runWorkflowTestCase(wfId: string, tcId: string) {
+  return request.post(`/workflows/${wfId}/test-cases/${tcId}/run`)
+}
+// 业务流调试日志导出
+export async function exportWorkflowDebugLogs(wfId: string) {
+  return request.get(`/workflows/${wfId}/debug/export`, { responseType: 'blob' })
+}
+// 业务流优化：分析对话数据 / 测试优化效果 / 导出优化报告
+export async function analyzeWorkflowOptimization(wfId: string) {
+  return request.post(`/workflows/${wfId}/optimizations/analyze`, {})
+}
+export async function testWorkflowOptimization(optId: string) {
+  return request.post(`/workflows/optimizations/${optId}/test`)
+}
+export async function exportWorkflowOptimizations(wfId: string) {
+  return request.get(`/workflows/${wfId}/optimizations/export`, { responseType: 'blob' })
+}
+// 兜底话术（对话配置）
+export async function saveAppFallback(appId: string, data: Record<string, unknown>) {
+  return request.put(`/apps/${appId}/global-policy/fallback`, data)
 }
 export async function getWorkflowMigrations() {
   return request.get('/workflows/migrations')

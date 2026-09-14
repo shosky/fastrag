@@ -84,4 +84,8 @@ public interface PublishManageService {
     List<Map<String,Object>> getNodeOptimizationSuggestions(String templateId);
     /** 复制审核节点 */
     KbReviewNode copyReviewNode(String id);
+    // 监听器分发：向启用的监听器 URL 推送事件并记录执行日志
+    Map<String,Object> dispatchListeners(String kbId, String eventType, String message);
+    // 知识质量趋势：按月聚合审核任务与发布记录
+    List<Map<String,Object>> getQualityTrend(String kbId, int months);
 }

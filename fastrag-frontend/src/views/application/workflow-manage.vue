@@ -627,6 +627,207 @@ onMounted(async () => {
     if (target) handleSelectWorkflow(target)
   }
 })
+
+// ============================================================================
+// 业务流-对话测试（录制/查看/删除/运行）
+// ============================================================================
+const wfTestList = ref<any[]>([])
+const wfTestLoading = ref(false)
+const showWfTestDialog = ref(false)
+const showWfTestCreate = ref(false)
+const wfTestCreateLoading = ref(false)
+const wfTestForm = ref({ name: '', query: '', expectedOutput: '' })
+const wfRunningId = ref('')
+function openWfTest() { showWfTestDialog.value = true; loadWfTests() }
+async function loadWfTests() {
+  if (!wfId.value) return
+  wfTestLoading.value = true
+  try { wfTestList.value = ((await api.getWorkflowTestCases(wfId.value)) as any) || [] } catch { wfTestList.value = [] } finally { wfTestLoading.value = false }
+}
+// 录制：真实执行业务流后保存为案例
+async function handleRecordWfTest() {
+  if (!wfTestForm.value.query) { ElMessage.warning('请输入测试输入'); return }
+  wfTestCreateLoading.value = true
+  try {
+    const exec: any = await api.executeWorkflow(wfId.value, { query: wfTestForm.value.query })
+    await api.createWorkflowTestCase(wfId.value, {
+      name: wfTestForm.value.name || ('录制-' + wfTestForm.value.query.substring(0, 16)),
+      query: wfTestForm.value.query,
+      expectedOutput: wfTestForm.value.expectedOutput,
+      actualOutput: typeof exec?.output === 'string' ? exec.output : JSON.stringify(exec?.steps || exec),
+      inputs: JSON.stringify({ query: wfTestForm.value.query }),
+    })
+    ElMessage.success('测试案例已录制')
+    showWfTestCreate.value = false
+    await loadWfTests()
+  } catch { ElMessage.error('录制失败') } finally { wfTestCreateLoading.value = false }
+}
+async function handleRunWfTest(row: any) {
+  wfRunningId.value = row.id
+  try {
+    const r: any = await api.runWorkflowTestCase(wfId.value, row.id)
+    ElMessage.success(r?.matched === 1 ? '运行通过' : '运行完成（未匹配期望输出）')
+    await loadWfTests()
+  } catch { ElMessage.error('运行失败') } finally { wfRunningId.value = '' }
+}
+async function handleDeleteWfTest(row: any) {
+  try {
+    await ElMessageBox.confirm(`确认删除案例「${row.name}」？`, '删除确认', { type: 'warning' })
+    await api.deleteWorkflowTestCase(wfId.value, row.id)
+    await loadWfTests()
+    ElMessage.success('已删除')
+  } catch {}
+}
+// 查看案例详情
+const showWfTestView = ref(false)
+const viewingWfTest = ref<any>(null)
+function handleViewWfTest(row: any) { viewingWfTest.value = row; showWfTestView.value = true }
+
+// ============================================================================
+// 业务流-对话调试（级别设置/查看/导出/清理）
+// ============================================================================
+const showWfDebugDialog = ref(false)
+const wfDebug = ref<{ level: string; logs: any[] }>({ level: 'info', logs: [] })
+const wfDebugLoading = ref(false)
+function openWfDebug() { showWfDebugDialog.value = true; loadWfDebug() }
+async function loadWfDebug() {
+  if (!wfId.value) return
+  wfDebugLoading.value = true
+  try {
+    const r: any = await api.getWorkflowDebugInfo(wfId.value)
+    wfDebug.value = { level: r?.level || 'info', logs: r?.logs || [] }
+  } catch { wfDebug.value = { level: 'info', logs: [] } } finally { wfDebugLoading.value = false }
+}
+async function handleSaveWfLevel() {
+  try { await api.saveWorkflowDebugConfig(wfId.value, { level: wfDebug.value.level }); ElMessage.success('调试级别已保存'); await loadWfDebug() } catch { ElMessage.error('保存失败') }
+}
+async function handleExportWfDebug() {
+  try {
+    const blob = await api.exportWorkflowDebugLogs(wfId.value) as unknown as Blob
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = `wf_debug_logs_${wfId.value}.csv`; a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('调试日志已导出')
+  } catch { ElMessage.error('导出失败') }
+}
+async function handleClearWfDebug() {
+  try { await ElMessageBox.confirm('确认清空该业务流全部调试日志？', '清理确认', { type: 'warning' }) } catch { return }
+  try { await api.clearWorkflowDebugLogs(wfId.value); ElMessage.success('已清空'); await loadWfDebug() } catch { ElMessage.error('清理失败') }
+}
+
+// ============================================================================
+// 业务流-知识更新（手动更新/自动更新/更新日志/比较）
+// ============================================================================
+const appId = (route.params.id as string) || ''
+const wfKbList = ref<any[]>([])
+const wfKbId = ref('')
+const wfUpdateLogs = ref<any[]>([])
+const wfUpdateLoading = ref(false)
+const showWfUpdateDialog = ref(false)
+const wfAutoConfig = ref({ enabled: false, schedule: '0 0 2 * * ?', incremental: true })
+const showWfAutoConfig = ref(false)
+function openWfKbUpdate() { showWfUpdateDialog.value = true; loadWfKbs(); }
+async function loadWfKbs() {
+  try {
+    const res: any = await api.getAppKbBindings(appId)
+    wfKbList.value = (Array.isArray(res) ? res : res?.list || []).map((b: any) => ({ id: b.kbId, name: b.kbName || b.kbId }))
+    if (wfKbList.value.length && !wfKbId.value) wfKbId.value = wfKbList.value[0].id
+  } catch { wfKbList.value = [] }
+  await loadWfUpdateLogs()
+}
+async function loadWfUpdateLogs() {
+  if (!wfKbId.value) { wfUpdateLogs.value = []; return }
+  wfUpdateLoading.value = true
+  try { const r: any = await api.getKnowledgeUpdateLogs(wfKbId.value, 1, 50); wfUpdateLogs.value = r?.list || [] } catch { wfUpdateLogs.value = [] } finally { wfUpdateLoading.value = false }
+}
+async function handleWfManualUpdate() {
+  try {
+    await ElMessageBox.confirm('确认手动触发知识更新？将向应用绑定的知识库写入更新记录。', '手动更新', { type: 'info' })
+    const r: any = await api.triggerAppKnowledgeUpdate(appId, { remark: '业务流管理-手动更新' })
+    ElMessage.success(`更新已完成（${r?.updated ?? 0} 个知识库）`)
+    await loadWfUpdateLogs()
+  } catch {}
+}
+async function handleWfSaveAutoConfig() {
+  try { await api.setAutoKnowledgeUpdate(appId, wfAutoConfig.value); ElMessage.success('自动更新配置已保存'); showWfAutoConfig.value = false } catch { ElMessage.error('保存失败') }
+}
+async function handleWfCompare(row: any) {
+  if (!row.oldId && !row.newId) { ElMessage.info('该记录无新旧版本信息'); return }
+  try {
+    const r: any = await api.compareKnowledgeContent(wfKbId.value, row.oldId, row.newId)
+    ElMessageBox.alert(`旧版：${r?.oldVersion?.title || '-'}（${r?.oldLength ?? 0} 字）\n新版：${r?.newVersion?.title || '-'}（${r?.newLength ?? 0} 字）`, '内容比较')
+  } catch { ElMessage.error('获取比较内容失败') }
+}
+
+// ============================================================================
+// 业务流-对话优化（分析/查看建议/应用/测试/导出）
+// ============================================================================
+const showWfOptDialog = ref(false)
+const wfOptList = ref<any[]>([])
+const wfOptLoading = ref(false)
+const wfAnalyze = ref<any>(null)
+const wfOptForm = ref({ name: '', suggestionType: 'flow', description: '' })
+const wfTestingOptId = ref('')
+function openWfOpt() { showWfOptDialog.value = true; loadWfOpts() }
+async function loadWfOpts() {
+  if (!wfId.value) return
+  wfOptLoading.value = true
+  try { wfOptList.value = ((await api.getWorkflowOptimizations(wfId.value)) as any) || [] } catch { wfOptList.value = [] } finally { wfOptLoading.value = false }
+}
+async function handleAnalyzeWf() {
+  try { wfAnalyze.value = await api.analyzeWorkflowOptimization(wfId.value); ElMessage.success('分析完成') } catch { ElMessage.error('分析失败') }
+}
+async function handleCreateWfOpt() {
+  if (!wfOptForm.value.name) { ElMessage.warning('请输入建议标题'); return }
+  try { await api.createWorkflowOptimization(wfId.value, wfOptForm.value); wfOptForm.value = { name: '', suggestionType: 'flow', description: '' }; await loadWfOpts(); ElMessage.success('优化建议已保存') } catch { ElMessage.error('保存失败') }
+}
+async function handleApplyWfOpt(row: any) {
+  try { await api.applyWorkflowOptimization(row.id); await loadWfOpts(); ElMessage.success('已应用') } catch { ElMessage.error('应用失败') }
+}
+async function handleTestWfOpt(row: any) {
+  wfTestingOptId.value = row.id
+  try {
+    const r: any = await api.testWorkflowOptimization(row.id)
+    ElMessageBox.alert(`测试前：案例通过率 ${r?.before?.testCasePassRate ?? '-'}%\n测试后（预期）：${r?.after?.testCasePassRate ?? '-'}%`, '优化效果测试')
+    await loadWfOpts()
+  } catch { ElMessage.error('测试失败') } finally { wfTestingOptId.value = '' }
+}
+async function handleExportWfOpts() {
+  try {
+    const blob = await api.exportWorkflowOptimizations(wfId.value) as unknown as Blob
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a'); a.href = url; a.download = `wf_optimizations_${wfId.value}.csv`; a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('优化报告已导出')
+  } catch { ElMessage.error('导出失败') }
+}
+
+// ============================================================================
+// 业务流-配置迁移（查看迁移日志/进度/设置迁移策略）
+// ============================================================================
+const showWfMigDialog = ref(false)
+const wfMigList = ref<any[]>([])
+const wfMigLoading = ref(false)
+const wfMigForm = ref({ targetWorkflowId: '', targetEnv: 'test', strategy: 'overwrite' })
+const wfMigSubmitting = ref(false)
+function openWfMig() { showWfMigDialog.value = true; loadWfMigs() }
+async function loadWfMigs() {
+  wfMigLoading.value = true
+  try { wfMigList.value = ((await api.getWorkflowMigrations()) as any) || [] } catch { wfMigList.value = [] } finally { wfMigLoading.value = false }
+}
+async function handleCreateWfMig() {
+  if (!wfMigForm.value.targetWorkflowId) { ElMessage.warning('请选择目标业务流'); return }
+  if (wfMigForm.value.targetWorkflowId === wfId.value) { ElMessage.warning('目标业务流不能与源相同'); return }
+  wfMigSubmitting.value = true
+  try {
+    await api.createWorkflowMigration({ sourceWorkflowId: wfId.value, ...wfMigForm.value, operator: 'admin' })
+    ElMessage.success('迁移已完成')
+    await loadWfMigs()
+  } catch { ElMessage.error('迁移失败') } finally { wfMigSubmitting.value = false }
+}
+function wfMigStatus(s: string) { return ({ running: '执行中', pending: '待执行', completed: '已完成', failed: '失败' } as Record<string, string>)[s] || s }
+function wfMigStatusColor(s: string) { return (({ completed: 'success', failed: 'danger', running: 'warning', pending: 'info' } as Record<string, string>)[s] || 'info') as any }
+function wfNameById(id: string) { return workflowList.value.find((w: any) => w.id === id)?.name || id }
 </script>
 
 <template>
@@ -646,6 +847,11 @@ onMounted(async () => {
         <el-button size="small" :disabled="!nodeClipboard" @click="handlePasteNode">📥 粘贴节点</el-button>
         <el-button size="small" @click="handleExportNodes">📤 导出配置</el-button>
         <el-button size="small" @click="handleImportNodes">🗂 导入配置</el-button>
+        <el-button size="small" type="success" @click="openWfTest">🧪 对话测试</el-button>
+        <el-button size="small" type="success" plain @click="openWfDebug">🐞 对话调试</el-button>
+        <el-button size="small" type="primary" plain @click="openWfKbUpdate">🔄 知识更新</el-button>
+        <el-button size="small" type="warning" plain @click="openWfOpt">📈 对话优化</el-button>
+        <el-button size="small" type="info" plain @click="openWfMig">🔁 配置迁移</el-button>
         <el-button size="small" type="warning" @click="saveCanvas">💾 保存画布</el-button>
       </div>
     </div>
@@ -987,6 +1193,193 @@ onMounted(async () => {
         </div>
       </div>
       <template #footer><el-button @click="showExtDialog=false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- 业务流对话测试弹窗：录制/查看/运行/删除 -->
+    <el-dialog v-model="showWfTestDialog" title="对话测试 - 测试案例" width="760px">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <el-button size="small" type="primary" @click="wfTestForm = { name: '', query: '', expectedOutput: '' }; showWfTestCreate = true">录制测试案例</el-button>
+      </div>
+      <el-table :data="wfTestList" stripe size="small" v-loading="wfTestLoading">
+        <el-table-column prop="name" label="案例名称" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="query" label="测试输入" show-overflow-tooltip min-width="160" />
+        <el-table-column prop="expectedOutput" label="期望输出" show-overflow-tooltip min-width="150" />
+        <el-table-column prop="actualOutput" label="实际输出" show-overflow-tooltip min-width="150" />
+        <el-table-column label="结果" width="80" align="center">
+          <template #default="{ row }">
+            <el-tag v-if="row.matched !== null && row.matched !== undefined" :type="row.matched === 1 ? 'success' : 'danger'" size="small">{{ row.matched === 1 ? '通过' : '未通过' }}</el-tag>
+            <span v-else style="color:#c0c4cc;font-size:12px">未运行</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="handleViewWfTest(row)">查看</el-button>
+            <el-button link type="success" size="small" :loading="wfRunningId === row.id" @click="handleRunWfTest(row)">运行</el-button>
+            <el-button link type="danger" size="small" @click="handleDeleteWfTest(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!wfTestList.length && !wfTestLoading" description="暂无测试案例（点击「录制测试案例」开始）" :image-size="60" />
+    </el-dialog>
+
+    <!-- 录制测试案例弹窗（真实执行业务流） -->
+    <el-dialog v-model="showWfTestCreate" title="录制测试案例" width="520px" :close-on-click-modal="false">
+      <el-form label-width="90px">
+        <el-form-item label="案例名称"><el-input v-model="wfTestForm.name" placeholder="留空自动按输入生成" /></el-form-item>
+        <el-form-item label="测试输入" required><el-input v-model="wfTestForm.query" type="textarea" :rows="2" placeholder="输入将真实执行当前业务流" /></el-form-item>
+        <el-form-item label="期望输出"><el-input v-model="wfTestForm.expectedOutput" type="textarea" :rows="2" placeholder="可选，用于判定运行是否通过" /></el-form-item>
+        <p style="font-size:12px;color:#909399">保存时会真实执行业务流并回填实际输出</p>
+      </el-form>
+      <template #footer><el-button @click="showWfTestCreate=false">取消</el-button><el-button type="primary" :loading="wfTestCreateLoading" @click="handleRecordWfTest">执行并保存</el-button></template>
+    </el-dialog>
+
+    <!-- 测试案例详情 -->
+    <el-dialog v-model="showWfTestView" :title="'案例详情：' + (viewingWfTest?.name || '')" width="560px">
+      <el-descriptions v-if="viewingWfTest" :column="1" border size="small">
+        <el-descriptions-item label="测试输入">{{ viewingWfTest.query || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="期望输出">{{ viewingWfTest.expectedOutput || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="实际输出">{{ viewingWfTest.actualOutput || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="结果">
+          <el-tag v-if="viewingWfTest.matched !== null && viewingWfTest.matched !== undefined" :type="viewingWfTest.matched === 1 ? 'success' : 'danger'" size="small">{{ viewingWfTest.matched === 1 ? '通过' : '未通过' }}</el-tag>
+          <span v-else>未运行</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ viewingWfTest.createdAt || '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <template #footer><el-button type="primary" @click="showWfTestView=false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- 业务流对话调试弹窗 -->
+    <el-dialog v-model="showWfDebugDialog" title="对话调试" width="720px">
+      <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
+        <span style="font-size:13px">调试级别：</span>
+        <el-select v-model="wfDebug.level" style="width:140px">
+          <el-option label="DEBUG" value="debug" /><el-option label="INFO" value="info" />
+          <el-option label="WARN" value="warn" /><el-option label="ERROR" value="error" />
+        </el-select>
+        <el-button size="small" type="primary" @click="handleSaveWfLevel">保存级别</el-button>
+        <el-button size="small" @click="loadWfDebug">刷新日志</el-button>
+        <el-button size="small" @click="handleExportWfDebug">导出日志</el-button>
+        <el-button size="small" type="danger" plain @click="handleClearWfDebug">清理日志</el-button>
+      </div>
+      <div style="border:1px solid #ebeef5;border-radius:8px;padding:12px;max-height:380px;overflow-y:auto;background:#0d1b2a;color:#a7f3d0;font-family:monospace;font-size:12px" v-loading="wfDebugLoading">
+        <div v-if="!wfDebug.logs.length" style="color:#64748b;text-align:center;padding:40px">暂无调试日志（执行业务流或节点测试后生成）</div>
+        <div v-for="(g, i) in wfDebug.logs" :key="g.id ?? i" style="line-height:1.7;white-space:pre-wrap;word-break:break-all">
+          [{{ g.createdAt }}] [{{ (g.level || 'debug').toUpperCase() }}] {{ g.nodeKey ? '[' + g.nodeKey + '] ' : '' }}{{ g.message }}
+        </div>
+      </div>
+    </el-dialog>
+
+    <!-- 业务流知识更新弹窗 -->
+    <el-dialog v-model="showWfUpdateDialog" title="知识更新" width="720px">
+      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+        <el-select v-model="wfKbId" placeholder="选择知识库" style="width:240px" @change="loadWfUpdateLogs">
+          <el-option v-for="kb in wfKbList" :key="kb.id" :label="kb.name" :value="kb.id" />
+        </el-select>
+        <el-button size="small" type="primary" @click="handleWfManualUpdate">手动更新</el-button>
+        <el-button size="small" @click="showWfAutoConfig = true">设置自动更新</el-button>
+      </div>
+      <el-table :data="wfUpdateLogs" stripe size="small" v-loading="wfUpdateLoading" max-height="360">
+        <el-table-column prop="updateType" label="类型" width="90"><template #default="{ row }">{{ ({ auto: '自动', manual: '手动', incremental: '增量' } as Record<string, string>)[row.updateType] || row.updateType }}</template></el-table-column>
+        <el-table-column prop="target" label="目标" width="130" show-overflow-tooltip />
+        <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
+        <el-table-column prop="operator" label="操作人" width="90" />
+        <el-table-column prop="timestamp" label="时间" width="160" />
+        <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="primary" size="small" @click="handleWfCompare(row)">比较</el-button></template></el-table-column>
+      </el-table>
+      <el-empty v-if="!wfUpdateLogs.length && !wfUpdateLoading" description="暂无更新记录（手动更新后可见）" :image-size="60" />
+    </el-dialog>
+
+    <!-- 自动更新配置 -->
+    <el-dialog v-model="showWfAutoConfig" title="设置自动更新" width="440px">
+      <el-form label-width="110px">
+        <el-form-item label="启用自动更新"><el-switch v-model="wfAutoConfig.enabled" /></el-form-item>
+        <el-form-item label="调度表达式"><el-input v-model="wfAutoConfig.schedule" placeholder="cron 表达式" /></el-form-item>
+        <el-form-item label="增量更新"><el-switch v-model="wfAutoConfig.incremental" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showWfAutoConfig=false">取消</el-button><el-button type="primary" @click="handleWfSaveAutoConfig">保存</el-button></template>
+    </el-dialog>
+
+    <!-- 业务流对话优化弹窗 -->
+    <el-dialog v-model="showWfOptDialog" title="对话优化" width="760px">
+      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+        <el-button size="small" type="primary" @click="handleAnalyzeWf">分析对话数据</el-button>
+        <div v-if="wfAnalyze" style="font-size:12px;color:#606266;display:flex;gap:12px">
+          <span>节点 {{ wfAnalyze.nodeCount }}</span><span>案例 {{ wfAnalyze.testCaseCount }}</span>
+          <span>通过率 {{ wfAnalyze.testCasePassRate }}%</span><span>待应用优化 {{ wfAnalyze.pendingOptimizations }}</span>
+        </div>
+      </div>
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <el-input v-model="wfOptForm.name" placeholder="优化建议名称，如：压缩检索节点提示词" style="width:260px" />
+        <el-select v-model="wfOptForm.suggestionType" style="width:130px">
+          <el-option label="流程优化" value="flow" /><el-option label="提示词优化" value="prompt" />
+          <el-option label="性能优化" value="performance" /><el-option label="准确性优化" value="accuracy" />
+        </el-select>
+        <el-button type="primary" @click="handleCreateWfOpt">新增建议</el-button>
+        <el-button @click="handleExportWfOpts">导出报告</el-button>
+      </div>
+      <el-input v-model="wfOptForm.description" type="textarea" :rows="2" placeholder="建议说明（可选）" style="margin-bottom:12px" />
+      <el-table :data="wfOptList" stripe size="small" v-loading="wfOptLoading">
+        <el-table-column prop="name" label="建议名称" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="suggestionType" label="类型" width="100" />
+        <el-table-column prop="status" label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.status === 'applied' ? 'success' : row.status === 'tested' ? 'primary' : 'warning'" size="small">{{ ({ pending: '待应用', applied: '已应用', tested: '已测试' } as Record<string, string>)[row.status] || row.status }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="创建时间" width="160" />
+        <el-table-column label="操作" width="220">
+          <template #default="{ row }">
+            <el-button link type="success" size="small" @click="handleApplyWfOpt(row)">应用</el-button>
+            <el-button link type="primary" size="small" :loading="wfTestingOptId === row.id" @click="handleTestWfOpt(row)">测试效果</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!wfOptList.length && !wfOptLoading" description="暂无优化建议（先「分析对话数据」再新增）" :image-size="60" />
+    </el-dialog>
+    <!-- 业务流配置迁移弹窗：查看迁移日志/进度/设置迁移策略 -->
+    <el-dialog v-model="showWfMigDialog" title="配置迁移" width="780px">
+      <div class="card-panel" style="margin-bottom:16px">
+        <div class="section-title" style="margin-bottom:10px">设置迁移策略并执行（源：{{ wfName || '当前业务流' }}）</div>
+        <el-form inline>
+          <el-form-item label="目标业务流">
+            <el-select v-model="wfMigForm.targetWorkflowId" filterable placeholder="选择目标业务流" style="width:200px">
+              <el-option v-for="w in workflowList.filter(x => x.id !== wfId)" :key="w.id" :label="w.name" :value="w.id" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="目标环境">
+            <el-select v-model="wfMigForm.targetEnv" style="width:110px">
+              <el-option label="测试环境" value="test" /><el-option label="生产环境" value="production" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="迁移策略">
+            <el-radio-group v-model="wfMigForm.strategy">
+              <el-radio value="overwrite">覆盖</el-radio>
+              <el-radio value="merge">合并（保留已有）</el-radio>
+            </el-radio-group>
+          </el-form-item>
+          <el-form-item>
+            <el-button type="primary" :loading="wfMigSubmitting" @click="handleCreateWfMig">开始迁移</el-button>
+          </el-form-item>
+        </el-form>
+      </div>
+      <div class="section-title" style="margin-bottom:8px">迁移日志</div>
+      <el-table :data="wfMigList" stripe size="small" v-loading="wfMigLoading">
+        <el-table-column label="源 → 目标" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ wfNameById(row.sourceWorkflowId) }} → {{ wfNameById(row.targetWorkflowId) }}</template>
+        </el-table-column>
+        <el-table-column label="目标环境" width="90"><template #default="{ row }">{{ row.targetEnv === 'production' ? '生产' : '测试' }}</template></el-table-column>
+        <el-table-column label="策略" width="80"><template #default="{ row }">{{ row.strategy === 'merge' ? '合并' : '覆盖' }}</template></el-table-column>
+        <el-table-column label="进度" width="150">
+          <template #default="{ row }"><el-progress :percentage="row.progress || 0" :status="row.status === 'failed' ? 'exception' : (row.progress >= 100 ? 'success' : undefined)" :stroke-width="10" /></template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }"><el-tag :type="wfMigStatusColor(row.status)" size="small">{{ wfMigStatus(row.status) }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="validateResult" label="迁移结果" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="operator" label="操作人" width="80" />
+        <el-table-column prop="createdAt" label="时间" width="160" />
+      </el-table>
+      <el-empty v-if="!wfMigList.length && !wfMigLoading" description="暂无迁移记录" :image-size="60" />
     </el-dialog>
   </div>
 </template>

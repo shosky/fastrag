@@ -873,8 +873,46 @@ CREATE TABLE IF NOT EXISTS kb_knowledge (
     created_by VARCHAR(32),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    deleted_at DATETIME DEFAULT NULL,
     INDEX idx_kb_id (kb_id),
     INDEX idx_category (category)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 知识工单（知识加工与采编）
+CREATE TABLE IF NOT EXISTS kb_knowledge_ticket (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    title VARCHAR(256) NOT NULL,
+    description TEXT,
+    ticket_type VARCHAR(16) DEFAULT 'other',
+    priority VARCHAR(16) DEFAULT 'medium',
+    knowledge_id VARCHAR(32),
+    assignee VARCHAR(32),
+    reporter VARCHAR(32),
+    status VARCHAR(16) DEFAULT 'open',
+    remark TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    resolved_at DATETIME,
+    INDEX idx_kb_id (kb_id),
+    INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 事项知识关联（业务事项 ↔ 知识条目）
+CREATE TABLE IF NOT EXISTS kb_matter_knowledge_rel (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    matter_name VARCHAR(128) NOT NULL,
+    matter_code VARCHAR(64),
+    knowledge_id VARCHAR(32),
+    knowledge_title VARCHAR(256),
+    relation_type VARCHAR(16) DEFAULT 'reference',
+    remark TEXT,
+    created_by VARCHAR(32),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_kb_id (kb_id),
+    INDEX idx_matter (matter_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS kb_knowledge_test (
@@ -1192,6 +1230,7 @@ CREATE TABLE IF NOT EXISTS app_dialog_config (
     show_avatar TINYINT DEFAULT 1,
     show_feedback TINYINT DEFAULT 1,
     show_suggestions TINYINT DEFAULT 1,
+    suggestions TEXT,
     updated_by VARCHAR(32),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP

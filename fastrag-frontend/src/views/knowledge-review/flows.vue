@@ -21,36 +21,33 @@ const STATUS_COLORS: Record<string, string> = { pending: 'warning', approved: 's
 const kbList = ref<any[]>([])
 const selectedKbId = ref('')
 async function loadKbList() {
-  kbList.value = [
-    { id: 'kb_001', name: '小微ICT业务知识库' },
-    { id: 'kb_002', name: '技术方案文档库' },
-    { id: 'kb_003', name: '产品资料与定价库' },
-  ]
-  selectedKbId.value = kbList.value[0].id
+  try {
+    const res: any = await api.getKnowledgeBases()
+    kbList.value = Array.isArray(res) ? res : res?.list || []
+  } catch { kbList.value = [] }
+  if (kbList.value.length && !selectedKbId.value) selectedKbId.value = kbList.value[0].id
 }
 
 async function loadData() {
   if (!selectedKbId.value) return
   loading.value = true
-  const mockData = [
-    // ===== 待审核 =====
-    { id: 'r1', knowledgeTitle: '小微ICT业务办理流程指南（2026版）', flowName: '标准审核流程', currentStep: '部门主管审核', status: 'pending', submitter: '张编辑', submitTime: '2026-06-29 09:00:00', reviewer: '李主管', comment: '-', priority: 'high', category: '业务流程' },
-    { id: 'r2', knowledgeTitle: '5G智慧港口解决方案白皮书', flowName: '标准审核流程', currentStep: '编辑初审', status: 'pending', submitter: '王编辑', submitTime: '2026-06-29 08:30:00', reviewer: '赵编辑', comment: '-', priority: 'medium', category: '技术文档' },
-    { id: 'r3', knowledgeTitle: '云桌面产品FAQ（2026Q3更新）', flowName: '快速审核流程', currentStep: '知识管理员审核', status: 'pending', submitter: '李编辑', submitTime: '2026-06-28 16:30:00', reviewer: '钱管理员', comment: '-', priority: 'low', category: '产品资料' },
-    { id: 'r4', knowledgeTitle: '企业宽带资费调整方案', flowName: '标准审核流程', currentStep: '合规审查', status: 'pending', submitter: '刘销售', submitTime: '2026-06-28 14:00:00', reviewer: '周合规', comment: '-', priority: 'high', category: '产品资料' },
-    // ===== 已通过 =====
-    { id: 'r5', knowledgeTitle: 'ICT项目施工安全规范（修订版）', flowName: '标准审核流程', currentStep: '-', status: 'approved', submitter: '赵安全', submitTime: '2026-06-27 10:00:00', reviewer: '孙主管', comment: '安全条款更新合理，同意发布', priority: 'high', category: '规章制度' },
-    { id: 'r6', knowledgeTitle: '2026年产品目录（Q3版）', flowName: '快速审核流程', currentStep: '-', status: 'approved', submitter: '王经理', submitTime: '2026-06-26 15:00:00', reviewer: '钱管理员', comment: '通过', priority: 'medium', category: '产品资料' },
-    { id: 'r7', knowledgeTitle: '光纤宽带接入验收标准', flowName: '标准审核流程', currentStep: '-', status: 'approved', submitter: '吴工程师', submitTime: '2026-06-25 11:00:00', reviewer: '郑主管', comment: '技术指标准确，同意发布', priority: 'medium', category: '技术文档' },
-    // ===== 已驳回 =====
-    { id: 'r8', knowledgeTitle: '政企客户售后服务SOP', flowName: '标准审核流程', currentStep: '-', status: 'rejected', submitter: '孙客服', submitTime: '2026-06-24 09:00:00', reviewer: '李主管', comment: '服务响应时间数据未更新，需补充最新SLA指标', priority: 'medium', category: '业务流程' },
-    { id: 'r9', knowledgeTitle: '员工培训考核管理办法', flowName: '标准审核流程', currentStep: '-', status: 'rejected', submitter: 'HR', submitTime: '2026-06-23 14:00:00', reviewer: '赵主管', comment: '培训考核标准需与绩效制度对齐', priority: 'low', category: '规章制度' },
-    // ===== 已超时 =====
-    { id: 'r10', knowledgeTitle: '网络故障应急预案（2026版）', flowName: '标准审核流程', currentStep: '部门主管审核', status: 'timeout', submitter: '陈运维', submitTime: '2026-06-20 10:00:00', reviewer: '李主管', comment: '已超时48小时', priority: 'high', category: '技术文档' },
-  ]
-  dataList.value = filterStatus.value ? mockData.filter(d => d.status === filterStatus.value) : mockData
-  total.value = dataList.value.length
-  loading.value = false
+  try {
+    // 真实审核任务列表（kb_review_task）
+    const res: any = await api.getReviews({ kbId: selectedKbId.value })
+    const list = Array.isArray(res) ? res : res?.list || []
+    const mapped = list.map((t: any) => ({
+      ...t,
+      knowledgeTitle: t.version ? `知识库版本 v${t.version}` : (t.versionId || '-'),
+      flowName: t.kbName || '-',
+      submitter: t.applicant || '-',
+      submitTime: t.createdAt || '-',
+      currentStep: '-',
+    }))
+    dataList.value = filterStatus.value ? mapped.filter((d: any) => d.status === filterStatus.value) : mapped
+    total.value = dataList.value.length
+  } catch {
+    dataList.value = []; total.value = 0
+  } finally { loading.value = false }
 }
 onMounted(async () => { await loadKbList(); loadData() })
 
@@ -68,14 +65,17 @@ async function handleSubmitReview() {
   if (reviewAction.value === 'reject' && !reviewComment.value) { ElMessage.warning('驳回时请填写原因'); return }
   try {
     if (reviewAction.value === 'approve') {
-      try { await api.approveReview(reviewingId.value) } catch { /* ignore */ }
+      await api.approveReview(reviewingId.value, reviewComment.value)
+      // 触发审核事件监听器（写监听执行日志）
+      try { await api.dispatchListeners(selectedKbId.value, 'review.approved', `审核任务 ${reviewingId.value} 已通过`) } catch {}
       ElMessage.success('已通过')
     } else {
-      try { await api.rejectReview(reviewingId.value, reviewComment.value) } catch { /* ignore */ }
+      await api.rejectReview(reviewingId.value, reviewComment.value)
+      try { await api.dispatchListeners(selectedKbId.value, 'review.rejected', `审核任务 ${reviewingId.value} 已驳回：${reviewComment.value}`) } catch {}
       ElMessage.success('已驳回')
     }
     showReviewDialog.value = false; loadData()
-  } catch { /* ignore */ }
+  } catch { ElMessage.error('操作失败') }
 }
 const pendingCount = computed(() => dataList.value.filter((d: any) => d.status === 'pending').length)
 const priorityColors: Record<string, string> = { high: 'danger', medium: 'warning', low: 'info' }
@@ -118,7 +118,7 @@ async function handleShowCoverage() {
 
 async function handleExportReviewRecords() {
   try {
-    const blob = await api.exportReviewRecords(selectedKbId.value) as Blob
+    const blob = await api.exportReviewRecords(selectedKbId.value) as unknown as Blob
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `审核记录_${Date.now()}.csv`
     a.click(); URL.revokeObjectURL(url); ElMessage.success('审核记录已导出')
   } catch {
@@ -132,7 +132,7 @@ async function handleExportReviewRecords() {
 }
 async function handleExportUnreviewed() {
   try {
-    const blob = await api.exportUnreviewedKnowledge(selectedKbId.value) as Blob
+    const blob = await api.exportUnreviewedKnowledge(selectedKbId.value) as unknown as Blob
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `未审核知识_${Date.now()}.csv`
     a.click(); URL.revokeObjectURL(url); ElMessage.success('未审核知识已导出')
   } catch {
@@ -231,18 +231,93 @@ async function handleRemind(row: any) {
   } catch {}
 }
 
-// 通知配置
+// 通知配置（真实读写 sys_config，接口 /config/notification）
 const showNotifyConfigDialog = ref(false)
 const notifyConfig = ref({ enabled: true, remindInterval: 30, channels: ['in_app'], template: '您有知识待审核：【title】，请及时处理' })
 async function handleShowNotifyConfig() {
-  try { const saved = localStorage.getItem('review_notify_config_' + selectedKbId.value); if (saved) Object.assign(notifyConfig.value, JSON.parse(saved)) } catch {}
+  try {
+    const res: any = await api.getNotificationConfig()
+    const saved = typeof res === 'string' ? JSON.parse(res) : res
+    if (saved && Object.keys(saved).length) {
+      const { kbId: _ignored, ...cfg } = saved
+      Object.assign(notifyConfig.value, cfg)
+    }
+  } catch { /* 首次无配置 */ }
   showNotifyConfigDialog.value = true
 }
-function handleSaveNotifyConfig() {
-  localStorage.setItem('review_notify_config_' + selectedKbId.value, JSON.stringify(notifyConfig.value))
-  ElMessage.success('通知配置已保存'); showNotifyConfigDialog.value = false
+async function handleSaveNotifyConfig() {
+  try {
+    await api.saveNotificationConfig({ ...notifyConfig.value, kbId: selectedKbId.value })
+    ElMessage.success('通知配置已保存')
+    showNotifyConfigDialog.value = false
+  } catch { ElMessage.error('保存失败') }
 }
-function handleTestNotify() { ElMessage.success('测试通知已发送，请检查通知中心') }
+async function handleTestNotify() {
+  try {
+    await api.createNotification({ title: '测试通知', content: `审核流程通知配置测试（知识库：${selectedKbId.value}）`, notifyType: 'review_remind', sourceType: 'kb', sourceId: selectedKbId.value })
+    ElMessage.success('测试通知已发送，请到通知中心查看')
+  } catch { ElMessage.error('测试通知发送失败') }
+}
+
+// ===== 审核策略管理（C6 设置策略 / C7 执行情况） =====
+const showStrategyDialog = ref(false)
+const strategyList = ref<any[]>([])
+const strategyLoading = ref(false)
+const strategyForm = ref({ name: '', strategyType: 'time_based', enabled: true })
+const STRATEGY_TYPES: Record<string, string> = { time_based: '按时间', volume_based: '按知识量', auto_pass: '超时自动通过', multi_level: '多级审核' }
+
+async function handleShowStrategies() {
+  showStrategyDialog.value = true
+  await loadStrategies()
+}
+async function loadStrategies() {
+  strategyLoading.value = true
+  try {
+    strategyList.value = ((await api.getReviewStrategies(selectedKbId.value)) as any) || []
+  } catch { strategyList.value = [] } finally { strategyLoading.value = false }
+}
+async function handleCreateStrategy() {
+  if (!strategyForm.value.name) { ElMessage.warning('请输入策略名称'); return }
+  try {
+    await api.createReviewStrategy(selectedKbId.value, strategyForm.value)
+    await loadStrategies()
+    ElMessage.success('策略已创建')
+  } catch { ElMessage.error('创建失败') }
+}
+async function handleDeleteStrategy(row: any) {
+  try {
+    await ElMessageBox.confirm(`确认删除策略「${row.name}」？`, '删除确认', { type: 'warning' })
+    await api.deleteReviewStrategy(selectedKbId.value, row.id)
+    await loadStrategies()
+    ElMessage.success('已删除')
+  } catch {}
+}
+// 执行情况
+const showStrategyHistoryDialog = ref(false)
+const strategyHistory = ref<any[]>([])
+const historyStrategy = ref<any>(null)
+async function handleShowStrategyHistory(row: any) {
+  historyStrategy.value = row
+  try { strategyHistory.value = ((await api.getReviewHistory(selectedKbId.value, row.id)) as any) || [] } catch { strategyHistory.value = [] }
+  showStrategyHistoryDialog.value = true
+}
+// 超时设置
+const showStrategyTimeoutDialog = ref(false)
+const strategyTimeout = ref({ timeoutHours: 48, autoApproveOnTimeout: false })
+const timeoutTarget = ref<any>(null)
+function handleShowStrategyTimeout(row: any) {
+  timeoutTarget.value = row
+  try { const c = typeof row.config === 'string' ? JSON.parse(row.config) : (row.config || {}); Object.assign(strategyTimeout.value, c) } catch {}
+  showStrategyTimeoutDialog.value = true
+}
+async function handleSaveStrategyTimeout() {
+  try {
+    await api.setReviewTimeout(selectedKbId.value, timeoutTarget.value.id, { ...strategyTimeout.value })
+    ElMessage.success('超时设置已保存')
+    showStrategyTimeoutDialog.value = false
+    await loadStrategies()
+  } catch { ElMessage.error('保存失败') }
+}
 
 function handleToolCommand(cmd: string) {
   switch (cmd) {
@@ -256,6 +331,7 @@ function handleToolCommand(cmd: string) {
     case 'timeout-records': handleShowTimeoutRecords(); break
     case 'import-knowledge': handleImportReviewKnowledge(); break
     case 'notify-config': handleShowNotifyConfig(); break
+    case 'review-strategy': handleShowStrategies(); break
   }
 }
 </script>
@@ -285,6 +361,7 @@ function handleToolCommand(cmd: string) {
                 <el-dropdown-item divided command="timeout">审核策略超时设置</el-dropdown-item>
                 <el-dropdown-item command="timeout-records">超时记录</el-dropdown-item>
                 <el-dropdown-item divided command="import-knowledge">导入审核知识</el-dropdown-item>
+                <el-dropdown-item command="review-strategy">审核策略管理</el-dropdown-item>
                 <el-dropdown-item divided command="notify-config">审核通知配置</el-dropdown-item>
               </el-dropdown-menu>
             </template>
@@ -302,7 +379,7 @@ function handleToolCommand(cmd: string) {
         <el-table-column prop="knowledgeTitle" label="知识标题" min-width="200" show-overflow-tooltip />
         <el-table-column label="优先级" width="60">
           <template #default="{ row }">
-            <el-tag :type="priorityColors[row.priority] || 'info'" size="small">{{ priorityLabels[row.priority] || row.priority }}</el-tag>
+            <el-tag :type="(priorityColors[row.priority] || 'info') as any" size="small">{{ priorityLabels[row.priority] || row.priority }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="category" label="分类" width="80" />
@@ -447,6 +524,57 @@ function handleToolCommand(cmd: string) {
       <template #footer><el-button @click="showTimeoutRecordsDialog=false">关闭</el-button></template>
     </el-dialog>
 
+    <!-- 审核策略管理（设置策略/查看执行情况） -->
+    <el-dialog v-model="showStrategyDialog" title="审核策略管理" width="720px">
+      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
+        <el-input v-model="strategyForm.name" placeholder="策略名称，如：紧急知识快速审核" style="width:220px" />
+        <el-select v-model="strategyForm.strategyType" style="width:150px">
+          <el-option v-for="(label, key) in STRATEGY_TYPES" :key="key" :label="label" :value="key" />
+        </el-select>
+        <el-button type="primary" @click="handleCreateStrategy">新增策略</el-button>
+      </div>
+      <el-table :data="strategyList" stripe size="small" v-loading="strategyLoading">
+        <el-table-column prop="name" label="策略名称" min-width="150" show-overflow-tooltip />
+        <el-table-column label="策略类型" width="110">
+          <template #default="{ row }">{{ STRATEGY_TYPES[row.strategyType] || row.strategyType }}</template>
+        </el-table-column>
+        <el-table-column label="启用" width="70" align="center">
+          <template #default="{ row }"><el-tag :type="row.enabled === 1 || row.enabled === true ? 'success' : 'info'" size="small">{{ row.enabled === 1 || row.enabled === true ? '启用' : '停用' }}</el-tag></template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="创建时间" width="160" />
+        <el-table-column label="操作" width="220">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="handleShowStrategyHistory(row)">执行情况</el-button>
+            <el-button link type="primary" size="small" @click="handleShowStrategyTimeout(row)">超时设置</el-button>
+            <el-button link type="danger" size="small" @click="handleDeleteStrategy(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!strategyList.length && !strategyLoading" description="暂无审核策略" :image-size="60" />
+    </el-dialog>
+
+    <!-- 策略执行情况 -->
+    <el-dialog v-model="showStrategyHistoryDialog" :title="'策略执行情况：' + (historyStrategy?.name || '')" width="640px">
+      <el-empty v-if="!strategyHistory.length" description="暂无执行记录" :image-size="60" />
+      <el-timeline v-else style="padding-left:8px;max-height:400px;overflow-y:auto">
+        <el-timeline-item v-for="(h, i) in strategyHistory" :key="i" :timestamp="h.time" :type="h.action === 'approved' ? 'success' : h.action === 'rejected' ? 'danger' : 'primary'">
+          <b>{{ h.action }}</b>
+          <span style="color:#909399;font-size:12px;margin-left:8px">操作人：{{ h.operator || '-' }}</span>
+          <div v-if="h.comment" style="font-size:13px;color:#606266;margin-top:2px">{{ h.comment }}</div>
+        </el-timeline-item>
+      </el-timeline>
+      <template #footer><el-button @click="showStrategyHistoryDialog=false">关闭</el-button></template>
+    </el-dialog>
+
+    <!-- 策略超时设置 -->
+    <el-dialog v-model="showStrategyTimeoutDialog" :title="'超时设置：' + (timeoutTarget?.name || '')" width="420px">
+      <el-form label-width="130px">
+        <el-form-item label="超时时间(小时)"><el-input-number v-model="strategyTimeout.timeoutHours" :min="1" :max="720" style="width:180px" /></el-form-item>
+        <el-form-item label="超时自动通过"><el-switch v-model="strategyTimeout.autoApproveOnTimeout" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showStrategyTimeoutDialog=false">取消</el-button><el-button type="primary" @click="handleSaveStrategyTimeout">保存</el-button></template>
+    </el-dialog>
+
     <!-- 通知配置 -->
     <el-dialog v-model="showNotifyConfigDialog" title="审核通知配置" width="500px">
       <el-form label-width="120px">
@@ -467,7 +595,7 @@ function handleToolCommand(cmd: string) {
         <div><strong>审核流程：</strong>{{ detailData.flowName || '-' }}</div>
         <div><strong>当前步骤：</strong>{{ detailData.currentStep || '-' }}</div>
         <div><strong>状态：</strong><el-tag :type="(STATUS_COLORS[detailData.status] || 'info') as any" size="small">{{ STATUS_LABELS[detailData.status] || detailData.status }}</el-tag></div>
-        <div><strong>优先级：</strong><el-tag :type="priorityColors[detailData.priority] || 'info'" size="small">{{ priorityLabels[detailData.priority] || '-' }}</el-tag></div>
+        <div><strong>优先级：</strong><el-tag :type="(priorityColors[detailData.priority] || 'info') as any" size="small">{{ priorityLabels[detailData.priority] || '-' }}</el-tag></div>
         <div><strong>提交人：</strong>{{ detailData.submitter || '-' }}</div>
         <div><strong>提交时间：</strong>{{ detailData.submitTime || '-' }}</div>
         <div><strong>审核人：</strong>{{ detailData.reviewer || '-' }}</div>

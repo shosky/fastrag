@@ -47,18 +47,6 @@ const knowledgeQuery = ref({ keyword: '', category: '' })
 async function loadKnowledge() {
   loading.value = true
   try { knowledgeList.value = ((await api.getKnowledgeList(kbId, knowledgeQuery.value)) as any) || [] } finally { loading.value = false }
-  if (!knowledgeList.value.length) {
-    knowledgeList.value = [
-      { id: 'k1', title: '小微ICT业务办理流程指南', category: '业务流程', source: '编辑创建', version: 'v2.1', status: 'published', viewCount: 356, createdAt: '2026-06-28 10:30:00' },
-      { id: 'k2', title: '企业ICT服务产品目录及定价', category: '产品资料', source: '导入', version: 'v3.0', status: 'published', viewCount: 289, createdAt: '2026-06-27 14:00:00' },
-      { id: 'k3', title: 'ICT项目施工安全规范手册', category: '规章制度', source: '编辑创建', version: 'v1.5', status: 'published', viewCount: 178, createdAt: '2026-06-26 09:15:00' },
-      { id: 'k4', title: '光纤宽带接入技术方案', category: '技术文档', source: '编辑创建', version: 'v2.0', status: 'draft', viewCount: 45, createdAt: '2026-06-25 16:45:00' },
-      { id: 'k5', title: '5G行业应用场景白皮书', category: '产品资料', source: '导入', version: 'v1.0', status: 'published', viewCount: 523, createdAt: '2026-06-24 11:00:00' },
-      { id: 'k6', title: '政企客户售后服务SOP', category: '业务流程', source: '编辑创建', version: 'v2.3', status: 'archived', viewCount: 92, createdAt: '2026-06-23 08:30:00' },
-      { id: 'k7', title: '云桌面产品部署与配置指引', category: '技术文档', source: '问答抽取', version: 'v1.2', status: 'published', viewCount: 167, createdAt: '2026-06-22 13:20:00' },
-      { id: 'k8', title: '网络故障排查与应急处理手册', category: '技术文档', source: '编辑创建', version: 'v3.1', status: 'draft', viewCount: 34, createdAt: '2026-06-21 10:00:00' },
-    ]
-  }
 }
 const showKnowledgeDialog = ref(false)
 const knowledgeForm = ref({ id: '', title: '', content: '', summary: '', category: '', tags: '', status: 'draft' })
@@ -71,8 +59,64 @@ async function handleSaveKnowledge() {
   showKnowledgeDialog.value = false; await loadKnowledge(); ElMessage.success('保存成功')
 }
 async function handleDeleteKnowledge(row: any) {
-  try { await ElMessageBox.confirm('确认删除该知识？', '删除确认', { type: 'warning' })
-    await api.deleteKnowledge(kbId, row.id); await loadKnowledge(); ElMessage.success('删除成功') } catch {}
+  try { await ElMessageBox.confirm(`确认删除「${row.title}」？删除后可在回收站恢复。`, '删除确认', { type: 'warning' })
+    await api.deleteKnowledge(kbId, row.id); await loadKnowledge(); ElMessage.success('已移入回收站') } catch {}
+}
+
+// ===== 知识回收站（列表/恢复/编辑/彻底删除/清空） =====
+const showRecycleDialog = ref(false)
+const recycleList = ref<any[]>([])
+const recycleLoading = ref(false)
+async function loadRecycle() {
+  recycleLoading.value = true
+  try { recycleList.value = ((await api.getDeletedKnowledges(kbId)) as any) || [] } catch { recycleList.value = [] } finally { recycleLoading.value = false }
+}
+function handleOpenRecycle() {
+  showRecycleDialog.value = true
+  loadRecycle()
+}
+async function handleRestoreKnowledge(row: any) {
+  try {
+    await api.restoreKnowledge(kbId, row.id)
+    await Promise.all([loadRecycle(), loadKnowledge()])
+    ElMessage.success('已恢复')
+  } catch { ElMessage.error('恢复失败') }
+}
+// 编辑回收站中的条目（修正标题/分类后可再恢复）
+const showRecycleEditDialog = ref(false)
+const recycleEditForm = ref({ id: '', title: '', category: '', summary: '' })
+function handleEditRecycle(row: any) {
+  recycleEditForm.value = { id: row.id, title: row.title || '', category: row.category || '', summary: row.summary || '' }
+  showRecycleEditDialog.value = true
+}
+async function handleSaveRecycleEdit() {
+  if (!recycleEditForm.value.title) { ElMessage.warning('请输入标题'); return }
+  try {
+    await api.updateKnowledge(kbId, recycleEditForm.value.id, {
+      title: recycleEditForm.value.title,
+      category: recycleEditForm.value.category,
+      summary: recycleEditForm.value.summary,
+    })
+    showRecycleEditDialog.value = false
+    await loadRecycle()
+    ElMessage.success('已保存')
+  } catch { ElMessage.error('保存失败') }
+}
+async function handlePermanentDelete(row: any) {
+  try {
+    await ElMessageBox.confirm(`彻底删除「${row.title}」后不可恢复，确认删除？`, '彻底删除', { type: 'warning' })
+    await api.permanentDeleteKnowledge(kbId, row.id)
+    await loadRecycle()
+    ElMessage.success('已彻底删除')
+  } catch {}
+}
+async function handleEmptyRecycle() {
+  try {
+    await ElMessageBox.confirm('确认清空回收站？所有已删除条目将被彻底删除。', '清空回收站', { type: 'warning' })
+    await api.emptyKnowledgeRecycleBin(kbId)
+    await loadRecycle()
+    ElMessage.success('回收站已清空')
+  } catch {}
 }
 
 // AI 配图（静默生成：prompt 由后端基于知识 summary/content 自动构造，与内容真正相关）
@@ -147,6 +191,18 @@ async function handleSaveUpdate() {
   if (updateForm.value.id) await api.updateKnowledgeUpdate(kbId, updateForm.value.id, updateForm.value)
   else await api.createKnowledgeUpdate(kbId, updateForm.value)
   showUpdateDialog.value = false; await loadUpdates(); ElMessage.success('保存成功')
+}
+function handleEditUpdate(row: any) {
+  updateForm.value = {
+    id: row.id,
+    knowledgeId: row.knowledgeId || '',
+    updateType: row.updateType || 'update',
+    title: row.title || '',
+    oldValue: row.oldValue || '',
+    newValue: row.newValue || '',
+    changeSummary: row.changeSummary || '',
+  }
+  showUpdateDialog.value = true
 }
 async function handleApplyUpdate(row: any) { await api.applyKnowledgeUpdate(kbId, row.id); await loadUpdates(); ElMessage.success('已应用') }
 async function handleRollbackUpdate(row: any) { await api.rollbackKnowledgeUpdate(kbId, row.id); await loadUpdates(); ElMessage.success('已回滚') }
@@ -285,7 +341,69 @@ async function handleDeleteDialog(row: any) {
   } catch {}
 }
 
-onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs() })
+// ===== 事项知识关联管理（新增/查看/编辑/删除） =====
+const RELATION_TYPE: Record<string, string> = { core: '核心依据', reference: '参考资料', supplement: '补充材料' }
+const matterRels = ref<any[]>([])
+const matterQuery = ref({ keyword: '' })
+const matterLoading = ref(false)
+async function loadMatterRels() {
+  matterLoading.value = true
+  try {
+    matterRels.value = ((await api.getMatterKnowledgeRels(kbId, { keyword: matterQuery.value.keyword || undefined })) as any) || []
+  } catch { matterRels.value = [] } finally { matterLoading.value = false }
+}
+
+const showMatterDialog = ref(false)
+const editingMatterId = ref<string | null>(null)
+const matterForm = ref({ matterName: '', matterCode: '', knowledgeId: '', relationType: 'reference', remark: '' })
+function handleAddMatter() {
+  editingMatterId.value = null
+  matterForm.value = { matterName: '', matterCode: '', knowledgeId: '', relationType: 'reference', remark: '' }
+  showMatterDialog.value = true
+}
+function handleEditMatter(row: any) {
+  editingMatterId.value = row.id
+  matterForm.value = {
+    matterName: row.matterName || '', matterCode: row.matterCode || '', knowledgeId: row.knowledgeId || '',
+    relationType: row.relationType || 'reference', remark: row.remark || '',
+  }
+  showMatterDialog.value = true
+}
+async function handleSaveMatter() {
+  if (!matterForm.value.matterName) { ElMessage.warning('请输入事项名称'); return }
+  if (!matterForm.value.knowledgeId) { ElMessage.warning('请选择关联知识'); return }
+  try {
+    if (editingMatterId.value) await api.updateMatterKnowledgeRel(kbId, editingMatterId.value, matterForm.value)
+    else await api.createMatterKnowledgeRel(kbId, matterForm.value)
+    showMatterDialog.value = false
+    await loadMatterRels()
+    ElMessage.success('保存成功')
+  } catch { ElMessage.error('保存失败') }
+}
+// 查看关联详情
+const showMatterViewDialog = ref(false)
+const viewingMatter = ref<any>(null)
+async function handleViewMatter(row: any) {
+  try {
+    viewingMatter.value = (await api.getMatterKnowledgeRel(kbId, row.id)) || row
+  } catch { viewingMatter.value = row }
+  showMatterViewDialog.value = true
+}
+async function handleDeleteMatter(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除「${row.matterName}」的关联？`, '删除确认', { type: 'warning' })
+    await api.deleteMatterKnowledgeRel(kbId, row.id)
+    await loadMatterRels()
+    ElMessage.success('删除成功')
+  } catch {}
+}
+// 关联知识下拉：本地知识列表（含已加载的全部条目）
+const knowledgeOptions = ref<any[]>([])
+async function loadKnowledgeOptions() {
+  try { knowledgeOptions.value = ((await api.getKnowledgeList(kbId, {})) as any) || [] } catch { knowledgeOptions.value = [] }
+}
+
+onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); loadMatterRels(); loadKnowledgeOptions() })
 </script>
 
 <template>
@@ -295,7 +413,10 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs() })
         <div class="card-panel">
           <div class="section-header">
             <div class="section-title">知识条目管理</div>
-            <el-button type="primary" @click="handleAddKnowledge">新增知识</el-button>
+            <div>
+              <el-button @click="handleOpenRecycle">回收站</el-button>
+              <el-button type="primary" @click="handleAddKnowledge">新增知识</el-button>
+            </div>
           </div>
           <div class="filter-bar">
             <el-input v-model="knowledgeQuery.keyword" placeholder="搜索标题" clearable style="width:200px" @keyup.enter="loadKnowledge" />
@@ -333,6 +454,37 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs() })
         </div>
       </el-tab-pane>
 
+      <el-tab-pane label="事项关联" name="matter">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">事项知识关联管理</div>
+            <el-button type="primary" @click="handleAddMatter">新增关联</el-button>
+          </div>
+          <div class="filter-bar">
+            <el-input v-model="matterQuery.keyword" placeholder="搜索事项/知识名称" clearable style="width: 240px" @keyup.enter="loadMatterRels" />
+            <el-button type="primary" @click="loadMatterRels">查询</el-button>
+          </div>
+          <el-table :data="matterRels" stripe v-loading="matterLoading">
+            <el-table-column prop="matterName" label="事项名称" show-overflow-tooltip min-width="140" />
+            <el-table-column prop="matterCode" label="事项编码" width="110" />
+            <el-table-column prop="knowledgeTitle" label="关联知识" show-overflow-tooltip min-width="160" />
+            <el-table-column prop="relationType" label="关联类型" width="100">
+              <template #default="{ row }">{{ RELATION_TYPE[row.relationType] || row.relationType }}</template>
+            </el-table-column>
+            <el-table-column prop="remark" label="备注" show-overflow-tooltip min-width="120" />
+            <el-table-column prop="createdAt" label="创建时间" width="160" />
+            <el-table-column label="操作" width="160">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleViewMatter(row)">查看</el-button>
+                <el-button link type="primary" size="small" @click="handleEditMatter(row)">编辑</el-button>
+                <el-button link type="danger" size="small" @click="handleDeleteMatter(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!matterRels.length && !matterLoading" description="暂无事项关联" />
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="知识更新" name="update">
         <div class="card-panel">
           <div class="section-header">
@@ -352,8 +504,9 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs() })
               <template #default="{ row }"><el-tag :type="row.status==='applied'?'success':(row.status==='rolled_back'?'info':'warning')" size="small">{{ row.status }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="createdAt" label="创建时间" width="160" />
-            <el-table-column label="操作" width="200">
+            <el-table-column label="操作" width="230">
               <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleEditUpdate(row)">编辑</el-button>
                 <el-button v-if="row.status==='pending'" link type="success" size="small" @click="handleApplyUpdate(row)">应用</el-button>
                 <el-button v-if="row.status==='applied'" link type="warning" size="small" @click="handleRollbackUpdate(row)">回滚</el-button>
                 <el-button v-if="row.status==='pending'" link type="danger" size="small" @click="handleDeleteUpdate(row)">删除</el-button>
@@ -439,6 +592,7 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs() })
           <el-select v-model="updateForm.updateType" style="width:140px"><el-option label="新建" value="create" /><el-option label="更新" value="update" /><el-option label="删除" value="delete" /><el-option label="归档" value="archive" /></el-select>
         </el-form-item>
         <el-form-item label="变更摘要"><el-input v-model="updateForm.changeSummary" /></el-form-item>
+        <el-form-item label="旧值"><el-input v-model="updateForm.oldValue" type="textarea" :rows="2" /></el-form-item>
         <el-form-item label="新值"><el-input v-model="updateForm.newValue" type="textarea" :rows="4" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showUpdateDialog=false">取消</el-button><el-button type="primary" @click="handleSaveUpdate">保存</el-button></template>
@@ -493,6 +647,79 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs() })
       <template #footer>
         <el-button @click="showJudgeDialog=false">关闭</el-button>
         <el-button type="primary" :loading="judgeLoading" @click="handleRunJudge">开始判断</el-button>
+      </template>
+    </el-dialog>
+    <!-- 知识回收站弹窗 -->
+    <el-dialog v-model="showRecycleDialog" title="知识回收站" width="720px">
+      <div style="display:flex;justify-content:flex-end;margin-bottom:8px">
+        <el-button size="small" type="danger" :disabled="!recycleList.length" @click="handleEmptyRecycle">清空回收站</el-button>
+      </div>
+      <el-table :data="recycleList" stripe v-loading="recycleLoading" size="small">
+        <el-table-column prop="title" label="标题" show-overflow-tooltip />
+        <el-table-column prop="category" label="分类" width="110" />
+        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column prop="deletedAt" label="删除时间" width="160" />
+        <el-table-column label="操作" width="170">
+          <template #default="{ row }">
+            <el-button link type="success" size="small" @click="handleRestoreKnowledge(row)">恢复</el-button>
+            <el-button link type="primary" size="small" @click="handleEditRecycle(row)">编辑</el-button>
+            <el-button link type="danger" size="small" @click="handlePermanentDelete(row)">彻底删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!recycleList.length && !recycleLoading" description="回收站为空" :image-size="60" />
+    </el-dialog>
+
+    <!-- 回收站编辑弹窗 -->
+    <el-dialog v-model="showRecycleEditDialog" title="编辑回收站条目" width="520px">
+      <el-alert title="可在恢复前修正条目标题/分类等信息" type="info" :closable="false" style="margin-bottom: 12px" />
+      <el-form label-width="70px">
+        <el-form-item label="标题" required><el-input v-model="recycleEditForm.title" /></el-form-item>
+        <el-form-item label="分类"><el-input v-model="recycleEditForm.category" /></el-form-item>
+        <el-form-item label="摘要"><el-input v-model="recycleEditForm.summary" type="textarea" :rows="3" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showRecycleEditDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveRecycleEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 事项关联新增/编辑弹窗 -->
+    <el-dialog v-model="showMatterDialog" :title="editingMatterId ? '编辑事项关联' : '新增事项关联'" width="560px">
+      <el-form label-width="90px">
+        <el-form-item label="事项名称" required><el-input v-model="matterForm.matterName" placeholder="如：小微企业ICT业务办理" /></el-form-item>
+        <el-form-item label="事项编码"><el-input v-model="matterForm.matterCode" /></el-form-item>
+        <el-form-item label="关联知识" required>
+          <el-select v-model="matterForm.knowledgeId" filterable placeholder="选择知识条目" style="width: 100%">
+            <el-option v-for="k in knowledgeOptions" :key="k.id" :label="k.title" :value="k.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="关联类型">
+          <el-select v-model="matterForm.relationType" style="width: 160px">
+            <el-option v-for="(label, key) in RELATION_TYPE" :key="key" :label="label" :value="key" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="备注"><el-input v-model="matterForm.remark" type="textarea" :rows="2" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showMatterDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveMatter">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 事项关联查看弹窗 -->
+    <el-dialog v-model="showMatterViewDialog" title="事项关联详情" width="560px">
+      <el-descriptions v-if="viewingMatter" :column="1" border>
+        <el-descriptions-item label="事项名称">{{ viewingMatter.matterName }}</el-descriptions-item>
+        <el-descriptions-item label="事项编码">{{ viewingMatter.matterCode || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="关联知识">{{ viewingMatter.knowledgeTitle || viewingMatter.knowledgeId || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="关联类型">{{ RELATION_TYPE[viewingMatter.relationType] || viewingMatter.relationType }}</el-descriptions-item>
+        <el-descriptions-item label="备注">{{ viewingMatter.remark || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="创建人">{{ viewingMatter.createdBy || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ viewingMatter.createdAt || '-' }}</el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button type="primary" @click="showMatterViewDialog = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
