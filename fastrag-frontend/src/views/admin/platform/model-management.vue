@@ -30,6 +30,13 @@ const models = ref<ModelRecord[]>([])
 const activeTab = ref('list')
 const loading = ref(false)
 
+const presets = ref<any[]>([])
+const presetLoading = ref(false)
+const showPresetDialog = ref(false)
+const presetDialogTitle = ref('')
+const editingPresetId = ref<string | null>(null)
+const presetForm = ref({ name: '', type: 'llm', models: [] as string[] })
+
 const selectedModelId = ref<string | null>(null)
 const trainingRecords = ref<any[]>([])
 const testReports = ref<any[]>([])
@@ -45,7 +52,60 @@ async function loadModels() {
   }
 }
 
-onMounted(loadModels)
+async function loadPresets() {
+  presetLoading.value = true
+  try {
+    presets.value = ((await api.getModelPresets()) as any)?.list || ((await api.getModelPresets()) as any) || []
+  } catch {
+    presets.value = []
+  } finally {
+    presetLoading.value = false
+  }
+}
+
+function handleAddPreset() {
+  editingPresetId.value = null
+  presetForm.value = { name: '', type: 'llm', models: [] }
+  presetDialogTitle.value = '新增模型预置'
+  showPresetDialog.value = true
+}
+
+function handleEditPreset(row: any) {
+  editingPresetId.value = row.id
+  presetForm.value = { name: row.name, type: row.type, models: Array.isArray(row.models) ? row.models : [] }
+  presetDialogTitle.value = '编辑模型预置'
+  showPresetDialog.value = true
+}
+
+async function handleSavePreset() {
+  if (!presetForm.value.name) { ElMessage.warning('请输入预置名称'); return }
+  if (!presetForm.value.models.length) { ElMessage.warning('请至少选择一个模型'); return }
+  try {
+    const data = { name: presetForm.value.name, type: presetForm.value.type, models: presetForm.value.models }
+    if (editingPresetId.value) { await api.updateModelPreset(editingPresetId.value, data); ElMessage.success('更新成功') }
+    else { await api.createModelPreset(data); ElMessage.success('创建成功') }
+    showPresetDialog.value = false
+    await loadPresets()
+  } catch { ElMessage.error('保存失败') }
+}
+
+async function handleDeletePreset(row: any) {
+  try {
+    await ElMessageBox.confirm(`确认删除模型预置「${row.name}」？`, '删除确认', { type: 'warning' })
+    await api.deleteModelPreset(row.id)
+    await loadPresets()
+    ElMessage.success('删除成功')
+  } catch {}
+}
+
+function handleUsePreset(row: any) {
+  ElMessage.success(`已应用预置「${row.name}」，共 ${row.models?.length || 0} 个模型`)
+}
+
+onMounted(() => {
+  loadModels()
+  loadPresets()
+})
 
 async function loadLifecycle(modelId: string) {
   selectedModelId.value = modelId
@@ -300,22 +360,71 @@ async function handleSave() {
       </div>
     </div>
 
-    <div v-if="activeTab === 'list'" class="model-grid">
-      <div v-for="model in models" :key="model.id" class="model-card">
-        <div class="card-header">
-          <div class="model-brand">{{ model.brand }}</div>
-          <div class="card-actions">
-            <el-button link size="small" @click="handleClone(model)">复刻</el-button>
+    <el-tabs v-model="activeTab" style="margin-top: 12px">
+      <el-tab-pane label="模型列表" name="list">
+        <div class="model-grid">
+          <div v-for="model in models" :key="model.id" class="model-card">
+            <div class="card-header">
+              <div class="model-brand">{{ model.brand }}</div>
+              <div class="card-actions">
+                <el-button link size="small" @click="handleClone(model)">复刻</el-button>
+              </div>
+            </div>
+            <h4>{{ model.name }}</h4>
+            <div class="model-meta">
+              <el-tag :type="(MODEL_PURPOSE_COLORS[model.purpose] as any) || 'info'" size="small">{{ model.purpose }}</el-tag>
+              <el-tag :type="model.status === 'online' ? 'success' : 'info'" size="small">
+                {{ model.status === 'online' ? '已上架' : '已下架' }}
+              </el-tag>
+            </div>
+            <div class="model-code">编码：{{ model.code }}</div>
+            <div v-if="model.contextWindow" class="model-code">上下文窗口：{{ model.contextWindow.toLocaleString() }} tokens</div>
+            <div class="card-footer">
+              <el-button size="small" @click="handleEdit(model)">编辑</el-button>
+              <el-button size="small" @click="loadLifecycle(model.id)">生命周期</el-button>
+              <el-button size="small" type="success" @click="selectedModelId = model.id; handleShowInvoke()">调用</el-button>
+              <el-button size="small" type="danger" @click="handleDelete(model)">删除</el-button>
+              <el-switch
+                :model-value="model.status === 'online'"
+                size="small"
+                active-text="上架"
+                inactive-text="下架"
+                @change="handleToggleStatus(model)"
+              />
+            </div>
           </div>
         </div>
-        <h4>{{ model.name }}</h4>
-        <div class="model-meta">
-          <el-tag :type="(MODEL_PURPOSE_COLORS[model.purpose] as any) || 'info'" size="small">{{ model.purpose }}</el-tag>
-          <el-tag :type="model.status === 'online' ? 'success' : 'info'" size="small">
-            {{ model.status === 'online' ? '已上架' : '已下架' }}
-          </el-tag>
+      </el-tab-pane>
+
+      <el-tab-pane label="模型预置" name="presets">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">模型预置配置</div>
+            <el-button size="small" type="primary" @click="handleAddPreset">新增预置</el-button>
+          </div>
+          <el-table :data="presets" stripe size="small" v-loading="presetLoading">
+            <el-table-column prop="name" label="预置名称" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="type" label="类型" width="120">
+              <template #default="{ row }">
+                <el-tag :type="row.type === 'llm' ? '' : row.type === 'embedding' ? 'success' : 'warning'" size="small">{{ row.type }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="models" label="包含模型" min-width="200">
+              <template #default="{ row }">
+                <el-tag v-for="m in (row.models || [])" :key="m" size="small" style="margin: 2px">{{ m }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleEditPreset(row)">编辑</el-button>
+                <el-button link type="success" size="small" @click="handleUsePreset(row)">应用</el-button>
+                <el-button link type="danger" size="small" @click="handleDeletePreset(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!presets.length && !presetLoading" description="暂无模型预置" :image-size="60" />
         </div>
-        <div class="model-code">编码：{{ model.code }}</div>
+      </el-tab-pane>
         <div v-if="model.contextWindow" class="model-code">上下文窗口：{{ model.contextWindow.toLocaleString() }} tokens</div>
         <div class="card-footer">
           <el-button size="small" @click="handleEdit(model)">编辑</el-button>
@@ -331,6 +440,35 @@ async function handleSave() {
           />
         </div>
       </div>
+    </div>
+
+    <!-- 模型预置 -->
+    <div v-if="activeTab === 'presets'" class="card-panel">
+      <div class="section-header">
+        <div class="section-title">模型预置配置</div>
+        <el-button size="small" type="primary" @click="handleAddPreset">新增预置</el-button>
+      </div>
+      <el-table :data="presets" stripe size="small" v-loading="presetLoading">
+        <el-table-column prop="name" label="预置名称" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="type" label="类型" width="120">
+          <template #default="{ row }">
+            <el-tag :type="row.type === 'llm' ? '' : row.type === 'embedding' ? 'success' : 'warning'" size="small">{{ row.type }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="models" label="包含模型" min-width="200">
+          <template #default="{ row }">
+            <el-tag v-for="m in (row.models || [])" :key="m" size="small" style="margin: 2px">{{ m }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="220" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="handleEditPreset(row)">编辑</el-button>
+            <el-button link type="success" size="small" @click="handleUsePreset(row)">应用</el-button>
+            <el-button link type="danger" size="small" @click="handleDeletePreset(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!presets.length && !presetLoading" description="暂无模型预置" :image-size="60" />
     </div>
 
     <!-- 生命周期详情 -->
@@ -419,6 +557,8 @@ async function handleSave() {
         </el-tab-pane>
       </el-tabs>
     </div>
+  </div>
+</template>
 
     <el-dialog v-model="showDialog" :title="dialogTitle" width="600px">
       <el-form label-width="100px">
@@ -545,6 +685,36 @@ async function handleSave() {
       <template #footer>
         <el-button @click="showTrainDialog = false">取消</el-button>
         <el-button type="primary" @click="handleSubmitTrain">提交训练</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 模型预置 新增/编辑 -->
+    <el-dialog v-model="showPresetDialog" :title="presetDialogTitle" width="520px">
+      <el-form label-width="100px">
+        <el-form-item label="预置名称" required>
+          <el-input v-model="presetForm.name" placeholder="如：通义千问大模型" />
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-select v-model="presetForm.type" style="width: 160px">
+            <el-option label="大语言模型" value="llm" />
+            <el-option label="嵌入模型" value="embedding" />
+            <el-option label="重排序" value="rerank" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="包含模型" required>
+          <el-select v-model="presetForm.models" multiple filterable allow-create default-first-option style="width: 100%">
+            <el-option label="qwen3-72b" value="qwen3-72b" />
+            <el-option label="qwen-max" value="qwen-max" />
+            <el-option label="qwen-plus" value="qwen-plus" />
+            <el-option label="bge-m3" value="bge-m3" />
+            <el-option label="bge-large-zh" value="bge-large-zh" />
+            <el-option label="bge-reranker-v2-m3" value="bge-reranker-v2-m3" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showPresetDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSavePreset">保存</el-button>
       </template>
     </el-dialog>
   </div>

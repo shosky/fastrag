@@ -6,17 +6,25 @@ import * as echarts from 'echarts'
 import * as api from '@/api'
 
 const chartRef = ref<HTMLElement>()
-const timeRange = ref('本周')
+const timeRange = ref('week')
 const loading = ref(true)
 
 const metrics = ref<any[]>([])
 const hotKBs = ref<any[]>([])
 const hotDocs = ref<any[]>([])
 
+const detailDialog = ref(false)
+const detailTitle = ref('')
+const detailItems = ref<any[]>([])
+const detailColumns = ref<any[]>([])
+
+const periodMap: Record<string, string> = { 今天: 'day', 本周: 'week', 本月: 'month' }
+
 async function loadAnalytics() {
   loading.value = true
   try {
-    const data: any = await api.getKbAnalytics()
+    const period = periodMap[timeRange.value] || 'week'
+    const data: any = await api.getKbAnalytics(period)
     if (data) {
       metrics.value = data.metrics || []
       hotKBs.value = data.hotKBs || []
@@ -27,6 +35,37 @@ async function loadAnalytics() {
   } finally {
     loading.value = false
   }
+}
+
+function handleTimeRangeChange() {
+  loadAnalytics()
+}
+
+function showKbDetails() {
+  detailTitle.value = '热门知识库详情'
+  detailColumns.value = [
+    { prop: 'rank', label: '排名', width: 70 },
+    { prop: 'name', label: '知识库名称', minWidth: 200 },
+    { prop: 'docCount', label: '文档数', width: 100 },
+    { prop: 'viewCount', label: '访问量', width: 100 },
+    { prop: 'accessCount', label: '综合得分', width: 100 },
+    { prop: 'description', label: '描述', minWidth: 200, showOverflow: true },
+  ]
+  detailItems.value = hotKBs.value
+  detailDialog.value = true
+}
+
+function showDocDetails() {
+  detailTitle.value = '热门文档详情'
+  detailColumns.value = [
+    { prop: 'rank', label: '排名', width: 70 },
+    { prop: 'name', label: '文档名称', minWidth: 200 },
+    { prop: 'kbName', label: '所属知识库', width: 150 },
+    { prop: 'viewCount', label: '浏览次数', width: 100 },
+    { prop: 'category', label: '分类', width: 100 },
+  ]
+  detailItems.value = hotDocs.value
+  detailDialog.value = true
 }
 
 onMounted(async () => {
@@ -118,7 +157,7 @@ function handleExport(command: string) {
     <div class="section-header">
       <h3>知识资产分析</h3>
       <div style="display: flex; gap: 12px; align-items: center">
-        <el-radio-group v-model="timeRange" size="small">
+        <el-radio-group v-model="timeRange" size="small" @change="handleTimeRangeChange">
           <el-radio-button label="今天" />
           <el-radio-button label="本周" />
           <el-radio-button label="本月" />
@@ -158,7 +197,7 @@ function handleExport(command: string) {
     <div class="rank-grid">
       <!-- 热门知识库排行 -->
       <div class="card-panel">
-        <div class="section-title">热门知识库排行</div>
+        <div class="section-title" style="cursor:pointer" @click="showKbDetails">热门知识库排行 <el-icon><ArrowDown /></el-icon></div>
         <div v-if="hotKBs.length">
           <div v-for="kb in hotKBs" :key="kb.rank" class="rank-item">
             <span class="rank" :class="{ 'top-3': kb.rank <= 3 }">{{ kb.rank }}</span>
@@ -172,7 +211,7 @@ function handleExport(command: string) {
 
       <!-- 热门文档排行 -->
       <div class="card-panel">
-        <div class="section-title">热门文档排行</div>
+        <div class="section-title" style="cursor:pointer" @click="showDocDetails">热门文档排行 <el-icon><ArrowDown /></el-icon></div>
         <div v-if="hotDocs.length">
           <div v-for="doc in hotDocs" :key="doc.rank" class="rank-item">
             <span class="rank" :class="{ 'top-3': doc.rank <= 3 }">{{ doc.rank }}</span>
@@ -184,6 +223,13 @@ function handleExport(command: string) {
         <el-empty v-else description="暂无数据" :image-size="60" />
       </div>
     </div>
+
+    <!-- 详情弹窗 -->
+    <el-dialog v-model="detailDialog" :title="detailTitle" width="720px">
+      <el-table :data="detailItems" stripe size="small">
+        <el-table-column v-for="col in detailColumns" :key="col.prop" :prop="col.prop" :label="col.label" :width="col.width" :min-width="col.minWidth" show-overflow-tooltip />
+      </el-table>
+    </el-dialog>
   </div>
 </template>
 

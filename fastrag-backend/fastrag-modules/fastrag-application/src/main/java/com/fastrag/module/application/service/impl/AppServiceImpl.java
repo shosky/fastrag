@@ -16,6 +16,9 @@ public class AppServiceImpl implements AppService {
     @Override public App update(String id,Map<String,Object> f) { var a=appMapper.selectById(id); if(a!=null){if(f.containsKey("name"))a.setName((String)f.get("name")); if(f.containsKey("description"))a.setDescription((String)f.get("description")); appMapper.updateById(a);} return a; }
     @Override public void delete(String id) { appMapper.deleteById(id); }
     @Override public List<AppTemplate> getTemplates() { return tplMapper.selectList(null); }
+    @Override public AppTemplate createTemplate(AppTemplate t) { t.setId(null); t.setUsageCount(0); tplMapper.insert(t); return t; }
+    @Override public AppTemplate updateTemplate(String id,AppTemplate t) { var e=tplMapper.selectById(id); if(e==null) throw new RuntimeException("模板不存在"); t.setId(id); tplMapper.updateById(t); return t; }
+    @Override public void deleteTemplate(String id) { tplMapper.deleteById(id); }
     @Override public AppConfig getConfig(String id) { return configMapper.selectOne(new LambdaQueryWrapper<AppConfig>().eq(AppConfig::getAppId,id)); }
     @Override public AppConfig saveConfig(String id,AppConfig config) { config.setAppId(id); var existing=configMapper.selectOne(new LambdaQueryWrapper<AppConfig>().eq(AppConfig::getAppId,id)); if(existing!=null){config.setId(existing.getId());configMapper.updateById(config);}else{configMapper.insert(config);} return config; }
 

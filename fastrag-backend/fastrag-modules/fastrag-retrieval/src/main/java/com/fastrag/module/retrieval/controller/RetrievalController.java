@@ -7,6 +7,7 @@ import java.util.Map;
 public class RetrievalController {
     private final RetrievalService retrievalService; private final QueryEnhanceService queryService;
     private final RetrievalLogService logService; private final UpdateRemindService remindService;
+    private final SearchPreferenceService preferenceService; private final KnowledgePushService pushService;
     @PostMapping("/api/retrieval/search") public ApiResponse<?> search(@RequestBody RetrievalRequest req) { return ApiResponse.success(retrievalService.search(req)); }
     @GetMapping("/api/retrieval/kb/{kbId}/chunks/count") public ApiResponse<?> count(@PathVariable String kbId) { return ApiResponse.success(retrievalService.getChunkCount(kbId)); }
     @PostMapping("/api/query/suggest") public ApiResponse<?> suggest(@RequestBody Map<String,Object> b) {
@@ -40,4 +41,18 @@ public class RetrievalController {
     @PostMapping("/api/update-remind") public ApiResponse<?> saveRemind(@RequestBody KbUpdateRemind remind) { return ApiResponse.success(remindService.save(remind)); }
     @PutMapping("/api/update-remind/{id}") public ApiResponse<?> updateRemind(@PathVariable String id,@RequestBody KbUpdateRemind remind) { remind.setId(id); return ApiResponse.success(remindService.save(remind)); }
     @DeleteMapping("/api/update-remind/{id}") public ApiResponse<?> deleteRemind(@PathVariable String id) { remindService.delete(id); return ApiResponse.success(); }
+    // ===== 检索偏好设置（新增/修改/删除/查询） =====
+    @GetMapping("/api/kb/{kbId}/search-preferences") public ApiResponse<?> prefList(@PathVariable String kbId,@RequestParam(required=false) String userId,@RequestParam(required=false,defaultValue="false") boolean mine) { return ApiResponse.success(preferenceService.list(kbId,userId,mine)); }
+    @GetMapping("/api/search-preferences/{id}") public ApiResponse<?> prefGet(@PathVariable String id) { return ApiResponse.success(preferenceService.get(id)); }
+    @PostMapping("/api/kb/{kbId}/search-preferences") public ApiResponse<?> prefCreate(@PathVariable String kbId,@RequestBody KbSearchPreference p) { return ApiResponse.success(preferenceService.create(kbId,p)); }
+    @PutMapping("/api/search-preferences/{id}") public ApiResponse<?> prefUpdate(@PathVariable String id,@RequestBody KbSearchPreference p) { return ApiResponse.success(preferenceService.update(id,p)); }
+    @DeleteMapping("/api/search-preferences/{id}") public ApiResponse<?> prefDelete(@PathVariable String id) { preferenceService.delete(id); return ApiResponse.success(); }
+    // ===== 知识推送（新增/修改/删除/查询/发送） =====
+    @GetMapping("/api/kb/{kbId}/knowledge-pushes") public ApiResponse<?> pushList(@PathVariable String kbId,@RequestParam(required=false) String status) { return ApiResponse.success(pushService.list(kbId,status)); }
+    @GetMapping("/api/knowledge-pushes/{id}") public ApiResponse<?> pushGet(@PathVariable String id) { return ApiResponse.success(pushService.get(id)); }
+    @PostMapping("/api/kb/{kbId}/knowledge-pushes") public ApiResponse<?> pushCreate(@PathVariable String kbId,@RequestBody KbKnowledgePush push) { return ApiResponse.success(pushService.create(kbId,push)); }
+    @PutMapping("/api/knowledge-pushes/{id}") public ApiResponse<?> pushUpdate(@PathVariable String id,@RequestBody KbKnowledgePush push) { return ApiResponse.success(pushService.update(id,push)); }
+    @DeleteMapping("/api/knowledge-pushes/{id}") public ApiResponse<?> pushDelete(@PathVariable String id) { pushService.delete(id); return ApiResponse.success(); }
+    // 发送知识推送（写入系统通知）
+    @PostMapping("/api/knowledge-pushes/{id}/send") public ApiResponse<?> pushSend(@PathVariable String id) { return ApiResponse.success(pushService.send(id,null)); }
 }

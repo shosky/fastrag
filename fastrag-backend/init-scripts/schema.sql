@@ -182,6 +182,35 @@ CREATE TABLE IF NOT EXISTS kb_qa_pair (
     INDEX idx_kb_id (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- 标准问法
+CREATE TABLE IF NOT EXISTS kb_standard_question (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    category VARCHAR(64),
+    standard_question TEXT NOT NULL,
+    answer TEXT,
+    hit_count INT DEFAULT 0,
+    enabled TINYINT DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 相似问法
+CREATE TABLE IF NOT EXISTS kb_similar_question (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    standard_question_id VARCHAR(32) NOT NULL,
+    question TEXT NOT NULL,
+    similarity DECIMAL(5,2) DEFAULT 0.0,
+    hit_count INT DEFAULT 0,
+    enabled TINYINT DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_standard (standard_question_id),
+    INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 -- ==================== Graph & Evaluation ====================
 CREATE TABLE IF NOT EXISTS kb_graph_index (
     kb_id VARCHAR(32) PRIMARY KEY,
@@ -686,6 +715,39 @@ CREATE TABLE IF NOT EXISTS kb_update_remind (
     cron_expr VARCHAR(64) DEFAULT '0 9 * * *',
     channels JSON,
     last_remind_at DATETIME,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 检索偏好设置（按用户+知识库）
+CREATE TABLE IF NOT EXISTS kb_search_preference (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    user_id VARCHAR(64) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    search_mode VARCHAR(16) DEFAULT 'hybrid',
+    top_k INT DEFAULT 10,
+    similarity_threshold DECIMAL(5,2) DEFAULT 0.5,
+    prefer_tags JSON,
+    enabled TINYINT DEFAULT 1,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_kb_user (kb_id, user_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 知识推送
+CREATE TABLE IF NOT EXISTS kb_knowledge_push (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    title VARCHAR(256) NOT NULL,
+    content TEXT,
+    knowledge_id VARCHAR(32),
+    push_type VARCHAR(16) DEFAULT 'manual',
+    target_users JSON,
+    status VARCHAR(16) DEFAULT 'draft',
+    pushed_at DATETIME,
+    created_by VARCHAR(64),
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_kb_id (kb_id)

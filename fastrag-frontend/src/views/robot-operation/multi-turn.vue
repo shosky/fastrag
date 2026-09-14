@@ -11,17 +11,8 @@ const pageSize = ref(20)
 async function loadData() {
   loading.value = true
   try {
-    const res: any = await api.getKbAnalytics()
-    const a: any = res || {}
-    dataList.value = [{
-      sessionId: 'ANL-001', topic: '知识库统计', turnCount: 1,
-      resolution: 'resolved', satisfaction: 4.8, keyIntents: ['知识查询'],
-      createdAt: new Date().toISOString()
-    }, {
-      sessionId: 'ANL-002', topic: '文档分析', turnCount: 1,
-      resolution: 'resolved', satisfaction: 4.5, keyIntents: ['文档检索'],
-      createdAt: new Date().toISOString()
-    }]
+    const res: any = await api.getMultiTurnAnalysis('month')
+    dataList.value = Array.isArray(res) ? res : (res?.list || [])
     total.value = dataList.value.length
   } finally { loading.value = false }
 }

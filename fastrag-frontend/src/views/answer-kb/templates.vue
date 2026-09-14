@@ -1,8 +1,7 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import * as api from '@/mock/answer-kb'
-
+import * as api from '@/api'
 
 const loading = ref(false)
 const dataList = ref<any[]>([])
@@ -18,14 +17,15 @@ const formData = ref<any>({})
 async function loadData() {
   loading.value = true
   try {
-    const res = (api as any).getTemplateList({ page: currentPage.value, pageSize: pageSize.value, keyword: searchKeyword.value || undefined })
-    if (res && typeof res === 'object' && 'list' in res) {
-      dataList.value = res.list; total.value = res.total
-    } else if (Array.isArray(res)) {
-      dataList.value = res; total.value = res.length
-    } else {
-      dataList.value = res ? [res] : []; total.value = dataList.value.length
+    const res: any = await api.getAppTemplates()
+    let list = Array.isArray(res) ? res : (res?.list || [])
+    if (searchKeyword.value) {
+      const kw = searchKeyword.value.toLowerCase()
+      list = list.filter((t: any) => (t.name || '').toLowerCase().includes(kw) || (t.content || '').toLowerCase().includes(kw))
     }
+    const start = (currentPage.value - 1) * pageSize.value
+    dataList.value = list.slice(start, start + pageSize.value)
+    total.value = list.length
   } finally { loading.value = false }
 }
 onMounted(loadData)
@@ -34,24 +34,21 @@ function handleSearch() { currentPage.value = 1; loadData() }
 function handlePageChange(p: number) { currentPage.value = p; loadData() }
 function handleSizeChange(s: number) { pageSize.value = s; currentPage.value = 1; loadData() }
 
-function handleAdd() { editingId.value = null; formData.value = {}; dialogTitle.value = '新增'; showDialog.value = true }
-function handleEdit(row: any) { editingId.value = row.id; formData.value = { ...row }; dialogTitle.value = '编辑'; showDialog.value = true }
+function handleAdd() { editingId.value = null; formData.value = { name: '', content: '', category: '通用', description: '' }; dialogTitle.value = '新增应答模板'; showDialog.value = true }
+function handleEdit(row: any) { editingId.value = row.id; formData.value = { ...row }; dialogTitle.value = '编辑应答模板'; showDialog.value = true }
 async function handleDelete(row: any) {
   try {
-    await ElMessageBox.confirm('确定要删除该记录吗？', '提示', { type: 'warning' })
-    const fn = (api as any)['deleteTemplates'] || (api as any).deleteFaq
-    if (fn) await fn(row.id)
+    await ElMessageBox.confirm('确定要删除该应答模板吗？', '提示', { type: 'warning' })
+    await api.deleteAppTemplate(row.id)
     ElMessage.success('删除成功'); loadData()
   } catch {}
 }
 async function handleSave() {
-    if (!formData.value.name) { ElMessage.warning('请输入模板名称'); return }
-    if (!formData.value.content) { ElMessage.warning('请输入模板内容'); return }
+  if (!formData.value.name) { ElMessage.warning('请输入模板名称'); return }
+  if (!formData.value.content) { ElMessage.warning('请输入模板内容'); return }
   try {
-    const cfn = (api as any)['createTemplates'] || (api as any).createFaq
-    const ufn = (api as any)['updateTemplates'] || (api as any).updateFaq
-    if (editingId.value) { if (ufn) await ufn(editingId.value, formData.value); ElMessage.success('更新成功') }
-    else { if (cfn) await cfn(formData.value); ElMessage.success('创建成功') }
+    if (editingId.value) { await api.updateAppTemplate(editingId.value, formData.value); ElMessage.success('更新成功') }
+    else { await api.createAppTemplate(formData.value); ElMessage.success('创建成功') }
     showDialog.value = false; loadData()
   } catch {}
 }

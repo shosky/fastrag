@@ -208,7 +208,115 @@ onMounted(() => {
   loadCorrections()
   loadUpdateLogs()
   loadUpdateRemindConfig()
+  loadPrefs()
+  loadPushes()
+  loadStdQuestions()
+  loadSimQuestions()
 })
+
+// ===== 检索偏好设置 =====
+const prefList = ref<any[]>([])
+const prefLoading = ref(false)
+const showPrefDialog = ref(false)
+const prefForm = ref({ name: '', searchMode: 'hybrid', topK: 10, similarityThreshold: 0.5, preferTags: '', enabled: true })
+const editingPrefId = ref('')
+function openAddPref() { editingPrefId.value = ''; prefForm.value = { name: '', searchMode: 'hybrid', topK: 10, similarityThreshold: 0.5, preferTags: '', enabled: true }; showPrefDialog.value = true }
+function openEditPref(row: any) { editingPrefId.value = row.id; prefForm.value = { name: row.name, searchMode: row.searchMode || 'hybrid', topK: row.topK || 10, similarityThreshold: row.similarityThreshold ?? 0.5, preferTags: (row.preferTags || '').toString(), enabled: row.enabled !== 0 }; showPrefDialog.value = true }
+async function loadPrefs() { prefLoading.value = true; try { prefList.value = ((await api.getSearchPreferences(kbId, undefined, true)) as any) || [] } catch { prefList.value = [] } finally { prefLoading.value = false } }
+async function savePref() {
+  if (!prefForm.value.name) { ElMessage.warning('请输入偏好名称'); return }
+  const payload = { ...prefForm.value, preferTags: prefForm.value.preferTags ? prefForm.value.preferTags.split(/[,，]/).map(s => s.trim()).filter(Boolean) : [] }
+  try {
+    if (editingPrefId.value) { await api.updateSearchPreference(editingPrefId.value, payload); ElMessage.success('已更新') }
+    else { await api.createSearchPreference(kbId, payload); ElMessage.success('已创建') }
+    showPrefDialog.value = false; await loadPrefs()
+  } catch { ElMessage.error('保存失败') }
+}
+async function deletePref(row: any) {
+  try { await ElMessageBox.confirm(`确认删除检索偏好「${row.name}」？`, '删除确认', { type: 'warning' }); await api.deleteSearchPreference(row.id); await loadPrefs(); ElMessage.success('已删除') } catch {}
+}
+
+// ===== 知识推送 =====
+const pushList = ref<any[]>([])
+const pushLoading = ref(false)
+const showPushDialog = ref(false)
+const pushForm = ref({ title: '', content: '', knowledgeId: '', pushType: 'manual', targetUsers: '', status: 'draft' })
+const editingPushId = ref('')
+function openAddPush() { editingPushId.value = ''; pushForm.value = { title: '', content: '', knowledgeId: '', pushType: 'manual', targetUsers: '', status: 'draft' }; showPushDialog.value = true }
+function openEditPush(row: any) { editingPushId.value = row.id; pushForm.value = { title: row.title, content: row.content || '', knowledgeId: row.knowledgeId || '', pushType: row.pushType || 'manual', targetUsers: (row.targetUsers || '').toString(), status: row.status || 'draft' }; showPushDialog.value = true }
+async function loadPushes() { pushLoading.value = true; try { pushList.value = ((await api.getKnowledgePushes(kbId)) as any) || [] } catch { pushList.value = [] } finally { pushLoading.value = false } }
+async function savePush() {
+  if (!pushForm.value.title) { ElMessage.warning('请输入推送标题'); return }
+  const payload = { ...pushForm.value }
+  try {
+    if (editingPushId.value) { await api.updateKnowledgePush(editingPushId.value, payload); ElMessage.success('已更新') }
+    else { await api.createKnowledgePush(kbId, payload); ElMessage.success('已创建') }
+    showPushDialog.value = false; await loadPushes()
+  } catch { ElMessage.error('保存失败') }
+}
+async function deletePush(row: any) {
+  try { await ElMessageBox.confirm(`确认删除知识推送「${row.title}」？`, '删除确认', { type: 'warning' }); await api.deleteKnowledgePush(row.id); await loadPushes(); ElMessage.success('已删除') } catch {}
+}
+async function sendPush(row: any) {
+  try { await ElMessageBox.confirm(`确认发送知识推送「${row.title}」？`, '发送确认', { type: 'info' }); await api.sendKnowledgePush(row.id); ElMessage.success('已发送'); await loadPushes() } catch {}
+}
+function pushStatusColor(s: string) { return (({ sent: 'success', draft: 'info', failed: 'danger' } as Record<string, string>)[s] || 'info') as any }
+
+// ===== 标准问法管理 =====
+const stdList = ref<any[]>([])
+const stdLoading = ref(false)
+const showStdDialog = ref(false)
+const stdForm = ref({ category: '', standardQuestion: '', answer: '', enabled: true })
+const editingStdId = ref('')
+function openAddStd() { editingStdId.value = ''; stdForm.value = { category: '', standardQuestion: '', answer: '', enabled: true }; showStdDialog.value = true }
+function openEditStd(row: any) { editingStdId.value = row.id; stdForm.value = { category: row.category || '', standardQuestion: row.standardQuestion || '', answer: row.answer || '', enabled: row.enabled !== 0 }; showStdDialog.value = true }
+async function loadStdQuestions() { stdLoading.value = true; try { stdList.value = ((await api.getStandardQuestions(kbId)) as any) || [] } catch { stdList.value = [] } finally { stdLoading.value = false } }
+async function saveStdQuestion() {
+  if (!stdForm.value.standardQuestion) { ElMessage.warning('请输入标准问法'); return }
+  try {
+    if (editingStdId.value) { await api.updateStandardQuestion(editingStdId.value, stdForm.value); ElMessage.success('已更新') }
+    else { await api.createStandardQuestion(kbId, stdForm.value); ElMessage.success('已创建') }
+    showStdDialog.value = false; await loadStdQuestions()
+  } catch { ElMessage.error('保存失败') }
+}
+async function deleteStdQuestion(row: any) {
+  try { await ElMessageBox.confirm(`确认删除标准问法「${row.standardQuestion}」？`, '删除确认', { type: 'warning' }); await api.deleteStandardQuestion(row.id); await loadStdQuestions(); ElMessage.success('已删除') } catch {}
+}
+
+// ===== 相似问法管理 =====
+const simList = ref<any[]>([])
+const simLoading = ref(false)
+const showSimDialog = ref(false)
+const simForm = ref({ standardQuestionId: '', question: '', similarity: 0.8, enabled: true })
+const editingSimId = ref('')
+function openAddSim(stdId?: string) { editingSimId.value = ''; simForm.value = { standardQuestionId: stdId || '', question: '', similarity: 0.8, enabled: true }; showSimDialog.value = true }
+function openEditSim(row: any) { editingSimId.value = row.id; simForm.value = { standardQuestionId: row.standardQuestionId || '', question: row.question || '', similarity: row.similarity ?? 0.8, enabled: row.enabled !== 0 }; showSimDialog.value = true }
+async function loadSimQuestions(standardQuestionId?: string) { simLoading.value = true; try { simList.value = ((await api.getSimilarQuestions(kbId, standardQuestionId)) as any) || [] } catch { simList.value = [] } finally { simLoading.value = false } }
+async function saveSimQuestion() {
+  if (!simForm.value.question) { ElMessage.warning('请输入相似问法'); return }
+  if (!simForm.value.standardQuestionId) { ElMessage.warning('请选择关联标准问法'); return }
+  try {
+    if (editingSimId.value) { await api.updateSimilarQuestion(editingSimId.value, simForm.value); ElMessage.success('已更新') }
+    else { await api.createSimilarQuestion(kbId, simForm.value); ElMessage.success('已创建') }
+    showSimDialog.value = false; await loadSimQuestions()
+  } catch { ElMessage.error('保存失败') }
+}
+async function deleteSimQuestion(row: any) {
+  try { await ElMessageBox.confirm(`确认删除相似问法？`, '删除确认', { type: 'warning' }); await api.deleteSimilarQuestion(row.id); await loadSimQuestions(); ElMessage.success('已删除') } catch {}
+}
+// 推荐相似问法
+const recommendLoading = ref(false)
+const recommendResult = ref<any[]>([])
+const recommendKeyword = ref('')
+async function handleRecommend(stdId: string) {
+  if (!recommendKeyword.value.trim()) { ElMessage.warning('请输入关键词'); return }
+  recommendLoading.value = true
+  try { recommendResult.value = ((await api.recommendSimilarQuestions(kbId, stdId, recommendKeyword.value, 10)) as any) || [] } catch { recommendResult.value = [] } finally { recommendLoading.value = false }
+}
+function useRecommend(row: any) {
+  simForm.value = { standardQuestionId: row.standardQuestionId || '', question: row.question, similarity: row.similarity ?? 0.8, enabled: true }
+  showSimDialog.value = true
+}
 </script>
 
 <template>
@@ -265,7 +373,7 @@ onMounted(() => {
             <!-- 按维度分组展示联想建议 -->
             <div v-for="group in groupedTestResult" :key="group.dimension" style="margin-bottom:12px">
               <div style="font-size:13px;color:#606266;margin-bottom:6px">
-                <el-tag size="small" :type="dimensionTagType(group.dimension)">{{ DIMENSION_LABEL_MAP[group.dimension] || group.dimension }}</el-tag>
+                <el-tag size="small" :type="(dimensionTagType(group.dimension) as any)">{{ DIMENSION_LABEL_MAP[group.dimension] || group.dimension }}</el-tag>
                 <span style="margin-left:8px">为您推荐以下内容：</span>
               </div>
               <div style="display:flex;flex-wrap:wrap;gap:6px">
@@ -343,9 +451,198 @@ onMounted(() => {
           <el-empty v-if="!updateLogs.length" description="暂无更新记录" :image-size="60" />
         </div>
       </el-tab-pane>
+
+      <!-- 检索偏好设置 -->
+      <el-tab-pane label="检索偏好设置" name="preference">
+        <div class="card-panel">
+          <div class="section-header"><div class="section-title">检索偏好设置</div><el-button type="primary" @click="openAddPref">新增偏好</el-button></div>
+          <el-table :data="prefList" stripe size="small" v-loading="prefLoading">
+            <el-table-column prop="name" label="偏好名称" min-width="140" show-overflow-tooltip />
+            <el-table-column label="检索模式" width="110"><template #default="{row}">{{ ({hybrid:'混合检索',vector:'向量检索',keyword:'关键词检索'} as Record<string,string>)[row.searchMode] || row.searchMode }}</template></el-table-column>
+            <el-table-column prop="topK" label="返回条数" width="90" align="center" />
+            <el-table-column label="相似度阈值" width="110" align="center"><template #default="{row}">{{ (row.similarityThreshold * 100).toFixed(0) }}%</template></el-table-column>
+            <el-table-column label="启用" width="70" align="center"><template #default="{row}"><el-tag :type="row.enabled===1||row.enabled===true?'success':'info'" size="small">{{ row.enabled===1||row.enabled===true?'是':'否' }}</el-tag></template></el-table-column>
+            <el-table-column label="操作" width="170">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="openEditPref(row)">编辑</el-button>
+                <el-button link type="danger" size="small" @click="deletePref(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!prefList.length && !prefLoading" description="暂无检索偏好，点击「新增偏好」创建" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
+      <!-- 知识推送 -->
+      <el-tab-pane label="知识推送" name="push">
+        <div class="card-panel">
+          <div class="section-header"><div class="section-title">知识推送</div><div><el-button type="primary" @click="openAddPush">新增推送</el-button></div></div>
+          <el-table :data="pushList" stripe size="small" v-loading="pushLoading">
+            <el-table-column prop="title" label="推送标题" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="content" label="内容" min-width="220" show-overflow-tooltip />
+            <el-table-column label="类型" width="90"><template #default="{row}">{{ row.pushType === 'auto' ? '自动' : '手动' }}</template></el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }"><el-tag :type="pushStatusColor(row.status) as any" size="small">{{ ({draft:'草稿',sent:'已发送',failed:'失败'} as Record<string,string>)[row.status] || row.status }}</el-tag></template>
+            </el-table-column>
+            <el-table-column label="操作" width="220">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="openEditPush(row)">编辑</el-button>
+                <el-button link type="danger" size="small" @click="deletePush(row)">删除</el-button>
+                <el-button v-if="row.status === 'draft'" link type="success" size="small" @click="sendPush(row)">发送</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!pushList.length && !pushLoading" description="暂无知识推送，点击「新增推送」创建" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
+      <!-- 标准问法管理 -->
+      <el-tab-pane label="标准问法管理" name="standard-question">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">标准问法</div>
+            <div style="display:flex;gap:8px">
+              <el-button size="small" type="primary" @click="openAddStd">新增标准问法</el-button>
+              <el-button size="small" @click="loadStdQuestions">刷新</el-button>
+            </div>
+          </div>
+          <el-table :data="stdList" stripe size="small" v-loading="stdLoading">
+            <el-table-column prop="category" label="分类" width="120" />
+            <el-table-column prop="standardQuestion" label="标准问法" show-overflow-tooltip />
+            <el-table-column prop="answer" label="答案" show-overflow-tooltip />
+            <el-table-column prop="hitCount" label="命中次数" width="100" />
+            <el-table-column prop="enabled" label="启用" width="70">
+              <template #default="{ row }">
+                <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '是' : '否' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="openEditStd(row)">编辑</el-button>
+                <el-button link type="primary" size="small" @click="loadSimQuestions(row.id)">查看相似问法</el-button>
+                <el-button link type="primary" size="small" @click="handleRecommend(row.id)">推荐相似</el-button>
+                <el-button link type="danger" size="small" @click="deleteStdQuestion(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!stdList.length && !stdLoading" description="暂无标准问法，点击「新增标准问法」创建" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
+      <!-- 相似问法管理 -->
+      <el-tab-pane label="相似问法管理" name="similar-question">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">相似问法</div>
+            <div style="display:flex;gap:8px">
+              <el-button size="small" type="primary" @click="openAddSim">新增相似问法</el-button>
+              <el-button size="small" @click="loadSimQuestions">刷新</el-button>
+            </div>
+          </div>
+          <div style="margin-bottom:12px">
+            <span style="font-size:13px;color:#606266;margin-right:8px">关键词推荐：</span>
+            <el-input v-model="recommendKeyword" placeholder="输入关键词推荐相似问法" style="width:220px" size="small" />
+            <el-button size="small" type="primary" @click="handleRecommend(stdList[0]?.id)" :disabled="!stdList.length" :loading="recommendLoading">推荐</el-button>
+          </div>
+          <el-table :data="simList" stripe size="small" v-loading="simLoading">
+            <el-table-column prop="question" label="相似问法" show-overflow-tooltip />
+            <el-table-column prop="similarity" label="相似度" width="100">
+              <template #default="{ row }">
+                <el-progress type="circle" :percentage="Math.round((row.similarity || 0) * 100)" :width="36" />
+              </template>
+            </el-table-column>
+            <el-table-column prop="hitCount" label="命中次数" width="100" />
+            <el-table-column prop="enabled" label="启用" width="70">
+              <template #default="{ row }">
+                <el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '是' : '否' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="openEditSim(row)">编辑</el-button>
+                <el-button link type="danger" size="small" @click="deleteSimQuestion(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <div v-if="recommendResult.length" style="margin-top:16px">
+            <div class="section-title" style="margin-bottom:8px">推荐结果</div>
+            <el-table :data="recommendResult" stripe size="small">
+              <el-table-column prop="question" label="相似问法" show-overflow-tooltip />
+              <el-table-column prop="similarity" label="相似度" width="100">
+                <template #default="{ row }">
+                  <el-progress type="circle" :percentage="Math.round((row.similarity || 0) * 100)" :width="36" />
+                </template>
+              </el-table-column>
+              <el-table-column prop="hitCount" label="命中次数" width="100" />
+              <el-table-column label="操作" width="120" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" size="small" @click="useRecommend(row)">采用</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+          <el-empty v-if="!simList.length && !simLoading && !recommendResult.length" description="暂无相似问法，点击「新增相似问法」创建" :image-size="60" />
+        </div>
+      </el-tab-pane>
     </el-tabs>
 
-    <el-dialog v-model="showAssocDialog" :title="assocForm.id?'编辑联想':'新增联想'" width="520px">
+    <!-- 标准问法 新增/编辑 -->
+    <el-dialog v-model="showStdDialog" :title="editingStdId ? '编辑标准问法' : '新增标准问法'" width="560px">
+      <el-form label-width="100px">
+        <el-form-item label="分类"><el-input v-model="stdForm.category" placeholder="如：售后、账单" /></el-form-item>
+        <el-form-item label="标准问法" required><el-input v-model="stdForm.standardQuestion" placeholder="用户最可能问的问题" /></el-form-item>
+        <el-form-item label="答案" required><el-input v-model="stdForm.answer" type="textarea" :rows="3" placeholder="标准答案" /></el-form-item>
+        <el-form-item label="启用"><el-switch v-model="stdForm.enabled" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showStdDialog=false">取消</el-button><el-button type="primary" @click="saveStdQuestion">保存</el-button></template>
+    </el-dialog>
+
+    <!-- 相似问法 新增/编辑 -->
+    <el-dialog v-model="showSimDialog" :title="editingSimId ? '编辑相似问法' : '新增相似问法'" width="520px">
+      <el-form label-width="100px">
+        <el-form-item label="关联标准问法" required>
+          <el-select v-model="simForm.standardQuestionId" placeholder="选择标准问法" style="width:360px" filterable>
+            <el-option v-for="item in stdList" :key="item.id" :label="item.standardQuestion" :value="item.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="相似问法" required><el-input v-model="simForm.question" placeholder="与标准问法意思相近的问法" /></el-form-item>
+        <el-form-item label="相似度"><el-input-number v-model="simForm.similarity" :min="0" :max="1" :step="0.05" style="width:160px" /></el-form-item>
+        <el-form-item label="启用"><el-switch v-model="simForm.enabled" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showSimDialog=false">取消</el-button><el-button type="primary" @click="saveSimQuestion">保存</el-button></template>
+    </el-dialog>
+
+    <!-- 检索偏好 新增/编辑 -->
+    <el-dialog v-model="showPrefDialog" :title="editingPrefId ? '编辑检索偏好' : '新增检索偏好'" width="520px">
+      <el-form label-width="110px">
+        <el-form-item label="偏好名称" required><el-input v-model="prefForm.name" placeholder="如：默认检索偏好" /></el-form-item>
+        <el-form-item label="检索模式">
+          <el-select v-model="prefForm.searchMode" style="width:180px"><el-option label="混合检索" value="hybrid" /><el-option label="向量检索" value="vector" /><el-option label="关键词检索" value="keyword" /></el-select>
+        </el-form-item>
+        <el-form-item label="返回条数"><el-input-number v-model="prefForm.topK" :min="1" :max="100" style="width:160px" /></el-form-item>
+        <el-form-item label="相似度阈值"><el-input-number v-model="prefForm.similarityThreshold" :min="0" :max="1" :step="0.05" style="width:160px" /></el-form-item>
+        <el-form-item label="偏好标签"><el-input v-model="prefForm.preferTags" placeholder="多个用逗号分隔" /></el-form-item>
+        <el-form-item label="启用"><el-switch v-model="prefForm.enabled" /></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showPrefDialog=false">取消</el-button><el-button type="primary" @click="savePref">保存</el-button></template>
+    </el-dialog>
+
+    <!-- 知识推送 新增/编辑 -->
+    <el-dialog v-model="showPushDialog" :title="editingPushId ? '编辑知识推送' : '新增知识推送'" width="520px">
+      <el-form label-width="110px">
+        <el-form-item label="推送标题" required><el-input v-model="pushForm.title" placeholder="如：知识库每周更新摘要" /></el-form-item>
+        <el-form-item label="推送内容"><el-input v-model="pushForm.content" type="textarea" :rows="3" placeholder="推送正文" /></el-form-item>
+        <el-form-item label="关联知识ID"><el-input v-model="pushForm.knowledgeId" placeholder="可选" /></el-form-item>
+        <el-form-item label="推送类型">
+          <el-select v-model="pushForm.pushType" style="width:160px"><el-option label="手动" value="manual" /><el-option label="自动" value="auto" /></el-select>
+        </el-form-item>
+        <el-form-item label="目标用户"><el-input v-model="pushForm.targetUsers" placeholder="多个用户名用逗号分隔；留空则推送给全员" /></el-form-item>
+        <el-form-item label="状态"><el-select v-model="pushForm.status" style="width:160px"><el-option label="草稿" value="draft" /><el-option label="已发送" value="sent" /></el-select></el-form-item>
+      </el-form>
+      <template #footer><el-button @click="showPushDialog=false">取消</el-button><el-button type="primary" @click="savePush">保存</el-button></template>
+    </el-dialog>
+
+    <!-- 更新提醒设置对话框 -->
       <el-form label-width="80px">
         <el-form-item label="名称" required><el-input v-model="assocForm.name" /></el-form-item>
         <el-form-item label="维度">

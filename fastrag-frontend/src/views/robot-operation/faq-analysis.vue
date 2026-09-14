@@ -11,19 +11,8 @@ const pageSize = ref(20)
 async function loadData() {
   loading.value = true
   try {
-    const res: any = await api.getKbAnalytics()
-    const analytics: any = res || {}
-    // 用 analytics 数据填充展示
-    dataList.value = [{
-      question: '知识库总量分析', hitCount: analytics.totalKBs || 0, missCount: 0,
-      hitRate: 1, avgSatisfaction: 5.0, period: new Date().toISOString().slice(0, 7)
-    }, {
-      question: '文档总量分析', hitCount: analytics.totalFiles || 0, missCount: 0,
-      hitRate: 1, avgSatisfaction: 4.5, period: new Date().toISOString().slice(0, 7)
-    }, {
-      question: '数据分块分析', hitCount: analytics.totalChunks || 0, missCount: 0,
-      hitRate: 0.95, avgSatisfaction: 4.2, period: new Date().toISOString().slice(0, 7)
-    }]
+    const res: any = await api.getFaqAnalysis('month')
+    dataList.value = Array.isArray(res) ? res : (res?.list || [])
     total.value = dataList.value.length
   } finally { loading.value = false }
 }

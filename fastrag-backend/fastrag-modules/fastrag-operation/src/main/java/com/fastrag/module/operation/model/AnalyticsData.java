@@ -10,6 +10,7 @@ public class AnalyticsData {
     private List<MetricItem> metrics;
     private List<HotKb> hotKBs;
     private List<HotDoc> hotDocs;
+    private String period;
 
     @Data
     @Builder
@@ -28,6 +29,8 @@ public class AnalyticsData {
         private String name;
         private long docCount;
         private long viewCount;
+        private long accessCount;
+        private String description;
     }
 
     @Data
@@ -38,5 +41,6 @@ public class AnalyticsData {
         private String name;
         private String kbName;
         private long viewCount;
+        private String category;
     }
 }

@@ -13,8 +13,17 @@ export async function getHomeData() {
 // 运营分析 API
 // ===========================================================================
 
-export async function getKbAnalytics() {
-  return request.get('/analytics/kb')
+export async function getKbAnalytics(period?: string) {
+  return request.get('/analytics/kb', { params: { period } })
+}
+export async function getFaqAnalysis(period?: string) {
+  return request.get('/analytics/faq', { params: { period } })
+}
+export async function getMultiTurnAnalysis(period?: string) {
+  return request.get('/analytics/multi-turn', { params: { period } })
+}
+export async function getIntentAnalysis(period?: string) {
+  return request.get('/analytics/intent', { params: { period } })
 }
 import type {
   GraphData,
@@ -483,6 +492,15 @@ export async function deleteApp(id: string) {
 
 export async function getAppTemplates() {
   return request.get('/apps/templates')
+}
+export async function createAppTemplate(data: Record<string, unknown>) {
+  return request.post('/apps/templates', data)
+}
+export async function updateAppTemplate(id: string, data: Record<string, unknown>) {
+  return request.put(`/apps/templates/${id}`, data)
+}
+export async function deleteAppTemplate(id: string) {
+  return request.delete(`/apps/templates/${id}`)
 }
 
 export async function getAppConfig(id: string) {
@@ -1017,6 +1035,43 @@ export async function saveUpdateRemind(data: Record<string, unknown>) {
 
 export async function updateUpdateRemind(id: string, data: Record<string, unknown>) {
   return request.put(`/update-remind/${id}`, data)
+}
+
+// ===== 检索偏好设置 =====
+export async function getSearchPreferences(kbId: string, userId?: string, mine?: boolean) {
+  return request.get(`/kb/${kbId}/search-preferences`, { params: { userId, mine } })
+}
+export async function getSearchPreference(id: string) {
+  return request.get(`/search-preferences/${id}`)
+}
+export async function createSearchPreference(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/search-preferences`, data)
+}
+export async function updateSearchPreference(id: string, data: Record<string, unknown>) {
+  return request.put(`/search-preferences/${id}`, data)
+}
+export async function deleteSearchPreference(id: string) {
+  return request.delete(`/search-preferences/${id}`)
+}
+
+// ===== 知识推送 =====
+export async function getKnowledgePushes(kbId: string, status?: string) {
+  return request.get(`/kb/${kbId}/knowledge-pushes`, { params: { status } })
+}
+export async function getKnowledgePush(id: string) {
+  return request.get(`/knowledge-pushes/${id}`)
+}
+export async function createKnowledgePush(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/knowledge-pushes`, data)
+}
+export async function updateKnowledgePush(id: string, data: Record<string, unknown>) {
+  return request.put(`/knowledge-pushes/${id}`, data)
+}
+export async function deleteKnowledgePush(id: string) {
+  return request.delete(`/knowledge-pushes/${id}`)
+}
+export async function sendKnowledgePush(id: string) {
+  return request.post(`/knowledge-pushes/${id}/send`)
 }
 
 export async function deleteUpdateRemind(id: string) {
@@ -2220,6 +2275,46 @@ export async function markAllNotificationsRead(userId?: string) {
 }
 export async function deleteNotification(id: string) {
   return request.delete(`/notifications/${id}`)
+}
+
+// ===== 标准问法 / 相似问法管理 =====
+export async function getStandardQuestions(kbId: string, category?: string) {
+  return request.get(`/kb/${kbId}/questions/standard`, { params: { category } })
+}
+export async function getStandardQuestion(id: string) {
+  return request.get(`/standard-questions/${id}`)
+}
+export async function createStandardQuestion(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/questions/standard`, data)
+}
+export async function updateStandardQuestion(id: string, data: Record<string, unknown>) {
+  return request.put(`/standard-questions/${id}`, data)
+}
+export async function deleteStandardQuestion(id: string) {
+  return request.delete(`/standard-questions/${id}`)
+}
+export async function recommendSimilarQuestions(kbId: string, standardQuestionId: string, keyword?: string, limit?: number) {
+  return request.get(`/kb/${kbId}/questions/standard/${standardQuestionId}/recommend`, { params: { keyword, limit } })
+}
+
+export async function getSimilarQuestions(kbId: string, standardQuestionId?: string) {
+  return request.get(`/kb/${kbId}/questions/similar`, { params: { standardQuestionId } })
+}
+export async function getSimilarQuestion(id: string) {
+  return request.get(`/similar-questions/${id}`)
+}
+export async function createSimilarQuestion(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/questions/similar`, data)
+}
+export async function updateSimilarQuestion(id: string, data: Record<string, unknown>) {
+  return request.put(`/similar-questions/${id}`, data)
+}
+export async function deleteSimilarQuestion(id: string) {
+  return request.delete(`/similar-questions/${id}`)
+}
+
+export async function getKeywordRecommendations(kbId: string, query: string, limit?: number) {
+  return request.get(`/kb/${kbId}/keywords/recommend`, { params: { query, limit } })
 }
 
 // ===========================================================================

@@ -11,17 +11,8 @@ const pageSize = ref(20)
 async function loadData() {
   loading.value = true
   try {
-    const res: any = await api.getKbAnalytics()
-    const a: any = res || {}
-    dataList.value = [{
-      intent: '知识查询', utteranceCount: a.totalKBs || 0,
-      accuracy: 0.95, coverage: 0.88, topConfusedIntents: ['文档检索'],
-      suggestion: '建议增加同义词扩展'
-    }, {
-      intent: '文档检索', utteranceCount: a.totalFiles || 0,
-      accuracy: 0.92, coverage: 0.85, topConfusedIntents: ['知识查询'],
-      suggestion: '建议优化检索策略'
-    }]
+    const res: any = await api.getIntentAnalysis('month')
+    dataList.value = Array.isArray(res) ? res : (res?.list || [])
     total.value = dataList.value.length
   } finally { loading.value = false }
 }

@@ -121,7 +121,6 @@ function addHistory(query: string, mode: 'text' | 'image', resultCount: number, 
     duration,
     timestamp: new Date().toLocaleTimeString('zh-CN'),
   })
-  // 只保留最近 50 条
   if (searchHistory.value.length > 50) {
     searchHistory.value = searchHistory.value.slice(0, 50)
   }
@@ -138,19 +137,28 @@ async function clearHistory() {
   ElMessage.success('历史记录已清空')
 }
 
-// --- 示例问题 ---
-const exampleQuestions = ref([
-  '小微企业申请ICT服务需要准备哪些材料？',
-  '小微ICT业务的技术支持范围是什么？',
-  '小微ICT业务与传统企业业务有什么区别？',
-  '如何查询小微ICT业务的办理进度？',
-  '小微ICT业务提供哪些主要产品和服务？',
-  '小微ICT业务的服务对象包括哪些企业类型？',
-  '小微ICT业务的合同期限和续约流程是什么？',
-  '小微ICT业务的售后服务包括哪些内容？',
-  '小微ICT业务的办理流程是怎样的？',
-  '小微ICT业务的收费标准是怎样的？',
-])
+// --- 关键词推荐 ---
+const recommendedKeywords = ref<string[]>([])
+const keywordLoading = ref(false)
+
+async function loadKeywordRecommendations(query: string) {
+  if (!query || !props.kbId) { recommendedKeywords.value = []; return }
+  keywordLoading.value = true
+  try {
+    const res: any = await api.getKeywordRecommendations(props.kbId, query, 10)
+    const list = Array.isArray(res) ? res : (res?.list || [])
+    recommendedKeywords.value = list.map((item: any) => item.text || item.question || String(item)).filter(Boolean)
+  } catch {
+    recommendedKeywords.value = []
+  } finally {
+    keywordLoading.value = false
+  }
+}
+
+function handleKeywordClick(keyword: string) {
+  searchQuery.value = keyword
+  handleSearch()
+}
 
 // --- 搜索 ---
 async function handleSearch() {
@@ -162,13 +170,11 @@ async function handleSearch() {
 
   let effectiveQuery = searchQuery.value
 
-  // 图片检索：用文件名列表作为 query（mock 实现）
   if (isImageSearch) {
     const names = imageItems.value.map((i) => i.file.name).join(' ')
     effectiveQuery = `[图片] ${names}`
   }
 
-  // 纠错（本地 mock）
   correctionSuggestion.value = null
   correctionReason.value = ''
   rewriteRules.value = []
@@ -181,7 +187,6 @@ async function handleSearch() {
     }
   }
 
-  // 查询重写（本地 mock）
   rewriteRules.value = []
   if (!isImageSearch && preprocess.value.queryRewrite) {
     const { rewritten, appliedRules } = localRewrite(effectiveQuery)
@@ -196,7 +201,6 @@ async function handleSearch() {
   const startTime = Date.now()
 
   try {
-    // 图谱扩展
     let graphExpandedQuery = effectiveQuery
     if (!isImageSearch && preprocess.value.graphExpansion) {
       graphExpandedQuery = await graphExpand(effectiveQuery)
@@ -204,7 +208,6 @@ async function handleSearch() {
       expandedQuery.value = ''
     }
 
-    // 同义词扩展
     let finalQuery = graphExpandedQuery
     if (!isImageSearch && preprocess.value.synonymExpansion) {
       finalQuery = await synonymExpand(graphExpandedQuery)
@@ -220,6 +223,11 @@ async function handleSearch() {
 
     const duration = Date.now() - startTime
     addHistory(effectiveQuery, searchMode.value, searchResults.value.length, duration)
+
+    // 搜索完成后加载关键词推荐（闭环）
+    if (!isImageSearch && searchQuery.value.trim()) {
+      loadKeywordRecommendations(searchQuery.value.trim())
+    }
   } catch {
     ElMessage.error('检索失败，请重试')
     searchResults.value = []
@@ -243,6 +251,7 @@ function handleClear() {
   searchResults.value = []
   hasSearched.value = false
   searchQuery.value = ''
+  recommendedKeywords.value = []
   clearAllImages()
   clearSynonyms()
   correctionSuggestion.value = null
@@ -428,7 +437,27 @@ function handleKeydown(e: Event | KeyboardEvent) {
           检索到 <strong>{{ searchResults.length }}</strong> 个相关文档块
           <el-tag v-if="searchMode === 'image'" size="small" type="warning" style="margin-left: 8px">图片检索</el-tag>
         </span>
-        <el-button link type="primary" @click="handleClear">清空</el-button>
+        <div style="display:flex;gap:8px">
+          <el-button v-if="recommendedKeywords.length" link type="primary" size="small" @click="loadKeywordRecommendations(searchQuery)">
+            刷新推荐
+          </el-button>
+          <el-button link type="primary" @click="handleClear">清空</el-button>
+        </div>
+      </div>
+
+      <!-- 关键词推荐 -->
+      <div v-if="recommendedKeywords.length && !searchLoading" class="search-test__keywords">
+        <span class="search-test__keywords-label">相关关键词：</span>
+        <el-tag
+          v-for="kw in recommendedKeywords"
+          :key="kw"
+          class="search-test__keyword-tag"
+          type="info"
+          effect="plain"
+          @click="handleKeywordClick(kw)"
+        >
+          {{ kw }}
+        </el-tag>
       </div>
 
       <div v-if="searchLoading" class="search-test__loading">
@@ -658,6 +687,31 @@ function handleKeydown(e: Event | KeyboardEvent) {
 
   strong {
     color: $text-primary;
+  }
+}
+
+// --- 关键词推荐 ---
+.search-test__keywords {
+  display: flex;
+  align-items: center;
+  gap: $spacing-xs;
+  flex-wrap: wrap;
+  padding: $spacing-sm 0;
+  font-size: 12px;
+
+  .search-test__keywords-label {
+    color: $text-secondary;
+    margin-right: $spacing-xs;
+  }
+
+  .search-test__keyword-tag {
+    cursor: pointer;
+    transition: all 0.15s;
+
+    &:hover {
+      border-color: $color-primary;
+      color: $color-primary;
+    }
   }
 }
 
