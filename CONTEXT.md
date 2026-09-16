@@ -2,6 +2,11 @@
 
 > 本文件由 idd-grill 维护，所有模块文档共享此术语定义。
 
+> **IDD Metadata**（由 idd-onboard 于 2026-09-16 检测写入）
+> - **Repository Role:** `backend+frontend`（CERTAIN — 后端：Spring Boot 3.2.5 / 15 个 Maven 模块 / 55 个控制器 / 108 张表；前端：Vue 3 + vue-router + pinia + Element Plus / 60 条路由，双侧强信号）
+> - **API Contract Source:** 本仓库运行时生成 — springdoc-openapi 2.5.0（`GET /v3/api-docs`、`/swagger-ui.html`，服务端口 8081）；仓库内无静态 OpenAPI 文件，控制器无手写 `@Tag`/`@Operation` 注解（fastrag-backend/pom.xml:157-162、fastrag-bootstrap/src/main/resources/application.yml:179-182）
+> - **文档语言：** 中文
+
 ## 核心领域术语
 
 **知识库（Knowledge Base）** — 用户创建的知识管理单元，包含文件、分片、QA 对、图谱等子资源。
@@ -61,3 +66,10 @@
 **Vector Store** — 向量存储抽象接口，当前仅有 Milvus 实现。
 
 **Ingestion Pipeline** — 文档摄入流水线：上传 → 解析 → 切分 → 向量化 → 存储，通过 RabbitMQ 异步执行。
+
+## 命名冲突与勘误（idd-onboard 检测，2026-09-16）
+
+- **产品命名漂移（INFERRED）**：manual.md 与前端 `document.title` 后缀使用「AIS」，index.html 标题为「AI知识仓」，package.json 包名为 `fastrag-demo-tmp`，代码与 AGENT.md 使用 FastRAG —— 四套命名并存，需统一。
+- **菜单标题重复（CERTAIN）**：`/operation` 与 `/robot-operation` 的侧边栏标题均为「运营中心」（fastrag-frontend/src/router/routes.ts）。
+- **孤儿路由（CERTAIN）**：`/knowledge-review/*` 与 `/robot-operation/*` 未接入侧边栏导航（fastrag-frontend/src/config/menu-perm-tree.ts:15-18 自述）。
+- **一致性确认（CERTAIN）**：AGENTS.md 分页规范 ↔ 后端 `PageResult{list,total,page,pageSize}` ↔ 前端 `usePagination`（19 个视图在用）三方一致，无冲突。
