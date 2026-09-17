@@ -183,7 +183,7 @@ function handleSave() {
         <label class="retrieval-sidebar__label">关键词匹配</label>
         <el-switch
           :model-value="(localConfig as any).enableKeywordMatch ?? false"
-          @update:model-value="(v: boolean) => { (localConfig as any).enableKeywordMatch = v; emit('update:config', { ...localConfig }) }"
+          @update:model-value="(v: string | number | boolean) => { (localConfig as any).enableKeywordMatch = v === true; emit('update:config', { ...localConfig }) }"
         />
         <span class="retrieval-sidebar__hint">启用后，用户输入命中问答对的触发关键词时优先返回匹配结果</span>
       </div>

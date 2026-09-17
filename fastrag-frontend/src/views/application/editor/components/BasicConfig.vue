@@ -51,6 +51,21 @@ async function saveBasic() {
   ElMessage.success('基础配置已保存')
 }
 
+// 重置基础配置：恢复默认值（对话记忆5轮/Markdown/30秒，清空开场白结束语）
+async function handleResetBasic() {
+  try {
+    await ElMessageBox.confirm('将基础配置恢复为默认值，确定重置？', '重置配置', { type: 'warning' })
+  } catch { return }
+  try {
+    await api.resetAppBasicConfig(appId())
+    basicForm.value = { memoryRounds: 5, outputFormat: 'markdown', timeoutSeconds: 30, greeting: '', goodbyeMessage: '' }
+    await loadBasic()
+    ElMessage.success('基础配置已重置为默认值')
+  } catch {
+    ElMessage.error('重置失败')
+  }
+}
+
 async function saveAdvancedOpts() {
   await api.saveAppAdvanced(appId(), advancedForm.value)
   ElMessage.success('高级选项已保存')
@@ -125,6 +140,7 @@ onMounted(() => {
           <el-button size="small" :icon="ZoomIn" @click="handleViewDetail">查看配置详情</el-button>
           <el-button size="small" :icon="Download" @click="handleExportBasic">导出配置</el-button>
           <el-button size="small" :icon="UploadFilled" @click="handleImportBasic">导入配置</el-button>
+          <el-button size="small" type="warning" @click="handleResetBasic">重置配置</el-button>
         </div>
       </div>
       <el-form label-width="120px" style="margin-top:16px">

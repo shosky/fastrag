@@ -370,7 +370,7 @@ export function getSearchPreference(userId: string): SearchPreference | null {
 }
 
 export function updateSearchPreference(userId: string, data: Partial<SearchPreference>): SearchPreference {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const idx = preferenceStore.findIndex(p => p.userId === userId)
   if (idx === -1) {
@@ -411,7 +411,7 @@ export function getPushList(params?: { page?: number; pageSize?: number; keyword
 }
 
 export function createPush(data: Partial<KnowledgePush>): KnowledgePush {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const item: KnowledgePush = {
     id: `push-${++pushSeq}`,
@@ -432,7 +432,7 @@ export function createPush(data: Partial<KnowledgePush>): KnowledgePush {
 }
 
 export function updatePush(id: string, data: Partial<KnowledgePush>): KnowledgePush | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const idx = pushStore.findIndex(p => p.id === id)
   if (idx === -1) return null
@@ -459,7 +459,7 @@ export function getMultimodalConfigs(): MultimodalSearchConfig[] {
 }
 
 export function updateMultimodalConfig(id: string, data: Partial<MultimodalSearchConfig>): MultimodalSearchConfig | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const idx = multimodalStore.findIndex(c => c.id === id)
   if (idx === -1) return null
@@ -489,7 +489,7 @@ export function getTrainingList(params?: { page?: number; pageSize?: number }) {
 }
 
 export function createTrainingTask(data: Partial<ModelTrainingTask>): ModelTrainingTask {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const item: ModelTrainingTask = {
     id: `train-${++trainSeq}`,
@@ -528,7 +528,7 @@ export function getRewriteList(params?: { page?: number; pageSize?: number; type
 }
 
 export function createRewrite(data: Partial<QueryRewriteRule>): QueryRewriteRule {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const item: QueryRewriteRule = {
     id: `rw-${++rewriteSeq}`,
@@ -545,7 +545,7 @@ export function createRewrite(data: Partial<QueryRewriteRule>): QueryRewriteRule
 }
 
 export function updateRewrite(id: string, data: Partial<QueryRewriteRule>): QueryRewriteRule | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const idx = rewriteStore.findIndex(r => r.id === id)
   if (idx === -1) return null
@@ -572,7 +572,7 @@ export function getStrategyList(): RetrievalStrategy[] {
 }
 
 export function createStrategy(data: Partial<RetrievalStrategy>): RetrievalStrategy {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const item: RetrievalStrategy = {
     id: `strat-${++strategySeq}`,
@@ -591,7 +591,7 @@ export function createStrategy(data: Partial<RetrievalStrategy>): RetrievalStrat
 }
 
 export function updateStrategy(id: string, data: Partial<RetrievalStrategy>): RetrievalStrategy | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:manage_strategy')
   initStore()
   const idx = strategyStore.findIndex(s => s.id === id)
   if (idx === -1) return null

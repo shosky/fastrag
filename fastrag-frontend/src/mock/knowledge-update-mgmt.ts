@@ -68,7 +68,7 @@ export function getInitiationList(params?: { page?: number; pageSize?: number; s
   return { list: list.slice((page - 1) * pageSize, page * pageSize), total }
 }
 export function createInitiation(data: Partial<UpdateInitiation>): UpdateInitiation {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: UpdateInitiation = { id: `ui-${++seq}`, knowledgeBaseId: data.knowledgeBaseId || '', knowledgeBaseName: data.knowledgeBaseName || '', type: data.type || 'manual', reason: data.reason || '', status: 'pending', progress: 0, initiator: 'admin', createdAt: new Date().toISOString() }
   initiationStore.push(item); return item
 }

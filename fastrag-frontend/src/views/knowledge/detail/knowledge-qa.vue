@@ -96,10 +96,119 @@ async function handleSaveDg() {
 async function handleIndexDg(row: any) { await api.indexDocGuide(kbId, row.id); await loadDg(); ElMessage.success('索引完成') }
 async function handleDeleteDg(row: any) { try { await ElMessageBox.confirm('确认删除？', '删除确认', { type: 'warning' }); await api.deleteDocGuide(kbId, row.id); await loadDg(); ElMessage.success('删除成功') } catch {} }
 
+// ===== 多模态检索：文档/图片/音频/视频 的搜索与排序 =====
+const mm2Modality = ref<'document' | 'image' | 'audio' | 'video'>('document')
+const mm2Query = ref('')
+const mm2TopK = ref(5)
+const mm2Loading = ref(false)
+const mm2Results = ref<any[]>([])
+const mm2SortBy = ref('relevance')
+const mm2Sorted = ref<any[]>([])
+const mm2Searched = ref(false)
+const MM2_MODALITIES = [
+  { value: 'document', label: '文档' },
+  { value: 'image', label: '图片' },
+  { value: 'audio', label: '音频' },
+  { value: 'video', label: '视频' },
+]
+const mm2ModalityLabel = (v: string) => MM2_MODALITIES.find(m => m.value === v)?.label || v
+
+/** 多模态搜索 */
+async function handleMm2Search() {
+  if (!mm2Query.value.trim()) { ElMessage.warning('请输入检索词'); return }
+  mm2Loading.value = true
+  try {
+    const res: any = await api.multimodalSearch(kbId, mm2Modality.value, { query: mm2Query.value, topK: Number(mm2TopK.value) || 5 })
+    mm2Results.value = res?.results || []
+    mm2Searched.value = true
+    if (!mm2Results.value.length) ElMessage.info(`未命中${mm2ModalityLabel(mm2Modality.value)}素材，可换关键词`)
+  } catch (e: any) {
+    mm2Results.value = []
+    mm2Searched.value = true
+    ElMessage.error('搜索失败：' + (e?.message || ''))
+  } finally { mm2Loading.value = false }
+}
+
+/** 多模态排序：对搜索命中的结果按规则重排 */
+async function handleMm2Sort() {
+  const ids = mm2Results.value.map((r: any) => r.id)
+  if (!ids.length) { ElMessage.warning('请先搜索出结果再排序'); return }
+  mm2Loading.value = true
+  try {
+    const res: any = await api.multimodalSort(kbId, mm2Modality.value, { documentIds: ids, sortBy: mm2SortBy.value })
+    mm2Sorted.value = res?.sorted || []
+    ElMessage.success(`已按「${mm2SortBy.value}」排序 ${mm2Sorted.value.length} 条`)
+  } catch (e: any) {
+    ElMessage.error('排序失败：' + (e?.message || ''))
+  } finally { mm2Loading.value = false }
+}
+
+// ===== 文档问答：选定文档 → 提问 → 从该文档分块中检索出答案片段 =====
+const dqFiles = ref<any[]>([])
+const dqFileId = ref('')
+const dqQuestion = ref('')
+const dqLoading = ref(false)
+const dqAnswer = ref<any>(null)
+async function loadDqFiles() {
+  try {
+    const res: any = await api.getFiles(kbId)
+    dqFiles.value = res?.records || res?.list || res || []
+    if (!dqFileId.value && dqFiles.value.length) dqFileId.value = dqFiles.value[0].id
+  } catch { dqFiles.value = [] }
+}
+const dqFileName = (id: string) => dqFiles.value.find((f: any) => f.id === id)?.name || id || '-'
+async function handleDocQa() {
+  if (!dqFileId.value) { ElMessage.warning('请先选择文档'); return }
+  if (!dqQuestion.value.trim()) { ElMessage.warning('请输入问题'); return }
+  dqLoading.value = true
+  try {
+    const all: any = await api.searchRetrieval({
+      knowledgeId: kbId,
+      query: dqQuestion.value,
+      config: { topK: 8, similarityThreshold: 0 },
+    } as any)
+    const list: any[] = Array.isArray(all) ? all : (all?.list || [])
+    const inDoc = list.filter((x: any) => x.fileId === dqFileId.value)
+    const hits = inDoc.length ? inDoc : list
+    // 后端未返回高亮词时，用问题里的关键词/双字词在片段前端补高亮
+    const tokens = Array.from(new Set(
+      String(dqQuestion.value)
+        .split(/[\s,，。；;：:！!？?、()（）]+/)
+        .flatMap((seg: string) => {
+          const out: string[] = []
+          if (/^[a-zA-Z0-9]{2,}$/.test(seg)) out.push(seg)
+          for (let i = 0; i + 2 <= seg.length; i++) out.push(seg.slice(i, i + 2))
+          return out
+        })
+        .filter((t: string) => t.length >= 2),
+    ))
+    dqAnswer.value = {
+      question: dqQuestion.value,
+      docName: dqFileName(dqFileId.value),
+      scoped: inDoc.length > 0,
+      hits: hits.map((h: any) => ({ ...h, highlights: (h.highlights?.length ? h.highlights : tokens) })),
+      answeredAt: new Date().toLocaleString('zh-CN'),
+    }
+    if (!hits.length) ElMessage.info('该文档中未命中相关内容，可换问法或更换文档')
+  } catch (e: any) {
+    ElMessage.error('问答失败：' + (e?.message || ''))
+  } finally { dqLoading.value = false }
+}
+
 // ===== 高亮定位：输入问题 → 检索命中内容并高亮关键词 =====
 const hlQuery = ref('')
 const hlLoading = ref(false)
 const hlResults = ref<any[]>([])
+const hlFileNames = ref<Record<string, string>>({})
+async function loadHlFileNames() {
+  try {
+    if (!dqFiles.value.length) await loadDqFiles()
+    const map: Record<string, string> = {}
+    for (const f of dqFiles.value) map[f.id] = f.name
+    hlFileNames.value = map
+  } catch { hlFileNames.value = {} }
+}
+const hlFileName = (id: string) => hlFileNames.value[id] || id || '-'
 async function handleLocate() {
   if (!hlQuery.value.trim()) { ElMessage.warning('请输入要定位的问题或关键词'); return }
   hlLoading.value = true
@@ -120,12 +229,102 @@ function renderContent(content: string, highlights?: string[]): string {
   return html
 }
 
-onMounted(() => { loadMt(); loadMm(); loadDg() })
+onMounted(async () => { loadMt(); loadMm(); loadDg(); await loadDqFiles(); await loadHlFileNames() })
 </script>
 
 <template>
   <div class="page-container" v-loading="loading">
     <el-tabs v-model="activeTab">
+      <!-- 多模态检索：文档/图片/音频/视频 的搜索与排序 -->
+      <el-tab-pane label="多模态检索" name="multimodal">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">多模态检索</div>
+            <span style="color:var(--el-text-color-secondary);font-size:12px">按模态检索素材库：文档 / 图片 / 音频 / 视频，支持搜索与排序</span>
+          </div>
+          <div class="filter-bar">
+            <el-radio-group v-model="mm2Modality" size="small">
+              <el-radio-button v-for="m in MM2_MODALITIES" :key="m.value" :value="m.value">{{ m.label }}</el-radio-button>
+            </el-radio-group>
+            <el-input v-model="mm2Query" :placeholder="`检索${mm2ModalityLabel(mm2Modality)}素材，如：宽带 / 资费 / 覆盖`" clearable style="width: 320px" @keyup.enter="handleMm2Search" />
+            <el-input-number v-model="mm2TopK" :min="1" :max="20" size="small" />
+            <el-button type="primary" :loading="mm2Loading" @click="handleMm2Search">搜索</el-button>
+            <el-select v-model="mm2SortBy" size="small" style="width: 140px">
+              <el-option label="按相关度" value="relevance" />
+              <el-option label="按名称" value="name" />
+              <el-option label="按大小" value="size" />
+              <el-option label="按时间" value="createdAt" />
+            </el-select>
+            <el-button :loading="mm2Loading" @click="handleMm2Sort">排序</el-button>
+          </div>
+
+          <div v-if="mm2Searched" style="margin:8px 0;color:var(--el-text-color-secondary);font-size:13px">
+            搜索命中 {{ mm2Results.length }} 条{{ mm2ModalityLabel(mm2Modality) }}素材
+          </div>
+          <el-table :data="mm2Results" size="small" stripe v-loading="mm2Loading">
+            <el-table-column prop="name" label="素材名称" min-width="220" show-overflow-tooltip />
+            <el-table-column label="模态" width="90" align="center">
+              <template #default="{ row }">{{ mm2ModalityLabel(row.mediaType) }}</template>
+            </el-table-column>
+            <el-table-column prop="description" label="描述/识别文本" min-width="240" show-overflow-tooltip />
+            <el-table-column prop="score" label="相关度" width="90" align="center" />
+          </el-table>
+          <el-empty v-if="!mm2Results.length && !mm2Loading" description="选择模态与关键词后点击「搜索」，命中的素材会展示在此" :image-size="60" />
+
+          <template v-if="mm2Sorted.length">
+            <div style="margin:16px 0 8px;font-weight:600;font-size:13px">
+              排序结果（{{ mm2SortBy }}，共 {{ mm2Sorted.length }} 条）
+            </div>
+            <el-table :data="mm2Sorted" size="small" stripe>
+              <el-table-column prop="rank" label="排名" width="80" align="center" />
+              <el-table-column prop="name" label="素材名称" min-width="240" show-overflow-tooltip />
+              <el-table-column prop="score" label="排序得分" width="110" align="center" />
+            </el-table>
+          </template>
+        </div>
+      </el-tab-pane>
+
+      <!-- 文档问答：选文档 → 提问 → 从该文档检索答案片段 -->
+      <el-tab-pane label="文档问答" name="docqa">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">文档问答</div>
+            <span style="color:var(--el-text-color-secondary);font-size:12px">选择文档后提问，答案取自该文档的原文片段（含相似度与高亮）</span>
+          </div>
+          <div class="filter-bar">
+            <el-select v-model="dqFileId" placeholder="选择文档" size="small" style="width: 300px">
+              <el-option v-for="f in dqFiles" :key="f.id" :label="f.name" :value="f.id" />
+            </el-select>
+            <el-input v-model="dqQuestion" placeholder="输入针对该文档的问题，如：退款需要多久到账？" clearable style="width: 380px" @keyup.enter="handleDocQa" />
+            <el-button type="primary" :loading="dqLoading" @click="handleDocQa">提问</el-button>
+          </div>
+
+          <div v-if="dqAnswer" class="dq-answer">
+            <el-alert
+              :type="dqAnswer.hits.length ? 'success' : 'info'" :closable="false" show-icon
+              :title="dqAnswer.hits.length
+                ? `已从《${dqAnswer.docName}》${dqAnswer.scoped ? '定位到' : '（该文档无命中，已放宽到全库）'} ${dqAnswer.hits.length} 个答案片段`
+                : `《${dqAnswer.docName}》中未找到与「${dqAnswer.question}」相关的内容`"
+            />
+            <div v-for="(h, i) in dqAnswer.hits" :key="i" class="dq-hit">
+              <div class="dq-hit__meta">
+                <el-tag size="small" type="success">答案 {{ Number(i) + 1 }}</el-tag>
+                <span>相似度 {{ h.similarity ?? '-' }}</span>
+                <span>文件：{{ hlFileName(h.fileId) }}</span>
+                <span>片段 #{{ h.chunkIndex ?? '-' }}</span>
+                <template v-if="h.highlights?.length">
+                  <span>命中：</span>
+                  <el-tag v-for="t in h.highlights" :key="t" size="small" type="warning" style="margin-right:4px">{{ t }}</el-tag>
+                </template>
+              </div>
+              <!-- eslint-disable-next-line vue/no-v-html -->
+              <div class="dq-hit__content" v-html="h.previewSnippet || renderContent(h.content, h.highlights)" />
+            </div>
+          </div>
+          <el-empty v-else-if="!dqLoading" description="选择文档并输入问题后点击「提问」" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
       <el-tab-pane label="多轮问答" name="multiturn">
         <div class="card-panel">
           <div class="section-header"><div class="section-title">多轮问答管理</div><el-button type="primary" @click="handleAddMt">新增</el-button></div>
@@ -229,7 +428,7 @@ onMounted(() => { loadMt(); loadMm(); loadDg() })
           <div v-for="(r, i) in hlResults" :key="i" class="hl-item">
             <div class="hl-meta">
               <el-tag size="small" type="info">片段 #{{ r.chunkIndex }}</el-tag>
-              <span class="hl-file">文件：{{ r.fileId || '-' }}</span>
+              <span class="hl-file">文件：{{ hlFileName(r.fileId) }}</span>
               <template v-if="r.highlights?.length">
                 <span style="margin-left:8px;color:#909399">命中：</span>
                 <el-tag v-for="h in r.highlights" :key="h" size="small" type="warning" style="margin-right:4px">{{ h }}</el-tag>
@@ -297,6 +496,11 @@ onMounted(() => { loadMt(); loadMm(); loadDg() })
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; }
 .section-title { font-size: 15px; font-weight: 600; }
 .hl-item { border: 1px solid var(--el-border-color-light); border-radius: $radius-base; padding: 12px 16px; margin-bottom: 12px; background: var(--el-bg-color-overlay); }
+.dq-answer { margin-top: 8px; }
+.dq-hit { border: 1px solid var(--el-border-color-light); border-radius: $radius-base; padding: 10px 14px; margin-top: 10px; background: var(--el-bg-color-overlay); }
+.dq-hit__meta { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 12px; color: var(--el-text-color-secondary); }
+.dq-hit__content { margin-top: 8px; font-size: 13px; line-height: 1.8; }
+.dq-hit__content :deep(mark), .hl-content :deep(mark) { background: #FFF3C4; color: #C45656; padding: 0 2px; border-radius: 2px; }
 .hl-meta { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; margin-bottom: 8px; }
 .hl-file { color: $text-secondary; font-size: 13px; }
 .hl-content { font-size: 14px; line-height: 1.8; word-break: break-word; :deep(mark) { background: #ffe58f; padding: 0 2px; border-radius: 2px; } }

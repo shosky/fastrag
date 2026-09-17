@@ -42,6 +42,25 @@ const trainingRecords = ref<any[]>([])
 const testReports = ref<any[]>([])
 const callLogs = ref<any[]>([])
 
+// ===== 模型阈值设置 =====
+const showThresholdDialog = ref(false)
+const thresholdModel = ref<any>(null)
+const thresholdForm = ref<Record<string, any>>({ scoreThreshold: 0.6, rerankThreshold: 0.3, maxTokens: 2048 })
+async function handleThreshold(model: any) {
+  thresholdModel.value = model
+  try {
+    const res: any = await api.getModelThreshold(model.id)
+    thresholdForm.value = { scoreThreshold: 0.6, rerankThreshold: 0.3, maxTokens: 2048, ...(res?.threshold || {}) }
+  } catch { /* 保持默认值 */ }
+  showThresholdDialog.value = true
+}
+async function handleSaveThreshold() {
+  try {
+    await api.updateModelThreshold(thresholdModel.value.id, thresholdForm.value)
+    ElMessage.success('阈值已保存')
+    showThresholdDialog.value = false
+  } catch { ElMessage.error('保存失败') }
+}
 async function loadModels() {
   loading.value = true
   try {
@@ -381,6 +400,7 @@ async function handleSave() {
             <div v-if="model.contextWindow" class="model-code">上下文窗口：{{ model.contextWindow.toLocaleString() }} tokens</div>
             <div class="card-footer">
               <el-button size="small" @click="handleEdit(model)">编辑</el-button>
+          <el-button size="small" @click="handleThreshold(model)">阈值</el-button>
               <el-button size="small" @click="loadLifecycle(model.id)">生命周期</el-button>
               <el-button size="small" type="success" @click="selectedModelId = model.id; handleShowInvoke()">调用</el-button>
               <el-button size="small" type="danger" @click="handleDelete(model)">删除</el-button>
@@ -406,7 +426,7 @@ async function handleSave() {
             <el-table-column prop="name" label="预置名称" min-width="180" show-overflow-tooltip />
             <el-table-column prop="type" label="类型" width="120">
               <template #default="{ row }">
-                <el-tag :type="row.type === 'llm' ? '' : row.type === 'embedding' ? 'success' : 'warning'" size="small">{{ row.type }}</el-tag>
+                <el-tag :type="row.type === 'llm' ? 'primary' : row.type === 'embedding' ? 'success' : 'warning'" size="small">{{ row.type }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="models" label="包含模型" min-width="200">
@@ -425,51 +445,7 @@ async function handleSave() {
           <el-empty v-if="!presets.length && !presetLoading" description="暂无模型预置" :image-size="60" />
         </div>
       </el-tab-pane>
-        <div v-if="model.contextWindow" class="model-code">上下文窗口：{{ model.contextWindow.toLocaleString() }} tokens</div>
-        <div class="card-footer">
-          <el-button size="small" @click="handleEdit(model)">编辑</el-button>
-          <el-button size="small" @click="loadLifecycle(model.id)">生命周期</el-button>
-          <el-button size="small" type="success" @click="selectedModelId = model.id; handleShowInvoke()">调用</el-button>
-          <el-button size="small" type="danger" @click="handleDelete(model)">删除</el-button>
-          <el-switch
-            :model-value="model.status === 'online'"
-            size="small"
-            active-text="上架"
-            inactive-text="下架"
-            @change="handleToggleStatus(model)"
-          />
-        </div>
-      </div>
-    </div>
-
-    <!-- 模型预置 -->
-    <div v-if="activeTab === 'presets'" class="card-panel">
-      <div class="section-header">
-        <div class="section-title">模型预置配置</div>
-        <el-button size="small" type="primary" @click="handleAddPreset">新增预置</el-button>
-      </div>
-      <el-table :data="presets" stripe size="small" v-loading="presetLoading">
-        <el-table-column prop="name" label="预置名称" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="type" label="类型" width="120">
-          <template #default="{ row }">
-            <el-tag :type="row.type === 'llm' ? '' : row.type === 'embedding' ? 'success' : 'warning'" size="small">{{ row.type }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="models" label="包含模型" min-width="200">
-          <template #default="{ row }">
-            <el-tag v-for="m in (row.models || [])" :key="m" size="small" style="margin: 2px">{{ m }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handleEditPreset(row)">编辑</el-button>
-            <el-button link type="success" size="small" @click="handleUsePreset(row)">应用</el-button>
-            <el-button link type="danger" size="small" @click="handleDeletePreset(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="!presets.length && !presetLoading" description="暂无模型预置" :image-size="60" />
-    </div>
+    </el-tabs>
 
     <!-- 生命周期详情 -->
     <div v-if="activeTab === 'lifecycle' && selectedModelId" class="lifecycle-section">
@@ -557,8 +533,6 @@ async function handleSave() {
         </el-tab-pane>
       </el-tabs>
     </div>
-  </div>
-</template>
 
     <el-dialog v-model="showDialog" :title="dialogTitle" width="600px">
       <el-form label-width="100px">
@@ -631,6 +605,24 @@ async function handleSave() {
       <template #footer>
         <el-button @click="showChatTestDialog = false">关闭</el-button>
         <el-button type="primary" :loading="chatTestLoading" @click="handleRunChatTest">开始测试</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="showThresholdDialog" :title="`模型阈值设置：${thresholdModel?.name || ''}`" width="480px" :close-on-click-modal="false">
+      <el-form label-width="110px">
+        <el-form-item label="相似度阈值">
+          <el-slider v-model="thresholdForm.scoreThreshold" :min="0" :max="1" :step="0.05" show-input style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="重排阈值">
+          <el-slider v-model="thresholdForm.rerankThreshold" :min="0" :max="1" :step="0.05" show-input style="width: 100%" />
+        </el-form-item>
+        <el-form-item label="最大 Tokens">
+          <el-input-number v-model="thresholdForm.maxTokens" :min="64" :max="131072" :step="64" style="width: 100%" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showThresholdDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleSaveThreshold">保存</el-button>
       </template>
     </el-dialog>
 

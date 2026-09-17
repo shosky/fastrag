@@ -187,6 +187,7 @@ function defaultForm(): KnowledgeBaseForm {
     category: '',
     description: '',
     tags: [],
+    kbType: 'general',
     permission: 'private',
     embeddingModel: 'text-embedding-v4',
     parseMode: 'auto',
@@ -261,6 +262,7 @@ watch(
     if (data) {
       form.name = data.name
       form.category = data.category
+      if ((data as any).kbType) form.kbType = (data as any).kbType
       form.description = data.description
       form.tags = [...(data.tags || [])]
       form.embeddingModel = data.embeddingModel
@@ -563,6 +565,14 @@ function goToParseStrategy() {
                 v-model="form.name"
                 placeholder="请输入知识库名称"
               />
+            </el-form-item>
+
+            <!-- 知识库类型：通用 / FAQ（FAQ 型库以问答对为核心知识） -->
+            <el-form-item label="知识库类型">
+              <el-radio-group v-model="form.kbType">
+                <el-radio value="general">通用知识库</el-radio>
+                <el-radio value="faq">FAQ 问答库</el-radio>
+              </el-radio-group>
             </el-form-item>
 
             <!-- Category -->

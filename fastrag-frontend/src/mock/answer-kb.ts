@@ -265,7 +265,7 @@ export function getFaqCategories(): FaqCategory[] {
 }
 
 export function createFaqCategory(data: Partial<FaqCategory>): FaqCategory {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const item: FaqCategory = {
     id: `cat-${++catSeq}`,
@@ -279,7 +279,7 @@ export function createFaqCategory(data: Partial<FaqCategory>): FaqCategory {
 }
 
 export function updateFaqCategory(id: string, data: Partial<FaqCategory>): FaqCategory | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const idx = categoryStore.findIndex(c => c.id === id)
   if (idx === -1) return null
@@ -318,7 +318,7 @@ export function getFaqById(id: string): FaqItem | null {
 }
 
 export function createFaq(data: Partial<FaqItem>): FaqItem {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const now = new Date().toISOString()
   const item: FaqItem = {
@@ -344,7 +344,7 @@ export function createFaq(data: Partial<FaqItem>): FaqItem {
 }
 
 export function updateFaq(id: string, data: Partial<FaqItem>): FaqItem | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const idx = faqStore.findIndex(f => f.id === id)
   if (idx === -1) return null
@@ -376,7 +376,7 @@ export function getTemplateList(params?: { page?: number; pageSize?: number; key
 }
 
 export function createTemplate(data: Partial<AnswerTemplate>): AnswerTemplate {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const item: AnswerTemplate = {
     id: `tpl-${++tplSeq}`,
@@ -393,7 +393,7 @@ export function createTemplate(data: Partial<AnswerTemplate>): AnswerTemplate {
 }
 
 export function updateTemplate(id: string, data: Partial<AnswerTemplate>): AnswerTemplate | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const idx = templateStore.findIndex(t => t.id === id)
   if (idx === -1) return null
@@ -425,7 +425,7 @@ export function getKeywordList(params?: { page?: number; pageSize?: number; keyw
 }
 
 export function createKeyword(data: Partial<KeywordConfig>): KeywordConfig {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const item: KeywordConfig = {
     id: `kw-${++kwSeq}`,
@@ -441,7 +441,7 @@ export function createKeyword(data: Partial<KeywordConfig>): KeywordConfig {
 }
 
 export function updateKeyword(id: string, data: Partial<KeywordConfig>): KeywordConfig | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const idx = keywordStore.findIndex(k => k.id === id)
   if (idx === -1) return null
@@ -473,7 +473,7 @@ export function getAttributeList(params?: { page?: number; pageSize?: number; ke
 }
 
 export function createAttribute(data: Partial<KnowledgeAttribute>): KnowledgeAttribute {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const item: KnowledgeAttribute = {
     id: `attr-${++attrSeq}`,
@@ -490,7 +490,7 @@ export function createAttribute(data: Partial<KnowledgeAttribute>): KnowledgeAtt
 }
 
 export function updateAttribute(id: string, data: Partial<KnowledgeAttribute>): KnowledgeAttribute | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const idx = attributeStore.findIndex(a => a.id === id)
   if (idx === -1) return null
@@ -527,7 +527,7 @@ export function getTableById(id: string): AnswerTable | null {
 }
 
 export function createTable(data: Partial<AnswerTable>): AnswerTable {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const now = new Date().toISOString()
   const item: AnswerTable = {
@@ -544,7 +544,7 @@ export function createTable(data: Partial<AnswerTable>): AnswerTable {
 }
 
 export function updateTable(id: string, data: Partial<AnswerTable>): AnswerTable | null {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const idx = tableStore.findIndex(t => t.id === id)
   if (idx === -1) return null
@@ -577,7 +577,7 @@ export function getDocumentList(params?: { page?: number; pageSize?: number; key
 }
 
 export function createDocument(data: Partial<AnswerDocument>): AnswerDocument {
-  checkApiPermission('kb:write')
+  checkApiPermission('kb:edit')
   initStore()
   const item: AnswerDocument = {
     id: `doc-${++docSeq}`,

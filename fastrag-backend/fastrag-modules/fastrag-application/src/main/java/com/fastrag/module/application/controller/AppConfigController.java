@@ -10,6 +10,7 @@ public class AppConfigController {
     // ===== 基础配置 =====
     @GetMapping("/{appId}/basic") public ApiResponse<?> basic(@PathVariable String appId) { return ApiResponse.success(svc.getBasic(appId)); }
     @PutMapping("/{appId}/basic") public ApiResponse<?> saveBasic(@PathVariable String appId,@RequestBody AppBasicConfig c) { return ApiResponse.success(svc.saveBasic(appId,c)); }
+    @PostMapping("/{appId}/basic/reset") public ApiResponse<?> resetBasic(@PathVariable String appId) { return ApiResponse.success(svc.resetBasic(appId)); }
     @PutMapping("/{appId}/basic/memory") public ApiResponse<?> memory(@PathVariable String appId,@RequestBody Map<String,Integer> b) { var c=svc.getBasic(appId);if(c==null)c=new AppBasicConfig();c.setMemoryRounds(b.getOrDefault("memoryRounds",5)); return ApiResponse.success(svc.saveBasic(appId,c)); }
     @PutMapping("/{appId}/basic/output-format") public ApiResponse<?> output(@PathVariable String appId,@RequestBody Map<String,String> b) { var c=svc.getBasic(appId);if(c==null)c=new AppBasicConfig();c.setOutputFormat(b.getOrDefault("outputFormat","markdown")); return ApiResponse.success(svc.saveBasic(appId,c)); }
     // ===== 对话配置 =====

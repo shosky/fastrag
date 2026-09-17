@@ -20,6 +20,7 @@ public class KnowledgeBase {
     private Integer dimension;
     private String creator;
     private String type; // team / personal
+    private String kbType; // general / faq（FAQ 型知识库：问答对即核心知识）
     private String permission; // private / team / public
     private Long usedSize;
     private Long totalSize;

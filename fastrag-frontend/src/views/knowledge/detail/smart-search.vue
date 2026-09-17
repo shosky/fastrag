@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import RichTextEditor from '@/components/common/RichTextEditor.vue'
 import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -17,6 +18,7 @@ const DIMENSION_OPTIONS = [
   { label: '附件', value: 'attachment' },
   { label: '发布时间', value: 'publishTime' },
   { label: '知识类型', value: 'knowledgeType' },
+  { label: '检索词联想', value: 'termLink' },
 ] as const
 const DIMENSION_LABEL_MAP: Record<string, string> = Object.fromEntries(DIMENSION_OPTIONS.map(d => [d.value, d.label]))
 const assocList = ref<any[]>([])
@@ -283,6 +285,130 @@ async function deleteStdQuestion(row: any) {
   try { await ElMessageBox.confirm(`确认删除标准问法「${row.standardQuestion}」？`, '删除确认', { type: 'warning' }); await api.deleteStandardQuestion(row.id); await loadStdQuestions(); ElMessage.success('已删除') } catch {}
 }
 
+// ===== 知识搜索（手动输入搜索 / 查看搜索结果 / 点击使用）=====
+const ksQuery = ref('')
+const ksMode = ref<'hybrid' | 'vector' | 'fulltext'>('hybrid')
+const ksTopK = ref(5)
+const ksThreshold = ref(0)
+const ksLoading = ref(false)
+const ksResults = ref<any[]>([])
+const ksSearched = ref(false)
+const ksUseVisible = ref(false)
+const ksUseRow = ref<any>({})
+
+async function handleKnowledgeSearch() {
+  if (!ksQuery.value.trim()) {
+    ElMessage.warning('请输入检索词')
+    return
+  }
+  ksLoading.value = true
+  try {
+    const res: any = await api.searchRetrieval({
+      knowledgeId: kbId,
+      query: ksQuery.value,
+      config: { mode: ksMode.value, topK: Number(ksTopK.value) || 5, similarityThreshold: Number(ksThreshold.value) || 0 },
+    } as any)
+    ksResults.value = Array.isArray(res) ? res : (res?.list || [])
+    ksSearched.value = true
+    if (!ksResults.value.length) ElMessage.info('未命中内容，可调整阈值或换关键词')
+  } catch (e: any) {
+    ksResults.value = []
+    ksSearched.value = true
+    ElMessage.error('搜索失败：' + (e?.message || ''))
+  } finally {
+    ksLoading.value = false
+  }
+}
+
+// 点击使用：打开使用抽屉（可复制内容 / 记录一次使用）
+const ksUsedLog = ref<string[]>([])
+function handleUse(row: any) {
+  ksUseRow.value = row
+  ksUseVisible.value = true
+}
+async function copyUsedContent() {
+  const text = String(ksUseRow.value?.content || '')
+  try {
+    await navigator.clipboard.writeText(text)
+  } catch {
+    // 剪贴板不可用时降级为选中提示
+  }
+  ksUsedLog.value.unshift(`${new Date().toLocaleTimeString('zh-CN')} 已使用：${(text || '').slice(0, 20)}…`)
+  ElMessage.success('已复制内容，可粘贴使用')
+}
+
+/** 命中片段的 <mark> 高亮渲染 */
+function renderHighlight(content: string, highlights?: string[]) {
+  let html = String(content || '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+  for (const h of (highlights || [])) {
+    if (!h) continue
+    html = html.split(h).join(`<mark>${h}</mark>`)
+  }
+  return html
+}
+
+// ===== 标准回复管理（查看 / 编辑 / 富文本编辑，复用标准问法的 answer 字段）=====
+const replyKeyword = ref('')
+const filteredReplies = computed(() =>
+  replyKeyword.value
+    ? stdList.value.filter(
+        (r: any) =>
+          (r.standardQuestion || '').includes(replyKeyword.value) ||
+          (r.answer || '').includes(replyKeyword.value),
+      )
+    : stdList.value,
+)
+/** 是否含 HTML 标签 → 判定为富文本回复 */
+function hasRichText(html?: string) {
+  return !!html && /<\/?[a-z][\s\S]*>/i.test(html)
+}
+// 查看标准回复
+const showReplyView = ref(false)
+const replyView = ref<any>({})
+function openViewReply(row: any) {
+  replyView.value = row
+  showReplyView.value = true
+}
+// 编辑标准回复（富文本）
+const showReplyDialog = ref(false)
+const replyForm = ref<any>({ id: '', standardQuestion: '', category: '', answer: '', enabled: true })
+const replySaving = ref(false)
+function openEditReply(row: any) {
+  replyForm.value = {
+    id: row.id,
+    standardQuestion: row.standardQuestion || '',
+    category: row.category || '',
+    answer: row.answer || '',
+    enabled: row.enabled !== 0,
+  }
+  showReplyDialog.value = true
+}
+async function saveReply() {
+  if (!replyForm.value.answer) {
+    ElMessage.warning('请填写标准回复内容')
+    return
+  }
+  replySaving.value = true
+  try {
+    await api.updateStandardQuestion(replyForm.value.id, {
+      standardQuestion: replyForm.value.standardQuestion,
+      category: replyForm.value.category,
+      answer: replyForm.value.answer,
+      enabled: replyForm.value.enabled ? 1 : 0,
+    })
+    ElMessage.success('标准回复已保存')
+    showReplyDialog.value = false
+    await loadStdQuestions()
+  } catch (e: any) {
+    ElMessage.error('保存失败：' + (e?.message || ''))
+  } finally {
+    replySaving.value = false
+  }
+}
+
 // ===== 相似问法管理 =====
 const simList = ref<any[]>([])
 const simLoading = ref(false)
@@ -509,7 +635,9 @@ function useRecommend(row: any) {
           <el-table :data="stdList" stripe size="small" v-loading="stdLoading">
             <el-table-column prop="category" label="分类" width="120" />
             <el-table-column prop="standardQuestion" label="标准问法" show-overflow-tooltip />
-            <el-table-column prop="answer" label="答案" show-overflow-tooltip />
+            <el-table-column prop="answer" label="答案" show-overflow-tooltip>
+              <template #default="{ row }"><span v-html="row.answer"></span></template>
+            </el-table-column>
             <el-table-column prop="hitCount" label="命中次数" width="100" />
             <el-table-column prop="enabled" label="启用" width="70">
               <template #default="{ row }">
@@ -529,14 +657,124 @@ function useRecommend(row: any) {
         </div>
       </el-tab-pane>
 
+      <!-- 知识搜索：手动输入搜索 / 查看搜索结果 / 点击使用 -->
+      <el-tab-pane label="知识搜索" name="knowledge-search">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">知识搜索（手动输入 → 查看结果 → 点击使用）</div>
+          </div>
+          <div class="filter-bar">
+            <el-input
+              v-model="ksQuery"
+              placeholder="手动输入检索词，如：宽带办理条件 / 退款流程 / LOS 红灯"
+              clearable
+              style="width: 380px"
+              @keyup.enter="handleKnowledgeSearch"
+            >
+              <template #prefix><el-icon><Search /></el-icon></template>
+            </el-input>
+            <el-select v-model="ksMode" style="width: 140px">
+              <el-option label="混合检索" value="hybrid" />
+              <el-option label="语义（向量）" value="vector" />
+              <el-option label="关键词（词法）" value="fulltext" />
+            </el-select>
+            <el-input-number v-model="ksTopK" :min="1" :max="20" size="default" />
+            <el-input-number v-model="ksThreshold" :min="0" :max="1" :step="0.05" :precision="2" />
+            <el-button type="primary" :loading="ksLoading" @click="handleKnowledgeSearch">搜索</el-button>
+            <el-button @click="ksQuery = ''; ksResults = []; ksSearched = false">清空</el-button>
+          </div>
+
+          <div v-if="ksSearched" style="margin: 8px 0; color: var(--el-text-color-secondary); font-size: 13px">
+            共命中 {{ ksResults.length }} 条（模式 {{ ksMode }}，TopK {{ ksTopK }}，阈值 {{ ksThreshold }}）
+          </div>
+
+          <div v-if="ksResults.length" class="ks-results">
+            <div v-for="(row, i) in ksResults" :key="i" class="ks-result">
+              <div class="ks-result__head">
+                <el-tag size="small" type="info">#{{ i + 1 }}</el-tag>
+                <el-tag size="small" :type="row.source === 'hybrid' ? 'success' : 'warning'">
+                  {{ row.source === 'hybrid' ? '混合命中' : row.source === 'vector' ? '语义命中' : '词法命中' }}
+                </el-tag>
+                <span class="ks-result__sim">相似度 {{ row.similarity ?? '-' }}</span>
+                <span v-if="row.fileId" class="ks-result__meta">来源文件 {{ row.fileId }} · 分片 #{{ row.chunkIndex }}</span>
+                <el-tag v-if="row.fallback" size="small" type="warning">为您推荐</el-tag>
+                <div style="margin-left: auto; display: flex; gap: 8px">
+                  <el-button link type="primary" size="small" @click="handleUse(row)">点击使用</el-button>
+                </div>
+              </div>
+              <div class="ks-result__content" v-html="renderHighlight(row.content, row.highlights)" />
+            </div>
+          </div>
+          <el-empty
+            v-else-if="ksSearched && !ksLoading"
+            description="未命中内容：可降低相似度阈值、切换检索模式或更换检索词"
+            :image-size="60"
+          />
+        </div>
+
+        <!-- 点击使用抽屉 -->
+        <el-dialog v-model="ksUseVisible" title="使用该知识" width="640px">
+          <el-descriptions :column="2" border size="small">
+            <el-descriptions-item label="相似度">{{ ksUseRow.similarity ?? '-' }}</el-descriptions-item>
+            <el-descriptions-item label="命中方式">{{ ksUseRow.source || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="来源文件">{{ ksUseRow.fileId || '-' }}</el-descriptions-item>
+            <el-descriptions-item label="分片序号">{{ ksUseRow.chunkIndex ?? '-' }}</el-descriptions-item>
+          </el-descriptions>
+          <div style="margin: 12px 0 6px; font-weight: 600; font-size: 13px">知识内容</div>
+          <div class="ks-use-content" v-html="renderHighlight(ksUseRow.content, ksUseRow.highlights)" />
+          <template #footer>
+            <el-button @click="ksUseVisible = false">关闭</el-button>
+            <el-button type="primary" @click="copyUsedContent">复制内容并使用</el-button>
+          </template>
+        </el-dialog>
+      </el-tab-pane>
+
+      <!-- 标准回复管理 -->
+      <el-tab-pane label="标准回复管理" name="standard-reply">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">标准回复（富文本）</div>
+            <div style="display:flex;gap:8px">
+              <el-input v-model="replyKeyword" placeholder="按标准问法/回复内容查询" clearable size="small" style="width:220px" />
+              <el-button size="small" @click="loadStdQuestions">刷新</el-button>
+            </div>
+          </div>
+          <el-table :data="filteredReplies" stripe size="small" v-loading="stdLoading">
+            <el-table-column prop="standardQuestion" label="标准问法" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="category" label="分类" width="110" />
+            <el-table-column label="标准回复（预览）" min-width="280">
+              <template #default="{ row }">
+                <span v-if="row.answer" v-html="row.answer" class="reply-preview" />
+                <span v-else style="color:#909399">（未配置回复）</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="富文本" width="90" align="center">
+              <template #default="{ row }">
+                <el-tag size="small" :type="hasRichText(row.answer) ? 'success' : 'info'">
+                  {{ hasRichText(row.answer) ? 'HTML' : row.answer ? '纯文本' : '-' }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="hitCount" label="命中次数" width="90" align="center" />
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="openViewReply(row)">查看</el-button>
+                <el-button link type="primary" size="small" @click="openEditReply(row)">编辑</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!filteredReplies.length && !stdLoading" description="暂无标准回复，请先在「标准问法管理」新增标准问法" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
       <!-- 相似问法管理 -->
       <el-tab-pane label="相似问法管理" name="similar-question">
         <div class="card-panel">
           <div class="section-header">
             <div class="section-title">相似问法</div>
             <div style="display:flex;gap:8px">
-              <el-button size="small" type="primary" @click="openAddSim">新增相似问法</el-button>
-              <el-button size="small" @click="loadSimQuestions">刷新</el-button>
+              <el-button size="small" type="primary" @click="openAddSim()">新增相似问法</el-button>
+              <el-button size="small" @click="loadSimQuestions()">刷新</el-button>
             </div>
           </div>
           <div style="margin-bottom:12px">
@@ -591,7 +829,7 @@ function useRecommend(row: any) {
       <el-form label-width="100px">
         <el-form-item label="分类"><el-input v-model="stdForm.category" placeholder="如：售后、账单" /></el-form-item>
         <el-form-item label="标准问法" required><el-input v-model="stdForm.standardQuestion" placeholder="用户最可能问的问题" /></el-form-item>
-        <el-form-item label="答案" required><el-input v-model="stdForm.answer" type="textarea" :rows="3" placeholder="标准答案" /></el-form-item>
+        <el-form-item label="答案" required><RichTextEditor v-model="stdForm.answer" placeholder="标准答案（支持富文本）" :min-height="110" /></el-form-item>
         <el-form-item label="启用"><el-switch v-model="stdForm.enabled" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showStdDialog=false">取消</el-button><el-button type="primary" @click="saveStdQuestion">保存</el-button></template>
@@ -642,7 +880,8 @@ function useRecommend(row: any) {
       <template #footer><el-button @click="showPushDialog=false">取消</el-button><el-button type="primary" @click="savePush">保存</el-button></template>
     </el-dialog>
 
-    <!-- 更新提醒设置对话框 -->
+    <!-- 搜索联想规则对话框 -->
+    <el-dialog v-model="showAssocDialog" :title="assocForm.id ? '编辑联想规则' : '新增联想规则'" width="480px">
       <el-form label-width="80px">
         <el-form-item label="名称" required><el-input v-model="assocForm.name" /></el-form-item>
         <el-form-item label="维度">
@@ -716,6 +955,45 @@ function useRecommend(row: any) {
         </el-form-item>
       </el-form>
     </el-dialog>
+
+    <!-- 查看标准回复 -->
+    <el-dialog v-model="showReplyView" title="查看标准回复" width="600px">
+      <el-descriptions :column="1" border size="small">
+        <el-descriptions-item label="标准问法">{{ replyView.standardQuestion }}</el-descriptions-item>
+        <el-descriptions-item label="分类">{{ replyView.category || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="命中次数">{{ replyView.hitCount ?? 0 }}</el-descriptions-item>
+      </el-descriptions>
+      <div style="margin-top:12px;font-weight:600;font-size:13px">回复内容（富文本渲染）</div>
+      <div class="reply-view" v-html="replyView.answer || '<span style=\'color:#909399\'>（未配置回复）</span>'" />
+      <div style="margin-top:12px;font-weight:600;font-size:13px">HTML 源码</div>
+      <el-input type="textarea" :rows="4" :model-value="replyView.answer || ''" readonly />
+      <template #footer>
+        <el-button @click="showReplyView = false">关闭</el-button>
+        <el-button type="primary" @click="showReplyView = false; openEditReply(replyView)">编辑回复</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑标准回复（富文本编辑器） -->
+    <el-dialog v-model="showReplyDialog" title="编辑标准回复" width="640px">
+      <el-form label-width="90px">
+        <el-form-item label="标准问法">
+          <el-input v-model="replyForm.standardQuestion" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-input v-model="replyForm.category" placeholder="如：常见问题" />
+        </el-form-item>
+        <el-form-item label="标准回复" required>
+          <RichTextEditor v-model="replyForm.answer" placeholder="标准回复（支持富文本：加粗/列表/链接等）" :min-height="140" />
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="replyForm.enabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showReplyDialog = false">取消</el-button>
+        <el-button type="primary" :loading="replySaving" @click="saveReply">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -725,4 +1003,15 @@ function useRecommend(row: any) {
 .section-title { font-size: 15px; font-weight: 600; }
 .result-box { margin-top: $spacing-base; padding: $spacing-base; background: $bg-white; border-radius: $radius-base; p { margin: 4px 0; } }
 .judge-result { margin-top: $spacing-base; padding: $spacing-base; background: #fafafa; border-radius: $radius-base; border: 1px solid $border-lighter; p { margin: 6px 0; } }
+.reply-preview { display: inline-block; max-height: 44px; overflow: hidden; vertical-align: middle; p { display: inline; margin: 0; } }
+.reply-view { margin-top: 6px; padding: 12px; background: $bg-white; border: 1px solid $border-lighter; border-radius: $radius-base; min-height: 60px; line-height: 1.7; }
+.ks-results { display: flex; flex-direction: column; gap: 10px; }
+.ks-result { border: 1px solid $border-lighter; border-radius: $radius-base; padding: 10px 12px; background: $bg-white;
+  &__head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; font-size: 12px; }
+  &__sim { color: #409EFF; font-weight: 600; }
+  &__meta { color: #909399; }
+  &__content { margin-top: 8px; font-size: 13px; line-height: 1.7; color: $text-primary; max-height: 120px; overflow: hidden; }
+}
+.ks-use-content { padding: 12px; background: $bg-white; border: 1px solid $border-lighter; border-radius: $radius-base; max-height: 260px; overflow: auto; line-height: 1.8; font-size: 13px; }
+.ks-result__content :deep(mark), .ks-use-content :deep(mark) { background: #FFF3C4; color: #C45656; padding: 0 2px; border-radius: 2px; }
 </style>

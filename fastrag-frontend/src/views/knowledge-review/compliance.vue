@@ -32,7 +32,7 @@ async function loadData() {
   if (!selectedKbId.value) return
   loading.value = true
   try {
-    dataList.value = (await api.getComplianceRules(selectedKbId.value)) as any[] || []
+    dataList.value = ((await api.getComplianceRules(selectedKbId.value)) as unknown as any[]) || []
   } catch {
     dataList.value = []
   } finally {
@@ -131,8 +131,8 @@ async function doCheck() {
   }
 }
 
-function getSeverityTag(severity: string) {
-  const map: Record<string, string> = { high: 'danger', medium: 'warning', low: 'info' }
+function getSeverityTag(severity: string): 'danger' | 'warning' | 'info' {
+  const map: Record<string, 'danger' | 'warning' | 'info'> = { high: 'danger', medium: 'warning', low: 'info' }
   return map[severity] || 'info'
 }
 </script>
@@ -165,7 +165,7 @@ function getSeverityTag(severity: string) {
         </el-table-column>
         <el-table-column label="严重级别" width="90">
           <template #default="{ row }">
-            <el-tag v-if="row.severity" :type="getSeverityTag(row.severity)" size="small">{{ {high:'高',medium:'中',low:'低'}[row.severity] || row.severity }}</el-tag>
+            <el-tag v-if="row.severity" :type="getSeverityTag(row.severity)" size="small">{{ ({ high: '高', medium: '中', low: '低' } as Record<string, string>)[row.severity] || row.severity }}</el-tag>
             <span v-else>-</span>
           </template>
         </el-table-column>

@@ -1,18 +1,25 @@
 package com.fastrag.module.retrieval.controller;
-import com.fastrag.common.response.ApiResponse; import com.fastrag.module.retrieval.entity.*;
+import com.fastrag.common.exception.BusinessException; import com.fastrag.common.response.ApiResponse; import com.fastrag.module.retrieval.entity.*;
 import com.fastrag.module.retrieval.model.*;
-import com.fastrag.module.retrieval.service.*; import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;
+import com.fastrag.module.retrieval.service.*; import com.fastrag.security.util.SecurityUtil; import lombok.RequiredArgsConstructor; import org.springframework.data.redis.core.StringRedisTemplate; import org.springframework.web.bind.annotation.*;
 import java.util.Map;
 @RestController @RequiredArgsConstructor
 public class RetrievalController {
     private final RetrievalService retrievalService; private final QueryEnhanceService queryService;
     private final RetrievalLogService logService; private final UpdateRemindService remindService;
     private final SearchPreferenceService preferenceService; private final KnowledgePushService pushService;
-    @PostMapping("/api/retrieval/search") public ApiResponse<?> search(@RequestBody RetrievalRequest req) { return ApiResponse.success(retrievalService.search(req)); }
+    private final StringRedisTemplate redisTemplate;
+    /** 检索权限控制：与 @KbAuth 同源的 ACL 校验（kb:acl:{kbId}:{userId}，super_admin 直通） */
+    private void checkKbAcl(String kbId) {
+        var user = SecurityUtil.getCurrentUser();
+        if (user == null || user.hasPermission("*") || kbId == null || kbId.isBlank()) return;
+        String role = redisTemplate.opsForValue().get("kb:acl:" + kbId + ":" + user.getUserId());
+        if (role == null) throw BusinessException.forbidden("无知识库访问权限");
+    }
+    @PostMapping("/api/retrieval/search") public ApiResponse<?> search(@RequestBody RetrievalRequest req) { checkKbAcl(req.getKnowledgeId()); return ApiResponse.success(retrievalService.search(req)); }
     @GetMapping("/api/retrieval/kb/{kbId}/chunks/count") public ApiResponse<?> count(@PathVariable String kbId) { return ApiResponse.success(retrievalService.getChunkCount(kbId)); }
     @PostMapping("/api/query/suggest") public ApiResponse<?> suggest(@RequestBody Map<String,Object> b) {
-        var result = queryService.suggest(String.valueOf(b.get("query")));
-        return ApiResponse.success(result.get("suggestedQuery"));
+        return ApiResponse.success(queryService.suggest(String.valueOf(b.get("query"))));
     }
     @PostMapping("/api/query/expand-synonyms") public ApiResponse<?> synonyms(@RequestBody Map<String,Object> b) { return ApiResponse.success(queryService.expandSynonyms(String.valueOf(b.get("query")))); }
     @PostMapping("/api/query-rules/apply") public ApiResponse<?> applyRules(@RequestBody Map<String,Object> b) {
@@ -36,6 +43,7 @@ public class RetrievalController {
     }
     @PostMapping("/api/retrieval/logs") public ApiResponse<?> addLog(@RequestBody KbRetrievalLog log) { logService.log(log); return ApiResponse.success(); }
     @PutMapping("/api/retrieval/logs/{id}") public ApiResponse<?> updateLog(@PathVariable Long id,@RequestBody KbRetrievalLog log) { log.setId(id); logService.update(log); return ApiResponse.success(); }
+    @DeleteMapping("/api/retrieval/logs/{id}") public ApiResponse<?> deleteLog(@PathVariable Long id) { logService.delete(id); return ApiResponse.success(); }
     @GetMapping("/api/kb/{kbId}/update-remind") public ApiResponse<?> remind(@PathVariable String kbId) { return ApiResponse.success(remindService.remind(kbId)); }
     @GetMapping("/api/update-remind") public ApiResponse<?> remindList(@RequestParam(required=false) String kbId) { return ApiResponse.success(remindService.list(kbId)); }
     @PostMapping("/api/update-remind") public ApiResponse<?> saveRemind(@RequestBody KbUpdateRemind remind) { return ApiResponse.success(remindService.save(remind)); }

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted, computed } from 'vue'
+import { ref, reactive, onMounted, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import BasicConfig from './components/BasicConfig.vue'
 import KnowledgeConfig from './components/KnowledgeConfig.vue'
 import DialogConfig from './components/DialogConfig.vue'
@@ -12,6 +12,9 @@ import DialogTest from './components/DialogTest.vue'
 import DialogOptimize from './components/DialogOptimize.vue'
 import MonitorPublishConfig from './components/MonitorPublishConfig.vue'
 import WorkflowConfig from './components/WorkflowConfig.vue'
+import SemanticConfig from './components/SemanticConfig.vue'
+import EntityConfig from './components/EntityConfig.vue'
+import DialogKnowledgeConfig from './components/DialogKnowledgeConfig.vue'
 import MonitorManage from './components/MonitorManage.vue'
 import * as api from '@/api'
 
@@ -75,6 +78,9 @@ const menuGroups = reactive([
       { key: 'vm', label: '虚拟机配置', icon: 'Monitor' },
 	      { key: 'ui', label: '界面配置', icon: 'Monitor' },
 	      { key: 'dialog', label: '对话配置', icon: 'ChatDotRound' },
+      { key: 'semantic', label: '语义配置', icon: 'Aim' },
+      { key: 'entity', label: '实体管理', icon: 'CollectionTag' },
+      { key: 'dialog-knowledge', label: '对话知识', icon: 'ChatLineSquare' },
       { key: 'nav', label: '导航配置', icon: 'Menu' },
       { key: 'param', label: '参数配置', icon: 'Tools' },
       { key: 'prompt', label: 'Prompt编写', icon: 'EditPen' },
@@ -395,6 +401,74 @@ async function handleDebugSend() {
 function handleDebugClear() {
   debugMessages.value = [{ role: 'assistant', content: '您好,有什么我可以帮助您' }]
 }
+
+// ===== 对话调试：设置调试级别 / 导出调试日志 / 清理调试日志 =====
+const appDebugLevel = ref('debug')
+const appDebugLogs = ref<any[]>([])
+const appDebugLoading = ref(false)
+const appId_ = computed(() => appInfo.value?.id || appId)
+
+async function loadAppDebug() {
+  if (!appId_.value) return
+  appDebugLoading.value = true
+  try {
+    const r: any = await api.getAppDebugInfo(appId_.value)
+    appDebugLevel.value = r?.level || 'debug'
+    appDebugLogs.value = Array.isArray(r?.logs) ? r.logs : []
+  } catch {
+    appDebugLogs.value = []
+  } finally {
+    appDebugLoading.value = false
+  }
+}
+/** 设置调试级别 */
+async function saveAppDebugLevel() {
+  if (!appId_.value) return
+  try {
+    await api.saveAppDebugConfig(appId_.value, { level: appDebugLevel.value })
+    ElMessage.success(`调试级别已设置为 ${appDebugLevel.value.toUpperCase()}`)
+    await loadAppDebug()
+  } catch (e: any) {
+    ElMessage.error('保存失败：' + (e?.message || ''))
+  }
+}
+/** 导出调试日志（CSV） */
+async function exportAppDebugLogs() {
+  if (!appId_.value) return
+  try {
+    const blob = (await api.exportAppDebugLogs(appId_.value)) as unknown as Blob
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `debug_logs_${appId_.value}.csv`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`调试日志已导出（${appDebugLogs.value.length} 条）`)
+  } catch (e: any) {
+    ElMessage.error('导出失败：' + (e?.message || ''))
+  }
+}
+/** 清理调试日志 */
+async function clearAppDebugLogs() {
+  if (!appId_.value) return
+  try {
+    await ElMessageBox.confirm('确认清理该应用全部调试日志？', '清理确认', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await api.clearAppDebugLogs(appId_.value)
+    await loadAppDebug()
+    ElMessage.success('调试日志已清理')
+  } catch (e: any) {
+    ElMessage.error('清理失败：' + (e?.message || ''))
+  }
+}
+function debugLevelTag(level: string) {
+  return level === 'error' ? 'danger' : level === 'warn' ? 'warning' : level === 'info' ? 'primary' : 'info'
+}
+watch(activeMenu, (m) => { if (m === 'debug') loadAppDebug() })
+onMounted(() => { if (activeMenu.value === 'debug') loadAppDebug() })
 
 // ===== 成员管理 =====
 const memberSearchKeyword = ref('')
@@ -763,6 +837,9 @@ function handlePublish() {
 
 	      <!-- 工作流配置 -->
 	      <WorkflowConfig v-if="activeMenu === 'workflow'" :app-info="appInfo" />
+	      <SemanticConfig v-if="activeMenu === 'semantic'" :app-info="appInfo" />
+      <EntityConfig v-if="activeMenu === 'entity'" :app-info="appInfo" />
+      <DialogKnowledgeConfig v-if="activeMenu === 'dialog-knowledge'" :app-info="appInfo" />
 
       <!-- 技能配置 -->
       <div v-if="activeMenu === 'skill'" class="config-section">
@@ -1160,6 +1237,33 @@ function handlePublish() {
 
       <!-- 对话调试 -->
       <div v-if="activeMenu === 'debug'" class="config-section chat-debug">
+        <!-- 对话调试：设置调试级别 / 导出调试日志 / 清理调试日志 -->
+        <div class="debug-toolbar">
+          <span class="debug-toolbar__label">调试级别</span>
+          <el-select v-model="appDebugLevel" size="small" style="width: 130px">
+            <el-option label="DEBUG" value="debug" />
+            <el-option label="INFO" value="info" />
+            <el-option label="WARN" value="warn" />
+            <el-option label="ERROR" value="error" />
+          </el-select>
+          <el-button size="small" type="primary" @click="saveAppDebugLevel">保存级别</el-button>
+          <el-tag size="small" type="info">当前 {{ appDebugLevel.toUpperCase() }}</el-tag>
+          <span style="flex:1" />
+          <el-tag size="small">{{ appDebugLogs.length }} 条调试日志</el-tag>
+          <el-button size="small" @click="loadAppDebug">刷新</el-button>
+          <el-button size="small" @click="exportAppDebugLogs">导出调试日志</el-button>
+          <el-button size="small" type="danger" @click="clearAppDebugLogs">清理调试日志</el-button>
+        </div>
+        <el-table :data="appDebugLogs.slice(0, 8)" size="small" stripe v-loading="appDebugLoading" style="margin-bottom: 12px">
+          <el-table-column label="级别" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="debugLevelTag(row.level)">{{ (row.level || 'info').toUpperCase() }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="module" label="模块" width="130" />
+          <el-table-column prop="message" label="内容" min-width="260" show-overflow-tooltip />
+          <el-table-column prop="createdAt" label="时间" width="170" />
+        </el-table>
         <div class="debug-layout">
           <!-- 左侧提示 -->
           <div class="debug-sidebar">
@@ -2732,10 +2836,22 @@ function handlePublish() {
   height: calc(100vh - 180px);
 }
 
+.debug-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+
+  &__label {
+    font-size: 13px;
+    color: $text-secondary;
+  }
+}
+
 .debug-layout {
   display: flex;
   gap: $spacing-xl;
-  height: 100%;
+  height: calc(100% - 180px);
 }
 
 .debug-sidebar {

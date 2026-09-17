@@ -124,7 +124,7 @@ export function getStorageList(params?: { page?: number; pageSize?: number; type
 }
 export function getStorageFolders(): StorageFolder[] { initStore(); return folderStore }
 export function createStorage(data: Partial<StorageItem>): StorageItem {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: StorageItem = { id: `si-${++seq}`, name: data.name || '', type: data.type || 'document', url: data.url || '', size: data.size || 0, mimeType: data.mimeType || '', folderId: data.folderId, tags: data.tags || [], creator: 'admin', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
   storageStore.push(item); return item
 }
@@ -136,12 +136,12 @@ export function deleteStorage(id: string): boolean {
 
 export function getGroupList(): KnowledgeGroup[] { initStore(); return groupStore }
 export function createGroup(data: Partial<KnowledgeGroup>): KnowledgeGroup {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: KnowledgeGroup = { id: `kg-${++seq}`, name: data.name || '', description: data.description || '', knowledgeBaseIds: data.knowledgeBaseIds || [], knowledgeBaseNames: data.knowledgeBaseNames || [], memberCount: 0, creator: 'admin', createdAt: new Date().toISOString() }
   groupStore.push(item); return item
 }
 export function updateGroup(id: string, data: Partial<KnowledgeGroup>): KnowledgeGroup | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = groupStore.findIndex(g => g.id === id); if (idx === -1) return null
   groupStore[idx] = { ...groupStore[idx], ...data }; return groupStore[idx]
 }
@@ -153,19 +153,19 @@ export function deleteGroup(id: string): boolean {
 
 export function getMaintenanceList(): KnowledgeMaintenance[] { initStore(); return maintenanceStore }
 export function createMaintenance(data: Partial<KnowledgeMaintenance>): KnowledgeMaintenance {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: KnowledgeMaintenance = { id: `mnt-${++seq}`, knowledgeBaseId: data.knowledgeBaseId || '', knowledgeBaseName: data.knowledgeBaseName || '', action: data.action || 'reindex', status: 'pending', progress: 0, createdAt: new Date().toISOString() }
   maintenanceStore.push(item); return item
 }
 
 export function getTagTypeList(): TagType[] { initStore(); return tagTypeStore }
 export function createTagType(data: Partial<TagType>): TagType {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: TagType = { id: `tt-${++seq}`, name: data.name || '', description: data.description || '', color: data.color || '#409EFF', tags: [], createdAt: new Date().toISOString() }
   tagTypeStore.push(item); return item
 }
 export function updateTagType(id: string, data: Partial<TagType>): TagType | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = tagTypeStore.findIndex(t => t.id === id); if (idx === -1) return null
   tagTypeStore[idx] = { ...tagTypeStore[idx], ...data }; return tagTypeStore[idx]
 }
@@ -175,7 +175,7 @@ export function deleteTagType(id: string): boolean {
   tagTypeStore.splice(idx, 1); return true
 }
 export function createTag(tagTypeId: string, data: Partial<TagItem>): TagItem {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const tt = tagTypeStore.find(t => t.id === tagTypeId); if (!tt) return {} as TagItem
   const item: TagItem = { id: `t-${++seq}`, name: data.name || '', tagTypeId, usageCount: 0, createdAt: new Date().toISOString() }
   tt.tags.push(item); return item
@@ -194,13 +194,13 @@ export function getNoteList(params?: { page?: number; pageSize?: number; keyword
   return { list: list.slice((page - 1) * pageSize, page * pageSize), total }
 }
 export function createNote(data: Partial<Note>): Note {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const now = new Date().toISOString()
   const item: Note = { id: `note-${++seq}`, title: data.title || '', content: data.content || '', tags: data.tags || [], relatedKnowledgeId: data.relatedKnowledgeId, creator: 'admin', createdAt: now, updatedAt: now }
   noteStore.push(item); return item
 }
 export function updateNote(id: string, data: Partial<Note>): Note | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = noteStore.findIndex(n => n.id === id); if (idx === -1) return null
   noteStore[idx] = { ...noteStore[idx], ...data, updatedAt: new Date().toISOString() }; return noteStore[idx]
 }

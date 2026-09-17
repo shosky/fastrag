@@ -379,6 +379,15 @@ public class AppConfigServiceImpl implements AppConfigService {
         dialogMapper.insert(fresh);
         return fresh;
     }
+    // 重置基础配置：删除自定义配置记录，恢复默认值
+    @Override public AppBasicConfig resetBasic(String appId) {
+        var e = getBasic(appId);
+        if (e != null) basicMapper.deleteById(e.getId());
+        var fresh = new AppBasicConfig();
+        fresh.setAppId(appId); fresh.setMemoryRounds(5); fresh.setOutputFormat("markdown"); fresh.setTimeoutSeconds(30);
+        basicMapper.insert(fresh);
+        return fresh;
+    }
     // 自动更新配置：app_kb_auto_update_config 表（cron/通知等明细存 config JSON）
     @Override public Map<String,Object> getAutoKnowledgeUpdate(String appId) {
         var c = autoUpdateMapper.selectOne(new LambdaQueryWrapper<AppKbAutoUpdateConfig>().eq(AppKbAutoUpdateConfig::getAppId,appId));

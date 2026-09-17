@@ -23,6 +23,7 @@ import {
   Management,
   DataBoard,
   ChatLineSquare,
+  Grid,
 } from '@element-plus/icons-vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import FileManager from './components/FileManager.vue'
@@ -35,8 +36,10 @@ import GraphSettingsPopup from './components/GraphSettingsPopup.vue'
 import RagEvaluationPanel from './components/RagEvaluationPanel.vue'
 import EvaluationBenchmarkPanel from './components/EvaluationBenchmarkPanel.vue'
 import LogPanel from './components/LogPanel.vue'
+import KnowledgeConfigPanel from './components/KnowledgeConfigPanel.vue'
 import PublishPanel from './components/PublishPanel.vue'
 import QaPanel from './components/QaPanel.vue'
+import TableKnowledgePanel from './components/TableKnowledgePanel.vue'
 // 新增功能面板
 import EntitiesPanel from './entities.vue'
 import ProductionPanel from './production.vue'
@@ -304,6 +307,16 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
         <QaPanel :kb-id="kbId" />
       </el-tab-pane>
 
+      <el-tab-pane name="tables">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><Grid /></el-icon>
+            表格知识
+          </span>
+        </template>
+        <TableKnowledgePanel :kb-id="kbId" />
+      </el-tab-pane>
+
       <el-tab-pane name="publish">
         <template #label>
           <span class="kb-detail__tab-label">
@@ -322,6 +335,16 @@ function handleStartEvaluationFromBenchmark(benchmarkName: string) {
           </span>
         </template>
         <LogPanel :kb-id="kbId" />
+      </el-tab-pane>
+
+      <el-tab-pane name="knowledge-config">
+        <template #label>
+          <span class="kb-detail__tab-label">
+            <el-icon><Setting /></el-icon>
+            知识配置
+          </span>
+        </template>
+        <KnowledgeConfigPanel :kb-id="kbId" />
       </el-tab-pane>
 
       <!-- ===== 新增功能页签 ===== -->

@@ -1,6 +1,10 @@
 package com.fastrag.module.retrieval.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.infra.neo4j.Neo4jService;
+import com.fastrag.module.knowledge.entity.KbAutoCorrection;
+import com.fastrag.module.knowledge.entity.KbStandardQuestion;
+import com.fastrag.module.knowledge.mapper.KbAutoCorrectionMapper;
+import com.fastrag.module.knowledge.mapper.KbStandardQuestionMapper;
 import com.fastrag.module.retrieval.entity.QueryRuleRow; import com.fastrag.module.retrieval.entity.TermRecordRow;
 import com.fastrag.module.retrieval.mapper.QueryRuleRowMapper; import com.fastrag.module.retrieval.mapper.TermRecordRowMapper;
 import com.fastrag.module.retrieval.service.QueryEnhanceService;
@@ -11,7 +15,33 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
     private final Neo4jService neo4jService;
     private final QueryRuleRowMapper ruleMapper;
     private final TermRecordRowMapper termMapper;
-    @Override public Map<String,Object> suggest(String query) { var r=new HashMap<String,Object>(); r.put("suggestedQuery",query); r.put("reason",""); return r; }
+    private final KbAutoCorrectionMapper correctionMapper;
+    private final KbStandardQuestionMapper standardMapper;
+    // 检索词联想：纠错规则改写 + 标准问法命中推荐，真实聚合
+    @Override public Map<String,Object> suggest(String query) {
+        var r=new LinkedHashMap<String,Object>();
+        String q=query==null?"":query.trim();
+        String suggested=q; List<String> reasons=new ArrayList<>(); List<String> alternatives=new ArrayList<>();
+        // 1) 纠错规则命中 → 建议改写
+        for(var rule:correctionMapper.selectList(new LambdaQueryWrapper<KbAutoCorrection>().eq(KbAutoCorrection::getEnabled,1).orderByAsc(KbAutoCorrection::getPriority))){
+            if(rule.getWrongText()!=null&&q.contains(rule.getWrongText())&&rule.getCorrectText()!=null){
+                suggested=suggested.replace(rule.getWrongText(),rule.getCorrectText());
+                reasons.add("纠错：\""+rule.getWrongText()+"\"→\""+rule.getCorrectText()+"\"");
+            }
+        }
+        // 2) 标准问法包含命中 → 推荐完整问法
+        for(var std:standardMapper.selectList(new LambdaQueryWrapper<KbStandardQuestion>().eq(KbStandardQuestion::getEnabled,1))){
+            if(std.getStandardQuestion()!=null&&(std.getStandardQuestion().contains(q)||q.contains(std.getStandardQuestion()))){
+                if(!suggested.equals(std.getStandardQuestion())&&!alternatives.contains(std.getStandardQuestion())&&alternatives.size()<5) alternatives.add(std.getStandardQuestion());
+                if(!reasons.contains("命中标准问法")) reasons.add("命中标准问法");
+            }
+        }
+        if(!suggested.equals(q)) alternatives.add(0,suggested);
+        r.put("suggestedQuery",suggested); r.put("originalQuery",q);
+        r.put("reason",String.join("；",reasons)); r.put("alternatives",alternatives);
+        r.put("changed",!suggested.equals(q));
+        return r;
+    }
     // 同义词扩写：命中扩写规则 + 术语库别名，追加 query 中没有的词
     @Override public Map<String,Object> expandSynonyms(String query) {
         List<String> added=new ArrayList<>(); List<String> matched=new ArrayList<>();

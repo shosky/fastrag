@@ -288,7 +288,7 @@ const changeTypeColors: Record<string, 'success' | 'danger' | 'primary' | 'warni
   config_changed: 'warning',
 }
 
-function onTabChange(name: string) {
+function onTabChange(name: string | number) {
   if (name === 'history') { loadPublishHistory(); loadPublishedVersion() }
   else if (name === 'plans') loadPublishPlans()
   else if (name === 'strategy') loadStrategyEffect()

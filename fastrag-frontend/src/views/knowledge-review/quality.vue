@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 
@@ -37,6 +37,79 @@ async function loadData() {
   }
 }
 onMounted(async () => { await loadKbList(); loadData() })
+
+// ===== 质量规则管理（新增 / 修改 / 删除 / 查询 / 库）=====
+// 后端：GET/POST /kb/{id}/quality-rules、PUT/DELETE /kb/{id}/quality-rules/{id}
+const METRIC_OPTIONS = [
+  { value: 'completeness', label: '完整性' },
+  { value: 'accuracy', label: '准确性' },
+  { value: 'freshness', label: '时效性' },
+  { value: 'relevance', label: '相关性' },
+  { value: 'sensitive', label: '敏感词' },
+  { value: 'format', label: '结构规范' },
+]
+const ruleKeyword = ref('')
+const filteredRules = computed(() =>
+  ruleKeyword.value
+    ? ruleList.value.filter((r: any) => (r.ruleName || r.name || '').includes(ruleKeyword.value))
+    : ruleList.value,
+)
+const ruleDialog = ref(false)
+const ruleEditing = ref(false)
+const ruleForm = ref<any>({ id: '', ruleName: '', metric: 'completeness', threshold: 0.6, weight: 1, enabled: 1 })
+// 阈值兼容 0-1 与绝对值两种存法
+function fmtThreshold(v: any) {
+  if (v === null || v === undefined || v === '') return '-'
+  const n = Number(v)
+  return n <= 1 ? (n * 100).toFixed(0) + '%' : String(n)
+}
+function openRule(row?: any) {
+  ruleEditing.value = !!row
+  ruleForm.value = row
+    ? { id: row.id, ruleName: row.ruleName || row.name, metric: row.metric, threshold: row.threshold, weight: row.weight, enabled: row.enabled ? 1 : 0 }
+    : { id: '', ruleName: '', metric: 'completeness', threshold: 0.6, weight: 1, enabled: 1 }
+  ruleDialog.value = true
+}
+async function saveRule() {
+  if (!ruleForm.value.ruleName) {
+    ElMessage.warning('请输入规则名称')
+    return
+  }
+  const payload = {
+    ruleName: ruleForm.value.ruleName,
+    metric: ruleForm.value.metric,
+    threshold: Number(ruleForm.value.threshold) || 0,
+    weight: Number(ruleForm.value.weight) || 1,
+    enabled: ruleForm.value.enabled ? 1 : 0,
+  }
+  try {
+    if (ruleEditing.value) {
+      await api.updateQualityRule(selectedKbId.value, ruleForm.value.id, payload)
+      ElMessage.success('规则已修改')
+    } else {
+      await api.createQualityRule(selectedKbId.value, payload)
+      ElMessage.success('规则已新增')
+    }
+    ruleDialog.value = false
+    await loadData()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '保存失败')
+  }
+}
+async function removeRule(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除规则「${row.ruleName || row.name}」吗？`, '提示', { type: 'warning' })
+  } catch {
+    return
+  }
+  try {
+    await api.deleteQualityRule(selectedKbId.value, row.id)
+    ElMessage.success('规则已删除')
+    await loadData()
+  } catch (e: any) {
+    ElMessage.error(e?.message || '删除失败')
+  }
+}
 
 // 评估规则配置
 function handleShowRules() { loadData(); showRules.value = true }
@@ -137,14 +210,21 @@ function handleExportReport() {
           <el-button @click="handleGenerateReport">生成报告</el-button>
           <el-button @click="handleExportReport">导出报告</el-button>
           <el-button @click="handleShowRules">评估规则配置</el-button>
+          <el-button type="primary" @click="openRule()">
+            <el-icon><Plus /></el-icon>新增规则
+          </el-button>
         </div>
       </div>
       <div class="filter-bar">
+        <el-input v-model="ruleKeyword" placeholder="按规则名称查询" clearable style="width:220px">
+          <template #prefix><el-icon><Search /></el-icon></template>
+        </el-input>
         <el-select v-model="filterLevel" placeholder="等级筛选" clearable style="width:140px">
           <el-option v-for="(label, key) in LEVEL_LABELS" :key="key" :label="label" :value="key" />
         </el-select>
+        <el-tag size="small" type="info">质量规则库：{{ filteredRules.length }} 条</el-tag>
       </div>
-      <el-table :data="ruleList" stripe>
+      <el-table :data="filteredRules" stripe>
         <el-table-column prop="ruleName" label="规则名称" min-width="160" />
         <el-table-column label="评估维度" width="100">
           <template #default="{ row }">{{ dimensionLabels[row.metric] || row.metric || '-' }}</template>
@@ -152,14 +232,48 @@ function handleExportReport() {
         <el-table-column prop="weight" label="权重" width="80">
           <template #default="{ row }">{{ row.weight ? (row.weight * 100).toFixed(0) + '%' : '-' }}</template>
         </el-table-column>
-        <el-table-column prop="threshold" label="阈值" width="80">
-          <template #default="{ row }">{{ row.threshold ? (row.threshold * 100).toFixed(0) + '%' : '-' }}</template>
+        <el-table-column label="阈值" width="80">
+          <template #default="{ row }">{{ fmtThreshold(row.threshold) }}</template>
         </el-table-column>
         <el-table-column label="启用" width="70">
           <template #default="{ row }"><el-tag :type="row.enabled ? 'success' : 'info'" size="small">{{ row.enabled ? '是' : '否' }}</el-tag></template>
         </el-table-column>
+        <el-table-column label="操作" width="130" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openRule(row)">修改</el-button>
+            <el-button link type="danger" size="small" @click="removeRule(row)">删除</el-button>
+          </template>
+        </el-table-column>
       </el-table>
     </div>
+
+    <!-- 新增/修改质量规则 -->
+    <el-dialog v-model="ruleDialog" :title="ruleEditing ? '修改质量规则' : '新增质量规则'" width="480px">
+      <el-form label-width="90px">
+        <el-form-item label="规则名称">
+          <el-input v-model="ruleForm.ruleName" placeholder="如：内容完整性校验" />
+        </el-form-item>
+        <el-form-item label="评估维度">
+          <el-select v-model="ruleForm.metric" style="width:100%">
+            <el-option v-for="m in METRIC_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="阈值">
+          <el-input-number v-model="ruleForm.threshold" :min="0" :max="100" :step="1" style="width:160px" />
+          <span style="margin-left:8px;color:var(--el-text-color-secondary);font-size:12px">≤1 视为比例（0.6=60%），&gt;1 视为绝对值</span>
+        </el-form-item>
+        <el-form-item label="权重">
+          <el-input-number v-model="ruleForm.weight" :min="0" :max="10" :step="0.1" :precision="1" style="width:160px" />
+        </el-form-item>
+        <el-form-item label="启用">
+          <el-switch v-model="ruleForm.enabled" :active-value="1" :inactive-value="0" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="ruleDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveRule">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 评估规则配置 -->
     <el-dialog v-model="showRules" title="评估规则配置" width="600px">

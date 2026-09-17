@@ -15,6 +15,8 @@ public class KbChunk {
     private String content;
     private String embeddingId;
     private Integer vectorStored;
+    // 库内向量缓存（JSON 数组）：语义检索向量来源，检索时懒计算回填
+    private String embedding;
     private Double startTime;
     private Double endTime;
 }

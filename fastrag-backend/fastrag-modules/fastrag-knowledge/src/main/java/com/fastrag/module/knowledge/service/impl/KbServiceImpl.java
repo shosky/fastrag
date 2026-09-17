@@ -27,7 +27,7 @@ public class KbServiceImpl implements KbService {
         e.setEmbeddingModel(req.getEmbeddingModel()); e.setParseMode(req.getParseMode()); e.setSplitMode(req.getSplitMode());
         e.setFileTypeConfig(req.getFileTypeConfig()!=null?JSONUtil.toJsonStr(req.getFileTypeConfig()):null);
         e.setRetrievalConfig(req.getRetrievalConfig()!=null?JSONUtil.toJsonStr(req.getRetrievalConfig()):null);
-        e.setCreator(creator); e.setUsedSize(0L); e.setTotalSize(0L); e.setType("personal"); mapper.insert(e); return toDto(e);
+        e.setCreator(creator); e.setUsedSize(0L); e.setTotalSize(0L); e.setType("personal"); e.setKbType(req.getKbType()!=null?req.getKbType():"general"); mapper.insert(e); return toDto(e);
     }
     @Override public KbDto update(String id,KbCreateRequest req) {
         var e=mapper.selectById(id); if(e==null)throw new RuntimeException("KB not found: "+id);
@@ -38,6 +38,7 @@ public class KbServiceImpl implements KbService {
         if(req.getParseMode()!=null)e.setParseMode(req.getParseMode());
         if(req.getSplitMode()!=null)e.setSplitMode(req.getSplitMode());
         if(req.getPermission()!=null)e.setPermission(req.getPermission());
+        if(req.getKbType()!=null)e.setKbType(req.getKbType());
         if(req.getFileTypeConfig()!=null)e.setFileTypeConfig(JSONUtil.toJsonStr(req.getFileTypeConfig()));
         if(req.getRetrievalConfig()!=null)e.setRetrievalConfig(JSONUtil.toJsonStr(req.getRetrievalConfig()));
         mapper.updateById(e); return toDto(e);
@@ -109,5 +110,5 @@ public class KbServiceImpl implements KbService {
         log.info("知识库导入完成: name={}, files={}, skipped={}",created.getName(),imported,skipped);
         return created;
     }
-    private KbDto toDto(KnowledgeBase e) { var d=new KbDto(); d.setId(e.getId()); d.setName(e.getName()); d.setDescription(e.getDescription()); d.setCategory(e.getCategory()); d.setTags(StrUtil.isNotBlank(e.getTags())?JSONUtil.toList(e.getTags(),String.class):null); d.setEmbeddingModel(e.getEmbeddingModel()); d.setDimension(e.getDimension()); d.setCreator(e.getCreator()); d.setCreatedAt(e.getCreatedAt()); d.setUsedSize(e.getUsedSize()); d.setTotalSize(e.getTotalSize()); d.setType(e.getType()); d.setParseMode(e.getParseMode()); d.setSplitMode(e.getSplitMode()); d.setPermission(e.getPermission()); d.setFileTypeConfig(StrUtil.isNotBlank(e.getFileTypeConfig())?JSONUtil.parse(e.getFileTypeConfig()):null); d.setRetrievalConfig(StrUtil.isNotBlank(e.getRetrievalConfig())?JSONUtil.parse(e.getRetrievalConfig()):null); return d; }
+    private KbDto toDto(KnowledgeBase e) { var d=new KbDto(); d.setId(e.getId()); d.setName(e.getName()); d.setDescription(e.getDescription()); d.setCategory(e.getCategory()); d.setTags(StrUtil.isNotBlank(e.getTags())?JSONUtil.toList(e.getTags(),String.class):null); d.setEmbeddingModel(e.getEmbeddingModel()); d.setDimension(e.getDimension()); d.setCreator(e.getCreator()); d.setCreatedAt(e.getCreatedAt()); d.setUsedSize(e.getUsedSize()); d.setTotalSize(e.getTotalSize()); d.setType(e.getType()); d.setKbType(e.getKbType()); d.setParseMode(e.getParseMode()); d.setSplitMode(e.getSplitMode()); d.setPermission(e.getPermission()); d.setFileTypeConfig(StrUtil.isNotBlank(e.getFileTypeConfig())?JSONUtil.parse(e.getFileTypeConfig()):null); d.setRetrievalConfig(StrUtil.isNotBlank(e.getRetrievalConfig())?JSONUtil.parse(e.getRetrievalConfig()):null); return d; }
 }

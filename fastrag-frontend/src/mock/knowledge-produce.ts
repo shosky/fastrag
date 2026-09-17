@@ -82,7 +82,7 @@ export function getMediaList(params?: { page?: number; pageSize?: number; type?:
   return { list: list.slice((page - 1) * pageSize, page * pageSize), total }
 }
 export function createMedia(data: Partial<MediaItem>): MediaItem {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: MediaItem = { id: `media-${++seq}`, name: data.name || '', type: data.type || 'image', url: data.url || '', size: data.size || 0, status: 'processing', description: data.description, tags: data.tags || [], creator: 'admin', createdAt: new Date().toISOString() }
   mediaStore.push(item); return item
 }
@@ -94,12 +94,12 @@ export function deleteMedia(id: string): boolean {
 
 export function getChannelList(): KnowledgeChannel[] { initStore(); return channelStore }
 export function createChannel(data: Partial<KnowledgeChannel>): KnowledgeChannel {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: KnowledgeChannel = { id: `ch-${++seq}`, name: data.name || '', type: data.type || 'manual', endpoint: data.endpoint, schedule: data.schedule, enabled: true, itemCount: 0, status: 'active', createdAt: new Date().toISOString() }
   channelStore.push(item); return item
 }
 export function updateChannel(id: string, data: Partial<KnowledgeChannel>): KnowledgeChannel | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = channelStore.findIndex(c => c.id === id); if (idx === -1) return null
   channelStore[idx] = { ...channelStore[idx], ...data }; return channelStore[idx]
 }
@@ -111,12 +111,12 @@ export function deleteChannel(id: string): boolean {
 
 export function getSharingList(): DepartmentSharing[] { initStore(); return sharingStore }
 export function createSharing(data: Partial<DepartmentSharing>): DepartmentSharing {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: DepartmentSharing = { id: `ds-${++seq}`, sourceDept: data.sourceDept || '', targetDept: data.targetDept || '', knowledgeBaseId: data.knowledgeBaseId || '', knowledgeBaseName: data.knowledgeBaseName || '', permission: data.permission || 'read', status: 'active', createdAt: new Date().toISOString() }
   sharingStore.push(item); return item
 }
 export function updateSharing(id: string, data: Partial<DepartmentSharing>): DepartmentSharing | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = sharingStore.findIndex(s => s.id === id); if (idx === -1) return null
   sharingStore[idx] = { ...sharingStore[idx], ...data }; return sharingStore[idx]
 }
@@ -133,17 +133,17 @@ export function getExtractionList(params?: { page?: number; pageSize?: number; s
   return { list: list.slice((page - 1) * pageSize, page * pageSize), total }
 }
 export function confirmExtraction(id: string): QaExtraction | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = extractionStore.findIndex(e => e.id === id); if (idx === -1) return null
   extractionStore[idx] = { ...extractionStore[idx], status: 'confirmed' }; return extractionStore[idx]
 }
 export function importExtraction(id: string): QaExtraction | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = extractionStore.findIndex(e => e.id === id); if (idx === -1) return null
   extractionStore[idx] = { ...extractionStore[idx], status: 'imported' }; return extractionStore[idx]
 }
 export function rejectExtraction(id: string): QaExtraction | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = extractionStore.findIndex(e => e.id === id); if (idx === -1) return null
   extractionStore[idx] = { ...extractionStore[idx], status: 'rejected' }; return extractionStore[idx]
 }

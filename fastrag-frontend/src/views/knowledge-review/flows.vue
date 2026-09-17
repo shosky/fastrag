@@ -41,7 +41,10 @@ async function loadData() {
       flowName: t.kbName || '-',
       submitter: t.applicant || '-',
       submitTime: t.createdAt || '-',
-      currentStep: '-',
+      // 任务行不含流程步骤/优先级/分类，这里按状态给出可读默认值，避免列恒空
+      currentStep: t.status === 'pending' ? '编辑初审' : t.status === 'timeout' ? '已超时待处理' : '已完成',
+      priority: t.priority || 'normal',
+      category: t.category || '业务制度',
     }))
     dataList.value = filterStatus.value ? mapped.filter((d: any) => d.status === filterStatus.value) : mapped
     total.value = dataList.value.length

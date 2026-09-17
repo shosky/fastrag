@@ -141,17 +141,17 @@ function initStore() {
 
 export function getFlowList(): ReviewFlow[] { initStore(); return flowStore }
 export function createFlow(data: Partial<ReviewFlow>): ReviewFlow {
-  checkApiPermission('review:write'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const item: ReviewFlow = { id: `rf-${++seq}`, name: data.name || '', description: data.description || '', steps: data.steps || [], status: 'draft', creator: 'admin', createdAt: new Date().toISOString() }
   flowStore.push(item); return item
 }
 export function updateFlow(id: string, data: Partial<ReviewFlow>): ReviewFlow | null {
-  checkApiPermission('review:write'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const idx = flowStore.findIndex(f => f.id === id); if (idx === -1) return null
   flowStore[idx] = { ...flowStore[idx], ...data }; return flowStore[idx]
 }
 export function deleteFlow(id: string): boolean {
-  checkApiPermission('review:delete'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const idx = flowStore.findIndex(f => f.id === id); if (idx === -1) return false
   flowStore.splice(idx, 1); return true
 }
@@ -180,53 +180,53 @@ export function getPublishList(params?: { page?: number; pageSize?: number; stat
   return { list: list.slice((page - 1) * pageSize, page * pageSize), total }
 }
 export function publishKnowledge(id: string): PublishRecord | null {
-  checkApiPermission('kb:publish'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = publishStore.findIndex(p => p.id === id); if (idx === -1) return null
   publishStore[idx] = { ...publishStore[idx], status: 'online', publishTime: new Date().toISOString() }; return publishStore[idx]
 }
 export function offlineKnowledge(id: string): PublishRecord | null {
-  checkApiPermission('kb:publish'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = publishStore.findIndex(p => p.id === id); if (idx === -1) return null
   publishStore[idx] = { ...publishStore[idx], status: 'offline' }; return publishStore[idx]
 }
 
 export function getResetList(): ResetRecord[] { initStore(); return resetStore }
 export function resetKnowledge(data: Partial<ResetRecord>): ResetRecord {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: ResetRecord = { id: `rr-${++seq}`, knowledgeId: data.knowledgeId || '', knowledgeTitle: data.knowledgeTitle || '', fromVersion: data.fromVersion || '', toVersion: data.toVersion || '', reason: data.reason || '', operator: 'admin', createdAt: new Date().toISOString() }
   resetStore.push(item); return item
 }
 
 export function getListenerList(): ReviewListener[] { initStore(); return listenerStore }
 export function createListener(data: Partial<ReviewListener>): ReviewListener {
-  checkApiPermission('review:write'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const item: ReviewListener = { id: `rl-${++seq}`, name: data.name || '', url: data.url || '', events: data.events || [], enabled: true, status: 'active', triggerCount: 0, createdAt: new Date().toISOString() }
   listenerStore.push(item); return item
 }
 export function updateListener(id: string, data: Partial<ReviewListener>): ReviewListener | null {
-  checkApiPermission('review:write'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const idx = listenerStore.findIndex(l => l.id === id); if (idx === -1) return null
   listenerStore[idx] = { ...listenerStore[idx], ...data }; return listenerStore[idx]
 }
 export function deleteListener(id: string): boolean {
-  checkApiPermission('review:delete'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const idx = listenerStore.findIndex(l => l.id === id); if (idx === -1) return false
   listenerStore.splice(idx, 1); return true
 }
 
 export function getComplianceList(): ComplianceRule[] { initStore(); return complianceStore }
 export function createCompliance(data: Partial<ComplianceRule>): ComplianceRule {
-  checkApiPermission('review:write'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const item: ComplianceRule = { id: `cr-${++seq}`, name: data.name || '', description: data.description || '', ruleType: data.ruleType || 'content', rule: data.rule || '', enabled: true, hitCount: 0, createdAt: new Date().toISOString() }
   complianceStore.push(item); return item
 }
 export function updateCompliance(id: string, data: Partial<ComplianceRule>): ComplianceRule | null {
-  checkApiPermission('review:write'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const idx = complianceStore.findIndex(c => c.id === id); if (idx === -1) return null
   complianceStore[idx] = { ...complianceStore[idx], ...data }; return complianceStore[idx]
 }
 export function deleteCompliance(id: string): boolean {
-  checkApiPermission('review:delete'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const idx = complianceStore.findIndex(c => c.id === id); if (idx === -1) return false
   complianceStore.splice(idx, 1); return true
 }
@@ -235,7 +235,7 @@ export function getReportList(): ReviewReport[] { initStore(); return reportStor
 
 export function getQualityRuleList(): QualityRule[] { initStore(); return qualityRuleStore }
 export function updateQualityRule(id: string, data: Partial<QualityRule>): QualityRule | null {
-  checkApiPermission('review:write'); initStore()
+  checkApiPermission('review:approve'); initStore()
   const idx = qualityRuleStore.findIndex(r => r.id === id); if (idx === -1) return null
   qualityRuleStore[idx] = { ...qualityRuleStore[idx], ...data }; return qualityRuleStore[idx]
 }

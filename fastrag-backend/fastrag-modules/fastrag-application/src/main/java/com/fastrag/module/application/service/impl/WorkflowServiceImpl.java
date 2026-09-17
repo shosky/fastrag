@@ -246,9 +246,11 @@ public class WorkflowServiceImpl implements WorkflowService {
     @Override public Map<String,Object> getNodeConfig(String wfId,String nodeKey) { var n=nodeMapper.selectOne(new LambdaQueryWrapper<WfNode>().eq(WfNode::getWorkflowId,wfId).eq(WfNode::getNodeKey,nodeKey)); Map<String,Object> r=new LinkedHashMap<>(); if(n!=null&&n.getConfig()!=null)r.put("config",n.getConfig()); else r.put("config","{}"); return r; }
     @Override public Map<String,Object> saveNodeConfig(String wfId,String nodeKey,String dimension,Map<String,Object> config) {
         var n=nodeMapper.selectOne(new LambdaQueryWrapper<WfNode>().eq(WfNode::getWorkflowId,wfId).eq(WfNode::getNodeKey,nodeKey));
-        if(n!=null){ n.setConfig(config.toString()); nodeMapper.updateById(n); }
+        if(n!=null){ n.setConfig(toJson(config)); nodeMapper.updateById(n); }
         return Map.of("nodeKey",nodeKey,"dimension",dimension,"saved",true);
     }
+    /** wf_node.config 为 JSON 列，需序列化为合法 JSON（Map.toString() 会写入非法 JSON 导致 500） */
+    private String toJson(Object v) { try { return objectMapper.writeValueAsString(v); } catch (Exception e) { return "{}"; } }
     // ===== 监控 =====
     @Override public Map<String,Object> getMonitorData(String wfId) { Map<String,Object> r=new LinkedHashMap<>(); r.put("totalExecutions",3200); r.put("avgLatency",1200); r.put("errorRate",0.02); r.put("lastExecutionAt",LocalDateTime.now()); return r; }
 }

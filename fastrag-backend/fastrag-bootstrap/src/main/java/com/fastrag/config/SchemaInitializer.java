@@ -272,6 +272,147 @@ public class SchemaInitializer {
         // ===== BPM 种子数据(节点元数据 + 内置模板)— 表必须先建好 =====
         seedBpmData();
 
+        // ===== 功能清单补齐：FAQ/表格知识/属性/同步/语义配置/向量缓存 =====
+        addColumnIfNotExists("kb_qa_pair", "faq_type", "VARCHAR(16) DEFAULT 'common'");
+        addColumnIfNotExists("kb_qa_pair", "keywords", "VARCHAR(512)");
+        addColumnIfNotExists("kb_qa_pair", "effective_start", "DATETIME");
+        addColumnIfNotExists("kb_qa_pair", "effective_end", "DATETIME");
+        addColumnIfNotExists("kb_qa_pair", "effective_scope", "VARCHAR(128)");
+        addColumnIfNotExists("kb_qa_pair", "related_knowledge_ids", "TEXT");
+        addColumnIfNotExists("kb", "kb_type", "VARCHAR(16) DEFAULT 'general'");
+        addColumnIfNotExists("kb_chunk", "embedding", "LONGTEXT");
+        addColumnIfNotExists("kb_knowledge", "attributes", "TEXT");
+        addColumnIfNotExists("model", "threshold", "VARCHAR(512)");
+        // 实体 AppSemanticConfig.createdAt 对应列（初期 DDL 遗漏，旧库补列）
+        addColumnIfNotExists("app_semantic_config", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+
+        // ===== 标准问法/相似问法/问答对（旧库可能缺这几张 schema.sql 后期追加的表，启动自愈） =====
+        ensureTable("kb_qa_pair", """
+            CREATE TABLE IF NOT EXISTS kb_qa_pair (
+                id VARCHAR(32) PRIMARY KEY,
+                kb_id VARCHAR(32) NOT NULL,
+                file_id VARCHAR(32),
+                file_name VARCHAR(256),
+                question TEXT NOT NULL,
+                answer TEXT NOT NULL,
+                source VARCHAR(16) DEFAULT 'manual',
+                status VARCHAR(16) DEFAULT 'draft',
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_kb_id (kb_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """);
+        ensureTable("kb_standard_question", """
+            CREATE TABLE IF NOT EXISTS kb_standard_question (
+                id VARCHAR(32) PRIMARY KEY,
+                kb_id VARCHAR(32) NOT NULL,
+                category VARCHAR(64),
+                standard_question TEXT NOT NULL,
+                answer TEXT,
+                hit_count INT DEFAULT 0,
+                enabled TINYINT DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_kb_id (kb_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """);
+        ensureTable("kb_similar_question", """
+            CREATE TABLE IF NOT EXISTS kb_similar_question (
+                id VARCHAR(32) PRIMARY KEY,
+                kb_id VARCHAR(32) NOT NULL,
+                standard_question_id VARCHAR(32) NOT NULL,
+                question TEXT NOT NULL,
+                similarity DECIMAL(5,2) DEFAULT 0.0,
+                hit_count INT DEFAULT 0,
+                enabled TINYINT DEFAULT 1,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_standard (standard_question_id),
+                INDEX idx_kb_id (kb_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """);
+
+        ensureBpmTable("kb_answer_table", """
+            CREATE TABLE IF NOT EXISTS kb_answer_table (
+                id VARCHAR(32) PRIMARY KEY,
+                kb_id VARCHAR(32) NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                description VARCHAR(512),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                INDEX idx_at_kb (kb_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='表格型应答知识主表'
+        """);
+        ensureBpmTable("kb_answer_table_column", """
+            CREATE TABLE IF NOT EXISTS kb_answer_table_column (
+                id VARCHAR(32) PRIMARY KEY,
+                table_id VARCHAR(32) NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                col_key VARCHAR(64) NOT NULL,
+                col_type VARCHAR(16) DEFAULT 'text',
+                sort_order INT DEFAULT 0,
+                INDEX idx_atc_table (table_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='表格知识列定义'
+        """);
+        ensureBpmTable("kb_answer_table_row", """
+            CREATE TABLE IF NOT EXISTS kb_answer_table_row (
+                id VARCHAR(32) PRIMARY KEY,
+                table_id VARCHAR(32) NOT NULL,
+                content JSON,
+                sort_order INT DEFAULT 0,
+                INDEX idx_atr_table (table_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='表格知识行内容'
+        """);
+        ensureBpmTable("kb_attribute_def", """
+            CREATE TABLE IF NOT EXISTS kb_attribute_def (
+                id VARCHAR(32) PRIMARY KEY,
+                kb_id VARCHAR(32) NOT NULL,
+                name VARCHAR(128) NOT NULL,
+                attr_type VARCHAR(16) DEFAULT 'text',
+                required TINYINT DEFAULT 0,
+                description VARCHAR(256),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_ad_kb (kb_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库自定义属性定义'
+        """);
+        ensureBpmTable("kb_sync_config", """
+            CREATE TABLE IF NOT EXISTS kb_sync_config (
+                id VARCHAR(32) PRIMARY KEY,
+                name VARCHAR(128) NOT NULL,
+                source_kb_id VARCHAR(32) NOT NULL,
+                target_kb_id VARCHAR(32) NOT NULL,
+                sync_mode VARCHAR(16) DEFAULT 'incremental',
+                interval_minutes INT DEFAULT 60,
+                enabled TINYINT DEFAULT 1,
+                last_sync_at DATETIME,
+                created_by VARCHAR(32),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_ksc_source (source_kb_id),
+                INDEX idx_ksc_target (target_kb_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库同步配置'
+        """);
+        ensureBpmTable("kb_sync_record", """
+            CREATE TABLE IF NOT EXISTS kb_sync_record (
+                id VARCHAR(32) PRIMARY KEY,
+                config_id VARCHAR(32) NOT NULL,
+                synced_entries INT DEFAULT 0,
+                synced_qa_pairs INT DEFAULT 0,
+                status VARCHAR(16) DEFAULT 'success',
+                message VARCHAR(512),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_ksr_config (config_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库同步记录'
+        """);
+        ensureBpmTable("app_semantic_config", """
+            CREATE TABLE IF NOT EXISTS app_semantic_config (
+                id VARCHAR(32) PRIMARY KEY,
+                app_id VARCHAR(32) NOT NULL,
+                intent_patterns JSON,
+                custom_synonyms JSON,
+                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                UNIQUE INDEX idx_asc_app (app_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='应用语义理解/语义定制配置'
+        """);
+
         log.info("Schema initialization completed.");
     }
 
@@ -343,6 +484,16 @@ public class SchemaInitializer {
             log.info("BPM table {} OK", name);
         } catch (Exception e) {
             log.error("Failed to create BPM table {}: {}", name, e.getMessage());
+        }
+    }
+
+    /** 通用幂等建表：确保表存在（已存在则跳过），用于旧库缺失表的启动自愈 */
+    private void ensureTable(String name, String ddl) {
+        try {
+            jdbc.execute(ddl);
+            log.info("Table {} OK", name);
+        } catch (Exception e) {
+            log.error("Failed to create table {}: {}", name, e.getMessage());
         }
     }
 

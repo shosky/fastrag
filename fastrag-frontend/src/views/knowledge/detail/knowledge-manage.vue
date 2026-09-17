@@ -2,7 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Edit, Picture, Download, Delete } from '@element-plus/icons-vue'
+import { Edit, Picture, Download, Delete, View } from '@element-plus/icons-vue'
 import * as api from '@/api'
 import { storage } from '@/utils/storage'
 
@@ -50,6 +50,51 @@ async function loadKnowledge() {
 }
 const showKnowledgeDialog = ref(false)
 const knowledgeForm = ref({ id: '', title: '', content: '', summary: '', category: '', tags: '', status: 'draft' })
+// ===== 查看详情 + 关联知识推荐 =====
+const showDetailDrawer = ref(false)
+const detailEntry = ref<any>(null)
+const detailRelated = ref<any[]>([])
+const detailRelatedQa = ref<any[]>([])
+const detailLoading = ref(false)
+async function handleViewDetail(row: any) {
+  detailEntry.value = row
+  showDetailDrawer.value = true
+  detailLoading.value = true
+  detailRelated.value = []
+  detailRelatedQa.value = []
+  try {
+    const res: any = await api.getRelatedKnowledge(route.params.id as string, row.id, 10)
+    detailRelated.value = res?.relatedKnowledge || []
+    detailRelatedQa.value = res?.relatedQaPairs || []
+  } catch { } finally { detailLoading.value = false }
+}
+
+// ===== 属性管理（定义 CRUD） =====
+const showAttrDialog = ref(false)
+const attrDefs = ref<any[]>([])
+const attrForm = ref<any>({ id: '', name: '', attrType: 'text', required: 0, description: '' })
+async function handleOpenAttrs() {
+  showAttrDialog.value = true
+  try { attrDefs.value = ((await api.getAttributeDefs(route.params.id as string)) as any) || [] } catch { attrDefs.value = [] }
+}
+async function handleSaveAttr() {
+  if (!attrForm.value.name.trim()) { ElMessage.warning('请输入属性名'); return }
+  try {
+    if (attrForm.value.id) await api.updateAttributeDef(route.params.id as string, attrForm.value.id, attrForm.value)
+    else await api.createAttributeDef(route.params.id as string, attrForm.value)
+    ElMessage.success('已保存')
+    attrForm.value = { id: '', name: '', attrType: 'text', required: 0, description: '' }
+    attrDefs.value = ((await api.getAttributeDefs(route.params.id as string)) as any) || []
+  } catch { ElMessage.error('保存失败') }
+}
+async function handleDeleteAttr(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除属性「${row.name}」？`, '提示', { type: 'warning' })
+    await api.deleteAttributeDef(route.params.id as string, row.id)
+    attrDefs.value = ((await api.getAttributeDefs(route.params.id as string)) as any) || []
+  } catch { }
+}
+
 function handleAddKnowledge() { knowledgeForm.value = { id: '', title: '', content: '', summary: '', category: '', tags: '', status: 'draft' }; showKnowledgeDialog.value = true }
 function handleEditKnowledge(row: any) { knowledgeForm.value = { ...row }; showKnowledgeDialog.value = true }
 async function handleSaveKnowledge() {
@@ -62,6 +107,40 @@ async function handleDeleteKnowledge(row: any) {
   try { await ElMessageBox.confirm(`确认删除「${row.title}」？删除后可在回收站恢复。`, '删除确认', { type: 'warning' })
     await api.deleteKnowledge(kbId, row.id); await loadKnowledge(); ElMessage.success('已移入回收站') } catch {}
 }
+
+// ===== 知识库录入（新建知识 / 查看知识详情 / 编辑知识 / 删除知识）=====
+const entryForm = ref({ title: '', category: '', tags: '', status: 'published', summary: '', content: '' })
+const entrySaving = ref(false)
+async function submitEntry() {
+  if (!entryForm.value.title.trim()) { ElMessage.warning('请输入知识标题'); return }
+  if (!entryForm.value.content.trim()) { ElMessage.warning('请输入知识内容'); return }
+  entrySaving.value = true
+  try {
+    await api.createKnowledge(kbId, {
+      title: entryForm.value.title,
+      category: entryForm.value.category,
+      tags: entryForm.value.tags ? String(entryForm.value.tags).split(/[,，]/).map((s: string) => s.trim()).filter(Boolean) : [],
+      status: entryForm.value.status,
+      summary: entryForm.value.summary,
+      content: entryForm.value.content,
+      source: 'manual',
+    })
+    ElMessage.success('知识已录入')
+    resetEntry()
+    await loadKnowledge()
+  } catch (e: any) {
+    ElMessage.error('录入失败：' + (e?.message || ''))
+  } finally {
+    entrySaving.value = false
+  }
+}
+function resetEntry() {
+  entryForm.value = { title: '', category: '', tags: '', status: 'published', summary: '', content: '' }
+}
+/** 录入记录中的查看/编辑/删除复用知识管理的同一套逻辑 */
+function entryView(row: any) { handleViewDetail(row) }
+function entryEdit(row: any) { handleEditKnowledge(row) }
+function entryDelete(row: any) { handleDeleteKnowledge(row) }
 
 // ===== 知识回收站（列表/恢复/编辑/彻底删除/清空） =====
 const showRecycleDialog = ref(false)
@@ -169,19 +248,10 @@ const updateList = ref<any[]>([])
 const updateQuery = ref({ status: '', page: 1, pageSize: 10 })
 const updateTotal = ref(0)
 async function loadUpdates() {
-  const res: any = await api.getKnowledgeUpdates(kbId, { status: updateQuery.value.status || undefined, page: updateQuery.value.page, pageSize: updateQuery.value.pageSize })
-  updateList.value = res?.list || []; updateTotal.value = res?.total || 0
-  if (!updateList.value.length) {
-    updateList.value = [
-      { id: 'u1', title: '更新小微ICT办理流程', knowledgeId: 'k1', updateType: 'update', changeSummary: '新增线上申请渠道说明', status: 'applied', createdAt: '2026-06-29 09:00:00' },
-      { id: 'u2', title: '新增云电脑产品介绍', knowledgeId: 'k7', updateType: 'create', changeSummary: '新增云桌面部署配置章节', status: 'applied', createdAt: '2026-06-28 15:30:00' },
-      { id: 'u3', title: '修订安全规范条款', knowledgeId: 'k3', updateType: 'update', changeSummary: '根据最新安全生产法更新', status: 'pending', createdAt: '2026-06-28 11:00:00' },
-      { id: 'u4', title: '下线老旧产品方案', knowledgeId: 'k2', updateType: 'delete', changeSummary: '停止ADSL相关产品描述', status: 'rolled_back', createdAt: '2026-06-27 16:45:00' },
-      { id: 'u5', title: '补充5G行业案例', knowledgeId: 'k5', updateType: 'update', changeSummary: '新增智慧港口应用案例', status: 'pending', createdAt: '2026-06-27 14:20:00' },
-      { id: 'u6', title: '归档售后SOP旧版', knowledgeId: 'k6', updateType: 'archive', changeSummary: '旧版SOP归档，启用新版', status: 'applied', createdAt: '2026-06-26 10:00:00' },
-    ]
-    updateTotal.value = updateList.value.length
-  }
+  try {
+    const res: any = await api.getKnowledgeUpdates(kbId, { status: updateQuery.value.status || undefined, page: updateQuery.value.page, pageSize: updateQuery.value.pageSize })
+    updateList.value = res?.list || []; updateTotal.value = res?.total || 0
+  } catch { updateList.value = []; updateTotal.value = 0 }
 }
 const showUpdateDialog = ref(false)
 const updateForm = ref({ id: '', knowledgeId: '', updateType: 'update', title: '', oldValue: '', newValue: '', changeSummary: '' })
@@ -415,6 +485,7 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
             <div class="section-title">知识条目管理</div>
             <div>
               <el-button @click="handleOpenRecycle">回收站</el-button>
+              <el-button @click="handleOpenAttrs">属性管理</el-button>
               <el-button type="primary" @click="handleAddKnowledge">新增知识</el-button>
             </div>
           </div>
@@ -432,9 +503,12 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
               <template #default="{ row }"><el-tag :type="row.status==='published'?'success':(row.status==='archived'?'info':'warning')" size="small">{{ row.status }}</el-tag></template>
             </el-table-column>
             <el-table-column prop="viewCount" label="查看数" width="80" />
-            <el-table-column label="操作" width="120">
+            <el-table-column label="操作" width="150">
               <template #default="{ row }">
                 <el-button-group>
+                  <el-tooltip content="查看" placement="top">
+                    <el-button link size="small" :icon="View" @click="handleViewDetail(row)" />
+                  </el-tooltip>
                   <el-tooltip content="编辑" placement="top">
                     <el-button link size="small" :icon="Edit" @click="handleEditKnowledge(row)" />
                   </el-tooltip>
@@ -451,6 +525,69 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
               </template>
             </el-table-column>
           </el-table>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="知识库录入" name="entry">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">知识库录入（新建知识）</div>
+          </div>
+          <el-form label-width="90px" style="max-width: 760px">
+            <el-form-item label="知识标题" required>
+              <el-input v-model="entryForm.title" placeholder="如：宽带停机保号办理说明" />
+            </el-form-item>
+            <el-form-item label="分类">
+              <el-input v-model="entryForm.category" placeholder="如：宽带 / 5G / 故障" style="width: 220px" />
+              <el-input v-model="entryForm.tags" placeholder="标签，逗号分隔，如：宽带,办理" style="width: 300px; margin-left: 12px" />
+            </el-form-item>
+            <el-form-item label="状态">
+              <el-select v-model="entryForm.status" style="width: 200px">
+                <el-option label="已发布" value="published" />
+                <el-option label="草稿" value="draft" />
+                <el-option label="待审核" value="reviewing" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="摘要">
+              <el-input v-model="entryForm.summary" placeholder="一句话摘要（可空）" />
+            </el-form-item>
+            <el-form-item label="知识内容" required>
+              <el-input v-model="entryForm.content" type="textarea" :rows="8" placeholder="录入知识正文，支持多段文本" />
+            </el-form-item>
+            <el-form-item>
+              <el-button type="primary" :loading="entrySaving" @click="submitEntry">保存并录入</el-button>
+              <el-button @click="resetEntry">重置</el-button>
+            </el-form-item>
+          </el-form>
+        </div>
+
+        <div class="card-panel" style="margin-top: 16px">
+          <div class="section-header">
+            <div class="section-title">录入记录（查看详情 / 编辑 / 删除）</div>
+            <div style="display:flex;gap:8px">
+              <el-input v-model="knowledgeQuery.keyword" placeholder="搜索标题/内容" clearable style="width: 200px" @keyup.enter="loadKnowledge" />
+              <el-button @click="loadKnowledge">查询</el-button>
+            </div>
+          </div>
+          <el-table :data="knowledgeList" stripe size="small" v-loading="loading">
+            <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="category" label="分类" width="100" />
+            <el-table-column label="标签" width="180">
+              <template #default="{ row }">
+                <el-tag v-for="t in (row.tags || [])" :key="t" size="small" type="info" style="margin-right:4px">{{ t }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column prop="createdAt" label="录入时间" min-width="160" />
+            <el-table-column label="操作" width="200" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="entryView(row)">查看详情</el-button>
+                <el-button link type="primary" size="small" @click="entryEdit(row)">编辑</el-button>
+                <el-button link type="danger" size="small" @click="entryDelete(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!knowledgeList.length && !loading" description="暂无录入记录" :image-size="60" />
         </div>
       </el-tab-pane>
 
@@ -721,6 +858,62 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
       <template #footer>
         <el-button type="primary" @click="showMatterViewDialog = false">关闭</el-button>
       </template>
+    </el-dialog>
+    <!-- 知识详情抽屉（查看 + 关联推荐） -->
+    <el-drawer v-model="showDetailDrawer" :title="detailEntry?.title || '知识详情'" size="480px">
+      <div v-loading="detailLoading">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item label="标题">{{ detailEntry?.title }}</el-descriptions-item>
+          <el-descriptions-item label="分类">{{ detailEntry?.category || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ detailEntry?.status }}</el-descriptions-item>
+          <el-descriptions-item label="版本">{{ detailEntry?.version ?? '-' }}</el-descriptions-item>
+          <el-descriptions-item label="摘要">{{ detailEntry?.summary || '-' }}</el-descriptions-item>
+          <el-descriptions-item label="正文"><div style="white-space: pre-wrap">{{ detailEntry?.content || '-' }}</div></el-descriptions-item>
+        </el-descriptions>
+        <div style="margin-top: 16px; font-weight: 600; margin-bottom: 8px">关联知识推荐</div>
+        <el-table :data="detailRelated" size="small" border>
+          <el-table-column prop="title" label="标题" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="score" label="相关度" width="80">
+            <template #default="{ row }"><el-tag size="small">{{ row.score }}</el-tag></template>
+          </el-table-column>
+          <el-table-column prop="reasons" label="依据" min-width="120" show-overflow-tooltip>
+            <template #default="{ row }">{{ (row.reasons || []).join('、') }}</template>
+          </el-table-column>
+        </el-table>
+        <div v-if="!detailLoading && detailRelated.length === 0" style="color:#909399;font-size:12px;margin-top:8px">暂无相关推荐</div>
+        <div v-if="detailRelatedQa.length" style="margin-top: 12px; font-weight: 600; margin-bottom: 8px">关联问答</div>
+        <div v-for="q in detailRelatedQa" :key="q.id" style="font-size:12px;color:#606266;padding:4px 0;border-bottom:1px dashed #eee">Q: {{ q.question }}</div>
+      </div>
+    </el-drawer>
+
+    <!-- 属性管理（定义 CRUD） -->
+    <el-dialog v-model="showAttrDialog" title="属性管理" width="640px" :close-on-click-modal="false">
+      <el-form :inline="true" style="margin-bottom: 8px">
+        <el-form-item label="属性名" style="margin-bottom: 0"><el-input v-model="attrForm.name" placeholder="如：产品线" style="width:130px" /></el-form-item>
+        <el-form-item label="类型" style="margin-bottom: 0">
+          <el-select v-model="attrForm.attrType" style="width:90px">
+            <el-option label="文本" value="text" /><el-option label="数字" value="number" />
+            <el-option label="日期" value="date" /><el-option label="选项" value="select" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="必填" style="margin-bottom: 0"><el-switch v-model="attrForm.required" :active-value="1" :inactive-value="0" /></el-form-item>
+        <el-button type="primary" @click="handleSaveAttr">{{ attrForm.id ? '更新' : '添加属性' }}</el-button>
+        <el-button v-if="attrForm.id" @click="attrForm = { id: '', name: '', attrType: 'text', required: 0, description: '' }">取消编辑</el-button>
+      </el-form>
+      <el-table :data="attrDefs" size="small" border>
+        <el-table-column prop="name" label="属性名" min-width="120" />
+        <el-table-column prop="attrType" label="类型" width="80" />
+        <el-table-column prop="required" label="必填" width="70">
+          <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
+        </el-table-column>
+        <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
+        <el-table-column label="操作" width="120">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="attrForm = { ...row }">编辑</el-button>
+            <el-button link type="danger" size="small" @click="handleDeleteAttr(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </el-dialog>
   </div>
 </template>

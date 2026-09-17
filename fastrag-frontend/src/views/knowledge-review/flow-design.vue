@@ -314,6 +314,53 @@ async function handleOptimizeNodeTimeout(node: any) {
   }
 }
 
+// ===== 节点配置：在效率分析弹窗内直接配置节点的 名称/审核角色/超时时间（真实落库）=====
+const nodeCfgRoles = ['知识编辑', '知识管理员', '部门主管', '质量管理员']
+const nodeCfgVisible = ref(false)
+const nodeCfgSaving = ref(false)
+const nodeCfgForm = ref<any>({ index: -1, name: '', reviewerRole: '知识管理员', timeoutHours: 24 })
+function openNodeConfig(row: any, index: number) {
+  if (!currentEfficiencyRow.value || !currentEfficiencyRow.value.id) {
+    ElMessage.warning('请先选择一个审核流程模板')
+    return
+  }
+  nodeCfgForm.value = {
+    index,
+    name: row.name || '',
+    reviewerRole: row.reviewerRole || '知识管理员',
+    timeoutHours: row.timeoutHours || 24,
+  }
+  nodeCfgVisible.value = true
+}
+async function saveNodeConfig() {
+  if (!nodeCfgForm.value.name.trim()) { ElMessage.warning('请输入节点名称'); return }
+  const row = currentEfficiencyRow.value
+  const st = getSteps(row)
+  const target = st[nodeCfgForm.value.index]
+  if (!target) { ElMessage.warning('未找到对应节点'); return }
+  target.name = nodeCfgForm.value.name.trim()
+  target.reviewerRole = nodeCfgForm.value.reviewerRole
+  target.timeoutHours = Number(nodeCfgForm.value.timeoutHours) || 24
+  nodeCfgSaving.value = true
+  try {
+    const s = st.map((x: any, i: number) => ({ ...x, id: `step-${i + 1}`, order: i + 1 }))
+    await api.updateReviewTemplate(selectedKbId.value, row.id, {
+      name: row.name,
+      description: row.description,
+      flowConfig: { steps: s },
+      category: row.category || 'review',
+    })
+    ElMessage.success(`节点「${target.name}」配置已保存`)
+    nodeCfgVisible.value = false
+    await loadData()
+    await handleShowEfficiency(row)
+  } catch (e: any) {
+    ElMessage.error('配置保存失败：' + (e?.message || ''))
+  } finally {
+    nodeCfgSaving.value = false
+  }
+}
+
 /** 应用优化建议 — 直接修改模板并保存 */
 async function handleApplySuggestion(sug: any) {
   if (!currentEfficiencyRow.value || !currentEfficiencyRow.value.id) {
@@ -552,8 +599,9 @@ async function handleApplySuggestion(sug: any) {
         <el-table-column prop="avgHours" label="平均耗时(h)" width="100" />
         <el-table-column prop="passRate" label="通过率(%)" width="100" />
         <el-table-column prop="suggestion" label="优化建议" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="230" fixed="right">
           <template #default="{ row, $index }">
+            <el-button link type="primary" size="small" @click="openNodeConfig(row, $index)">配置</el-button>
             <el-button v-if="row.suggestion?.includes('缩短')" link size="small" type="warning" @click="handleOptimizeNodeTimeout(row)">优化</el-button>
             <el-button link size="small" @click="handleCopyNode(row)">复制</el-button>
             <el-button link type="danger" size="small" @click="handleDeleteNode(row, $index)">删除</el-button>
@@ -578,6 +626,28 @@ async function handleApplySuggestion(sug: any) {
           </el-button>
         </div>
       </div>
+
+      <!-- 节点配置弹窗（真实落库到模板 flowConfig.steps） -->
+      <el-dialog v-model="nodeCfgVisible" title="节点配置" width="460px" append-to-body>
+        <el-form label-width="90px" size="small">
+          <el-form-item label="节点名称">
+            <el-input v-model="nodeCfgForm.name" placeholder="节点名称" />
+          </el-form-item>
+          <el-form-item label="审核角色">
+            <el-select v-model="nodeCfgForm.reviewerRole" style="width:100%">
+              <el-option v-for="r in nodeCfgRoles" :key="r" :label="r" :value="r" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="超时时间(h)">
+            <el-input-number v-model="nodeCfgForm.timeoutHours" :min="1" :max="720" style="width:100%" />
+            <div style="font-size:12px;color:#909399;margin-top:4px">超过 24h 系统会提示缩短超时</div>
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="nodeCfgVisible = false">取消</el-button>
+          <el-button type="primary" :loading="nodeCfgSaving" @click="saveNodeConfig">保存配置</el-button>
+        </template>
+      </el-dialog>
       <template #footer><el-button @click="showEfficiencyDialog=false">关闭</el-button></template>
     </el-dialog>
   </div>

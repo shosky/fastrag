@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+import * as bpm from '@/api/bpm'
 
 const route = useRoute()
 const loading = ref(false)
@@ -804,30 +805,165 @@ async function handleExportWfOpts() {
 
 // ============================================================================
 // 业务流-配置迁移（查看迁移日志/进度/设置迁移策略）
+// 说明：/api/workflows/migrations 在后端是兼容层桩实现（仅返回占位 id、列表恒空），
+// 因此迁移动作改为**前端驱动**：读取源业务流的节点/连线/节点扩展配置，真实写入目标业务流，
+// 迁移日志与进度在前端留存（localStorage），保证演示可见、可复现。
 // ============================================================================
 const showWfMigDialog = ref(false)
 const wfMigList = ref<any[]>([])
 const wfMigLoading = ref(false)
-const wfMigForm = ref({ targetWorkflowId: '', targetEnv: 'test', strategy: 'overwrite' })
+const wfMigForm = ref({ targetWorkflowId: '', targetEnv: 'test', strategy: 'overwrite', remark: '' })
 const wfMigSubmitting = ref(false)
-function openWfMig() { showWfMigDialog.value = true; loadWfMigs() }
+const wfMigProgress = ref(0)
+const wfMigStage = ref('')
+const MIG_LOG_KEY = 'fastrag_wf_migration_logs'
+
+function loadMigLogs() {
+  try { return JSON.parse(localStorage.getItem(MIG_LOG_KEY) || '[]') || [] } catch { return [] }
+}
+function saveMigLogs(list: any[]) {
+  try { localStorage.setItem(MIG_LOG_KEY, JSON.stringify(list.slice(0, 50))) } catch { /* 本地存储不可用时忽略 */ }
+}
+function openWfMig() {
+  showWfMigDialog.value = true
+  wfMigProgress.value = 0
+  wfMigStage.value = ''
+  loadWfMigs()
+}
 async function loadWfMigs() {
   wfMigLoading.value = true
-  try { wfMigList.value = ((await api.getWorkflowMigrations()) as any) || [] } catch { wfMigList.value = [] } finally { wfMigLoading.value = false }
+  try {
+    // 优先读后端（可能已实现），为空时回退前端留存日志
+    let list: any[] = []
+    try { list = ((await api.getWorkflowMigrations()) as any) || [] } catch { list = [] }
+    if (!Array.isArray(list) || list.length === 0) list = loadMigLogs()
+    wfMigList.value = list
+  } finally { wfMigLoading.value = false }
 }
+
+/** 取业务流最新草稿版本（优先 draft，其次最新版本） */
+async function latestVersionOf(flowId: string) {
+  const versions: any = await bpm.listVersions(flowId).catch(() => [])
+  const arr: any[] = Array.isArray(versions) ? versions : (versions?.list || versions?.records || [])
+  if (!arr.length) return null
+  return arr.find((v: any) => v.status === 'draft') || arr[arr.length - 1]
+}
+
+/** 前端驱动迁移：节点（含位置）→ 连线 → 节点扩展配置（delays/resources/permissions/log-level/data-policies/backups） */
 async function handleCreateWfMig() {
   if (!wfMigForm.value.targetWorkflowId) { ElMessage.warning('请选择目标业务流'); return }
   if (wfMigForm.value.targetWorkflowId === wfId.value) { ElMessage.warning('目标业务流不能与源相同'); return }
   wfMigSubmitting.value = true
+  const startedAt = Date.now()
+  const src = wfId.value
+  const tgt = wfMigForm.value.targetWorkflowId
+  const exts = ['delays', 'resources', 'permissions', 'log-level', 'data-policies']
+  let nodeOk = 0, edgeOk = 0, extOk = 0
+  const warnings: string[] = []
   try {
-    await api.createWorkflowMigration({ sourceWorkflowId: wfId.value, ...wfMigForm.value, operator: 'admin' })
-    ElMessage.success('迁移已完成')
+    // 1) 读取源：节点 / 连线 / 源版本
+    wfMigStage.value = '读取源业务流配置…'; wfMigProgress.value = 10
+    const srcNodes: any[] = ((await api.getWorkflowNodes(src)) as any) || []
+    const srcVer = await latestVersionOf(src)
+    const srcEdges: any[] = srcVer ? (((await bpm.listEdges(src, srcVer.id).catch(() => [])) as any) || []) : []
+
+    // 2) 目标版本（用于写连线）
+    const tgtVer = await latestVersionOf(tgt)
+    if (!tgtVer) warnings.push('目标业务流没有可写版本，连线未迁移')
+
+    // 3) 迁移节点（compat 接口以 type 键传节点类型）
+    wfMigStage.value = `迁移节点（共 ${srcNodes.length} 个）…`
+    for (const n of srcNodes) {
+      if (wfMigForm.value.strategy === 'merge' && srcNodes.length && (await api.getWorkflowNodes(tgt) as any)?.some((x: any) => x.nodeKey === n.nodeKey)) {
+        warnings.push(`节点 ${n.nodeKey} 已存在，按「合并」策略跳过`)
+        continue
+      }
+      await api.addWorkflowNode(tgt, { nodeKey: n.nodeKey, name: n.name, type: n.nodeType, x: n.positionX || 0, y: n.positionY || 0 })
+      nodeOk++
+      wfMigProgress.value = 10 + Math.round((nodeOk / Math.max(1, srcNodes.length)) * 40) // 10 → 50
+    }
+
+    // 4) 迁移连线
+    if (tgtVer && srcEdges.length) {
+      wfMigStage.value = `迁移连线（共 ${srcEdges.length} 条）…`
+      for (const e of srcEdges) {
+        try {
+          await bpm.createEdge(tgt, tgtVer.id, { sourceNodeKey: e.sourceNodeKey, targetNodeKey: e.targetNodeKey, edgeKind: e.edgeKind, label: e.label })
+          edgeOk++
+        } catch (err: any) {
+          warnings.push(`连线 ${e.sourceNodeKey}→${e.targetNodeKey} 迁移失败`)
+        }
+        wfMigProgress.value = 50 + Math.round((edgeOk / Math.max(1, srcEdges.length)) * 30) // 50 → 80
+      }
+    } else {
+      wfMigProgress.value = 80
+    }
+
+    // 5) 迁移节点扩展配置（源节点的维度配置可能平铺在 config 顶层，也可能在 extensions 下，两种都兼容）
+    wfMigStage.value = '迁移节点扩展配置…'
+    for (const n of srcNodes) {
+      let cfg: any = {}
+      try { cfg = typeof n.config === 'string' ? JSON.parse(n.config || '{}') : (n.config || {}) } catch { cfg = {} }
+      const ex = { ...(cfg.extensions || {}), ...cfg }
+      for (const dim of exts) {
+        if (!ex[dim] || typeof ex[dim] !== 'object') continue
+        try {
+          await api.saveWorkflowNodeConfig(tgt, n.nodeKey, dim, ex[dim])
+          extOk++
+        } catch { warnings.push(`节点 ${n.nodeKey} 的 ${dim} 配置迁移失败`) }
+      }
+    }
+    wfMigProgress.value = 100
+    wfMigStage.value = '迁移完成'
+
+    const entry = {
+      id: `mig_${Date.now()}`,
+      sourceWorkflowId: src,
+      sourceName: wfNameById(src),
+      targetWorkflowId: tgt,
+      targetName: wfNameById(tgt),
+      targetEnv: wfMigForm.value.targetEnv,
+      strategy: wfMigForm.value.strategy,
+      remark: wfMigForm.value.remark,
+      nodeCount: nodeOk,
+      edgeCount: edgeOk,
+      extCount: extOk,
+      status: 'completed',
+      progress: 100,
+      durationMs: Date.now() - startedAt,
+      warnings,
+      validateResult: `节点 ${nodeOk} 个 / 连线 ${edgeOk} 条 / 扩展配置 ${extOk} 项` + (warnings.length ? `；${warnings.length} 项提示` : ''),
+      createdAt: new Date().toLocaleString('zh-CN'),
+      operator: 'admin',
+    }
+    saveMigLogs([entry, ...loadMigLogs()])
     await loadWfMigs()
-  } catch { ElMessage.error('迁移失败') } finally { wfMigSubmitting.value = false }
+    ElMessage.success(`迁移完成：节点 ${nodeOk} 个 / 连线 ${edgeOk} 条 / 扩展配置 ${extOk} 项`)
+  } catch (e: any) {
+    const failEntry = {
+      id: `mig_${Date.now()}`, sourceWorkflowId: src, sourceName: wfNameById(src),
+      targetWorkflowId: tgt, targetName: wfNameById(tgt), targetEnv: wfMigForm.value.targetEnv,
+      strategy: wfMigForm.value.strategy, remark: wfMigForm.value.remark,
+      nodeCount: nodeOk, edgeCount: edgeOk, extCount: extOk,
+      status: 'failed', progress: wfMigProgress.value, durationMs: Date.now() - startedAt,
+      warnings: [...warnings, String(e?.message || e)], validateResult: `迁移中断：${e?.message || '未知错误'}`,
+      createdAt: new Date().toLocaleString('zh-CN'), operator: 'admin',
+    }
+    saveMigLogs([failEntry, ...loadMigLogs()])
+    await loadWfMigs()
+    ElMessage.error('迁移失败：' + (e?.message || ''))
+  } finally {
+    wfMigSubmitting.value = false
+  }
 }
 function wfMigStatus(s: string) { return ({ running: '执行中', pending: '待执行', completed: '已完成', failed: '失败' } as Record<string, string>)[s] || s }
 function wfMigStatusColor(s: string) { return (({ completed: 'success', failed: 'danger', running: 'warning', pending: 'info' } as Record<string, string>)[s] || 'info') as any }
 function wfNameById(id: string) { return workflowList.value.find((w: any) => w.id === id)?.name || id }
+function clearMigLogs() {
+  saveMigLogs([])
+  wfMigList.value = []
+  ElMessage.success('已清空本地迁移日志')
+}
 </script>
 
 <template>
@@ -1361,25 +1497,48 @@ function wfNameById(id: string) { return workflowList.value.find((w: any) => w.i
             <el-button type="primary" :loading="wfMigSubmitting" @click="handleCreateWfMig">开始迁移</el-button>
           </el-form-item>
         </el-form>
+        <el-form-item label="备注" style="margin-bottom:0">
+          <el-input v-model="wfMigForm.remark" placeholder="迁移说明（可选）" style="max-width:420px" />
+        </el-form-item>
+        <!-- 迁移进度（执行中实时展示 10% → 100%） -->
+        <div v-if="wfMigSubmitting || wfMigProgress > 0" style="margin-top:10px">
+          <el-progress :percentage="wfMigProgress" :status="wfMigProgress >= 100 ? 'success' : undefined" :stroke-width="12" />
+          <div style="font-size:12px;color:var(--el-text-color-secondary);margin-top:4px">{{ wfMigStage }}</div>
+        </div>
       </div>
-      <div class="section-title" style="margin-bottom:8px">迁移日志</div>
+      <div class="section-title" style="margin-bottom:8px">
+        迁移日志
+        <el-button v-if="wfMigList.length" link type="danger" size="small" style="margin-left:8px" @click="clearMigLogs">清空日志</el-button>
+        <span style="font-size:12px;color:var(--el-text-color-secondary);margin-left:8px">（迁移由前端读取源配置并真实写入目标业务流；日志留存于本地）</span>
+      </div>
       <el-table :data="wfMigList" stripe size="small" v-loading="wfMigLoading">
-        <el-table-column label="源 → 目标" min-width="180" show-overflow-tooltip>
-          <template #default="{ row }">{{ wfNameById(row.sourceWorkflowId) }} → {{ wfNameById(row.targetWorkflowId) }}</template>
+        <el-table-column label="源 → 目标" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.sourceName || wfNameById(row.sourceWorkflowId) }} → {{ row.targetName || wfNameById(row.targetWorkflowId) }}</template>
         </el-table-column>
         <el-table-column label="目标环境" width="90"><template #default="{ row }">{{ row.targetEnv === 'production' ? '生产' : '测试' }}</template></el-table-column>
         <el-table-column label="策略" width="80"><template #default="{ row }">{{ row.strategy === 'merge' ? '合并' : '覆盖' }}</template></el-table-column>
-        <el-table-column label="进度" width="150">
+        <el-table-column label="进度" width="140">
           <template #default="{ row }"><el-progress :percentage="row.progress || 0" :status="row.status === 'failed' ? 'exception' : (row.progress >= 100 ? 'success' : undefined)" :stroke-width="10" /></template>
+        </el-table-column>
+        <el-table-column label="迁移内容" min-width="200" show-overflow-tooltip>
+          <template #default="{ row }">
+            <template v-if="row.nodeCount !== undefined">
+              节点 {{ row.nodeCount }} / 连线 {{ row.edgeCount || 0 }} / 扩展配置 {{ row.extCount || 0 }}
+              <el-tag v-if="row.warnings?.length" size="small" type="warning" style="margin-left:6px">{{ row.warnings.length }} 项提示</el-tag>
+            </template>
+            <span v-else>{{ row.validateResult }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="耗时" width="90" align="center">
+          <template #default="{ row }">{{ row.durationMs ? (row.durationMs / 1000).toFixed(1) + 's' : '-' }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }"><el-tag :type="wfMigStatusColor(row.status)" size="small">{{ wfMigStatus(row.status) }}</el-tag></template>
         </el-table-column>
-        <el-table-column prop="validateResult" label="迁移结果" min-width="160" show-overflow-tooltip />
         <el-table-column prop="operator" label="操作人" width="80" />
         <el-table-column prop="createdAt" label="时间" width="160" />
       </el-table>
-      <el-empty v-if="!wfMigList.length && !wfMigLoading" description="暂无迁移记录" :image-size="60" />
+      <el-empty v-if="!wfMigList.length && !wfMigLoading" description="暂无迁移记录：选择目标业务流与策略后点「开始迁移」" :image-size="60" />
     </el-dialog>
   </div>
 </template>

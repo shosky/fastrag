@@ -3,6 +3,7 @@ import { ref, reactive, onMounted, onBeforeUnmount, computed, watch, nextTick } 
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as bpm from '@/api/bpm'
+import * as api from '@/api'
 import {
   BPM_NODE_TYPE_LABELS, BPM_NODE_TYPE_COLORS, BPM_NODE_TYPE_ICONS,
   VERSION_STATUS_LABELS, VERSION_STATUS_TAG_TYPES,
@@ -373,6 +374,104 @@ async function deleteNode(n: NodeVO) {
 }
 
 // ============================================================================
+// 节点管理：剪切节点 / 粘贴节点 / 节点日志（查看 + 清理）
+// ============================================================================
+const cutBuffer = ref<any>(null)
+const pasteCount = ref(0)
+
+/** 剪切节点：记录节点配置并删除原节点，随后可「粘贴节点」重建 */
+async function cutNode() {
+  const n = selectedNode.value
+  if (!n || !currentVersionId.value) { ElMessage.warning('请先选中要剪切的节点'); return }
+  try {
+    await ElMessageBox.confirm(`剪切节点「${n.name || n.nodeKey}」？剪切后可在画布中「粘贴节点」恢复。`, '剪切确认', { type: 'warning' })
+  } catch { return }
+  cutBuffer.value = {
+    nodeType: n.nodeType,
+    name: n.name,
+    positionX: n.positionX || 0,
+    positionY: n.positionY || 0,
+    config: n.config || '{}',
+    timeoutMs: n.timeoutMs,
+    retryCount: n.retryCount,
+    retryIntervalMs: n.retryIntervalMs,
+    onFailure: n.onFailure,
+  }
+  try {
+    await bpm.deleteNode(flowDefId.value, currentVersionId.value, n.nodeKey)
+    nodes.value = nodes.value.filter(nn => nn.nodeKey !== n.nodeKey)
+    edges.value = edges.value.filter(e => e.sourceNodeKey !== n.nodeKey && e.targetNodeKey !== n.nodeKey)
+    selectedNodeKey.value = null
+    dirty.value = true
+    ElMessage.success(`已剪切「${n.name || n.nodeKey}」，点「粘贴节点」可重建`)
+  } catch (e: any) {
+    ElMessage.error('剪切失败：' + (e?.message || ''))
+  }
+}
+
+/** 粘贴节点：用剪切缓冲在画布上重建（nodeKey 自动加后缀避免冲突） */
+async function pasteNode() {
+  if (!cutBuffer.value) { ElMessage.warning('剪贴板为空，请先剪切节点'); return }
+  if (!currentVersionId.value) { ElMessage.warning('请先选择版本'); return }
+  pasteCount.value += 1
+  const baseKey = (cutBuffer.value.name || cutBuffer.value.nodeType || 'node').replace(/\s+/g, '_')
+  let nodeKey = `${baseKey}_paste${pasteCount.value}`
+  while (nodes.value.some(n => n.nodeKey === nodeKey)) { pasteCount.value += 1; nodeKey = `${baseKey}_paste${pasteCount.value}` }
+  try {
+    const created = await bpm.createNode(flowDefId.value, currentVersionId.value, {
+      nodeKey,
+      nodeType: cutBuffer.value.nodeType,
+      name: `${cutBuffer.value.name || cutBuffer.value.nodeType}（粘贴）`,
+      positionX: (cutBuffer.value.positionX || 0) + 60,
+      positionY: (cutBuffer.value.positionY || 0) + 60,
+      config: cutBuffer.value.config || '{}',
+      enabled: true,
+    } as any)
+    nodes.value.push(created || { nodeKey, nodeType: cutBuffer.value.nodeType, name: `${cutBuffer.value.name}（粘贴）`, positionX: cutBuffer.value.positionX + 60, positionY: cutBuffer.value.positionY + 60, config: cutBuffer.value.config })
+    selectedNodeKey.value = nodeKey
+    dirty.value = true
+    ElMessage.success(`已粘贴节点「${nodeKey}」（请保存画布）`)
+  } catch (e: any) {
+    ElMessage.error('粘贴失败：' + (e?.message || ''))
+  }
+}
+
+/** 节点日志：查看（真实接口） */
+const nodeLogVisible = ref(false)
+const nodeLogs = ref<any[]>([])
+const nodeLogLoading = ref(false)
+const nodeLogKey = ref('')
+async function openNodeLogs(n?: any) {
+  const target = n || selectedNode.value
+  if (!target) { ElMessage.warning('请先选中节点'); return }
+  nodeLogKey.value = target.nodeKey
+  nodeLogVisible.value = true
+  nodeLogLoading.value = true
+  try {
+    nodeLogs.value = ((await api.getWorkflowNodeLogs(flowDefId.value, target.nodeKey)) as any) || []
+  } catch {
+    nodeLogs.value = []
+  } finally {
+    nodeLogLoading.value = false
+  }
+}
+/** 节点日志：清理 */
+async function clearNodeLogs(n?: any) {
+  const key = n?.nodeKey || nodeLogKey.value || selectedNode.value?.nodeKey
+  if (!key) { ElMessage.warning('请先选中节点'); return }
+  try {
+    await ElMessageBox.confirm(`确定清理节点「${key}」的日志吗？`, '清理确认', { type: 'warning' })
+  } catch { return }
+  try {
+    await api.clearWorkflowNodeLogs(flowDefId.value, key)
+    nodeLogs.value = []
+    ElMessage.success(`节点「${key}」日志已清理`)
+  } catch (e: any) {
+    ElMessage.error('清理失败：' + (e?.message || ''))
+  }
+}
+
+// ============================================================================
 // 节点编辑表单
 // ============================================================================
 function syncNodeEditForm(n: NodeVO) {
@@ -554,6 +653,148 @@ const toolboxGroups = computed(() => {
   }
   return groups
 })
+
+// ============================================================================
+// 节点扩展配置（画布节点）：节点延时 / 节点资源 / 节点权限 / 节点日志级别 /
+// 节点数据保留策略 / 节点数据备份 —— 每个维度支持 设置(新增) / 查看 / 修改 / 删除
+// 存储：写入节点 config 的 extensions 字段（PUT /api/bpm/flows/{flowDefId}/versions/{versionId}/nodes/{nodeKey}/config）
+// ============================================================================
+interface ExtField { k: string; l: string; t: 'number' | 'input' | 'select' | 'switch'; opts?: string[] }
+const EXT_TABS: { key: string; label: string; fields: ExtField[] }[] = [
+  { key: 'delays', label: '节点延时', fields: [{ k: 'duration', l: '延时时长', t: 'number' }, { k: 'unit', l: '单位', t: 'select', opts: ['second', 'minute', 'hour'] }] },
+  { key: 'resources', label: '节点资源', fields: [{ k: 'timeoutMs', l: '超时(ms)', t: 'number' }, { k: 'retryCount', l: '重试次数', t: 'number' }, { k: 'retryIntervalMs', l: '重试间隔(ms)', t: 'number' }] },
+  { key: 'permissions', label: '节点权限', fields: [{ k: 'visibleRoles', l: '可见角色', t: 'input' }, { k: 'editableRoles', l: '可编辑角色', t: 'input' }] },
+  { key: 'logLevel', label: '日志级别', fields: [{ k: 'level', l: '日志级别', t: 'select', opts: ['DEBUG', 'INFO', 'WARN', 'ERROR'] }] },
+  { key: 'dataPolicies', label: '数据保留策略', fields: [{ k: 'retentionDays', l: '保留天数', t: 'number' }, { k: 'autoArchive', l: '自动归档', t: 'switch' }] },
+]
+const extVisible = ref(false)
+const extTab = ref('delays')
+const extSaving = ref(false)
+const extForm = ref<Record<string, any>>({})
+const extBackups = ref<{ autoBackup: boolean; frequency: string; snapshots: any[] }>({ autoBackup: false, frequency: 'daily', snapshots: [] })
+
+function defaultExt(key: string): Record<string, any> {
+  switch (key) {
+    case 'delays': return { duration: 10, unit: 'second' }
+    case 'resources': return { timeoutMs: 30000, retryCount: 1, retryIntervalMs: 1000 }
+    case 'permissions': return { visibleRoles: 'admin,editor', editableRoles: 'admin' }
+    case 'logLevel': return { level: 'INFO' }
+    case 'dataPolicies': return { retentionDays: 90, autoArchive: false }
+    default: return {}
+  }
+}
+
+/** 解析节点 config（JSON 字符串 / 对象） */
+function parseNodeConfig(n: any): Record<string, any> {
+  if (!n) return {}
+  const c = n.config
+  if (!c) return {}
+  if (typeof c === 'object') return c as Record<string, any>
+  try { return JSON.parse(c) } catch { return {} }
+}
+
+function openExtConfig() {
+  const n = selectedNode.value
+  if (!n) { ElMessage.warning('请先选中节点'); return }
+  const cfg = parseNodeConfig(n)
+  const ex = cfg.extensions || {}
+  extForm.value = {}
+  for (const t of EXT_TABS) extForm.value[t.key] = ex[t.key] ? { ...ex[t.key] } : {}
+  extBackups.value = ex.backups ? JSON.parse(JSON.stringify(ex.backups)) : { autoBackup: false, frequency: 'daily', snapshots: [] }
+  extTab.value = 'delays'
+  extVisible.value = true
+}
+
+/** 保存整棵 extensions（removeKey 传入时表示删除该维度） */
+async function persistExtensions(nextEx: Record<string, any>, tip: string) {
+  const n = selectedNode.value
+  if (!n || !currentVersionId.value) return
+  extSaving.value = true
+  try {
+    const cfg = parseNodeConfig(n)
+    cfg.extensions = nextEx
+    await bpm.updateNodeConfig(flowDefId.value, currentVersionId.value, n.nodeKey, cfg)
+    n.config = JSON.stringify(cfg) // 本地同步，避免再次打开读到旧值
+    ElMessage.success(tip)
+    return true
+  } catch (e: any) {
+    ElMessage.error('保存失败：' + (e?.message || ''))
+    return false
+  } finally {
+    extSaving.value = false
+  }
+}
+
+function currentExtensions(): Record<string, any> {
+  return { ...(parseNodeConfig(selectedNode.value).extensions || {}) }
+}
+
+/** 设置 / 修改：写入当前页签的维度配置 */
+async function saveExtDim() {
+  const ex = currentExtensions()
+  if (extTab.value === 'backups') ex.backups = extBackups.value
+  else ex[extTab.value] = { ...extForm.value[extTab.value] }
+  const had = !!currentExtensions()[extTab.value]
+  if (await persistExtensions(ex, had ? '节点配置已修改' : '节点配置已设置')) extSaving.value = false
+}
+
+/** 查看：从节点 config 重新读取（含未保存时的刷新） */
+function loadExtDim() {
+  openExtConfig()
+  ElMessage.success('已从节点配置读取最新值')
+}
+
+/** 删除：移除当前页签的维度配置 */
+async function deleteExtDim(key?: string) {
+  const target = key || extTab.value
+  try {
+    await ElMessageBox.confirm(`确定删除节点「${target}」配置吗？`, '提示', { type: 'warning' })
+  } catch { return }
+  const ex = currentExtensions()
+  delete ex[target]
+  if (await persistExtensions(ex, '节点配置已删除')) {
+    if (target === 'backups') extBackups.value = { autoBackup: false, frequency: 'daily', snapshots: [] }
+    else extForm.value[target] = {}
+  }
+}
+
+/** 数据备份：立即备份（把当前 extensions 存为快照） */
+async function createBackup() {
+  const ex = currentExtensions()
+  const snap = { id: `snap_${Date.now()}`, name: `快照 ${new Date().toLocaleString('zh-CN')}`, createdAt: new Date().toLocaleString('zh-CN'), extensions: JSON.parse(JSON.stringify(ex)) }
+  extBackups.value.snapshots.unshift(snap)
+  if (await persistExtensions({ ...ex, backups: extBackups.value }, '已完成节点数据备份')) extTab.value = 'backups'
+}
+
+/** 数据备份：恢复（把快照的 extensions 写回节点） */
+async function restoreBackup(snap: any) {
+  try {
+    await ElMessageBox.confirm(`确定用「${snap.name}」覆盖当前节点配置吗？`, '恢复确认', { type: 'warning' })
+  } catch { return }
+  const snapEx = JSON.parse(JSON.stringify(snap.extensions || {}))
+  const backups = { ...extBackups.value }
+  if (await persistExtensions({ ...snapEx, backups }, `已恢复到「${snap.name}」`)) {
+    const cfg = parseNodeConfig(selectedNode.value)
+    const ex = cfg.extensions || {}
+    for (const t of EXT_TABS) extForm.value[t.key] = ex[t.key] ? { ...ex[t.key] } : {}
+  }
+}
+
+/** 数据备份：删除快照 */
+async function deleteBackup(snap: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除快照「${snap.name}」吗？`, '提示', { type: 'warning' })
+  } catch { return }
+  extBackups.value.snapshots = extBackups.value.snapshots.filter((s: any) => s.id !== snap.id)
+  const ex = currentExtensions()
+  if (await persistExtensions({ ...ex, backups: extBackups.value }, '快照已删除')) extTab.value = 'backups'
+}
+
+/** 当前维度是否已配置（用于「查看」提示与按钮态） */
+function hasExt(key: string) {
+  if (key === 'backups') return (currentExtensions().backups?.snapshots || []).length > 0
+  return !!currentExtensions()[key]
+}
 </script>
 
 <template>
@@ -689,6 +930,16 @@ const toolboxGroups = computed(() => {
               </el-select>
             </div>
             <el-button type="primary" size="small" style="margin-top:8px" @click="saveNodeEdit">应用(需保存画布)</el-button>
+            <el-button size="small" style="margin-top:8px" type="warning" plain @click="openExtConfig">节点扩展配置</el-button>
+            <div style="display:flex;gap:8px;margin-top:8px;flex-wrap:wrap">
+              <el-button size="small" @click="cutNode">剪切节点</el-button>
+              <el-button size="small" :disabled="!cutBuffer" @click="pasteNode">粘贴节点</el-button>
+              <el-button size="small" @click="openNodeLogs()">节点日志</el-button>
+              <el-button size="small" type="danger" plain @click="clearNodeLogs()">清理节点日志</el-button>
+            </div>
+            <div v-if="cutBuffer" style="font-size:12px;color:#909399;margin-top:6px">
+              已剪切：{{ cutBuffer.name || cutBuffer.nodeType }}
+            </div>
           </div>
         </template>
 
@@ -790,6 +1041,91 @@ const toolboxGroups = computed(() => {
         <el-button @click="showTrigger = false">取消</el-button>
         <el-button type="primary" @click="submitTrigger">触发</el-button>
       </template>
+    </el-dialog>
+
+    <!-- ===== 节点扩展配置：延时/资源/权限/日志级别/数据保留策略/数据备份 ===== -->
+    <el-dialog v-model="extVisible" :title="`节点扩展配置 — ${selectedNode?.name || selectedNode?.nodeKey || ''}（${selectedNode?.nodeKey || ''}）`" width="680px" top="8vh">
+      <el-tabs v-model="extTab">
+        <el-tab-pane v-for="t in EXT_TABS" :key="t.key" :label="t.label" :name="t.key">
+          <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+            <el-tag :type="hasExt(t.key) ? 'success' : 'info'" size="small">{{ hasExt(t.key) ? '已配置' : '未配置' }}</el-tag>
+            <span style="color:var(--el-text-color-secondary);font-size:12px">支持 设置（新增）/ 查看 / 修改 / 删除</span>
+          </div>
+          <el-form label-width="110px" size="small">
+            <el-form-item v-for="f in t.fields" :key="f.k" :label="f.l">
+              <el-input-number v-if="f.t === 'number'" v-model="extForm[t.key][f.k]" :min="0" :max="3600000" style="width:200px" />
+              <el-select v-else-if="f.t === 'select'" v-model="extForm[t.key][f.k]" style="width:200px">
+                <el-option v-for="o in (f.opts || [])" :key="o" :label="o" :value="o" />
+              </el-select>
+              <el-switch v-else-if="f.t === 'switch'" v-model="extForm[t.key][f.k]" />
+              <el-input v-else v-model="extForm[t.key][f.k]" style="width:320px" placeholder="多个角色用逗号分隔，如 admin,editor" />
+            </el-form-item>
+          </el-form>
+          <div style="display:flex;gap:8px">
+            <el-button size="small" type="primary" :loading="extSaving" @click="saveExtDim">{{ hasExt(t.key) ? '修改（保存）' : '设置（保存）' }}</el-button>
+            <el-button size="small" @click="loadExtDim">查看（读取节点配置）</el-button>
+            <el-button size="small" @click="extForm[t.key] = defaultExt(t.key)">填充默认值</el-button>
+            <el-button size="small" type="danger" plain :disabled="!hasExt(t.key)" @click="deleteExtDim()">删除该维度配置</el-button>
+          </div>
+        </el-tab-pane>
+
+        <!-- 数据备份：立即备份 / 恢复 / 删除 -->
+        <el-tab-pane label="节点数据备份" name="backups">
+          <div style="display:flex;align-items:center;gap:12px;margin-bottom:10px">
+            <span style="font-size:13px">自动备份</span>
+            <el-switch v-model="extBackups.autoBackup" />
+            <el-select v-model="extBackups.frequency" size="small" style="width:130px" :disabled="!extBackups.autoBackup">
+              <el-option label="每天" value="daily" />
+              <el-option label="每周" value="weekly" />
+              <el-option label="每月" value="monthly" />
+            </el-select>
+            <el-button size="small" type="primary" :loading="extSaving" @click="createBackup">立即备份（设置）</el-button>
+            <el-button size="small" :disabled="!extBackups.snapshots.length" type="danger" plain @click="deleteExtDim('backups')">删除全部备份</el-button>
+          </div>
+          <el-table :data="extBackups.snapshots" size="small" stripe>
+            <el-table-column prop="name" label="快照名称" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="createdAt" label="备份时间" width="180" />
+            <el-table-column label="包含维度" min-width="180">
+              <template #default="{ row }">
+                <el-tag v-for="k in Object.keys(row.extensions || {})" :key="k" size="small" style="margin-right:4px">{{ k }}</el-tag>
+                <span v-if="!Object.keys(row.extensions || {}).length" style="color:#909399">空</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="150" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="restoreBackup(row)">恢复</el-button>
+                <el-button link type="danger" size="small" @click="deleteBackup(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!extBackups.snapshots.length" description="暂无快照，点击「立即备份」创建" :image-size="60" />
+        </el-tab-pane>
+      </el-tabs>
+      <template #footer>
+        <span style="float:left;color:var(--el-text-color-secondary);font-size:12px">配置写入节点 config.extensions（随画布保存生效）</span>
+        <el-button @click="extVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- ===== 节点日志：查看 + 清理 ===== -->
+    <el-dialog v-model="nodeLogVisible" :title="`节点日志 — ${nodeLogKey}`" width="640px">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
+        <el-tag size="small" type="info">{{ nodeLogs.length }} 条日志</el-tag>
+        <span style="flex:1" />
+        <el-button size="small" :loading="nodeLogLoading" @click="openNodeLogs({ nodeKey: nodeLogKey })">刷新</el-button>
+        <el-button size="small" type="danger" @click="clearNodeLogs({ nodeKey: nodeLogKey })">清理节点日志</el-button>
+      </div>
+      <el-table :data="nodeLogs" size="small" stripe v-loading="nodeLogLoading" max-height="360">
+        <el-table-column prop="level" label="级别" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.level === 'ERROR' ? 'danger' : row.level === 'WARN' ? 'warning' : 'info'">{{ row.level || 'INFO' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="message" label="日志内容" min-width="280" show-overflow-tooltip />
+        <el-table-column prop="createdAt" label="时间" width="160" />
+      </el-table>
+      <el-empty v-if="!nodeLogs.length && !nodeLogLoading" description="该节点暂无日志（执行流程后会写入）" :image-size="60" />
+      <template #footer><el-button @click="nodeLogVisible = false">关闭</el-button></template>
     </el-dialog>
   </div>
 </template>

@@ -52,6 +52,12 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '知识库分类', icon: 'FolderOpened' },
       },
       {
+        path: 'knowledge/sync',
+        name: 'KnowledgeSync',
+        component: () => import('@/views/knowledge/sync.vue'),
+        meta: { title: '知识库同步', icon: 'Refresh' },
+      },
+      {
         path: 'knowledge/create',
         name: 'KnowledgeCreate',
         component: () => import('@/views/knowledge/create.vue'),
@@ -491,6 +497,12 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '下载中心', roles: ['super_admin', 'kb_admin'] as const },
           },
           {
+            path: 'content/qa-knowledge',
+            name: 'QaKnowledgeManage',
+            component: () => import('@/views/admin/content/qa-knowledge.vue'),
+            meta: { title: '问答知识管理', roles: ['super_admin', 'kb_admin'] as const },
+          },
+          {
             path: 'platform/third-party',
             name: 'ThirdParty',
             component: () => import('@/views/admin/platform/third-party.vue'),
@@ -559,6 +571,18 @@ const routes: RouteRecordRaw[] = [
           { path: 'plugins', name: 'PluginManagement', component: () => import('@/views/plugin-db/plugins.vue'), meta: { title: '插件管理' } },
           { path: 'databases', name: 'DatabaseManagement', component: () => import('@/views/plugin-db/databases.vue'), meta: { title: '数据库管理' } },
         ],
+      },
+      {
+        path: '/search-center',
+        name: 'SearchCenter',
+        component: () => import('@/views/search-center/index.vue'),
+        meta: { title: '知识搜索', icon: 'Search' },
+      },
+      {
+        path: '/agent-console',
+        name: 'AgentConsole',
+        component: () => import('@/views/agent-console/index.vue'),
+        meta: { title: '座席工作台', icon: 'User' },
       },
     ],
   },

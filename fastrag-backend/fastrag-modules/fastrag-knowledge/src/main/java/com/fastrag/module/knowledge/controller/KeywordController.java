@@ -10,6 +10,7 @@ import java.util.*;
 @RequiredArgsConstructor
 public class KeywordController {
     private final StandardQuestionService standardQuestionService;
+    private final com.fastrag.module.knowledge.service.QaPairService qaPairService;
     @GetMapping("/recommend")
     public ApiResponse<?> recommend(@PathVariable String kbId,
                                     @RequestParam String query,
@@ -48,5 +49,36 @@ public class KeywordController {
         ));
         List<Map<String, Object>> finalList = result.stream().limit(limit).toList();
         return ApiResponse.success(finalList);
+    }
+
+    /** 关键词推荐判断：判定 query 是否命中已配置关键词/标准问法（管理端-关键词推荐-判断） */
+    @PostMapping("/judge")
+    public ApiResponse<?> judge(@PathVariable String kbId, @RequestBody Map<String, Object> body) {
+        String query = body.get("query") == null ? "" : body.get("query").toString().trim();
+        Map<String, Object> result = new LinkedHashMap<>();
+        if (query.isEmpty()) { result.put("matched", false); result.put("keywords", List.of()); return ApiResponse.success(result); }
+        List<Map<String, Object>> hits = new ArrayList<>();
+        for (var std : standardQuestionService.list(kbId, null)) {
+            if (std.getStandardQuestion() != null && (std.getStandardQuestion().contains(query) || query.contains(std.getStandardQuestion()))) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("source", "standard"); m.put("id", std.getId()); m.put("text", std.getStandardQuestion()); m.put("score", 0.9);
+                hits.add(m);
+            }
+        }
+        for (var qa : qaPairService.list(kbId, null, null)) {
+            if (qa.getKeywords() == null) continue;
+            for (String kw : qa.getKeywords().split("[,，]")) {
+                kw = kw.trim();
+                if (!kw.isEmpty() && (query.contains(kw) || kw.contains(query))) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("source", "qa_keyword"); m.put("id", qa.getId()); m.put("text", kw); m.put("score", 0.8);
+                    hits.add(m);
+                }
+            }
+        }
+        result.put("matched", !hits.isEmpty());
+        result.put("keywords", hits.size() > 10 ? hits.subList(0, 10) : hits);
+        result.put("query", query);
+        return ApiResponse.success(result);
     }
 }

@@ -84,6 +84,50 @@ function goToDetail(id: string) {
 function goToCreate() {
   router.push('/knowledge/create')
 }
+
+// ===== 知识库导入 / 导出（后端 GET /kb/{id}/export、POST /kb/import） =====
+const importing = ref(false)
+const importInput = ref<HTMLInputElement>()
+
+async function handleExport(kb: any) {
+  try {
+    const resp: any = await api.exportKnowledgeBase(kb.id)
+    const data = resp?.data ?? resp
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `${kb.name || 'knowledge-base'}.json`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success(`已导出「${kb.name}」`)
+  } catch {
+    ElMessage.error('导出失败')
+  }
+}
+
+function triggerImport() {
+  importInput.value?.click()
+}
+
+async function handleImportFile(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  importing.value = true
+  try {
+    const text = await file.text()
+    const data = JSON.parse(text)
+    await api.importKnowledgeBase(data)
+    ElMessage.success(`已导入「${data?.knowledgeBase?.name || file.name}」`)
+    await loadData()
+  } catch (err: any) {
+    ElMessage.error('导入失败：' + (err?.message || '文件格式不正确（需为导出的 JSON）'))
+  } finally {
+    importing.value = false
+    input.value = ''
+  }
+}
 </script>
 
 <template>
@@ -93,9 +137,15 @@ function goToCreate() {
         <el-tab-pane label="全部知识库" name="all" />
         <el-tab-pane label="我的知识库" name="my" />
       </el-tabs>
-      <el-button v-permission="'kb:create'" type="primary" @click="goToCreate">
-        <el-icon><Plus /></el-icon>创建知识库
-      </el-button>
+      <div style="display:flex;gap:8px;align-items:center">
+        <el-button :loading="importing" @click="triggerImport">
+          <el-icon><Upload /></el-icon>导入知识库
+        </el-button>
+        <input ref="importInput" type="file" accept=".json,application/json" style="display:none" @change="handleImportFile" />
+        <el-button v-permission="'kb:create'" type="primary" @click="goToCreate">
+          <el-icon><Plus /></el-icon>创建知识库
+        </el-button>
+      </div>
     </div>
 
     <div class="knowledge-body">
@@ -175,7 +225,10 @@ function goToCreate() {
               </div>
               <div class="footer">
                 <span>{{ kb.creator }}</span>
-                <span>{{ kb.usedSize }}</span>
+                <span style="display:flex;align-items:center;gap:8px">
+                  <span>{{ kb.usedSize }}</span>
+                  <el-button link type="primary" size="small" @click.stop="handleExport(kb)">导出</el-button>
+                </span>
               </div>
             </div>
           </div>

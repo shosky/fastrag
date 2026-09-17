@@ -21,4 +21,29 @@ public class ModelController {
     @PostMapping("/presets") public ApiResponse<?> createPreset(@RequestBody Map<String,Object> preset) { return ApiResponse.success(svc.createPreset(preset)); }
     @PutMapping("/presets/{id}") public ApiResponse<?> updatePreset(@PathVariable String id,@RequestBody Map<String,Object> preset) { return ApiResponse.success(svc.updatePreset(id,preset)); }
     @DeleteMapping("/presets/{id}") public ApiResponse<?> deletePreset(@PathVariable String id) { svc.deletePreset(id); return ApiResponse.success(); }
-}
+
+
+    // ===== 模型阈值设置（新增/查看/修改） =====
+    @org.springframework.beans.factory.annotation.Autowired(required = false)
+    private com.fastrag.module.platform.mapper.ModelRecordMapper modelMapper;
+    @GetMapping("/{id}/threshold")
+    public ApiResponse<?> getThreshold(@PathVariable String id) {
+        if (modelMapper == null) return ApiResponse.success(null);
+        var m = modelMapper.selectById(id);
+        if (m == null) throw new RuntimeException("模型不存在");
+        java.util.Map<String, Object> r = new java.util.LinkedHashMap<>();
+        r.put("id", m.getId());
+        try { r.put("threshold", m.getThreshold() == null ? new java.util.HashMap<>() : new com.fasterxml.jackson.databind.ObjectMapper().readValue(m.getThreshold(), java.util.Map.class)); }
+        catch (Exception e) { r.put("threshold", new java.util.HashMap<>()); }
+        return ApiResponse.success(r);
+    }
+    @PutMapping("/{id}/threshold")
+    public ApiResponse<?> updateThreshold(@PathVariable String id, @RequestBody Map<String, Object> body) {
+        if (modelMapper == null) throw new RuntimeException("modelMapper 不可用");
+        var m = modelMapper.selectById(id);
+        if (m == null) throw new RuntimeException("模型不存在");
+        Object threshold = body.get("threshold");
+        m.setThreshold(threshold instanceof String ? (String) threshold : new com.fasterxml.jackson.databind.ObjectMapper().valueToTree(threshold).toString());
+        modelMapper.updateById(m);
+        return ApiResponse.success();
+    }}

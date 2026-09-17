@@ -92,15 +92,54 @@ public class SmartSearchServiceImpl implements SmartSearchService {
         var corrections=correctionMapper.selectList(new LambdaQueryWrapper<KbAutoCorrection>().eq(KbAutoCorrection::getKbId,kbId).eq(KbAutoCorrection::getEnabled,1).orderByDesc(KbAutoCorrection::getPriority));
         String corrected=q; List<Map<String,Object>> correctionList=new ArrayList<>(); boolean changed=false;
         for(var c:corrections){
+            if(c.getWrongText()==null||c.getCorrectText()==null) continue;
             if("exact".equals(c.getMatchType())&&corrected.contains(c.getWrongText())){
                 corrected=corrected.replace(c.getWrongText(),c.getCorrectText()); changed=true;
-                Map<String,Object> m=new LinkedHashMap<>(); m.put("original",c.getWrongText()); m.put("corrected",c.getCorrectText()); m.put("confidence",0.95); correctionList.add(m);
+                Map<String,Object> m=new LinkedHashMap<>(); m.put("original",c.getWrongText()); m.put("corrected",c.getCorrectText()); m.put("confidence",0.95); m.put("matchType","exact"); correctionList.add(m);
                 c.setHitCount((c.getHitCount()!=null?c.getHitCount():0)+1); correctionMapper.updateById(c);
+            }
+        }
+        // 模糊纠错（matchType=fuzzy）：与规则词/正确词等长且仅差 1 个字符时纠正，覆盖规则词表未穷举的错别字
+        if(!corrections.isEmpty()){
+            Map<String,String> vocab=new LinkedHashMap<>();
+            for(var c:corrections){
+                if(c.getWrongText()==null||c.getCorrectText()==null) continue;
+                if(!"fuzzy".equals(c.getMatchType())) continue;
+                if(c.getWrongText().length()>=2) vocab.putIfAbsent(c.getWrongText(),c.getCorrectText());
+                if(c.getCorrectText().length()>=2) vocab.putIfAbsent(c.getCorrectText(),c.getCorrectText());
+            }
+            for(var entry:vocab.entrySet()){
+                String wrong=entry.getKey(), right=entry.getValue();
+                int len=wrong.length();
+                for(int i=0;i+len<=corrected.length();i++){
+                    String window=corrected.substring(i,i+len);
+                    if(window.equals(right)) continue;
+                    if(hammingDistance(window,wrong)<=1){
+                        corrected=corrected.substring(0,i)+right+corrected.substring(i+len);
+                        changed=true;
+                        Map<String,Object> m=new LinkedHashMap<>(); m.put("original",window); m.put("corrected",right); m.put("confidence",0.85); m.put("matchType","fuzzy"); correctionList.add(m);
+                        break;
+                    }
+                }
             }
         }
         Map<String,Object> result=new LinkedHashMap<>();
         result.put("original",q); result.put("corrected",corrected); result.put("corrections",correctionList); result.put("hasCorrection",changed);
+        if(changed&&!correctionList.isEmpty()){
+            StringBuilder reason=new StringBuilder();
+            for(var m:correctionList){
+                if(reason.length()>0) reason.append("；");
+                reason.append("已将“").append(m.get("original")).append("”纠正为“").append(m.get("corrected")).append("”");
+            }
+            result.put("reason",reason.toString());
+        }
         return result;
+    }
+    /** 等长字符串的汉明距离（仅用于同长错别字定位） */
+    private int hammingDistance(String a,String b){
+        if(a.length()!=b.length()) return Integer.MAX_VALUE;
+        int d=0; for(int i=0;i<a.length();i++) if(a.charAt(i)!=b.charAt(i)) d++;
+        return d;
     }
     @Override public List<KbAutoCorrection> listCorrections(String kbId) { return correctionMapper.selectList(new LambdaQueryWrapper<KbAutoCorrection>().eq(KbAutoCorrection::getKbId,kbId).orderByDesc(KbAutoCorrection::getPriority)); }
     @Override public KbAutoCorrection createCorrection(KbAutoCorrection c) { if(c.getEnabled()==null) c.setEnabled(1); if(c.getHitCount()==null) c.setHitCount(0); if(c.getMatchType()==null) c.setMatchType("exact"); correctionMapper.insert(c); return c; }

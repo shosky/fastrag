@@ -46,6 +46,7 @@ export interface KnowledgeBaseForm {
   category: string
   description: string
   tags: string[]
+  kbType: 'general' | 'faq'
   permission: 'private' | 'team' | 'public'
   embeddingModel: string
   parseMode: 'auto' | 'manual'

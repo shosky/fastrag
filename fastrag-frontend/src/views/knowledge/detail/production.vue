@@ -179,12 +179,22 @@ async function loadTasks() {
     const res: any = await api.getQaExtractTasks(kbId)
     extractTasks.value = res || []
   } catch { extractTasks.value = [] }
-  if (!extractTasks.value.length) {
-    extractTasks.value = [
-      { id: 'et1', name: '产品文档问答抽取', sourceType: 'document', llmModel: 'qwen3-72b', completedCount: 45, totalCount: 50, status: 'completed' },
-      { id: 'et2', name: 'FAQ问答抽取', sourceType: 'qa_pair', llmModel: 'DeepSeek-V3', completedCount: 12, totalCount: 12, status: 'completed' },
-      { id: 'et3', name: '技术文档批量抽取', sourceType: 'document', llmModel: 'qwen3-72b', completedCount: 8, totalCount: 30, status: 'running' },
-    ]
+}
+
+// 全部入库：将该知识库下全部待确认(draft)问答对批量置为已入库
+const importingAll = ref(false)
+async function handleImportAll() {
+  try {
+    await ElMessageBox.confirm('将本知识库下全部待确认问答对批量入库，确认执行？', '全部入库', { type: 'warning' })
+  } catch { return }
+  importingAll.value = true
+  try {
+    const res: any = await api.confirmAllQaPairs(kbId)
+    ElMessage.success(`已入库 ${res?.count ?? 0} 条问答对，可在「问答对」Tab 查看`)
+  } catch {
+    ElMessage.error('全部入库失败')
+  } finally {
+    importingAll.value = false
   }
 }
 
@@ -315,7 +325,10 @@ onMounted(() => {
     <div class="card-panel" style="margin-top: 16px">
       <div class="section-header">
         <div class="section-title">问答抽取任务</div>
-        <el-button type="primary" @click="handleAddExtract">启动抽取</el-button>
+        <div>
+          <el-button :loading="importingAll" type="success" @click="handleImportAll">全部入库</el-button>
+          <el-button type="primary" @click="handleAddExtract">启动抽取</el-button>
+        </div>
       </div>
       <el-table :data="extractTasks" stripe>
         <el-table-column prop="name" label="任务名称" show-overflow-tooltip />

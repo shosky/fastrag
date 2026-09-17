@@ -66,17 +66,17 @@ export function getPluginList(params?: { page?: number; pageSize?: number; keywo
 }
 export function getPluginById(id: string): PluginItem | null { initStore(); return pluginStore.find(p => p.id === id) || null }
 export function createPlugin(data: Partial<PluginItem>): PluginItem {
-  checkApiPermission('app:write'); initStore()
+  checkApiPermission('app:edit'); initStore()
   const item: PluginItem = { id: `plg-${++seq}`, name: data.name || '', description: data.description || '', type: data.type || 'custom', tools: data.tools || [], status: 'active', version: 'v1.0.0', creator: 'admin', createdAt: new Date().toISOString() }
   pluginStore.push(item); return item
 }
 export function updatePlugin(id: string, data: Partial<PluginItem>): PluginItem | null {
-  checkApiPermission('app:write'); initStore()
+  checkApiPermission('app:edit'); initStore()
   const idx = pluginStore.findIndex(p => p.id === id); if (idx === -1) return null
   pluginStore[idx] = { ...pluginStore[idx], ...data }; return pluginStore[idx]
 }
 export function deletePlugin(id: string): boolean {
-  checkApiPermission('app:delete'); initStore()
+  checkApiPermission('app:edit'); initStore()
   const idx = pluginStore.findIndex(p => p.id === id); if (idx === -1) return false
   pluginStore.splice(idx, 1); return true
 }
@@ -89,17 +89,17 @@ export function getDatabaseList(params?: { page?: number; pageSize?: number; key
 }
 export function getDatabaseById(id: string): DatabaseConnection | null { initStore(); return dbStore.find(d => d.id === id) || null }
 export function createDatabase(data: Partial<DatabaseConnection>): DatabaseConnection {
-  checkApiPermission('app:write'); initStore()
+  checkApiPermission('app:edit'); initStore()
   const item: DatabaseConnection = { id: `db-${++seq}`, name: data.name || '', description: data.description || '', type: data.type || 'mysql', host: data.host || '', port: data.port || 3306, database: data.database || '', username: data.username || '', tables: [], status: 'disconnected', createdAt: new Date().toISOString() }
   dbStore.push(item); return item
 }
 export function updateDatabase(id: string, data: Partial<DatabaseConnection>): DatabaseConnection | null {
-  checkApiPermission('app:write'); initStore()
+  checkApiPermission('app:edit'); initStore()
   const idx = dbStore.findIndex(d => d.id === id); if (idx === -1) return null
   dbStore[idx] = { ...dbStore[idx], ...data }; return dbStore[idx]
 }
 export function deleteDatabase(id: string): boolean {
-  checkApiPermission('app:delete'); initStore()
+  checkApiPermission('app:edit'); initStore()
   const idx = dbStore.findIndex(d => d.id === id); if (idx === -1) return false
   dbStore.splice(idx, 1); return true
 }

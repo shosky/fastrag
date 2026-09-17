@@ -79,7 +79,7 @@ const BODY_TYPE_OPTIONS = [
 
 // ==================== 状态工具函数 ====================
 
-function statusColor(val: string | number | boolean | undefined | null): string {
+function statusColor(val: string | number | boolean | undefined | null): 'success' | 'info' | 'danger' | 'warning' | 'primary' {
   if (val === 'active' || val === 1 || val === true) return 'success'
   if (val === 'inactive' || val === 0 || val === false) return 'info'
   return 'info'
@@ -207,6 +207,23 @@ async function handleEdit(row: any) {
   }
 }
 
+// ==================== 查看插件详情（只读） ====================
+const showDetailDialog = ref(false)
+const detailRow = ref<any>({})
+const detailApi = ref<{ method: string; url: string; authType: string } | null>(null)
+
+async function handleViewDetail(row: any) {
+  detailRow.value = row
+  detailApi.value = null
+  showDetailDialog.value = true
+  if (row.type === 'http') {
+    try {
+      const cfg: any = await api.getToolApiConfig(row.id)
+      if (cfg) detailApi.value = { method: cfg.method || 'GET', url: cfg.url || '', authType: cfg.authType || 'none' }
+    } catch { /* 无配置时展示基础信息 */ }
+  }
+}
+
 async function handleDelete(row: any) {
   try {
     await ElMessageBox.confirm('确定要删除该记录吗？', '提示', { type: 'warning' })
@@ -283,7 +300,7 @@ async function handleSave() {
       await api.updateTool(editingId.value, payload)
       // 保存 API 配置（将 headers/params 数组序列化为 JSON 字符串，适配后端 String 字段）
       if (formData.value.type === 'custom') {
-        const apiCfg = { ...apiConfigForm.value }
+        const apiCfg: any = { ...apiConfigForm.value }
         apiCfg.headers = JSON.stringify(apiCfg.headers)
         apiCfg.params = JSON.stringify(apiCfg.params)
         await api.saveToolApiConfig(editingId.value, apiCfg)
@@ -293,7 +310,7 @@ async function handleSave() {
       const res: any = await api.createTool(payload)
       const newId: string | undefined = res?.id
       if (newId && formData.value.type === 'custom') {
-        const apiCfg = { ...apiConfigForm.value }
+        const apiCfg: any = { ...apiConfigForm.value }
         apiCfg.headers = JSON.stringify(apiCfg.headers)
         apiCfg.params = JSON.stringify(apiCfg.params)
         await api.saveToolApiConfig(newId, apiCfg)
@@ -381,8 +398,9 @@ function removePair(arr: KeyValuePair[], idx: number) { if (arr.length > 1) arr.
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="创建时间" width="160" show-overflow-tooltip />
-        <el-table-column label="操作" width="150" fixed="right">
+        <el-table-column label="操作" width="190" fixed="right">
           <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="handleViewDetail(row)">详情</el-button>
             <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -549,6 +567,26 @@ function removePair(arr: KeyValuePair[], idx: number) { if (arr.length > 1) arr.
         >
           {{ formData.type === 'uploaded' ? '上传' : formData.type === 'json_import' ? '导入' : '保存' }}
         </el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 插件详情弹窗（只读） -->
+    <el-dialog v-model="showDetailDialog" title="插件详情" width="560px">
+      <el-descriptions :column="1" border>
+        <el-descriptions-item label="插件名称">{{ detailRow.name || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="描述">{{ detailRow.description || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="类型">{{ TYPE_LABELS[BACK_TYPE_TO_FRONT[detailRow.type]] || detailRow.type || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="状态">
+          <el-tag :type="statusColor(detailRow.enabled)" size="small">{{ statusText(detailRow.enabled) }}</el-tag>
+        </el-descriptions-item>
+        <el-descriptions-item label="创建时间">{{ detailRow.createdAt || '-' }}</el-descriptions-item>
+        <el-descriptions-item v-if="detailApi" label="请求方法">{{ detailApi.method }}</el-descriptions-item>
+        <el-descriptions-item v-if="detailApi" label="请求地址">{{ detailApi.url || '-' }}</el-descriptions-item>
+        <el-descriptions-item v-if="detailApi" label="鉴权方式">{{ detailApi.authType === 'none' ? '无' : detailApi.authType }}</el-descriptions-item>
+      </el-descriptions>
+      <template #footer>
+        <el-button @click="showDetailDialog = false">关闭</el-button>
+        <el-button type="primary" @click="showDetailDialog = false; handleEdit(detailRow)">前往编辑</el-button>
       </template>
     </el-dialog>
   </div>

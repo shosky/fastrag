@@ -4,5 +4,6 @@ public interface RetrievalLogService {
     void log(KbRetrievalLog log);
     void update(KbRetrievalLog log);
     PageResult<KbRetrievalLog> page(String kbId,Boolean hasResult,int page,int pageSize);
+    void delete(Long id);
     Map<String,Object> analysis(String kbId);
 }

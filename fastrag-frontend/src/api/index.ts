@@ -210,6 +210,11 @@ export async function confirmQaPair(kbId: string, id: string) {
   return request.post(`/kb/${kbId}/qa-pairs/${id}/confirm`)
 }
 
+// 问答抽取全部入库：将该知识库下全部待确认问答对批量置为已入库
+export async function confirmAllQaPairs(kbId: string) {
+  return request.post(`/kb/${kbId}/qa-pairs/confirm-all`)
+}
+
 export async function qaExtract(kbId: string, fileIds: string[]) {
   return request.post(`/kb/${kbId}/qa-pairs/qa-extract`, { fileIds })
 }
@@ -1021,6 +1026,14 @@ export async function updateRetrievalLog(id: number | string, data: Record<strin
   return request.put(`/retrieval/logs/${id}`, data)
 }
 
+export async function createRetrievalLog(data: Record<string, unknown>) {
+  return request.post('/retrieval/logs', data)
+}
+
+export async function deleteRetrievalLog(id: number | string) {
+  return request.delete(`/retrieval/logs/${id}`)
+}
+
 export async function getUpdateRemindList(kbId?: string) {
   return request.get('/update-remind', { params: { kbId } })
 }
@@ -1361,6 +1374,10 @@ export async function deleteTag(kbId: string, id: string) {
 export async function getTagKnowledge(kbId: string, tagId: string) {
   return request.get(`/kb/${kbId}/tags/${tagId}/knowledge`)
 }
+/** 标签-知识关联（存储）：把知识挂到标签下 */
+export async function associateTagKnowledge(kbId: string, tagId: string, knowledgeId: string) {
+  return request.post(`/kb/${kbId}/tags/${tagId}/relations`, { targetType: 'knowledge', targetId: knowledgeId })
+}
 export async function disassociateTag(kbId: string, tagId: string, knowledgeId: string) {
   return request.delete(`/kb/${kbId}/tags/${tagId}/knowledge/${knowledgeId}`)
 }
@@ -1541,6 +1558,11 @@ export async function indexDocGuide(kbId: string, id: string) {
 }
 export async function multimodalSearch(kbId: string, modality: string, data: Record<string, unknown>) {
   return request.post(`/kb/${kbId}/multimodal-retrieval/${modality}/search`, data)
+}
+
+/** 多模态排序：对命中的素材按 relevance/name/size/createdAt 重排 */
+export async function multimodalSort(kbId: string, modality: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/multimodal-retrieval/${modality}/sort`, data)
 }
 
 // ===========================================================================
@@ -1730,6 +1752,10 @@ export async function getAppBasicConfig(appId: string) {
 }
 export async function saveAppBasicConfig(appId: string, data: Record<string, unknown>) {
   return request.put(`/apps/${appId}/basic`, data)
+}
+// 重置基础配置：删除自定义配置，恢复默认值
+export async function resetAppBasicConfig(appId: string) {
+  return request.post(`/apps/${appId}/basic/reset`)
 }
 export async function getAppDialogConfig(appId: string) {
   return request.get(`/apps/${appId}/dialog`)
@@ -2320,4 +2346,109 @@ export async function getKeywordRecommendations(kbId: string, query: string, lim
 // ===========================================================================
 // 默认导出（兼容旧代码）
 // ===========================================================================
+
+// ===========================================================================
+// 功能清单补齐 API（FAQ扩展 / 表格知识 / 属性管理 / 关联推荐 / 同步 / 语义配置 / 模型阈值）
+// ===========================================================================
+
+// ---- 关键词推荐判断（管理端-关键词推荐-判断） ----
+export async function judgeKeywords(kbId: string, query: string) {
+  return request.post(`/kb/${kbId}/keywords/judge`, { query })
+}
+
+// ---- FAQ 扩展：按应答添加知识 ----
+export async function qaPairToKnowledge(kbId: string, id: string) {
+  return request.post(`/kb/${kbId}/qa-pairs/${id}/to-knowledge`)
+}
+
+// ---- 表格型应答知识（新增表格/表格增加列/表格内容） ----
+export async function getAnswerTables(kbId: string) {
+  return request.get(`/kb/${kbId}/answer-tables`)
+}
+export async function getAnswerTable(kbId: string, id: string) {
+  return request.get(`/kb/${kbId}/answer-tables/${id}`)
+}
+export async function createAnswerTable(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/answer-tables`, data)
+}
+export async function updateAnswerTable(kbId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/kb/${kbId}/answer-tables/${id}`, data)
+}
+export async function deleteAnswerTable(kbId: string, id: string) {
+  return request.delete(`/kb/${kbId}/answer-tables/${id}`)
+}
+export async function addAnswerTableColumn(kbId: string, id: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/answer-tables/${id}/columns`, data)
+}
+export async function deleteAnswerTableColumn(kbId: string, id: string, colId: string) {
+  return request.delete(`/kb/${kbId}/answer-tables/${id}/columns/${colId}`)
+}
+export async function addAnswerTableRow(kbId: string, id: string, content: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/answer-tables/${id}/rows`, { content })
+}
+export async function updateAnswerTableRow(kbId: string, id: string, rowId: string, content: Record<string, unknown>) {
+  return request.put(`/kb/${kbId}/answer-tables/${id}/rows/${rowId}`, { content })
+}
+export async function deleteAnswerTableRow(kbId: string, id: string, rowId: string) {
+  return request.delete(`/kb/${kbId}/answer-tables/${id}/rows/${rowId}`)
+}
+
+// ---- 属性管理（知识库自定义属性定义 CRUD） ----
+export async function getAttributeDefs(kbId: string) {
+  return request.get(`/kb/${kbId}/attributes`)
+}
+export async function createAttributeDef(kbId: string, data: Record<string, unknown>) {
+  return request.post(`/kb/${kbId}/attributes`, data)
+}
+export async function updateAttributeDef(kbId: string, id: string, data: Record<string, unknown>) {
+  return request.put(`/kb/${kbId}/attributes/${id}`, data)
+}
+export async function deleteAttributeDef(kbId: string, id: string) {
+  return request.delete(`/kb/${kbId}/attributes/${id}`)
+}
+
+// ---- 知识关联推荐 ----
+export async function getRelatedKnowledge(kbId: string, id: string, limit?: number) {
+  return request.get(`/kb/${kbId}/knowledge/${id}/related`, { params: { limit } })
+}
+
+// ---- 知识库同步机制 ----
+export async function getKbSyncConfigs(keyword?: string) {
+  return request.get('/kb-sync', { params: { keyword } })
+}
+export async function createKbSyncConfig(data: Record<string, unknown>) {
+  return request.post('/kb-sync', data)
+}
+export async function updateKbSyncConfig(id: string, data: Record<string, unknown>) {
+  return request.put(`/kb-sync/${id}`, data)
+}
+export async function deleteKbSyncConfig(id: string) {
+  return request.delete(`/kb-sync/${id}`)
+}
+export async function runKbSync(id: string) {
+  return request.post(`/kb-sync/${id}/run`)
+}
+export async function getKbSyncRecords(id: string) {
+  return request.get(`/kb-sync/${id}/records`)
+}
+
+// ---- 语义理解/语义定制（应用级） ----
+export async function getSemanticConfig(appId: string) {
+  return request.get(`/apps/${appId}/semantic-config`)
+}
+export async function saveSemanticConfig(appId: string, data: Record<string, unknown>) {
+  return request.put(`/apps/${appId}/semantic-config`, data)
+}
+export async function judgeSemantic(appId: string, query: string) {
+  return request.post(`/apps/${appId}/semantic-config/judge`, { query })
+}
+
+// ---- 模型阈值设置 ----
+export async function getModelThreshold(id: string) {
+  return request.get(`/models/${id}/threshold`)
+}
+export async function updateModelThreshold(id: string, threshold: Record<string, unknown>) {
+  return request.put(`/models/${id}/threshold`, { threshold })
+}
+
 export default request

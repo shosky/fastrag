@@ -113,7 +113,7 @@ function handlePreview(file: KnowledgeFile) {
 async function handleDownload(file: KnowledgeFile) {
   try {
     const response = await api.downloadFile(kbId, file.id)
-    const blob = new Blob([response])
+    const blob = new Blob([response as unknown as BlobPart])
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -190,7 +190,7 @@ async function handleBulkExport() {
     for (const file of selectedFiles.value) {
       try {
         const response = await api.downloadFile(kbId, file.id)
-        const blob = new Blob([response])
+        const blob = new Blob([response as unknown as BlobPart])
         const url = URL.createObjectURL(blob)
         const a = document.createElement('a')
         a.href = url

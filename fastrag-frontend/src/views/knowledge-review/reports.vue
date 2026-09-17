@@ -40,7 +40,7 @@ const summary = computed(() => {
 
 async function handleExport() {
   try {
-    const blob = await api.exportPublishReport(selectedKbId.value) as Blob
+    const blob = await api.exportPublishReport(selectedKbId.value) as unknown as Blob
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url

@@ -34,7 +34,18 @@ interface SubMenuItem {
 // 全部模块定义（静态），通过 computed 过滤后渲染
 // 三大顶级模块：知识库、应用、管理
 const allModules: NavModule[] = [
-  { key: 'home', title: '首页', icon: 'HomeFilled', path: '/home' },
+  {
+    key: 'home',
+    title: '首页',
+    icon: 'HomeFilled',
+    path: '/home',
+    children: [
+      { path: '/home', title: '主页' },
+      { path: '/workspace', title: '工作台' },
+      { path: '/search-center', title: '知识搜索' },
+      { path: '/agent-console', title: '座席工作台' },
+    ],
+  },
 
   // ===== 知识库 =====
   {
@@ -49,6 +60,7 @@ const allModules: NavModule[] = [
           { path: '/knowledge', title: '知识库列表' },
           { path: '/knowledge/categories', title: '知识库分类' },
           { path: '/knowledge/tags', title: '知识库标签' },
+          { path: '/knowledge/sync', title: '知识库同步' },
         ],
       },
       {
@@ -172,6 +184,7 @@ const allModules: NavModule[] = [
           { path: '/application/prompt-templates', title: 'Prompt模板' },
           { path: '/admin/content/templates', title: '文档模板' },
           { path: '/admin/content/download', title: '下载中心' },
+          { path: '/admin/content/qa-knowledge', title: '问答知识管理' },
         ],
       },
       {

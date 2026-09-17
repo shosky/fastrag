@@ -4,6 +4,8 @@ public interface AppConfigService {
     // 基础配置
     AppBasicConfig getBasic(String appId);
     AppBasicConfig saveBasic(String appId,AppBasicConfig config);
+    // 重置基础配置：删除自定义配置，恢复默认
+    AppBasicConfig resetBasic(String appId);
     // 对话配置
     AppDialogConfig getDialog(String appId);
     AppDialogConfig saveDialog(String appId,AppDialogConfig config);

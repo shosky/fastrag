@@ -1,17 +1,11 @@
 package com.fastrag.module.application.entity;
 import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.time.LocalDateTime;
+/** 应用知识自动更新配置：仅映射 app_kb_auto_update_config 实际存在的列（此前实体含大量非本表字段导致 SELECT 报 Unknown column） */
 @Data @TableName("app_kb_auto_update_config") public class AppKbAutoUpdateConfig {
     @TableId(type=IdType.ASSIGN_ID) private String id;
-    private String appId,workflowId,dbId,module,nodeKey,nodeType;
-    private String name,description,type,status,operator,varType,varKey;
-    private String alias,scopeType,scopeValue,configSnapshot,suggestionType;
-    private String query,expectedAnswer,actualAnswer,sessionId,level,message,context,triggerType,actionType;
-    private String targetEnv,strategy,validateResult,metricType,dimension,details;
-    private String canvasData,category,createdBy,config,fallbackText;
-    private Integer enabled,priority,hitCount,memoryRounds,maxInputLength,showAvatar;
-    private Integer showFeedback,showSuggestions,sort,usageCount,isBuiltin;
-    private Integer matched,progress,version,timeoutSeconds,autoPublish;
-    private Integer safetyEnabled,unmatchedEnabled;
-    private Double metricValue,impactScore,similarity,temperature;
-    private LocalDateTime createdAt,updatedAt,publishedAt,periodStart,periodEnd;
+    private String appId;
+    private Integer enabled;
+    /** 明细配置 JSON（cron/通知渠道/模式等） */
+    private String config;
+    private LocalDateTime createdAt,updatedAt;
 }

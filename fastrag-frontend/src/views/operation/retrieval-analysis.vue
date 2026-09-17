@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 
 const loading = ref(false)
@@ -10,23 +10,14 @@ const total = ref(0)
 const query = ref({ kbId: '', hasResult: '' as string, page: 1, pageSize: 10 })
 
 async function loadAnalysis() {
+  loading.value = true
   try {
     const res: any = await api.getRetrievalLogAnalysis(query.value.kbId || undefined)
     analysis.value = res || {}
-  } catch { analysis.value = {} }
-  if (!analysis.value.totalQueries && !analysis.value.topQueries) {
-    analysis.value = {
-      totalQueries: 1523, noResultCount: 87, noResultRate: 5.7, avgLatencyMs: 235, avgHitCount: 3.2,
-      topQueries: [
-        { query: '产品价格', count: 156 }, { query: '技术支持', count: 98 }, { query: '联系方式', count: 87 },
-        { query: '使用教程', count: 76 }, { query: '功能介绍', count: 65 }, { query: '常见问题', count: 54 },
-        { query: '版本更新', count: 43 }, { query: '数据导出', count: 38 }, { query: 'API文档', count: 32 }, { query: '账号设置', count: 28 },
-      ],
-      noResultQueries: [
-        { query: 'xxx系统', count: 12 }, { query: '内部工具', count: 8 }, { query: '旧版接口', count: 6 },
-        { query: '测试环境', count: 5 }, { query: '废弃功能', count: 4 },
-      ],
-    }
+  } catch {
+    analysis.value = {}
+  } finally {
+    loading.value = false
   }
 }
 
@@ -43,16 +34,6 @@ async function loadLogs() {
     total.value = res?.total || 0
   } finally {
     loading.value = false
-  }
-  if (!logList.value.length) {
-    logList.value = [
-      { id: 'log1', kbId: 'kb_001', query: '产品价格是多少', hitCount: 5, topScore: 0.92, latencyMs: 156, hasResult: true, createdAt: '2026-06-29 10:30:00' },
-      { id: 'log2', kbId: 'kb_001', query: '如何申请退款', hitCount: 3, topScore: 0.85, latencyMs: 203, hasResult: true, createdAt: '2026-06-29 10:28:00' },
-      { id: 'log3', kbId: 'kb_002', query: 'xxx系统使用', hitCount: 0, topScore: 0, latencyMs: 89, hasResult: false, createdAt: '2026-06-29 10:25:00' },
-      { id: 'log4', kbId: 'kb_001', query: 'API调用方式', hitCount: 4, topScore: 0.78, latencyMs: 312, hasResult: true, createdAt: '2026-06-29 10:20:00' },
-      { id: 'log5', kbId: 'kb_001', query: '技术支持电话', hitCount: 2, topScore: 0.65, latencyMs: 178, hasResult: true, createdAt: '2026-06-29 10:15:00' },
-    ]
-    total.value = logList.value.length
   }
 }
 
@@ -125,6 +106,64 @@ async function handleSaveLogEdit() {
     loadAnalysis()
   } catch {
     ElMessage.error('修改失败')
+  }
+}
+
+// 检索日志新增/删除功能
+const showAddDialog = ref(false)
+const addForm = ref<{
+  kbId: string
+  query: string
+  hitCount: number
+  topScore: number
+  latencyMs: number
+  hasResult: boolean
+}>({
+  kbId: '',
+  query: '',
+  hitCount: 0,
+  topScore: 0,
+  latencyMs: 0,
+  hasResult: true,
+})
+
+function handleAddLog() {
+  addForm.value = { kbId: query.value.kbId || '', query: '', hitCount: 0, topScore: 0, latencyMs: 0, hasResult: true }
+  showAddDialog.value = true
+}
+
+async function handleSaveLogAdd() {
+  if (!addForm.value.kbId || !addForm.value.query) {
+    ElMessage.warning('请填写知识库ID和查询内容')
+    return
+  }
+  try {
+    await api.createRetrievalLog({
+      kbId: addForm.value.kbId,
+      query: addForm.value.query,
+      hitCount: addForm.value.hitCount,
+      topScore: addForm.value.topScore,
+      latencyMs: addForm.value.latencyMs,
+      hasResult: addForm.value.hasResult,
+    })
+    ElMessage.success('新增成功')
+    showAddDialog.value = false
+    loadLogs()
+    loadAnalysis()
+  } catch {
+    ElMessage.error('新增失败')
+  }
+}
+
+async function handleDeleteLog(row: any) {
+  try {
+    await ElMessageBox.confirm(`确认删除该条检索日志？`, '删除确认', { type: 'warning' })
+    await api.deleteRetrievalLog(row.id)
+    ElMessage.success('已删除')
+    loadLogs()
+    loadAnalysis()
+  } catch {
+    /* 取消或失败 */
   }
 }
 
@@ -208,7 +247,10 @@ function handleSaveConfig() {
     <div class="card-panel">
       <div class="section-header">
         <div class="section-title">检索日志明细</div>
-        <el-button size="small" @click="handleShowConfig">分析配置</el-button>
+        <div>
+          <el-button size="small" type="primary" @click="handleAddLog">新增日志</el-button>
+          <el-button size="small" @click="handleShowConfig">分析配置</el-button>
+        </div>
       </div>
       <div class="filter-bar">
         <el-input v-model="query.kbId" placeholder="知识库ID" clearable style="width: 180px" />
@@ -231,9 +273,10 @@ function handleSaveConfig() {
           </template>
         </el-table-column>
         <el-table-column prop="createdAt" label="时间" width="160" />
-        <el-table-column label="操作" width="80" align="center">
+        <el-table-column label="操作" width="120" align="center">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="handleEditLog(row)">修改</el-button>
+            <el-button link type="danger" size="small" @click="handleDeleteLog(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -259,6 +302,22 @@ function handleSaveConfig() {
         <el-form-item label="定时报告"><el-switch v-model="analysisConfig.scheduledReport" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showConfigDialog=false">取消</el-button><el-button type="primary" @click="handleSaveConfig">保存配置</el-button></template>
+    </el-dialog>
+
+    <!-- 新增检索日志 -->
+    <el-dialog v-model="showAddDialog" title="新增检索日志" width="500px">
+      <el-form label-width="100px">
+        <el-form-item label="知识库ID" required><el-input v-model="addForm.kbId" /></el-form-item>
+        <el-form-item label="查询内容" required><el-input v-model="addForm.query" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item label="命中数"><el-input-number v-model="addForm.hitCount" :min="0" style="width:160px" /></el-form-item>
+        <el-form-item label="最高分"><el-input-number v-model="addForm.topScore" :min="0" :max="1" :step="0.01" style="width:160px" /></el-form-item>
+        <el-form-item label="耗时(ms)"><el-input-number v-model="addForm.latencyMs" :min="0" style="width:160px" /></el-form-item>
+        <el-form-item label="是否有结果"><el-switch v-model="addForm.hasResult" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showAddDialog=false">取消</el-button>
+        <el-button type="primary" @click="handleSaveLogAdd">保存</el-button>
+      </template>
     </el-dialog>
 
     <!-- 修改检索日志 -->

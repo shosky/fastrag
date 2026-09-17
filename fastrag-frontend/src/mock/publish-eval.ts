@@ -67,12 +67,12 @@ export function getEvalDatasetList(params?: { page?: number; pageSize?: number; 
   return { list: list.slice((page - 1) * pageSize, page * pageSize), total }
 }
 export function createEvalDataset(data: Partial<EvalDataset>): EvalDataset {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: EvalDataset = { id: `eds-${++seq}`, name: data.name || '', description: data.description || '', questionCount: 0, category: data.category || '', status: 'draft', creator: 'admin', createdAt: new Date().toISOString() }
   datasetStore.push(item); return item
 }
 export function updateEvalDataset(id: string, data: Partial<EvalDataset>): EvalDataset | null {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const idx = datasetStore.findIndex(d => d.id === id); if (idx === -1) return null
   datasetStore[idx] = { ...datasetStore[idx], ...data }; return datasetStore[idx]
 }
@@ -89,7 +89,7 @@ export function getEvalTaskList(params?: { page?: number; pageSize?: number; sta
   return { list: list.slice((page - 1) * pageSize, page * pageSize), total }
 }
 export function createEvalTask(data: Partial<EvalTask>): EvalTask {
-  checkApiPermission('kb:write'); initStore()
+  checkApiPermission('kb:edit'); initStore()
   const item: EvalTask = { id: `et-${++seq}`, name: data.name || '', datasetId: data.datasetId || '', datasetName: data.datasetName || '', modelId: data.modelId || '', modelName: data.modelName || '', status: 'pending', progress: 0, createdAt: new Date().toISOString() }
   taskStore.push(item); return item
 }
@@ -101,12 +101,12 @@ export function deleteEvalTask(id: string): boolean {
 
 export function getRobotReleaseList(): RobotRelease[] { initStore(); return releaseStore }
 export function createRobotRelease(data: Partial<RobotRelease>): RobotRelease {
-  checkApiPermission('app:write'); initStore()
+  checkApiPermission('app:edit'); initStore()
   const item: RobotRelease = { id: `rel-${++seq}`, robotName: data.robotName || '', version: data.version || '', environment: data.environment || 'staging', status: 'pending', releaseNotes: data.releaseNotes || '', createdAt: new Date().toISOString() }
   releaseStore.push(item); return item
 }
 export function releaseRobot(id: string): RobotRelease | null {
-  checkApiPermission('app:write'); initStore()
+  checkApiPermission('app:edit'); initStore()
   const idx = releaseStore.findIndex(r => r.id === id); if (idx === -1) return null
   releaseStore[idx] = { ...releaseStore[idx], status: 'released', releasedAt: new Date().toISOString() }; return releaseStore[idx]
 }

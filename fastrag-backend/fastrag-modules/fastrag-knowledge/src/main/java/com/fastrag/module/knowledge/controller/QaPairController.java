@@ -6,10 +6,13 @@ import java.util.List; import java.util.Map;
 @RestController @RequestMapping("/api/kb/{kbId}/qa-pairs") @RequiredArgsConstructor
 public class QaPairController {
     private final QaPairService svc;
-    @GetMapping public ApiResponse<?> list(@PathVariable String kbId) { return ApiResponse.success(svc.list(kbId)); }
+    @GetMapping public ApiResponse<?> list(@PathVariable String kbId,@RequestParam(required=false) String faqType,@RequestParam(required=false) String keyword) { return ApiResponse.success(svc.list(kbId,faqType,keyword)); }
     @PostMapping public ApiResponse<?> create(@PathVariable String kbId,@Valid @RequestBody QaCreateRequest req) { return ApiResponse.success(svc.create(kbId,req)); }
     @PutMapping("/{id}") public ApiResponse<?> update(@PathVariable String kbId,@PathVariable String id,@RequestBody Map<String,Object> p) { return ApiResponse.success(svc.update(kbId,id,p)); }
     @DeleteMapping("/{id}") public ApiResponse<?> delete(@PathVariable String kbId,@PathVariable String id) { svc.delete(kbId,id); return ApiResponse.success(); }
     @PostMapping("/{id}/confirm") public ApiResponse<?> confirm(@PathVariable String kbId,@PathVariable String id) { svc.confirm(kbId,id); return ApiResponse.success(); }
+    @PostMapping("/confirm-all") public ApiResponse<?> confirmAll(@PathVariable String kbId) { return ApiResponse.success(Map.of("count",svc.confirmAll(kbId))); }
     @PostMapping("/qa-extract") public ApiResponse<?> extract(@PathVariable String kbId,@RequestBody Map<String,List<String>> b) { return ApiResponse.success(svc.extractQa(kbId,b.get("fileIds"))); }
+    // 按应答添加知识：将 QA 对答案固化为知识条目
+    @PostMapping("/{id}/to-knowledge") public ApiResponse<?> toKnowledge(@PathVariable String kbId,@PathVariable String id) { return ApiResponse.success(svc.toKnowledge(kbId,id)); }
 }

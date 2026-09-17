@@ -91,9 +91,10 @@ function getTypeName(tagTypeId: string): string {
   return t?.name || ''
 }
 const TAG_TYPE_COLORS = ['', 'success', 'warning', 'danger', 'info', 'primary']
-function getTypeTagType(tagTypeId: string): string {
+function getTypeTagType(tagTypeId: string): 'success' | 'warning' | 'danger' | 'info' | 'primary' {
   const idx = tagTypeList.value.findIndex((t: any) => t.id === tagTypeId)
-  return idx >= 0 ? TAG_TYPE_COLORS[idx % TAG_TYPE_COLORS.length] : 'info'
+  const c = idx >= 0 ? TAG_TYPE_COLORS[idx % TAG_TYPE_COLORS.length] : 'info'
+  return (c || 'primary') as 'success' | 'warning' | 'danger' | 'info' | 'primary'
 }
 
 // 笔记

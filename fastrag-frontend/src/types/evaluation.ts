@@ -69,7 +69,8 @@ export interface SearchResultItem {
   /** 命中的查询关键词（用于高亮展示） */
   highlights?: string[]
   /** 带高亮标记的预览片段（HTML，命中的词用 <mark> 包裹） */
-  previewSnippet?: string
+  previewSnippet?: string
+  fallback?: boolean
 }
 
 /** 检索请求 */

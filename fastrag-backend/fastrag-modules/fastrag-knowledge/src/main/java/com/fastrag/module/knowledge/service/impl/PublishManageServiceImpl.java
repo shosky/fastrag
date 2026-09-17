@@ -5,12 +5,16 @@ import com.fastrag.module.knowledge.service.PublishManageService;
 import com.fastrag.module.publish.entity.KbReviewTask; import com.fastrag.module.publish.entity.KbUpdateLog;
 import com.fastrag.module.publish.mapper.KbReviewTaskMapper; import com.fastrag.module.publish.mapper.KbUpdateLogMapper;
 import lombok.RequiredArgsConstructor; import lombok.extern.slf4j.Slf4j; import org.springframework.stereotype.Service;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI; import java.net.http.HttpClient; import java.net.http.HttpRequest; import java.net.http.HttpResponse;
 import java.time.Duration; import java.time.LocalDateTime; import java.time.format.DateTimeFormatter; import java.util.*;
 import java.util.regex.Pattern;
 import org.springframework.transaction.annotation.Transactional;
 @Slf4j @Service @RequiredArgsConstructor
 public class PublishManageServiceImpl implements PublishManageService {
+    private static final ObjectMapper JSON = new ObjectMapper();
+    /** JSON 列字段（listener/review_strategy 的 config）需序列化为合法 JSON，Map.toString() 会写坏数据 */
+    private static String toJson(Object v) { try { return JSON.writeValueAsString(v); } catch (Exception e) { return "{}"; } }
     private final KbPublishHistoryMapper2 phMapper; private final KbPublishPlanMapper ppMapper;
     private final KbReviewStrategyMapper rsMapper; private final KbComplianceRuleMapper crMapper; private final KbQualityRuleMapper qrMapper;
     private final KbReviewTemplateMapper rtMapper; private final KbReviewNodeMapper rnMapper;
@@ -143,7 +147,7 @@ public class PublishManageServiceImpl implements PublishManageService {
         return trends;
     }
     @Override public Map<String,Object> saveListenerAlerts(String id, Map<String,Object> config) {
-        var l=liMapper.selectById(id); if(l!=null){l.setConfig(config.toString()); liMapper.updateById(l);}
+        var l=liMapper.selectById(id); if(l!=null){l.setConfig(toJson(config)); liMapper.updateById(l);}
         Map<String,Object> r=new LinkedHashMap<>(config); r.put("listenerId",id); r.put("enabled",true); r.put("updatedAt",LocalDateTime.now()); return r;
     }
     @Override public Map<String,Object> getOnlineVersion(String kbId, String knowledgeId) {
@@ -178,7 +182,7 @@ public class PublishManageServiceImpl implements PublishManageService {
         return history;
     }
     @Override public Map<String,Object> setReviewTimeout(String strategyId, Map<String,Object> config) {
-        var s=rsMapper.selectById(strategyId); if(s!=null){s.setConfig(config.toString()); rsMapper.updateById(s);}
+        var s=rsMapper.selectById(strategyId); if(s!=null){s.setConfig(toJson(config)); rsMapper.updateById(s);}
         Map<String,Object> r=new LinkedHashMap<>(config); r.put("strategyId",strategyId); r.put("updatedAt",LocalDateTime.now()); return r;
     }
     @Override public Map<String,Object> generatePublishReport(String kbId) {

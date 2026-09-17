@@ -60,7 +60,7 @@ export function useQaExtraction(kbId: string = 'default') {
   async function extractFromFiles(fileIds: string[]) {
     extracting.value = true
     try {
-      const res = await api.qaExtract(kbId, { fileId: fileIds[0] })
+      const res = await api.qaExtract(kbId, fileIds)
       candidates.value = (res as any) || []
     } finally {
       extracting.value = false
