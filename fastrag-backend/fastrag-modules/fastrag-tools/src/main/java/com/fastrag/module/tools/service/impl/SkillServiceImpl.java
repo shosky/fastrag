@@ -10,6 +10,8 @@ import com.fastrag.module.tools.mapper.SkillDependencyMapper;
 import com.fastrag.module.tools.mapper.SkillMapper;
 import com.fastrag.module.tools.mapper.SkillScopeMapper;
 import com.fastrag.module.tools.service.SkillService;
+import com.fastrag.module.tools.skill.SkillAccessManager;
+import com.fastrag.module.tools.skill.SlugValidator;
 import com.fastrag.common.exception.BusinessException;
 import com.fastrag.security.filter.LoginUser;
 import com.fastrag.security.util.DataScope;
@@ -32,10 +34,13 @@ public class SkillServiceImpl implements SkillService {
     private final SkillMapper mapper;
     private final SkillDependencyMapper dependencyMapper;
     private final SkillScopeMapper scopeMapper;
+    private final SkillAccessManager accessManager;
+    private final com.fastrag.module.tools.skill.SkillDependencyValidator dependencyValidator;
 
-    /** 技能可见性：系统级（内置/存量） / 属主 / 同组织 / API Token */
+    /** 技能可见性：系统级（内置/存量） / 属主 / 同组织 / API Token / 分享可见（M3-1 经 SkillAccessManager） */
     private boolean visible(Skill s, LoginUser user) {
-        return DataScope.visible(user, s.getCreator(), s.getOrgId(), s.getIsBuiltin());
+        return DataScope.visible(user, s.getCreator(), s.getOrgId(), s.getIsBuiltin())
+                || accessManager.shareVisible(user, s);
     }
 
     private void requireManage(Skill s) {
@@ -44,15 +49,19 @@ public class SkillServiceImpl implements SkillService {
         if (!DataScope.manageable(user, s.getCreator())) throw BusinessException.forbidden("无权管理该技能");
     }
 
-    /** 非 API Token 用户追加可见性条件（属主 / 同组织 / 系统级） */
-    private void applyScope(LambdaQueryWrapper<Skill> w) {
+    /**
+     * M3-1：列表统一收口到扩展 visible()（DataScope 四态 + 分享三级）。
+     * 分享可见（global/department/user）是 JSON 语义，SQL 侧无法表达，
+     * 故列表查全后内存过滤——结果 = 原 SQL 属主域语义 ∪ 分享可见，纯超集。
+     */
+    private List<Skill> filterVisible(List<Skill> skills) {
         LoginUser user = SecurityUtil.getCurrentUser();
-        if (!DataScope.isApiToken(user)) {
-            w.and(q -> q.eq(Skill::getCreator, user.getUserId())
-                    .or(o -> o.eq(Skill::getOrgId, user.getOrgId())
-                            .or().eq(Skill::getCreator, "system")
-                            .or().eq(Skill::getIsBuiltin, 1)));
+        if (DataScope.isApiToken(user)) return skills;
+        List<Skill> out = new ArrayList<>();
+        for (Skill s : skills) {
+            if (visible(s, user)) out.add(s);
         }
+        return out;
     }
 
     @Override
@@ -64,9 +73,8 @@ public class SkillServiceImpl implements SkillService {
              .or(l -> l.like(Skill::getDescription, keyword));
         }
         if (StrUtil.isNotBlank(category)) w.eq(Skill::getCategory, category);
-        applyScope(w);
         w.orderByDesc(Skill::getUpdatedAt);
-        return mapper.selectList(w);
+        return filterVisible(mapper.selectList(w));
     }
 
     @Override
@@ -80,14 +88,19 @@ public class SkillServiceImpl implements SkillService {
         }
         if (StrUtil.isNotBlank(category)) w.eq(Skill::getCategory, category);
         if (StrUtil.isNotBlank(sourceType)) w.eq(Skill::getSourceType, sourceType);
-        applyScope(w);
         w.orderByDesc(Skill::getUpdatedAt);
-        return mapper.selectList(w);
+        return filterVisible(mapper.selectList(w));
     }
 
     @Override
     public List<Skill> listBuiltin() {
         return mapper.selectBuiltin();
+    }
+
+    @Override
+    public List<Skill> listByIds(Collection<String> ids) {
+        if (ids == null || ids.isEmpty()) return new ArrayList<>();
+        return mapper.selectBatchIds(ids);
     }
 
     @Override
@@ -168,7 +181,17 @@ public class SkillServiceImpl implements SkillService {
     private void applyBasicFields(Skill s, Map<String, Object> form) {
         if (form.containsKey("name")) s.setName((String) form.get("name"));
         if (form.containsKey("identifier")) s.setIdentifier((String) form.get("identifier"));
-        if (form.containsKey("slug")) s.setSlug((String) form.get("slug"));
+        // slug 白名单校验；缺省时由 name 派生，无法派生则要求显式提供
+        if (form.containsKey("slug")) {
+            s.setSlug(SlugValidator.validate((String) form.get("slug")));
+        } else if (form.containsKey("name")) {
+            String normalized = SlugValidator.normalize((String) form.get("name"));
+            if (normalized == null) {
+                throw BusinessException.badRequest(
+                    "无法从 name 派生合法 slug，请显式提供 slug（规则：小写字母或数字开头，仅含 a-z、0-9、.、_、-，长度 1-64）");
+            }
+            s.setSlug(normalized);
+        }
         if (form.containsKey("description")) s.setDescription((String) form.get("description"));
         if (form.containsKey("icon")) s.setIcon((String) form.get("icon"));
         if (form.containsKey("source")) s.setSource((String) form.get("source"));
@@ -190,27 +213,43 @@ public class SkillServiceImpl implements SkillService {
         }
     }
 
+    /**
+     * 依赖全量替换写入。M3-2（D9）：create/update 两路径落库前统一过
+     * {@link com.fastrag.module.tools.skill.SkillDependencyValidator}（四类存在性/去重/自引用/未知类型），
+     * 非法抛 BusinessException；校验器逻辑复用勿复制。
+     */
     @SuppressWarnings("unchecked")
     private void saveDependencies(String skillId, Map<String, Object> form) {
         dependencyMapper.deleteBySkillId(skillId);
 
         Object raw = form.get("dependencies");
         if (raw == null) return;
+        if (!(raw instanceof List)) return;
+        List<Map<String, Object>> depList = (List<Map<String, Object>>) raw;
 
-        List<Map<String, Object>> depList;
-        if (raw instanceof List) {
-            depList = (List<Map<String, Object>>) raw;
-        } else {
-            return;
+        List<com.fastrag.module.tools.entity.SkillDependencyInfo> infos = new ArrayList<>();
+        for (Map<String, Object> d : depList) {
+            com.fastrag.module.tools.entity.SkillDependencyInfo info =
+                    new com.fastrag.module.tools.entity.SkillDependencyInfo();
+            info.setType((String) d.get("type"));
+            info.setName((String) d.get("name"));
+            Object requiredVal = d.get("required");
+            info.setRequired(Boolean.TRUE.equals(requiredVal) || Integer.valueOf(1).equals(requiredVal));
+            infos.add(info);
         }
 
-        for (Map<String, Object> d : depList) {
+        com.fastrag.module.tools.skill.SkillDependencyValidator.ValidationResult vr =
+                dependencyValidator.validate(skillId, infos);
+        if (vr.getErrors() != null && !vr.getErrors().isEmpty()) {
+            throw BusinessException.badRequest("依赖校验失败: " + String.join("; ", vr.getErrors()));
+        }
+
+        for (com.fastrag.module.tools.entity.SkillDependencyInfo d : vr.getValidDeps()) {
             SkillDependency dep = new SkillDependency();
             dep.setSkillId(skillId);
-            dep.setType((String) d.get("type"));
-            dep.setName((String) d.get("name"));
-            Object requiredVal = d.get("required");
-            dep.setRequired(Boolean.TRUE.equals(requiredVal) || Integer.valueOf(1).equals(requiredVal) ? 1 : 0);
+            dep.setType(d.getType());
+            dep.setName(d.getName());
+            dep.setRequired(d.isRequired() ? 1 : 0);
             dependencyMapper.insert(dep);
         }
     }
@@ -302,7 +341,9 @@ public class SkillServiceImpl implements SkillService {
     public Skill updateShareConfig(String id, Map<String, Object> shareConfig) {
         Skill s = mapper.selectById(id);
         if (s != null) {
-            s.setShareConfig(shareConfig);
+            // M3-1（V2）：非管理员（无 * 权限且非 API Token）提交 global/department 强制降级 user，
+            // 归一规则复用 SkillAccessManager.normalizeShareConfig（消灭零调用 + 降级勿重写）
+            s.setShareConfig(accessManager.normalizeShareConfig(shareConfig, SecurityUtil.getCurrentUser()));
             mapper.updateById(s);
         }
         return s;

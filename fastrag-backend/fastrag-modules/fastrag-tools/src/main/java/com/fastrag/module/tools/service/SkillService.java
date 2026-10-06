@@ -4,12 +4,19 @@ import com.fastrag.module.tools.entity.Skill;
 import com.fastrag.module.tools.entity.SkillImportResult;
 
 import java.nio.file.Path;
+import java.util.Collection;
 import java.util.List;
 import java.util.Map;
 
 public interface SkillService {
     List<Skill> list(String keyword, String category);
     List<Skill> listAccessible(String keyword, String category, String sourceType);
+
+    /**
+     * 按主键批量取技能实体（不做可见性/启用过滤——调用方与 listAccessible 求交集后自行裁决）。
+     * M2-2：app/agent 绑定存的是 skill 主键 id，运行时装配经此解析。
+     */
+    List<Skill> listByIds(Collection<String> ids);
     List<Skill> listBuiltin();
     Skill get(String id);
     Skill getBySlug(String slug);

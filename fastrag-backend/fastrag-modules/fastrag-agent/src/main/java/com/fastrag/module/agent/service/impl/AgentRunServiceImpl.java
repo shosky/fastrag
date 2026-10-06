@@ -8,7 +8,7 @@ import com.fastrag.module.agent.context.User;
 import com.fastrag.module.agent.dto.AgentRunCreateDTO;
 import com.fastrag.module.agent.entity.Agent;
 import com.fastrag.module.agent.entity.AgentRun;
-import com.fastrag.module.agent.executor.AgentExecutor;
+import com.fastrag.module.agent.executor.AgentEngine;
 import com.fastrag.module.agent.executor.AgentResult;
 import com.fastrag.module.agent.mapper.AgentRunMapper;
 import com.fastrag.module.agent.service.AgentRunService;
@@ -52,7 +52,8 @@ public class AgentRunServiceImpl implements AgentRunService {
 
     private final AgentRunMapper agentRunMapper;
     private final AgentService agentService;
-    private final AgentExecutor agentExecutor;
+    /** M2-4（D12）：agent REST 路径统一走 AgentEngine（完整中间件链），与 App 对话路径同源 */
+    private final AgentEngine agentEngine;
     private final ContextBuilder contextBuilder;
 
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
@@ -200,8 +201,8 @@ public class AgentRunServiceImpl implements AgentRunService {
             // 构建上下文
             BaseContext context = contextBuilder.buildContext(run);
 
-            // 执行 Agent
-            AgentResult result = agentExecutor.execute(run, context);
+            // 执行 Agent（M2-4：AgentEngine.executeSync，中间件链生效；RunEventPublisher 事件语义不变）
+            AgentResult result = agentEngine.executeSync(run, context);
 
             // 更新结果
             run.setStatus(result.isSuccess() ? "completed" : "failed");

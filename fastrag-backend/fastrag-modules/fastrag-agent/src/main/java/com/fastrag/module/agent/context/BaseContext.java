@@ -9,6 +9,7 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Agent运行时上下文基类，是所有Agent后端上下文的公共父类。
@@ -71,6 +72,11 @@ public class BaseContext {
     @ConfigField(type = "list", kind = "mcps")
     private List<String> mcps;
 
+    /**
+     * 技能绑定列表。语义（M2-2 裁决 2A）：<b>技能主键 id 列表</b>（与 app_skill_binding.skill_id /
+     * agent 配置中 skill 绑定一致），运行时由 SkillsMiddleware 经 SkillService.listByIds 解析，
+     * 不接受 slug。
+     */
     @ConfigField(type = "list", kind = "skills")
     private List<String> skills;
 
@@ -95,6 +101,29 @@ public class BaseContext {
     private transient Map<String, Object> runtimeSkillMetadata;
 
     private transient Map<String, Object> runtimeSkillDependencyMap;
+
+    /**
+     * 本 run 缓存的技能实体（slug → Skill，M2-5 run 级缓存）。
+     * 技能读取（SKILL.md 拦截返回全文）从缓存取，不再查库。
+     */
+    private transient Map<String, com.fastrag.module.tools.entity.Skill> runtimeSkillEntities;
+
+    /**
+     * 工具集脏标志（M2-3，D7）：中间件在运行中向 {@link #tools} 追加工具依赖后置 true，
+     * AgentEngine 在下一次模型调用前重算 openaiTools 并清零。每 run 独立，禁存中间件实例。
+     */
+    private transient boolean toolsDirty;
+
+    /**
+     * run 级技能缓存哨兵（M2-5，D13）：true = 本 run 技能上下文已装配（listByIds/listAccessible
+     * 已消费），后续轮次跳过 DB 加载。每 run 独立，禁存中间件实例。
+     */
+    private transient boolean skillsLoaded;
+
+    /**
+     * 最近一次成功物化到沙箱的技能 slug 集合（M2-5，D13）：集合不变则跳过 syncSkills。
+     */
+    private transient Set<String> syncedSkillSlugs;
 
     /** 运行时模型配置（由 ContextMiddleware 或 AppServiceImpl 填充） */
     private transient ModelConfig modelConfig;

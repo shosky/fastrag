@@ -5,8 +5,6 @@ import com.fastrag.module.agent.backend.AgentBackendManager;
 import com.fastrag.module.agent.entity.Agent;
 import com.fastrag.module.agent.entity.AgentRun;
 import com.fastrag.module.agent.mapper.AgentMapper;
-import com.fastrag.module.tools.entity.Skill;
-import com.fastrag.module.tools.service.SkillService;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
@@ -18,16 +16,17 @@ import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
 import static org.mockito.Mockito.*;
 
+/**
+ * ContextBuilder 单元测试（M2-4 装配单点后：只负责配置装载与运行时标识，
+ * 技能装配唯一归属 SkillsMiddleware——此处断言不触碰技能装配产物）。
+ */
 @ExtendWith(MockitoExtension.class)
 class ContextBuilderTest {
 
     @Mock
     private AgentMapper agentMapper;
-    @Mock
-    private SkillService skillService;
     @Mock
     private AgentBackendManager backendManager;
     @Mock
@@ -37,7 +36,7 @@ class ContextBuilderTest {
 
     @BeforeEach
     void setUp() {
-        contextBuilder = new ContextBuilder(agentMapper, backendManager, skillService);
+        contextBuilder = new ContextBuilder(agentMapper, backendManager);
     }
 
     @Test
@@ -48,17 +47,10 @@ class ContextBuilderTest {
         Map<String, Object> config = new LinkedHashMap<>();
         config.put("model", "gpt-4");
         config.put("systemPrompt", "You are helpful");
-        config.put("skills", List.of("web-search"));
+        config.put("skills", List.of("1001"));
         config.put("tools", List.of("tool1"));
         agent.setConfigJson(config);
         when(agentMapper.selectById("agent-1")).thenReturn(agent);
-
-        Skill skill = new Skill();
-        skill.setSlug("web-search");
-        skill.setName("联网搜索");
-        skill.setDescription("Search the web");
-        when(skillService.listAccessible(any(), any(), any()))
-            .thenReturn(List.of(skill));
 
         doReturn(ChatBotContext.class).when(backend).getContextSchema();
         when(backendManager.getBackend("ChatbotAgent")).thenReturn(backend);
@@ -73,12 +65,15 @@ class ContextBuilderTest {
         assertNotNull(context);
         assertEquals("gpt-4", context.getModel());
         assertEquals("You are helpful", context.getSystemPrompt());
+        // M2-4：绑定原样保留（技能主键 id），装配延迟到 SkillsMiddleware
         assertNotNull(context.getSkills());
-        assertTrue(context.getSkills().contains("web-search"));
-        assertNotNull(context.getTools());
+        assertTrue(context.getSkills().contains("1001"));
         assertTrue(context.getTools().contains("tool1"));
         assertEquals("user1", context.getUid());
         assertEquals("run-1", context.getRunId());
+        // 装配单点：ContextBuilder 不再触碰技能运行时产物
+        assertNull(context.getPromptSkills());
+        assertNull(context.getRuntimeSkillMetadata());
     }
 
     @Test
@@ -111,45 +106,5 @@ class ContextBuilderTest {
         run.setAgentId("nonexistent");
 
         assertThrows(RuntimeException.class, () -> contextBuilder.buildContext(run));
-    }
-
-    @Test
-    void testBuildContext_PrepareRuntimeSkills() throws Exception {
-        Agent agent = new Agent();
-        agent.setId("agent-1");
-        agent.setBackendId("ChatbotAgent");
-        Map<String, Object> config = new LinkedHashMap<>();
-        config.put("skills", List.of("skill-a", "skill-b"));
-        agent.setConfigJson(config);
-        when(agentMapper.selectById("agent-1")).thenReturn(agent);
-
-        Skill skillA = new Skill();
-        skillA.setSlug("skill-a");
-        skillA.setName("Skill A");
-        skillA.setDescription("First skill");
-        Skill skillB = new Skill();
-        skillB.setSlug("skill-b");
-        skillB.setName("Skill B");
-        skillB.setDescription("Second skill");
-
-        when(skillService.listAccessible(any(), any(), any()))
-            .thenReturn(List.of(skillA, skillB));
-
-        doReturn(ChatBotContext.class).when(backend).getContextSchema();
-        when(backendManager.getBackend("ChatbotAgent")).thenReturn(backend);
-
-        AgentRun run = new AgentRun();
-        run.setId("run-1");
-        run.setAgentId("agent-1");
-
-        BaseContext context = contextBuilder.buildContext(run);
-
-        assertNotNull(context.getPromptSkills());
-        assertTrue(context.getPromptSkills().contains("skill-a"));
-        assertTrue(context.getPromptSkills().contains("skill-b"));
-        assertNotNull(context.getReadableSkills());
-        assertNotNull(context.getRuntimeSkillMetadata());
-        assertTrue(context.getRuntimeSkillMetadata().containsKey("skill-a"));
-        assertNotNull(context.getRuntimeSkillDependencyMap());
     }
 }

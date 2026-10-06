@@ -20,7 +20,7 @@ import java.util.List;
  * <ul>
  *   <li>由{@link AgentBackend#buildGraph(BaseContext)}方法根据具体上下文构建</li>
  *   <li>不同的后端实现会设置不同的stateSchema（如ChatbotAgentBackend使用ChatBotState，SubAgentBackend使用BaseState）</li>
- *   <li>构建完成后传递给AgentExecutor进行实际执行</li>
+ *   <li>构建完成后交由 AgentEngine（M2-4 起唯一执行引擎，原 AgentExecutor 已删除）进行实际执行</li>
  * </ul></p>
  *
  * @see AgentBackend#buildGraph(BaseContext)

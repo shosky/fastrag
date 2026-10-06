@@ -4,6 +4,11 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fastrag.module.application.entity.*; import com.fastrag.module.application.mapper.*;
 import com.fastrag.module.application.service.AppConfigService;
+import com.fastrag.module.knowledge.entity.KnowledgeBase; import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
+import com.fastrag.module.tools.entity.DbInstance; import com.fastrag.module.tools.entity.McpService;
+import com.fastrag.module.tools.entity.Skill; import com.fastrag.module.tools.entity.Tool;
+import com.fastrag.module.tools.mapper.DbInstanceMapper; import com.fastrag.module.tools.mapper.McpServiceMapper;
+import com.fastrag.module.tools.mapper.SkillMapper; import com.fastrag.module.tools.mapper.ToolMapper;
 import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
 import java.time.LocalDateTime; import java.util.*;
 @Service @RequiredArgsConstructor
@@ -15,7 +20,17 @@ public class AppConfigServiceImpl implements AppConfigService {
     private final AppOptimizationMapper optMapper; private final AppKbAutoUpdateConfigMapper autoKbMapper;
     private final AppConversationMapper convMapper;
     private final AppConversationMessageMapper convMsgMapper;
+    private final AppSkillBindingMapper skillBindMapper;
+    private final AppToolBindingMapper toolBindMapper;
+    private final AppMcpBindingMapper mcpBindMapper;
+    // 资源表 Mapper（绑定有效性预览用，app-chat-optimize Step 3a）
+    private final KnowledgeBaseMapper knowledgeMapper; private final ToolMapper toolResMapper;
+    private final SkillMapper skillResMapper; private final McpServiceMapper mcpResMapper;
+    private final DbInstanceMapper dbResMapper;
     private final ObjectMapper objectMapper;
+
+    /** 技能挂载预算（M2-6，D8）：单应用 enabled 技能绑定数上限，防技能提示注入撑爆上下文 */
+    public static final int MAX_SKILL_BINDINGS = 20;
 
     // ========== JSON 工具 ==========
     private String toJson(Object obj) { try { return objectMapper.writeValueAsString(obj); } catch (JsonProcessingException e) { return "{}"; } }
@@ -145,12 +160,31 @@ public class AppConfigServiceImpl implements AppConfigService {
             return trimmed;
         }
     }
-    // 技能绑定
-    private final AppSkillBindingMapper skillBindMapper;
-    private final AppToolBindingMapper toolBindMapper;
-    private final AppMcpBindingMapper mcpBindMapper;
+    // 技能/工具/MCP 绑定（Mapper 字段已收敛至类头部，app-chat-optimize Step 3a）
     @Override public List<AppSkillBinding> listSkillBindings(String appId) { try { return skillBindMapper.selectList(new LambdaQueryWrapper<AppSkillBinding>().eq(AppSkillBinding::getAppId,appId)); } catch(Exception e) { return new ArrayList<>(); } }
-    @Override public AppSkillBinding bindSkill(String appId,AppSkillBinding b) { b.setAppId(appId); if(b.getEnabled()==null)b.setEnabled(1); skillBindMapper.insert(b); return b; }
+    @Override public AppSkillBinding bindSkill(String appId,AppSkillBinding b) {
+        b.setAppId(appId); if(b.getEnabled()==null)b.setEnabled(1);
+        // M2-6（D8）：挂载预算——当前应用 enabled 技能绑定数 ≥ 上限时拒绝新增
+        Long enabledCount = skillBindMapper.selectCount(new LambdaQueryWrapper<AppSkillBinding>()
+                .eq(AppSkillBinding::getAppId, appId).eq(AppSkillBinding::getEnabled, 1));
+        if (enabledCount != null && enabledCount >= MAX_SKILL_BINDINGS) {
+            throw new com.fastrag.common.exception.BusinessException(400,
+                    "技能挂载数量已达上限（" + MAX_SKILL_BINDINGS + " 个），请先停用或解绑部分技能");
+        }
+        // M3-5（D11）：绑定前校验技能存在且启用——否则悬挂绑定在运行时被静默丢弃（SkillsMiddleware 只认 enabled 技能）
+        if (b.getSkillId() == null || b.getSkillId().isBlank()) {
+            throw new com.fastrag.common.exception.BusinessException(400, "技能绑定缺少 skillId");
+        }
+        Skill skill = skillResMapper.selectById(b.getSkillId());
+        if (skill == null) {
+            throw new com.fastrag.common.exception.BusinessException(404, "技能不存在: " + b.getSkillId());
+        }
+        if (!Integer.valueOf(1).equals(skill.getEnabled())) {
+            throw new com.fastrag.common.exception.BusinessException(400,
+                    "技能已停用，无法绑定: " + (skill.getName() != null ? skill.getName() : b.getSkillId()));
+        }
+        skillBindMapper.insert(b); return b;
+    }
     @Override public AppSkillBinding updateSkillBinding(String id,AppSkillBinding b) { b.setId(id); skillBindMapper.updateById(b); return skillBindMapper.selectById(id); }
     @Override public void unbindSkill(String id) { skillBindMapper.deleteById(id); }
     @Override public List<AppToolBinding> listToolBindings(String appId) { try { return toolBindMapper.selectList(new LambdaQueryWrapper<AppToolBinding>().eq(AppToolBinding::getAppId,appId)); } catch(Exception e) { return new ArrayList<>(); } }
@@ -377,5 +411,40 @@ public class AppConfigServiceImpl implements AppConfigService {
         r.put("totalTokens",totalTokens);
         r.put("avgResponseTime",totalCalls>0?"-":"-");
         return r;
+    }
+
+    // ===== 绑定有效性预览（app-chat-optimize Step 3a，对齐 WeKnora 有效工具预览） =====
+    @Override
+    public List<Map<String,Object>> bindingsEffectiveness(String appId) {
+        List<Map<String,Object>> out = new ArrayList<>();
+        for (AppKbBinding b : kbMapper.selectList(new LambdaQueryWrapper<AppKbBinding>().eq(AppKbBinding::getAppId,appId))) {
+            KnowledgeBase kb = knowledgeMapper.selectById(b.getKbId());
+            out.add(effItem("kb", b.getKbId(), kb==null?null:kb.getName(), kb!=null, b.getEnabled()));
+        }
+        for (AppToolBinding b : toolBindMapper.selectList(new LambdaQueryWrapper<AppToolBinding>().eq(AppToolBinding::getAppId,appId))) {
+            Tool t = toolResMapper.selectById(b.getToolId());
+            out.add(effItem("tool", b.getToolId(), t==null?null:t.getName(), t!=null, b.getEnabled()));
+        }
+        for (AppSkillBinding b : skillBindMapper.selectList(new LambdaQueryWrapper<AppSkillBinding>().eq(AppSkillBinding::getAppId,appId))) {
+            Skill s = skillResMapper.selectById(b.getSkillId());
+            out.add(effItem("skill", b.getSkillId(), s==null?null:s.getName(), s!=null, b.getEnabled()));
+        }
+        for (AppMcpBinding b : mcpBindMapper.selectList(new LambdaQueryWrapper<AppMcpBinding>().eq(AppMcpBinding::getAppId,appId))) {
+            McpService m = mcpResMapper.selectById(b.getMcpServiceId());
+            out.add(effItem("mcp", b.getMcpServiceId(), m==null?null:m.getName(), m!=null, b.getEnabled()));
+        }
+        for (AppDbBinding b : dbMapper.selectList(new LambdaQueryWrapper<AppDbBinding>().eq(AppDbBinding::getAppId,appId))) {
+            DbInstance d = dbResMapper.selectById(b.getDbId());
+            out.add(effItem("db", b.getDbId(), d==null?null:d.getName(), d!=null, b.getEnabled()));
+        }
+        return out;
+    }
+
+    private Map<String,Object> effItem(String type, String id, String name, boolean exists, Integer enabled) {
+        Map<String,Object> m = new LinkedHashMap<>();
+        m.put("type", type); m.put("id", id); m.put("name", name);
+        m.put("exists", exists); m.put("enabled", enabled != null && enabled == 1);
+        if (!exists) m.put("reason", "资源已删除");
+        return m;
     }
 }

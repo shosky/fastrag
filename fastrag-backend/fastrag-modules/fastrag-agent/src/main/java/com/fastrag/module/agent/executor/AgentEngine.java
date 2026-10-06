@@ -124,6 +124,8 @@ public class AgentEngine {
         try {
             // 1. 解析工具定义
             List<ToolDefinition> tools = toolRegistry.resolveTools(context.getTools());
+            // M3-3（D14）：install_skill 条件注入——引擎侧过滤（绑定技能非空或沙箱启用才保留）
+            filterInstallSkill(context, tools);
             List<ChatRequest.ToolDefinition> openaiTools = toolRegistry.toOpenAITools(tools);
             log.info("[AgentEngine] executeStream start: model={}, tools={}", modelConfig.getModel(), tools.size());
 
@@ -151,6 +153,12 @@ public class AgentEngine {
             for (int round = 0; round < maxIterations; round++) {
                 totalIterations++;
                 log.info("[AgentEngine] Iteration {}/{}", round + 1, maxIterations);
+
+                // M2-3（D7）：技能激活追加工具依赖后，本轮模型调用前重算工具
+                List<ChatRequest.ToolDefinition> recomputed = recomputeToolsIfDirty(context, tools);
+                if (recomputed != null) {
+                    openaiTools = recomputed;
+                }
 
                 // 打印当前消息列表摘要
                 logMessagesSummary(messages, round);
@@ -276,6 +284,10 @@ public class AgentEngine {
                     if (toolResult.getError() != null) {
                         resultData.put("error", toolResult.getError());
                     }
+                    // 结构化通道（app-chat-optimize 二批）：display_type+tool_data 直达前端专用渲染器
+                    if (toolResult.getStructured() != null && !toolResult.getStructured().isEmpty()) {
+                        resultData.put("data", toolResult.getStructured());
+                    }
                     sendSseEvent(emitter, "tool_result", resultData);
 
                     // 加入消息历史（截断到大模型友好的长度，前端仍然可查看完整结果）
@@ -295,18 +307,21 @@ public class AgentEngine {
                     if (run != null && run.getId() != null) {
                         publishToolCallEvent(run.getId(), tc, toolResult, toolDuration);
                     }
-                    // 记录工具调用
+                    // 记录工具调用（structured 一并入库，历史回看同构）
+                    Map<String, Object> resultPayload = new LinkedHashMap<>();
+                    resultPayload.put("success", toolResult.isSuccess());
+                    resultPayload.put("output", toolResult.isSuccess()
+                            ? truncate(toolResult.getOutput(), TOOL_OUTPUT_MAX)
+                            : (toolResult.getError() != null ? toolResult.getError() : "unknown error"));
+                    resultPayload.put("durationMs", toolDuration);
+                    if (toolResult.getStructured() != null && !toolResult.getStructured().isEmpty()) {
+                        resultPayload.put("data", toolResult.getStructured());
+                    }
                     toolCallRecords.add(Map.of(
                             "id", tc.getId(),
                             "name", tc.getFunction().getName(),
                             "arguments", tc.getFunction().getArguments(),
-                            "result", Map.of(
-                                    "success", toolResult.isSuccess(),
-                                    "output", toolResult.isSuccess()
-                                            ? truncate(toolResult.getOutput(), TOOL_OUTPUT_MAX)
-                                            : (toolResult.getError() != null ? toolResult.getError() : "unknown error"),
-                                    "durationMs", toolDuration
-                            )
+                            "result", resultPayload
                     ));
                     // 跟踪工具失败次数
                     if (!toolResult.isSuccess()) {
@@ -348,7 +363,8 @@ public class AgentEngine {
                 sendSseEvent(emitter, "content", Map.of("content", finalContent));
             }
 
-            // 调用完成回调（AppServiceImpl 保存消息等）
+            // 调用完成回调（AppServiceImpl 保存消息等）；iterations 经 runtimeState 侧通道交回编排层落库
+            context.getRuntimeState().put("iterations", totalIterations);
             if (onComplete != null) {
                 try {
                     String toolCallsJson = objectMapper.writeValueAsString(toolCallRecords);
@@ -400,6 +416,8 @@ public class AgentEngine {
         try {
             // 1. 解析工具
             List<ToolDefinition> tools = toolRegistry.resolveTools(context.getTools());
+            // M3-3（D14）：install_skill 条件注入——引擎侧过滤（绑定技能非空或沙箱启用才保留）
+            filterInstallSkill(context, tools);
             List<ChatRequest.ToolDefinition> openaiTools = toolRegistry.toOpenAITools(tools);
             ModelConfig mc = context.getModelConfig() != null
                     ? context.getModelConfig() : ModelConfig.default_(context.getModel());
@@ -427,6 +445,12 @@ public class AgentEngine {
                     ? context.getMaxSteps() : MAX_ITERATIONS;
             for (int round = 0; round < maxIterationsSync; round++) {
                 totalIterations++;
+
+                // M2-3（D7）：技能激活追加工具依赖后，本轮模型调用前重算工具
+                List<ChatRequest.ToolDefinition> recomputed = recomputeToolsIfDirty(context, tools);
+                if (recomputed != null) {
+                    openaiTools = recomputed;
+                }
 
                 ChatResponse resp = llmService.chatWithTools(
                         mc.getModel(), messages, openaiTools,
@@ -657,6 +681,54 @@ public class AgentEngine {
     }
 
     // ==================== 辅助方法 ====================
+
+    /**
+     * M3-3（D14，spec REQ-E03 修订）：install_skill 条件注入——引擎侧过滤（ToolRegistry 恒注入行为不动，
+     * Deviation 已登记）。仅当 context 绑定技能非空或沙箱启用时保留 install_skill，否则从工具列表剔除。
+     */
+    private void filterInstallSkill(BaseContext context, List<ToolDefinition> tools) {
+        if (keepsInstallSkill(context)) return;
+        tools.removeIf(t -> "install_skill".equals(t.getName()));
+    }
+
+    /**
+     * install_skill 保留判定：绑定技能非空 || 沙箱启用。
+     * 沙箱启用取数路径对齐 SkillsMiddleware.sandboxConfigIdOf（runtimeState 优先，回落 ChatBotContext 字段）。
+     */
+    static boolean keepsInstallSkill(BaseContext context) {
+        if (context.getSkills() != null && !context.getSkills().isEmpty()) return true;
+        Object fromState = context.getRuntimeState() != null
+                ? context.getRuntimeState().get("sandboxConfigId") : null;
+        if (fromState instanceof String s && !s.isBlank()) return true;
+        if (context instanceof com.fastrag.module.agent.context.ChatBotContext chatBot) {
+            String cfgId = chatBot.getSandboxConfigId();
+            return cfgId != null && !cfgId.isBlank();
+        }
+        return false;
+    }
+
+    /**
+     * M2-3（D7）：模型调用前若 toolsDirty（技能激活等中间件在运行中向 context.tools 追加了
+     * 工具依赖），重走 resolveTools → openai 转换并清标志。只重算一次/置位一次，勿每轮全量重查。
+     * 中间件直接注入 tools 列表的定义（filesystem/database 等）按名称去重保留，不因重解析丢失。
+     *
+     * @return 重算后的 openai tools；null 表示无需重算（调用方沿用原列表）
+     */
+    private List<ChatRequest.ToolDefinition> recomputeToolsIfDirty(BaseContext context,
+                                                                   List<ToolDefinition> tools) {
+        if (!context.isToolsDirty()) return null;
+        List<ToolDefinition> fresh = toolRegistry.resolveTools(context.getTools());
+        for (ToolDefinition def : fresh) {
+            boolean exists = (def.getName() != null && findTool(tools, def.getName()) != null)
+                    || (def.getToolId() != null && findTool(tools, def.getToolId()) != null);
+            if (!exists) tools.add(def);
+        }
+        // M3-3：重解析会重新恒注入 install_skill，过滤须在合并后执行
+        filterInstallSkill(context, tools);
+        context.setToolsDirty(false);
+        log.info("[AgentEngine] toolsDirty detected: recomputed tools, total={}", tools.size());
+        return toolRegistry.toOpenAITools(tools);
+    }
 
     /**
      * 尝试修复 LLM 生成的无效 JSON arguments。
