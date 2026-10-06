@@ -2,6 +2,9 @@ package com.fastrag.module.tools.skill;
 
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+
+import java.util.List;
+
 import static org.junit.jupiter.api.Assertions.*;
 
 class SkillMarkdownParserTest {
@@ -94,5 +97,88 @@ class SkillMarkdownParserTest {
         assertEquals("analysis", result.getCategory());
         assertEquals("#ff0000", result.getIcon());
         assertEquals("test", result.getMetadata().get("author"));
+    }
+
+    // ========== M1-2 slug 白名单接线 ==========
+
+    @Test
+    void testParseInvalidSlugRejected() {
+        String content = "---\nname: Evil\nslug: ../evil\ndescription: e\n---\n\nBody";
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> parser.parse(content));
+        assertTrue(ex.getMessage().contains("slug"), "消息应包含字段名 slug");
+    }
+
+    @Test
+    void testParseSlugDerivedFromNameWhenAbsent() {
+        String content = "---\nname: My Cool Skill\ndescription: d\n---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals("my-cool-skill", result.getSlug());
+    }
+
+    @Test
+    void testParseSlugDerivationFailureRejected() {
+        String content = "---\nname: 中文名字\ndescription: d\n---\n\nBody";
+
+        IllegalArgumentException ex = assertThrows(IllegalArgumentException.class, () -> parser.parse(content));
+        assertTrue(ex.getMessage().contains("slug"), "消息应包含字段名 slug");
+    }
+
+    // ========== M3-2（D9）：frontmatter 依赖三字段解析（tool/skill/mcp_dependencies，兼容 string 与 list） ==========
+
+    @Test
+    void testParse_DependencyFrontmatterLists() {
+        // 与 builtin-skills/web-search/SKILL.md 实际写法一致
+        String content = "---\nname: 联网搜索\nslug: web-search\ndescription: d\n"
+            + "tool_dependencies:\n  - tavily_search\n"
+            + "skill_dependencies: []\n"
+            + "mcp_dependencies: []\n"
+            + "---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals(List.of("tavily_search"), result.getToolDependencies(), "tool_dependencies 列表应解析");
+        assertTrue(result.getSkillDependencies().isEmpty(), "空 skill_dependencies 应为空列表");
+        assertTrue(result.getMcpDependencies().isEmpty(), "空 mcp_dependencies 应为空列表");
+    }
+
+    @Test
+    void testParse_DependenciesAbsentYieldEmptyLists() {
+        String content = "---\nname: Plain\nslug: plain\ndescription: d\n---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertTrue(result.getToolDependencies().isEmpty());
+        assertTrue(result.getSkillDependencies().isEmpty());
+        assertTrue(result.getMcpDependencies().isEmpty());
+    }
+
+    @Test
+    void testParse_DependencyStringFormNormalizedToList() {
+        String content = "---\nname: StrDeps\nslug: str-deps\ndescription: d\n"
+            + "tool_dependencies: tavily_search\n"
+            + "mcp_dependencies: filesystem\n"
+            + "---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals(List.of("tavily_search"), result.getToolDependencies(), "string 形态应归一为单元素列表");
+        assertEquals(List.of("filesystem"), result.getMcpDependencies(), "string 形态应归一为单元素列表");
+    }
+
+    @Test
+    void testParse_AllThreeDependencyTypesMultiValue() {
+        String content = "---\nname: Multi\nslug: multi\ndescription: d\n"
+            + "tool_dependencies:\n  - t1\n  - t2\n"
+            + "skill_dependencies:\n  - other-skill\n"
+            + "mcp_dependencies:\n  - github\n---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals(List.of("t1", "t2"), result.getToolDependencies());
+        assertEquals(List.of("other-skill"), result.getSkillDependencies());
+        assertEquals(List.of("github"), result.getMcpDependencies());
     }
 }

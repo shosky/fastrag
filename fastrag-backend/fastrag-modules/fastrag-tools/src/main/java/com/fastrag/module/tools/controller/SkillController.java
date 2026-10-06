@@ -111,18 +111,21 @@ public class SkillController {
     }
 
     /** 创建技能 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_created)
     @PostMapping
     public ApiResponse<?> create(@RequestBody Map<String, Object> form) {
         return ApiResponse.success(svc.create(form));
     }
 
     /** 更新技能 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_updated, target = "#id")
     @PutMapping("/{id}")
     public ApiResponse<?> update(@PathVariable String id, @RequestBody Map<String, Object> form) {
         return ApiResponse.success(svc.update(id, form));
     }
 
     /** 删除技能 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_deleted, target = "#id")
     @DeleteMapping("/{id}")
     public ApiResponse<?> delete(@PathVariable String id) {
         svc.delete(id);
@@ -130,6 +133,7 @@ public class SkillController {
     }
 
     /** 切换技能启用状态 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_updated, target = "#id")
     @PostMapping("/{id}/toggle")
     public ApiResponse<?> toggle(@PathVariable String id) {
         svc.toggleEnabled(id);
@@ -137,6 +141,7 @@ public class SkillController {
     }
 
     /** 更新技能依赖 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_updated, target = "#id")
     @PutMapping("/{id}/dependencies")
     public ApiResponse<?> updateDependencies(
             @PathVariable String id,
@@ -145,6 +150,7 @@ public class SkillController {
     }
 
     /** 更新技能分享配置 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_updated, target = "#id")
     @PutMapping("/{id}/share-config")
     public ApiResponse<?> updateShareConfig(
             @PathVariable String id,
@@ -153,6 +159,7 @@ public class SkillController {
     }
 
     /** 设置技能启用状态 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_updated, target = "#id")
     @PutMapping("/{id}/enabled")
     public ApiResponse<?> setEnabled(
             @PathVariable String id,
@@ -198,6 +205,7 @@ public class SkillController {
     }
 
     /** 创建技能文件或目录 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_file_created, target = "#slug")
     @PostMapping("/{slug}/file")
     public ApiResponse<?> createFile(
             @PathVariable String slug,
@@ -206,11 +214,12 @@ public class SkillController {
             (String) body.get("path"),
             Boolean.TRUE.equals(body.get("isDir")),
             (String) body.get("content"),
-            getCurrentUserId());
+            SecurityUtil.getCurrentUserId());
         return ApiResponse.success();
     }
 
     /** 更新技能文件 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_file_updated, target = "#slug")
     @PutMapping("/{slug}/file")
     public ApiResponse<?> updateFile(
             @PathVariable String slug,
@@ -218,16 +227,17 @@ public class SkillController {
         skillFileService.updateFile(slug,
             (String) body.get("path"),
             (String) body.get("content"),
-            getCurrentUserId());
+            SecurityUtil.getCurrentUserId());
         return ApiResponse.success();
     }
 
     /** 删除技能文件或目录 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_file_deleted, target = "#slug")
     @DeleteMapping("/{slug}/file")
     public ApiResponse<?> deleteFile(
             @PathVariable String slug,
             @RequestParam String path) {
-        skillFileService.deleteNode(slug, path, getCurrentUserId());
+        skillFileService.deleteNode(slug, path, SecurityUtil.getCurrentUserId());
         return ApiResponse.success();
     }
 
@@ -255,6 +265,7 @@ public class SkillController {
     // ========== 安装草稿流水线 ==========
 
     /** 上传 ZIP/SKILL.md 并自动完成安装（创建草稿 → 确认安装 → 清理草稿） */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_created)
     @PostMapping("/import/prepare")
     public ApiResponse<?> prepareImport(@RequestParam("file") MultipartFile file) {
         try {
@@ -271,6 +282,7 @@ public class SkillController {
     }
 
     /** 确认安装草稿 */
+    @Loggable(category = LogCategory.operation, action = ActionType.skill_created, target = "#draftId")
     @PostMapping("/install-drafts/{draftId}/confirm")
     public ApiResponse<?> confirmDraft(
             @PathVariable String draftId,
@@ -286,10 +298,5 @@ public class SkillController {
     public ApiResponse<?> discardDraft(@PathVariable String draftId) {
         skillDraftService.discardDraft(draftId, SecurityUtil.getCurrentUserId());
         return ApiResponse.success();
-    }
-
-    /** 获取当前用户 ID（占位，后续从 SecurityContext 获取） */
-    private String getCurrentUserId() {
-        return "system";
     }
 }

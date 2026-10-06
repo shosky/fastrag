@@ -12,7 +12,7 @@ package com.fastrag.common.enums;
  *   <li><b>文件生命周期</b> - file_uploaded, file_processed, file_processing_started, file_processing_failed,
  *       file_updated, file_removed, file_restored, file_permanent_deleted, file_copied, file_retried, file_downloaded, file_moved</li>
  *   <li><b>文件夹</b> - folder_created, folder_updated, folder_deleted</li>
- *   <li><b>QA 对</b> - qa_pair_created, qa_pair_updated, qa_pair_deleted, qa_pair_confirmed</li>
+ *   <li><b>QA 对</b> - qa_pair_created, qa_pair_updated, qa_pair_deleted, qa_pair_confirmed, qa_generation_triggered</li>
  *   <li><b>分片</b> - chunk_created, chunk_updated, chunk_deleted</li>
  *   <li><b>解析策略</b> - strategy_created, strategy_updated, strategy_deleted, strategy_set_default</li>
  *   <li><b>知识图谱</b> - graph_build_started, graph_build_completed, graph_build_failed, graph_build_retried,
@@ -80,6 +80,7 @@ public enum ActionType {
     qa_pair_updated,
     qa_pair_deleted,
     qa_pair_confirmed,
+    qa_generation_triggered,
 
     // ==================== 分片 ====================
     chunk_created,
@@ -209,6 +210,9 @@ public enum ActionType {
     skill_created,
     skill_updated,
     skill_deleted,
+    skill_file_created,
+    skill_file_updated,
+    skill_file_deleted,
     mcp_service_created,
     mcp_service_updated,
     mcp_service_deleted,
