@@ -109,7 +109,7 @@
 - Shared state：agent_run 表（唯一持久状态）；sseExecutor 为类内自建 cachedThreadPool（非 Spring 托管）
 
 **Decisions & Deviations:**
-- ① ~~走旧 AgentExecutor~~ 已消解（M2-4，见 ExecutionEngine Deviations①）；② 取消无信号传播：cancelled 可被执行线程随后的 completed/failed 覆盖（last-write-wins，无锁无版本号）；③ streamEvents 选择「DB 轮询」而非「事件订阅」——与 RunEventPublisher 写而不读互为因果（事件通道闭环未建，先以状态轮询保底）；④ @Lazy self 注入是为绕 @Async 自调用失效的 Spring 惯用法
+- ① ~~走旧 AgentExecutor~~ 已消解（M2-4，见 ExecutionEngine Deviations①）；② 取消无信号传播：cancelled 可被执行线程随后的 completed/failed 覆盖（last-write-wins，无锁无版本号）——**终态覆盖已保护（2026-10-06 快修）**：executeRunAsync 回写终态前查库，非 running 不覆盖并保留 cancelled（引擎循环内真中断/插话通道仍待立项，见 docs/plan/weknora-gap-review.md P0-2）；③ streamEvents 选择「DB 轮询」而非「事件订阅」——与 RunEventPublisher 写而不读互为因果（事件通道闭环未建，先以状态轮询保底）；④ @Lazy self 注入是为绕 @Async 自调用失效的 Spring 惯用法
 
 **Parent Trace:** AgentRunServiceImpl → agent.AgentRunGateway → RunOrchestrationModule → REQ-C01~C08、D02~D03
 
@@ -275,5 +275,6 @@ syncSkills: SkillService 读内容 → /workspace/skills/{slug}/SKILL.md
 - **fastrag-tools 既有失配已修复（2026-09-28 质量门收尾）**：McpServiceServiceTest(16)/SkillServiceImplTest(9) 原因 = Service 层经 `SecurityUtil.getCurrentUser()` 取当前用户而单测无认证过滤器——修法为测试类 `@BeforeEach` 装配 SecurityContextHolder（LoginUser userId=u1 + `*` 权限）+ `@AfterEach` 清理 + MCP 夹具补 `creator="u1"`（可见性判定）；原「登记不改」条目解除
 - **全 reactor 质量门（2026-09-28）**：`mvn test` **BUILD SUCCESS**，16 模块全绿，合计 **run=641, failures=0, errors=0, skipped=11**（11 skipped 均为 Docker 集成守护）；注：修复过程中一次 reactor 运行在 tools 之后的模块出现过一次未复现的失败，复验两次均全绿，application 模块含异步/SSE 时序测试，若复现优先隔离该处
 - HITL：S8 真容器验收（集成用例在可达 daemon 环境实跑后人工验收隔离性与镜像内容）、S9 应用↔引擎端到端
+- **2026-10-06 快修批次（idd-review 对标，详见 docs/plan/weknora-gap-review.md）**：模块 **167 run / 0 失败 / 11 skipped**；+AgentEngineTest 2（executeSync 轮次耗尽兜底文案，对齐流式分支）+AgentRunServiceImplTest 2（终态回写前查库、cancelled 不被覆盖）+DockerSandboxAdapterTest 3（writeFile 的 mkdir+touch 活动标记复合命令）；AgentEngine 抽取 stepsExhaustedFallback 共享方法。
 - 旧「红绿循环未执行」登记已解除：沙箱域按 tdd/agent.md S7/S10/S11 用例表完成红绿循环（Tracer Bullet = S10-2 配置校验链）
 - **2026-10-06 技能域修复（skill-runtime-remediation M1~M3）**：模块最终 **160 run / 0 失败 / 11 skipped**（Docker 守护跳过，既往即如此）。净变化 = +AgentEngineTest(7，含 toolsDirty 重算正负控制/install_skill 过滤) +AgentRunServiceImplTest(3，委派/终态/异常→system_error) +SkillsMiddlewareTest 增量（拦截全文/id 解析/可见性 warn/三轮零查库/沙箱单次同步/600 截断）+ContextBuilderTest 重写(3) −SkillReadonlyBackendTest(13，随类删除)；`AgentExecutor.java` 与 `fs/` 两件删除经全仓 grep + 全仓 mvn test 编译运行验证。同轮全仓质量门：**16 模块 BUILD SUCCESS**（tools 226 / agent 160+11skip / application 76 / knowledge-retrieval-platform-graph-eval-publish-operation-iam-bootstrap 全绿）
