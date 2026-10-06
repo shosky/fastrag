@@ -57,6 +57,7 @@ public class KbFile {
     private Integer chunkCount;
     private String processingMode; // chunk 或 qa
     private String processingConfig; // JSON：上传向导的处理配置（引擎/语言/编码/优先级/重试/媒体），重试与重新分片时复用
+    private String qaGenerationConfig; // JSON：qa 模式上传参数 {count,customInstruction,model}（无 mode——自动触发恒 replace 语义）
     private Integer enableGraphBuild; // 该文件是否构建知识图谱，默认 0
     private String folderId;
     private Long viewCount;

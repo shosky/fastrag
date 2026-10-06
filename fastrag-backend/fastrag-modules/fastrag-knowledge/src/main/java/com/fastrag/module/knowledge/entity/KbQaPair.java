@@ -35,6 +35,8 @@ public class KbQaPair {
     private String answer;
     private String source; // manual / ai
     private String status; // draft / confirmed
+    /** 源父分片引用（qa-generation 提炼产出）；manual 恒 NULL，ai 对写入，悬空允许（重切/删片不清理） */
+    private String sourceChunkId;
     @TableField(fill = FieldFill.INSERT)
     private LocalDateTime createdAt;
 }

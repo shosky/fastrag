@@ -803,6 +803,10 @@ public class RetrievalServiceImpl implements RetrievalService {
             List<KbQaPair> qaPairs = qaPairMapper.selectList(
                     new LambdaQueryWrapper<KbQaPair>()
                             .eq(KbQaPair::getKbId, kbId)
+                            // 召回准入（ADR-0005）：manual 创建即可召回；ai 提炼对须确认后才召回
+                            .and(w -> w.eq(KbQaPair::getSource, "manual")
+                                    .or()
+                                    .eq(KbQaPair::getStatus, "confirmed"))
                             .and(w -> {
                                 for (int i = 0; i < tokens.size(); i++) {
                                     if (i > 0) w.or();

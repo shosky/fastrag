@@ -16,6 +16,8 @@ import java.util.Map;
 public class FileProcessRequest {
     /** 处理模式：chunk（默认）/ qa */
     private String processingMode;
+    /** qa 模式提炼参数 {count, customInstruction, model}（无 mode——自动触发恒 replace 语义，qa-generation 链 REQ-A03） */
+    private Map<String, Object> qaGenerationConfig;
     /** 指定解析策略 ID（为空则后端按扩展名自动匹配） */
     private String parseStrategyId;
     /** 内容语言：auto / zh / en / mixed（影响 ASR） */

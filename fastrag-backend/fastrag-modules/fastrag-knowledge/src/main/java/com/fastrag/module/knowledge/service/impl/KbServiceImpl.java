@@ -11,12 +11,14 @@ import com.fastrag.infra.minio.MinioService;
 import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KbQaPair;
+import com.fastrag.module.knowledge.entity.KbQaGenerationTask;
 import com.fastrag.module.knowledge.entity.KbTag;
 import com.fastrag.module.knowledge.entity.KbTagRelation;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
 import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbQaPairMapper;
+import com.fastrag.module.knowledge.mapper.KbQaGenerationTaskMapper;
 import com.fastrag.module.knowledge.mapper.KbTagMapper;
 import com.fastrag.module.knowledge.mapper.KbTagRelationMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
@@ -49,6 +51,7 @@ public class KbServiceImpl implements KbService {
     private final GraphStore graphStore;
     private final MinioService minioService;
     private final KbQaPairMapper qaPairMapper;
+    private final KbQaGenerationTaskMapper qaGenerationTaskMapper;
     private final KbAclService aclService;
     private final KbAccessChecker accessChecker;
     private final TagRelationHelper tagRelationHelper;
@@ -214,6 +217,14 @@ public class KbServiceImpl implements KbService {
                         .eq(KbQaPair::getFileId, fileId));
             } catch (Exception e) {
                 log.warn("[KB Delete] QA pair cleanup failed for file {}: {}", fileId, e.getMessage());
+            }
+            // 清理提炼任务行（qa-generation，与 QA 对同批级联）
+            try {
+                qaGenerationTaskMapper.delete(new LambdaQueryWrapper<KbQaGenerationTask>()
+                        .eq(KbQaGenerationTask::getKbId, id)
+                        .eq(KbQaGenerationTask::getFileId, fileId));
+            } catch (Exception e) {
+                log.warn("[KB Delete] QA generation task cleanup failed for file {}: {}", fileId, e.getMessage());
             }
         }
         // 2. 清理该 KB 下的全部标签关联（KB 级 + 文件级）并校正 usage_count（分册四：标签维护闭环）

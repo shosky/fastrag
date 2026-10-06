@@ -19,6 +19,7 @@ import com.fastrag.module.knowledge.entity.KbChunk;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
 import com.fastrag.module.knowledge.entity.KbQaPair;
+import com.fastrag.module.knowledge.entity.KbQaGenerationTask;
 import com.fastrag.module.knowledge.entity.KbTag;
 import com.fastrag.module.knowledge.entity.KbTagRelation;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
@@ -26,6 +27,7 @@ import com.fastrag.module.knowledge.mapper.KbChunkMapper;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
 import com.fastrag.module.knowledge.mapper.KbQaPairMapper;
+import com.fastrag.module.knowledge.mapper.KbQaGenerationTaskMapper;
 import com.fastrag.module.knowledge.mapper.KbTagMapper;
 import com.fastrag.module.knowledge.mapper.KbTagRelationMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
@@ -80,6 +82,7 @@ public class FileServiceImpl implements FileService {
     private final KbFileMapper fileMapper;
     private final KbChunkMapper chunkMapper;
     private final KbQaPairMapper qaPairMapper;
+    private final KbQaGenerationTaskMapper qaGenerationTaskMapper;
     private final MinioService minioService;
     private final MessagePublisher messagePublisher;
     private final KbParseStrategyMapper strategyMapper;
@@ -161,6 +164,10 @@ public class FileServiceImpl implements FileService {
 
         // 持久化处理模式
         f.setProcessingMode(processingMode);
+        // qa 模式：持久化提炼参数（qa-generation 链 REQ-A03；摄入完成后按此自动触发）
+        if ("qa".equals(processingMode) && req.getQaGenerationConfig() != null && !req.getQaGenerationConfig().isEmpty()) {
+            f.setQaGenerationConfig(JSONUtil.toJsonStr(req.getQaGenerationConfig()));
+        }
         // 持久化解析策略 ID（后续图谱构建等需要读取策略中的 LLM 模型配置）
         f.setParseStrategyId(strategyId);
         // 持久化图谱开关：
@@ -608,6 +615,15 @@ public class FileServiceImpl implements FileService {
             }
         } catch (Exception e) {
             log.warn("[Delete] QA pair cleanup failed for file {}: {}", fileId, e.getMessage());
+        }
+
+        // 清理提炼任务行（qa-generation，与 QA 对同批级联）
+        try {
+            qaGenerationTaskMapper.delete(new LambdaQueryWrapper<KbQaGenerationTask>()
+                    .eq(KbQaGenerationTask::getKbId, kbId)
+                    .eq(KbQaGenerationTask::getFileId, fileId));
+        } catch (Exception e) {
+            log.warn("[Delete] QA generation task cleanup failed for file {}: {}", fileId, e.getMessage());
         }
 
         // 清理文件级专属自定义策略（随文件删除级联）

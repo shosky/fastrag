@@ -19,6 +19,8 @@ import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.knowledge.util.OcrNoiseFilter;
 import com.fastrag.module.knowledge.model.FileProcessRequest;
 import com.fastrag.module.knowledge.model.ParseStrategyConfig;
+import com.fastrag.module.knowledge.model.QaGenerationConfig;
+import com.fastrag.module.knowledge.service.QaGenerationService;
 import com.fastrag.module.knowledge.parser.DocumentParser;
 import com.fastrag.module.knowledge.parser.ImageFilter;
 import com.fastrag.module.knowledge.parser.MediaExtractor;
@@ -107,6 +109,7 @@ public class IngestionConsumer implements IngestionHandler {
     private final StrategyConfigResolver configResolver;
     private final ObjectProvider<MessagePublisher> messagePublisherProvider;
     private final MarkdownService markdownService;
+    private final QaGenerationService qaGenerationService;
 
     private static final Set<String> AUDIO_EXTENSIONS = Set.of("mp3", "wav", "m4a", "aac", "ogg", "flac", "wma");
 
@@ -514,6 +517,16 @@ public class IngestionConsumer implements IngestionHandler {
                         fileId, enableGraphBuild, rawEnableGraphBuild);
             }
 
+            // 7.5 qa 模式文件：摄入完成后自动触发问答对提炼（qa-generation 链 REQ-A03）。
+            //     互斥命中/队列不可用/校验失败均不阻断摄入主流程——任务行已由 trigger 落 failed 供观测。
+            if ("qa".equals(message.get("processingMode")) || "qa".equals(existingFile.getProcessingMode())) {
+                try {
+                    triggerQaGeneration(existingFile);
+                } catch (Exception e) {
+                    log.warn("[QaGeneration] auto-trigger failed for file={} (non-blocking): {}", fileId, e.getMessage());
+                }
+            }
+
             // 8. 更新状态为 completed
             // (Markdown 落盘在状态推进前执行，失败仅告警、不阻断主流程)
             markdownService.persistParsedMarkdown(kbId, fileId, extension, parseResult);
@@ -789,5 +802,21 @@ public class IngestionConsumer implements IngestionHandler {
     private String getFileName(String fileId) {
         KbFile f = fileMapper.selectById(fileId);
         return f != null ? f.getName() : fileId;
+    }
+
+    /**
+     * qa 模式文件摄入完成后的自动提炼触发（qa-generation 链 REQ-A03）：
+     * 参数取 kb_file.qa_generation_config（无则全缺省），mode 恒 replace（首次生成本身即 replace 语义，
+     * 契约口径：文件级参数无 mode 字段）。异常由调用点捕获，不阻断摄入主流程。
+     * 包私有 = 测试缝（tdd S6）。
+     */
+    void triggerQaGeneration(KbFile file) {
+        QaGenerationConfig config = QaGenerationConfig.fromJson(file.getQaGenerationConfig());
+        if (config == null) {
+            config = new QaGenerationConfig();
+        }
+        config.setMode(QaGenerationConfig.MODE_REPLACE);
+        qaGenerationService.trigger(file.getKbId(), file.getId(), config);
+        log.info("[QaGeneration] auto-triggered for qa-mode file={}", file.getId());
     }
 }

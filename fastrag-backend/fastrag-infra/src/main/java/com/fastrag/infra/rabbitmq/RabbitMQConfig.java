@@ -33,6 +33,7 @@ public class RabbitMQConfig {
 
     public static final String INGESTION_QUEUE = "fastrag.ingestion.queue";
     public static final String GRAPH_BUILD_QUEUE = "fastrag.graph-build.queue";
+    public static final String QA_GENERATION_QUEUE = "fastrag.qa-generation.queue";
     public static final String DIRECT_EXCHANGE = "fastrag.direct";
 
     @Bean
@@ -51,6 +52,11 @@ public class RabbitMQConfig {
     }
 
     @Bean
+    public Queue qaGenerationQueue() {
+        return new Queue(QA_GENERATION_QUEUE, true);
+    }
+
+    @Bean
     public Binding ingestionBinding(Queue ingestionQueue, TopicExchange exchange) {
         return BindingBuilder.bind(ingestionQueue).to(exchange).with("ingestion");
     }
@@ -58,6 +64,11 @@ public class RabbitMQConfig {
     @Bean
     public Binding graphBuildBinding(Queue graphBuildQueue, TopicExchange exchange) {
         return BindingBuilder.bind(graphBuildQueue).to(exchange).with("graph-build");
+    }
+
+    @Bean
+    public Binding qaGenerationBinding(Queue qaGenerationQueue, TopicExchange exchange) {
+        return BindingBuilder.bind(qaGenerationQueue).to(exchange).with("qa-generation");
     }
 
     @Bean

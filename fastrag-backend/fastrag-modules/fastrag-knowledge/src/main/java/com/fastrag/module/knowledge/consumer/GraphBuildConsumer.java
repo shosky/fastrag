@@ -674,7 +674,24 @@ public class GraphBuildConsumer implements GraphBuildHandler {
             u.setExtractionResult(resultJson);
             u.setStatus(status);
             u.setCreatedAt(LocalDateTime.now());
-            unitMapper.insert(u);
+            try {
+                unitMapper.insert(u);
+            } catch (org.springframework.dao.DuplicateKeyException e) {
+                // 并发/构建内重试下同 (kb,file,unitIndex) 槽位已被写入（uk_unit）：降级为按槽位更新，
+                // 避免单条唯一键冲突中断整个文件的图谱构建（2026-09-27 缺陷登记，feature-map #10）
+                KbGraphUnit racer = unitMapper.selectOne(new LambdaQueryWrapper<KbGraphUnit>()
+                        .eq(KbGraphUnit::getKbId, kbId)
+                        .eq(KbGraphUnit::getFileId, fileId)
+                        .eq(KbGraphUnit::getUnitIndex, unit.index()));
+                if (racer != null) {
+                    racer.setContentHash(u.getContentHash());
+                    racer.setChunkIds(chunkIdsJson);
+                    racer.setExtractionResult(resultJson);
+                    racer.setStatus(status);
+                    racer.setUpdatedAt(LocalDateTime.now());
+                    unitMapper.updateById(racer);
+                }
+            }
         }
     }
 

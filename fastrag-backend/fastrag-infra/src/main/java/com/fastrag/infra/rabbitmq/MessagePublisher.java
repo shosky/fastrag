@@ -132,4 +132,23 @@ public class MessagePublisher {
             }
         }
     }
+
+    /**
+     * 发布问答对提炼消息到 qa-generation routing key。
+     *
+     * <p>与 {@link #publishIngestion}/{@link #publishGraphBuild} 不同：<b>无同步降级</b>——
+     * 提炼不在上传关键路径上，MQ 不可用时直接抛出，由调用方（QaGenerationService.trigger）
+     * 将任务行落 failed 并向调用者返回业务错误（design/qa-generation.md 缝 2 偏差声明）。
+     */
+    public void publishQaGeneration(Object message) {
+        if (!isRabbitMqAvailable()) {
+            throw new IllegalStateException("RabbitMQ 不可用");
+        }
+        try {
+            rabbitTemplate.convertAndSend(RabbitMQConfig.DIRECT_EXCHANGE, "qa-generation", message);
+            log.info("[QaGeneration-Publish] Message published, routingKey=qa-generation");
+        } catch (Exception e) {
+            throw new IllegalStateException("提炼消息发布失败: " + e.getMessage(), e);
+        }
+    }
 }
