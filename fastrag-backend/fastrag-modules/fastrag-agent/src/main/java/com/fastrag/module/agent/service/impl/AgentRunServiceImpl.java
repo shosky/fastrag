@@ -204,7 +204,13 @@ public class AgentRunServiceImpl implements AgentRunService {
             // 执行 Agent（M2-4：AgentEngine.executeSync，中间件链生效；RunEventPublisher 事件语义不变）
             AgentResult result = agentEngine.executeSync(run, context);
 
-            // 更新结果
+            // 更新结果（QF-5：终态回写前查当前状态——运行期间被取消等非 running 状态不覆盖，取消保留）
+            AgentRun current = agentRunMapper.selectById(run.getId());
+            if (current != null && !"running".equals(current.getStatus())) {
+                log.info("[AgentRunService] Run {} 取消保留: DB 当前状态={}, 引擎结果={} 不回写终态",
+                        run.getId(), current.getStatus(), result.isSuccess() ? "success" : "failed");
+                return;
+            }
             run.setStatus(result.isSuccess() ? "completed" : "failed");
             if (!result.isSuccess()) {
                 run.setErrorType("execution_error");

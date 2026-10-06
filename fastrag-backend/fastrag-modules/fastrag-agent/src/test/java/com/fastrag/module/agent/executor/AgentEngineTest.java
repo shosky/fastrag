@@ -2,6 +2,7 @@ package com.fastrag.module.agent.executor;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fastrag.ai.llm.LlmService;
+import com.fastrag.ai.model.ChatMessage;
 import com.fastrag.ai.model.ChatResponse;
 import com.fastrag.module.agent.context.BaseContext;
 import com.fastrag.module.agent.entity.AgentRun;
@@ -187,5 +188,53 @@ class AgentEngineTest {
         context.setSkills(List.of());
 
         assertFalse(AgentEngine.keepsInstallSkill(context));
+    }
+
+    // ===== QF-4（idd-review 快修）：executeSync 轮次耗尽兜底文案 =====
+
+    private ChatResponse toolCallResponse(String toolName) {
+        ChatResponse resp = new ChatResponse();
+        resp.setContent("");
+        resp.setToolCalls(List.of(new ChatMessage.ToolCall("call-1", "function",
+                new ChatMessage.FunctionCall(toolName, "{}"))));
+        return resp;
+    }
+
+    @Test
+    void executeSync_maxStepsExhaustedWithoutAnswer_fillsFallbackContent() {
+        // 每轮都返回 tool_calls（工具未注册走 not-found 通道），循环耗尽且 finalAnswer 为空
+        when(toolRegistry.resolveTools(anyList()))
+                .thenReturn(new ArrayList<>(List.of(def("loop_tool"))));
+        when(toolRegistry.toOpenAITools(anyList())).thenReturn(List.of());
+        when(llmService.chatWithTools(any(), anyList(), anyList(), anyDouble(), any(), any()))
+                .thenReturn(toolCallResponse("loop_tool"));
+
+        BaseContext context = new BaseContext();
+        context.setTools(new ArrayList<>(List.of("loop_tool")));
+        context.setMaxSteps(2);
+
+        AgentResult result = engine.executeSync(runOf("hi"), context);
+
+        assertTrue(result.isSuccess());
+        assertFalse(result.getAnswer().isEmpty(), "轮次耗尽不应返回空串");
+        assertTrue(result.getAnswer().contains("已达到最大步数限制"), "应为与流式分支一致的兜底文案");
+        assertTrue(result.getAnswer().contains("2步"), "兜底文案应带实际轮次上限");
+    }
+
+    @Test
+    void executeSync_normalAnswer_notOverwrittenByFallback() {
+        when(toolRegistry.resolveTools(anyList()))
+                .thenReturn(new ArrayList<>(List.of(def("loop_tool"))));
+        when(toolRegistry.toOpenAITools(anyList())).thenReturn(List.of());
+        when(llmService.chatWithTools(any(), anyList(), anyList(), anyDouble(), any(), any()))
+                .thenReturn(finalResponse("real answer"));
+
+        BaseContext context = new BaseContext();
+        context.setTools(new ArrayList<>(List.of("loop_tool")));
+        context.setMaxSteps(5);
+
+        AgentResult result = engine.executeSync(runOf("hi"), context);
+
+        assertEquals("real answer", result.getAnswer());
     }
 }

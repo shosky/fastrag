@@ -99,4 +99,45 @@ class AgentRunServiceImplTest {
         assertEquals("failed", finalState.getStatus());
         assertEquals("system_error", finalState.getErrorType());
     }
+
+    // ===== QF-5（idd-review 快修）：终态回写前查状态，已取消的 run 不被引擎结果覆盖 =====
+
+    @Test
+    void executeRunAsync_preservesCancelledStatus_whenRunCancelledDuringExecution() throws Exception {
+        AgentRun run = newRun();
+        when(contextBuilder.buildContext(run)).thenReturn(new BaseContext());
+        when(agentEngine.executeSync(eq(run), any(BaseContext.class)))
+                .thenReturn(AgentResult.success("late answer"));
+        // DB 预置：引擎执行期间用户已取消
+        AgentRun dbState = new AgentRun();
+        dbState.setId("run-1");
+        dbState.setStatus("cancelled");
+        when(agentRunMapper.selectById("run-1")).thenReturn(dbState);
+
+        service.executeRunAsync(run);
+
+        // 只有开头置 running 那一次回写，completed 不得覆盖 cancelled
+        ArgumentCaptor<AgentRun> captor = ArgumentCaptor.forClass(AgentRun.class);
+        verify(agentRunMapper, times(1)).updateById(captor.capture());
+        assertEquals("running", captor.getAllValues().get(0).getStatus());
+        assertEquals("cancelled", agentRunMapper.selectById("run-1").getStatus());
+    }
+
+    @Test
+    void executeRunAsync_stillRunning_normalCompletedPathUnchanged() throws Exception {
+        AgentRun run = newRun();
+        when(contextBuilder.buildContext(run)).thenReturn(new BaseContext());
+        when(agentEngine.executeSync(eq(run), any(BaseContext.class)))
+                .thenReturn(AgentResult.success("done"));
+        AgentRun dbState = new AgentRun();
+        dbState.setId("run-1");
+        dbState.setStatus("running");
+        when(agentRunMapper.selectById("run-1")).thenReturn(dbState);
+
+        service.executeRunAsync(run);
+
+        ArgumentCaptor<AgentRun> captor = ArgumentCaptor.forClass(AgentRun.class);
+        verify(agentRunMapper, times(2)).updateById(captor.capture());
+        assertEquals("completed", captor.getAllValues().get(1).getStatus());
+    }
 }

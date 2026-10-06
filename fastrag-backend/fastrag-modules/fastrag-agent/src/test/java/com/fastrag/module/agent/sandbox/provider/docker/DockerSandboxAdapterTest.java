@@ -128,6 +128,33 @@ class DockerSandboxAdapterTest {
                 "find '/workspace' -maxdepth 1 -mindepth 1 -printf '%y\\t%s\\t%f\\n'");
     }
 
+    // ---------- QF-7（idd-review 快修）：writeFile 前置 exec 复合活动标记 ----------
+
+    @Test
+    void writeFile前置命令_mkdir复合活动标记touch() {
+        // tar 通道绕过 execWrapper 的 touch 前缀，活动刷新复合进 mkdir 阶段（零额外往返）
+        String cmd = DockerSandboxAdapter.commandWriteFilePrepare(
+                "/workspace/sub", "/workspace/.fastrag_activity");
+        assertThat(cmd).isEqualTo("mkdir -p '/workspace/sub'; touch /workspace/.fastrag_activity");
+    }
+
+    @Test
+    void writeFile前置命令_父目录带空格与单引号安全() {
+        String cmd = DockerSandboxAdapter.commandWriteFilePrepare(
+                "/workspace/my dir", "/workspace/.fastrag_activity");
+        assertThat(cmd).isEqualTo("mkdir -p '/workspace/my dir'; touch /workspace/.fastrag_activity");
+    }
+
+    @Test
+    void writeFile前置命令_无额外exec往返() {
+        // 单条命令一次 exec 完成 mkdir + touch：以 "; touch " 复合，不再是纯 mkdir
+        String cmd = DockerSandboxAdapter.commandWriteFilePrepare(
+                "/workspace", "/workspace/.fastrag_activity");
+        assertThat(cmd).startsWith("mkdir -p '/workspace'");
+        assertThat(cmd).contains("; touch /workspace/.fastrag_activity");
+        assertThat(cmd.indexOf("mkdir")).isLessThan(cmd.indexOf("touch"));
+    }
+
     @Test
     void 父目录计算() {
         assertThat(DockerSandboxAdapter.parentDir("/a/b.txt")).isEqualTo("/a");

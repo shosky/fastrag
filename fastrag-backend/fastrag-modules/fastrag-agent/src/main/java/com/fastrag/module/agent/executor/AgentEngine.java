@@ -89,6 +89,15 @@ public class AgentEngine {
     /** 最大工具调用轮次 */
     private static final int MAX_ITERATIONS = 15;
 
+    /**
+     * 轮次耗尽且无最终回答时的兜底文案（QF-4）：流式/同步共用，保证两条执行路径语义一致。
+     */
+    static String stepsExhaustedFallback(int maxSteps) {
+        return "抱歉，执行已达到最大步数限制（" + maxSteps + "步），未能完成回答。"
+                + "可能原因是工具执行失败导致无法获取所需数据。"
+                + "请尝试简化问题或检查数据源连接是否正常。";
+    }
+
     /** 工具输出截断长度 */
     private static final int TOOL_OUTPUT_MAX = 5000;
 
@@ -356,9 +365,7 @@ public class AgentEngine {
             // 检查是否因达到最大迭代次数而导致无最终回答
             String finalContent = fullAnswer.toString();
             if (finalContent.isEmpty() && totalIterations >= maxIterations) {
-                finalContent = "抱歉，执行已达到最大步数限制（" + maxIterations + "步），未能完成回答。"
-                        + "可能原因是工具执行失败导致无法获取所需数据。"
-                        + "请尝试简化问题或检查数据源连接是否正常。";
+                finalContent = stepsExhaustedFallback(maxIterations);
                 // 将兜底内容推送给前端
                 sendSseEvent(emitter, "content", Map.of("content", finalContent));
             }
@@ -514,6 +521,11 @@ public class AgentEngine {
                     record.setDurationMs((int) toolDuration);
                     toolCallRecords.add(record);
                 }
+            }
+
+            // QF-4：轮次耗尽且无最终回答时，填入与流式分支一致的兜底文案（success 语义不变）
+            if (StrUtil.isBlank(finalAnswer) && totalIterations >= maxIterationsSync) {
+                finalAnswer = stepsExhaustedFallback(maxIterationsSync);
             }
 
             AgentResult result = AgentResult.success(finalAnswer);

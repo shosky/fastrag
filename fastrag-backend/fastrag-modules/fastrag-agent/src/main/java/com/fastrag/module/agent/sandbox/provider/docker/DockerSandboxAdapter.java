@@ -392,7 +392,8 @@ public class DockerSandboxAdapter implements SandboxProviderClient {
         // 从未送达容器侧，命令干等至 FS_OP_TIMEOUT 被杀（exit 124、stderr 空），空 env 修复后首次
         // 真机写入即暴露。改走 copyArchiveToContainer 内存 tar——Docker 标准通道，无 stdin 依赖。
         try {
-            execFs(client, id, commandMakeDir(parentDir(clean)), "writeFile");
+            // QF-7：mkdir 复合 touch 活动标记——tar 写入本身不刷新活动，前置 exec 一次性补齐
+            execFs(client, id, commandWriteFilePrepare(parentDir(clean), ACTIVITY_MARKER), "writeFile");
         } catch (RuntimeException | LinkageError e) {
             throw wrapOp("writeFile", e);
         }
@@ -971,6 +972,15 @@ public class DockerSandboxAdapter implements SandboxProviderClient {
 
     static String commandMakeDir(String path) {
         return "mkdir -p " + shellQuote(path);
+    }
+
+    /**
+     * writeFile 前置命令（QF-7）：mkdir -p 父目录 + touch 活动标记复合成单条 exec。
+     * tar 通道（copyArchiveToContainer）绕过 execWrapper 的 touch 前缀，活动刷新借
+     * 必经的 makeDir 阶段补回——零额外往返，与 lastActivity 的空闲回收语义（REQ-H02）保持一致。
+     */
+    static String commandWriteFilePrepare(String dir, String markerPath) {
+        return commandMakeDir(dir) + "; touch " + markerPath;
     }
 
     static String commandRemove(String path) {
