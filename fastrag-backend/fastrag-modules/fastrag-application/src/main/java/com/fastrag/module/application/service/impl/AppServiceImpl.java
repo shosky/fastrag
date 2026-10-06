@@ -708,7 +708,7 @@ public class AppServiceImpl implements AppService {
     /**
      * 全 agentic 化（2026-09-30）：知识来源自工具调用通道提取——扫描 toolCallsJson 中
      * query_kb 调用的结构化结果（result.data.display_type=knowledge_chunks.chunks），
-     * 投影为与原预检索 sources 同构的条目（fileName/score/kbId/content），供 references 落库。
+     * 投影为与原预检索 sources 同构的条目（fileName/fileId/score/kbId/chunkIndex/content），供 references 落库。
      */
     private List<Map<String, Object>> extractKbSources(String toolCallsJson) {
         List<Map<String, Object>> sources = new ArrayList<>();
@@ -732,6 +732,7 @@ public class AppServiceImpl implements AppService {
                     cn.hutool.json.JSONObject chunk = (cn.hutool.json.JSONObject) c;
                     Map<String, Object> src = new LinkedHashMap<>();
                     src.put("fileName", chunk.getStr("source"));
+                    src.put("fileId", chunk.getStr("file_id")); // QF-1：上游结构化通道已含 file_id，投影不再丢弃
                     src.put("score", chunk.get("score"));
                     src.put("kbId", data.getStr("kb_id"));
                     src.put("chunkIndex", chunk.get("chunk_index"));

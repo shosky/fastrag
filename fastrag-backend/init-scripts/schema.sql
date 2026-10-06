@@ -595,7 +595,6 @@ CREATE TABLE IF NOT EXISTS model_call_log (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     model_id VARCHAR(32) NOT NULL,
     caller VARCHAR(64),
-    status VARCHAR(16),
     duration INT,
     tokens INT,
     status VARCHAR(16) DEFAULT 'success' COMMENT 'success|failed',

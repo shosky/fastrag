@@ -117,7 +117,7 @@ public class ToolRegistry {
         return def;
     }
 
-    /** 将 ToolDefinition 列表转为 OpenAI function calling 格式 */
+    /** 将 ToolDefinition 列表转为 OpenAI function calling 格式（QF-6：按 function name 稳定排序，两条消费路径自动受益） */
     public List<ChatRequest.ToolDefinition> toOpenAITools(List<ToolDefinition> tools) {
         if (tools == null) return List.of();
         return tools.stream().map(t -> {
@@ -140,7 +140,9 @@ public class ToolRegistry {
             }
             td.setFunction(fn);
             return td;
-        }).collect(Collectors.toList());
+        }).sorted(Comparator.comparing(td -> td.getFunction().getName(),
+                        Comparator.nullsLast(Comparator.naturalOrder())))
+                .collect(Collectors.toList());
     }
 
     @SuppressWarnings("unchecked")
