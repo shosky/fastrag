@@ -234,4 +234,11 @@ public class AppConfigController {
     @DeleteMapping("/{appId}/conversations/{convId}") public ApiResponse<?> delConv(@PathVariable String convId) { svc.deleteConversation(convId); return ApiResponse.success(); }
     @PreAuthorize("@perm.has('app:use')")
     @GetMapping("/{appId}/conversations/export") public void exportConvs(@PathVariable String appId,HttpServletResponse resp) throws Exception { svc.exportConversationsCsv(appId,resp); }
+
+    // ===== 绑定有效性预览（app-chat-optimize Step 3a） =====
+    @PreAuthorize("@perm.has('app:use')")
+    @GetMapping("/{appId}/bindings/effectiveness")
+    public ApiResponse<?> bindingsEffectiveness(@PathVariable String appId) {
+        return ApiResponse.success(svc.bindingsEffectiveness(appId));
+    }
 }

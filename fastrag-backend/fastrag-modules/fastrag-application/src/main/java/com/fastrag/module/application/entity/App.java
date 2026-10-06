@@ -33,6 +33,8 @@ import com.baomidou.mybatisplus.annotation.*; import com.fasterxml.jackson.annot
     @TableId(type=IdType.ASSIGN_ID) private String id;
     private String name,description,type,icon,status,owner;
     private String orgId; // 归属组织（同组织可见，创建时写入）
+    /** 沙箱配置引用（REQ-H03 分支②载体，2026-09-28 沙箱实装；空=该应用工具执行降级） */
+    private String sandboxConfigId;
     @JsonIgnore private String tags;
     private LocalDateTime createdAt,updatedAt;
 

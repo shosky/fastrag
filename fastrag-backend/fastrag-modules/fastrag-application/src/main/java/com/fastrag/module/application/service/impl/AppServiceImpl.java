@@ -10,22 +10,23 @@ import com.fastrag.module.agent.context.BaseContext;
 import com.fastrag.module.agent.entity.AgentRun;
 import com.fastrag.module.agent.executor.AgentEngine;
 import com.fastrag.module.agent.executor.ModelConfig;
+import com.fastrag.module.agent.mapper.SandboxConfigMapper;
 import com.fastrag.module.application.dto.AppSessionDTO;
+import com.fastrag.module.application.dto.ConversationRequestState;
 import com.fastrag.module.application.entity.*;
 import com.fastrag.module.application.mapper.*;
 import com.fastrag.module.application.service.AppService;
-import com.fastrag.module.knowledge.entity.KnowledgeBase;
-import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
+import com.fastrag.module.application.service.preset.DialogDefaults;
+import com.fastrag.module.application.service.preset.DialogPresetResolver;
+import com.fastrag.module.application.service.preset.EffectiveDialogConfig;
+import com.fastrag.module.application.service.session.SessionRequestStateStore;
+import com.fastrag.module.application.service.session.StopRegistry;
 import com.fastrag.module.platform.entity.ModelRecord;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import com.fastrag.module.platform.service.SensitiveWordService;
-import com.fastrag.module.retrieval.model.RetrievalRequest;
-import com.fastrag.module.retrieval.model.SearchResultItem;
-import com.fastrag.module.retrieval.service.RetrievalService;
 import com.fastrag.security.filter.LoginUser;
 import com.fastrag.security.util.DataScope;
 import com.fastrag.security.util.SecurityUtil;
-import lombok.Data;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
@@ -42,6 +43,13 @@ import org.springframework.security.core.context.SecurityContextHolder;
 @RequiredArgsConstructor
 public class AppServiceImpl implements AppService {
 
+    /** 沙箱能力提示：应用绑定沙箱配置时追加进 system prompt（工具恒注册但模型无从得知沙箱可用，见 2026-09-30 排查）。
+     * 示例路径必须在 /workspace 下——工作区守卫拒收外部路径，用 /tmp 作示例曾把模型带偏 */
+    private static final String SANDBOX_CAPABILITY_HINT =
+            "\n\n【沙箱已启用】本应用接入了代码执行沙箱：需要运行代码、执行命令或处理文件时，请主动使用沙箱工具——"
+                    + "先用 write_file 把代码写入沙箱（路径必须在 /workspace 下，如 /workspace/main.py），"
+                    + "再用 execute 执行（例如 `python3 /workspace/main.py`），并基于命令输出来回答用户。";
+
     private final AppMapper appMapper;
     private final AppConfigMapper configMapper;
     private final AppTemplateMapper tplMapper;
@@ -49,17 +57,20 @@ public class AppServiceImpl implements AppService {
     private final AppConversationMessageMapper convMsgMapper;
     private final AppKbBindingMapper kbBindingMapper;
     private final AppBasicConfigMapper basicConfigMapper;
-    private final KnowledgeBaseMapper kbMapper;
     private final ModelRecordMapper modelRecordMapper;
     private final AppToolBindingMapper toolBindingMapper;
     private final AppSkillBindingMapper skillBindingMapper;
     private final AppMcpBindingMapper mcpBindingMapper;
     private final AppDbBindingMapper dbMapper;
     private final LlmService llmService;
-    private final RetrievalService retrievalService;
     private final AgentEngine agentEngine;
     private final SensitiveWordService sensitiveWordService;
     private final AppGlobalPolicyMapper globalPolicyMapper;
+    private final DialogPresetResolver presetResolver;
+    private final StopRegistry stopRegistry;
+    private final SessionRequestStateStore requestStateStore;
+    /** 沙箱配置存在性校验与对话链注入（REQ-H03 分支②，2026-09-28 沙箱实装） */
+    private final SandboxConfigMapper sandboxConfigMapper;
 
     private final ExecutorService streamExecutor = Executors.newCachedThreadPool();
 
@@ -97,6 +108,19 @@ public class AppServiceImpl implements AppService {
                         .eq(AppConversation::getSessionId, sessionId));
         if (conv == null) throw BusinessException.notFound("会话不存在");
         LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.isApiToken(user) && !user.getUserId().equals(conv.getUserId())) {
+            throw BusinessException.forbidden("无权访问该会话");
+        }
+        return conv;
+    }
+
+    /**
+     * 会话 ID 主键定位 + 归属校验（new-conversation：app_id 可空后的定位键迁移不变量）。
+     * 新旧通道共用；直聊会话（app_id=NULL）仅可经此定位。
+     */
+    private AppConversation requireOwnConversationById(String conversationId, LoginUser user) {
+        AppConversation conv = convMapper.selectById(conversationId);
+        if (conv == null) throw BusinessException.notFound("会话不存在");
         if (!DataScope.isApiToken(user) && !user.getUserId().equals(conv.getUserId())) {
             throw BusinessException.forbidden("无权访问该会话");
         }
@@ -146,6 +170,7 @@ public class AppServiceImpl implements AppService {
         a.setStatus("draft");
         a.setOwner(user.getUserId());
         a.setOrgId(user.getOrgId());
+        a.setSandboxConfigId(requireSandboxConfigExists((String) f.get("sandboxConfigId")));
         appMapper.insert(a);
         return a;
     }
@@ -157,9 +182,24 @@ public class AppServiceImpl implements AppService {
         if (a != null) {
             if (f.containsKey("name")) a.setName((String) f.get("name"));
             if (f.containsKey("description")) a.setDescription((String) f.get("description"));
+            if (f.containsKey("sandboxConfigId")) {
+                // 传空串/null 表示解除引用（回到分支②降级）；非空须存在
+                a.setSandboxConfigId(requireSandboxConfigExists((String) f.get("sandboxConfigId")));
+            }
             appMapper.updateById(a);
         }
         return a;
+    }
+
+    /** 沙箱引用存在性校验：空放行（=未配置，对话走降级分支②）；非空须命中 sandbox_config 表。 */
+    private String requireSandboxConfigExists(String sandboxConfigId) {
+        if (StrUtil.isBlank(sandboxConfigId)) {
+            return null;
+        }
+        if (sandboxConfigMapper.selectById(sandboxConfigId.trim()) == null) {
+            throw BusinessException.badRequest("沙箱配置不存在: " + sandboxConfigId);
+        }
+        return sandboxConfigId.trim();
     }
 
     @Override
@@ -320,6 +360,8 @@ public class AppServiceImpl implements AppService {
             m.put("feedback", msg.getFeedback());
             m.put("thinkingContent", msg.getThinkingContent());
             m.put("toolCalls", msg.getToolCalls());
+            m.put("iterations", msg.getIterations());
+            m.put("references", msg.getReferences());
             m.put("createdAt", msg.getCreatedAt());
             result.add(m);
         }
@@ -365,32 +407,61 @@ public class AppServiceImpl implements AppService {
         convMsgMapper.updateById(msg);
     }
 
-    // ==================== SSE 流式对话 ====================
+    // ==================== SSE 流式对话（双入口、单执行核） ====================
 
+    /**
+     * 旧通道对话（G01 行为不变）：壳 = 应用可见性 + 会话定位 + PRESET_ONLY 解析 + 委托共享执行核。
+     * 禁止在本方法体内做任何配置读取——配置一律经 DialogPresetResolver（design §2 编排器扩展）。
+     */
     @Override
     public SseEmitter runStream(String appId, String query, String sessionId, String userId, String userName) {
-        // 1. 验证应用存在且当前用户可见
         App app = appMapper.selectById(appId);
         requireVisible(app);
+        AppConversation conv = locateSessionForApp(appId, sessionId, userId, userName);
+        EffectiveDialogConfig cfg = presetResolver.resolve(
+                conv, ConversationRequestState.PRESET_ONLY, SecurityUtil.getCurrentUser());
+        return executeDialog(conv, cfg, query, userId, null);
+    }
 
-        // 2. 获取或创建会话（带 sessionId 时校验会话归属）
+    /** 新通道对话（new-conversation）：会话一等公民入口；turnState 为本轮请求态覆盖（空时回落持久化形状） */
+    @Override
+    public SseEmitter runStreamByConversation(String conversationId, String query,
+                                              ConversationRequestState turnState, LoginUser user) {
+        AppConversation conv = requireOwnConversationById(conversationId, user);
+        if (turnState == null) turnState = requestStateStore.load(conversationId);
+        EffectiveDialogConfig cfg = presetResolver.resolve(conv, turnState, user);
+        return executeDialog(conv, cfg, query, user.getUserId(), turnState);
+    }
+
+    /** 旧通道会话定位/创建（原 runStream 步骤 2 原样提取，行为不变） */
+    private AppConversation locateSessionForApp(String appId, String sessionId, String userId, String userName) {
         AppConversation conv = null;
         if (StrUtil.isNotBlank(sessionId)) {
             conv = requireOwnConversation(appId, sessionId);
         }
         if (conv == null) {
-            // 创建新会话
             Map<String, Object> sessionInfo = createSession(appId, userId, userName);
-            sessionId = (String) sessionInfo.get("sessionId");
+            String sid = (String) sessionInfo.get("sessionId");
             conv = convMapper.selectOne(
                     new LambdaQueryWrapper<AppConversation>()
                             .eq(AppConversation::getAppId, appId)
-                            .eq(AppConversation::getSessionId, sessionId));
+                            .eq(AppConversation::getSessionId, sid));
         }
+        return conv;
+    }
 
-        // 2.5 敏感词拦截（总开关 = 应用「安全策略启用」）：
+    /**
+     * 共享执行核（新旧通道唯一对话执行路径）：只消费 EffectiveDialogConfig，不感知配置来源。
+     *
+     * @param persistState 新通道=本轮请求态（三落库点固化，REQ-B01）；旧通道=null（不固化）
+     */
+    private SseEmitter executeDialog(AppConversation conv, EffectiveDialogConfig cfg, String query,
+                                     String userId, ConversationRequestState persistState) {
+        final String sessionId = StrUtil.isNotBlank(conv.getSessionId()) ? conv.getSessionId() : conv.getId();
+
+        // 敏感词输入拦截（直聊恒开＝安全缺省；挂应用＝应用开关，现行口径）：
         // 命中 blockInput 词条时直接拒绝，不保存用户消息、不产生模型调用
-        final boolean finalSafetyFilterOn = isSafetyEnabled(appId);
+        final boolean finalSafetyFilterOn = cfg.isSafetyEnabled();
         Optional<String> blocked = finalSafetyFilterOn ? sensitiveWordService.checkInput(query) : Optional.empty();
         if (blocked.isPresent()) {
             try {
@@ -424,63 +495,11 @@ public class AppServiceImpl implements AppService {
             conv.setTitle(query.length() > 30 ? query.substring(0, 30) + "..." : query);
         }
 
-        // 4. 读取应用配置
-        AppConfig appConfig = getConfig(appId);
-        AppBasicConfig basicConfig = basicConfigMapper.selectOne(
-                new LambdaQueryWrapper<AppBasicConfig>().eq(AppBasicConfig::getAppId, appId));
-        int memoryRounds = (basicConfig != null && basicConfig.getMemoryRounds() != null)
-                ? basicConfig.getMemoryRounds() : 5;
-
-        // 从 app_config 读取模型 code，如果为空则从 advancedOptions 读取
-        String modelCode = null;
-        if (appConfig != null && StrUtil.isNotBlank(appConfig.getModel())) {
-            modelCode = appConfig.getModel();
-        }
-        // 也尝试从 AppBasicConfig.advancedOptions JSON 中读取
-        if (StrUtil.isBlank(modelCode) && basicConfig != null && StrUtil.isNotBlank(basicConfig.getAdvancedOptions())) {
-            try {
-                com.fasterxml.jackson.databind.ObjectMapper om = new com.fasterxml.jackson.databind.ObjectMapper();
-                Map<String, Object> adv = om.readValue(basicConfig.getAdvancedOptions(), Map.class);
-                if (adv.containsKey("model") && StrUtil.isNotBlank(adv.get("model").toString())) {
-                    modelCode = adv.get("model").toString();
-                }
-            } catch (Exception ignored) {}
-        }
-
-        // 根据 modelCode 查找 ModelRecord 获取 apiUrl 和 apiKey
-        String model = "default";
-        String modelApiUrl = null;
-        String modelApiKey = null;
-        boolean enableThinking = false;
-        if (StrUtil.isNotBlank(modelCode)) {
-            model = modelCode;
-            ModelRecord modelRecord = modelRecordMapper.selectOne(
-                    new LambdaQueryWrapper<ModelRecord>()
-                            .eq(ModelRecord::getCode, modelCode)
-                            .eq(ModelRecord::getStatus, "online")
-                            .last("LIMIT 1"));
-            if (modelRecord != null) {
-                if (StrUtil.isNotBlank(modelRecord.getApiUrl())) {
-                    modelApiUrl = modelRecord.getApiUrl();
-                }
-                if (StrUtil.isNotBlank(modelRecord.getApiKeyRef())) {
-                    modelApiKey = modelRecord.getApiKeyRef();
-                }
-                enableThinking = Boolean.TRUE.equals(modelRecord.getEnableThinking());
-                log.info("[AppChat] Using model: code={}, name={}, apiUrl={}, thinking={}",
-                        modelCode, modelRecord.getName(), modelApiUrl, enableThinking);
-            } else {
-                log.warn("[AppChat] Model not found or offline: code={}, will use default gateway", modelCode);
-            }
-        }
-
-        String systemPrompt = (appConfig != null && StrUtil.isNotBlank(appConfig.getPrompt()))
-                ? appConfig.getPrompt() : "你是一个智能助手，请根据用户的问题提供帮助。";
-        double temperature = (appConfig != null && appConfig.getTemperature() != null)
-                ? appConfig.getTemperature().doubleValue() : 0.7;
+        // 有效配置已由 DialogPresetResolver 解析（prompt/temperature/maxTokens/memoryRounds/model 路由
+        // 全部来自 cfg；旧通道=应用预设源，直聊=内置缺省——此处零配置读取）
 
         // 5. 如果有问候语且是第一条消息，直接返回问候语
-        String greeting = (basicConfig != null) ? basicConfig.getGreeting() : null;
+        String greeting = cfg.getGreeting();
         if (greeting != null && !greeting.isEmpty()
                 && (conv.getMessageCount() == null || conv.getMessageCount() == 0)
                 && isGreetingQuery(query)) {
@@ -494,7 +513,7 @@ public class AppServiceImpl implements AppService {
                 emitter.complete();
 
                 // 保存问候语到消息记录
-                saveAssistantMessage(conv, greeting, null, null, 0);
+                saveAssistantMessage(conv, greeting, null, null, 0, java.util.List.of(), null);
                 return emitter;
             } catch (Exception e) {
                 throw new RuntimeException("Failed to send greeting", e);
@@ -502,29 +521,40 @@ public class AppServiceImpl implements AppService {
         }
 
         // 6. 立即创建 SSE Emitter 并返回，所有耗时操作放到异步线程
-        final String effectiveSystemPromptBase = systemPrompt;
-        final int finalMemoryRounds = memoryRounds;
         SseEmitter emitter = new SseEmitter(5 * 60 * 1000L); // 5 分钟超时
         StringBuilder fullAnswer = new StringBuilder();
         final String finalSessionId = sessionId;
         final AppConversation finalConv = conv;
         final long startTime = System.currentTimeMillis();
-        final String finalModel = model;
-        final double finalTemperature = temperature;
-        final String finalModelApiUrl = modelApiUrl;
-        final String finalModelApiKey = modelApiKey;
-        final boolean finalEnableThinking = enableThinking;
         final String finalUserId = userId;
+        final java.util.concurrent.atomic.AtomicBoolean answerSaved =
+                new java.util.concurrent.atomic.AtomicBoolean(false);
+        final java.util.concurrent.atomic.AtomicReference<BaseContext> contextRef =
+                new java.util.concurrent.atomic.AtomicReference<>();
 
-        emitter.onCompletion(() -> log.info("[AppChat] SSE completed: sessionId={}", finalSessionId));
+        // 部分落库（超时/停止共用）：恰一次幂等 + 请求态固化（REQ-B01 三落库点之二）；迭代轮数尽力读取
+        Runnable partialSave = () -> {
+            // 部分保存时工具调用尚未定形（toolCallsJson 为 null），知识来源无从提取，落空列表
+            persistAnswer(finalConv, cfg, fullAnswer.toString(), null, null,
+                    (int) (System.currentTimeMillis() - startTime),
+                    Collections.emptyList(),
+                    readIterations(contextRef.get()), persistState, answerSaved);
+        };
+
+        // 停止注册表（new-conversation）：partialSave + 关流；取消后引擎 error 事件被抑制（NFR-03）
+        StopRegistry.CancelHandle handle = new StopRegistry.CancelHandle(() -> {
+            partialSave.run();
+            emitter.complete();
+        });
+        stopRegistry.register(conv.getId(), handle);
+
+        emitter.onCompletion(() -> {
+            log.info("[AppChat] SSE completed: sessionId={}", finalSessionId);
+            stopRegistry.unregister(conv.getId());
+        });
         emitter.onTimeout(() -> {
             log.warn("[AppChat] SSE timeout: sessionId={}", finalSessionId);
-            if (fullAnswer.length() > 0) {
-                String partial = finalSafetyFilterOn
-                        ? sensitiveWordService.filterOutput(fullAnswer.toString()).orElse(fullAnswer.toString())
-                        : fullAnswer.toString();
-                saveAssistantMessage(finalConv, partial, null, null, (int)(System.currentTimeMillis() - startTime));
-            }
+            partialSave.run();
         });
         emitter.onError(e -> log.warn("[AppChat] SSE error: sessionId={}, error={}", finalSessionId, e.getMessage()));
 
@@ -535,121 +565,79 @@ public class AppServiceImpl implements AppService {
             try {
                 // 将 SecurityContext 传播到异步线程，供下游（如 recordLog）使用
                 SecurityContextHolder.setContext(securityContext);
-                // RAG 知识库检索（异步执行，不阻塞 HTTP 线程）
-                RetrievalContext retrievalCtx = retrieveContext(appId, query);
-                String ragContext = retrievalCtx.getRagContext();
-                String effectiveSystemPrompt = effectiveSystemPromptBase;
-                if (StrUtil.isNotBlank(ragContext)) {
-                    effectiveSystemPrompt = effectiveSystemPromptBase + "\n\n以下是相关知识库检索到的参考资料，请参考这些资料回答用户问题：\n\n" + ragContext + "\n\n请根据以上参考资料回答用户问题。如果参考资料中没有相关信息，请如实告知用户。";
-                }
-
-                // 向前端推送本次回答的知识来源（在回答生成前发送）
-                try {
-                    Map<String, Object> srcData = new LinkedHashMap<>();
-                    srcData.put("sources", retrievalCtx.getSources());
-                    emitter.send(SseEmitter.event().name("sources").data(srcData));
-                } catch (Exception e) {
-                    log.warn("[AppChat] Failed to send sources event: {}", e.getMessage());
-                }
+                // 全 agentic 化（2026-09-30）：移除无条件预检索与 RAG 提示块、sources 预取事件——
+                // 知识资料改由模型按需调用 query_kb 获取（绑定 KB 时 KnowledgeBaseMiddleware 注入能力提示），
+                // 检索来源经工具调用通道落库（extractKbSources）。代价是 KB 相关问题的首答延迟增加一轮工具往返，
+                // 换来无关问题（如纯代码执行）不再产生检索延迟与噪音上下文。
+                String effectiveSystemPrompt = cfg.getSystemPrompt();
 
                 // 构建历史消息
                 List<AppConversationMessage> historyMessages = convMsgMapper.selectList(
                         new LambdaQueryWrapper<AppConversationMessage>()
                                 .eq(AppConversationMessage::getConversationId, finalConv.getId())
                                 .orderByDesc(AppConversationMessage::getCreatedAt)
-                                .last("LIMIT " + (finalMemoryRounds * 2)));
+                                .last("LIMIT " + (cfg.getMemoryRounds() * 2)));
                 Collections.reverse(historyMessages);
 
-                // 构建 BaseContext
+                // 构建 BaseContext（能力装配全部来自有效配置；直聊四空集）
                 BaseContext context = new BaseContext();
                 context.setUid(finalUserId);
                 context.setSystemPrompt(effectiveSystemPrompt);
-                context.setModel(finalModel);
+                context.setModel(cfg.getModelRoute().getModel());
+                contextRef.set(context);
 
-                // 加载应用绑定的工具/技能/MCP/知识库
-                List<AppToolBinding> toolBindings = toolBindingMapper.selectList(
-                        new LambdaQueryWrapper<AppToolBinding>()
-                                .eq(AppToolBinding::getAppId, appId)
-                                .eq(AppToolBinding::getEnabled, 1));
-                if (!toolBindings.isEmpty()) {
-                    context.setTools(toolBindings.stream()
-                            .map(AppToolBinding::getToolId)
-                            .filter(Objects::nonNull)
-                            .toList());
+                if (!cfg.getBindings().getTools().isEmpty()) {
+                    context.setTools(cfg.getBindings().getTools());
+                }
+                if (!cfg.getBindings().getSkills().isEmpty()) {
+                    context.setSkills(cfg.getBindings().getSkills());
+                }
+                if (!cfg.getBindings().getMcps().isEmpty()) {
+                    context.setMcps(cfg.getBindings().getMcps());
+                }
+                if (!cfg.getKbScope().isEmpty()) {
+                    context.setKnowledges(cfg.getKbScope());
+                }
+                if (!cfg.getBindings().getDatabases().isEmpty()) {
+                    context.setDatabases(cfg.getBindings().getDatabases());
                 }
 
-                List<AppSkillBinding> skillBindings = skillBindingMapper.selectList(
-                        new LambdaQueryWrapper<AppSkillBinding>()
-                                .eq(AppSkillBinding::getAppId, appId)
-                                .eq(AppSkillBinding::getEnabled, 1));
-                if (!skillBindings.isEmpty()) {
-                    context.setSkills(skillBindings.stream()
-                            .map(AppSkillBinding::getSkillId)
-                            .filter(Objects::nonNull)
-                            .toList());
-                }
-
-                List<AppMcpBinding> mcpBindings = mcpBindingMapper.selectList(
-                        new LambdaQueryWrapper<AppMcpBinding>()
-                                .eq(AppMcpBinding::getAppId, appId)
-                                .eq(AppMcpBinding::getEnabled, 1));
-                if (!mcpBindings.isEmpty()) {
-                    context.setMcps(mcpBindings.stream()
-                            .map(AppMcpBinding::getMcpServiceId)
-                            .filter(Objects::nonNull)
-                            .toList());
-                }
-
-                List<AppKbBinding> kbBindings = kbBindingMapper.selectList(
-                        new LambdaQueryWrapper<AppKbBinding>()
-                                .eq(AppKbBinding::getAppId, appId)
-                                .eq(AppKbBinding::getEnabled, 1));
-                if (!kbBindings.isEmpty()) {
-                    context.setKnowledges(kbBindings.stream()
-                            .map(AppKbBinding::getKbId)
-                            .filter(Objects::nonNull)
-                            .toList());
-                }
-
-                // 加载数据库绑定
-                List<AppDbBinding> dbBindings = dbMapper.selectList(
-                        new LambdaQueryWrapper<AppDbBinding>()
-                                .eq(AppDbBinding::getAppId, appId)
-                                .eq(AppDbBinding::getEnabled, 1));
-                if (!dbBindings.isEmpty()) {
-                    context.setDatabases(dbBindings.stream()
-                            .map(AppDbBinding::getDbId)
-                            .filter(Objects::nonNull)
-                            .toList());
-                }
-
-                // 从 AppConfig 加载新配置字段（summaryThreshold/retryTimes/maxSteps/summaryPrompt）
-                if (appConfig != null) {
-                    context.setSummaryThreshold(appConfig.getSummaryThreshold());
-                    context.setModelRetryTimes(appConfig.getRetryTimes());
-                    context.setMaxSteps(appConfig.getMaxSteps());
-                    if (appConfig.getSummaryPrompt() != null) {
-                        context.getRuntimeState().put("summaryPrompt", appConfig.getSummaryPrompt());
+                // 沙箱配置注入（REQ-H03 分支②，2026-09-28）：应用引用 sandbox_config_id 时透传执行链；
+                // 未引用保持 runtimeState 无该键——FilesystemMiddleware/SandboxExecutionService 走「not configured」降级
+                if (StrUtil.isNotBlank(conv.getAppId())) {
+                    App dialogApp = appMapper.selectById(conv.getAppId());
+                    if (dialogApp != null && StrUtil.isNotBlank(dialogApp.getSandboxConfigId())) {
+                        context.getRuntimeState().put("sandboxConfigId", dialogApp.getSandboxConfigId());
+                        // 能力注入（2026-09-30 修复）：绑定沙箱的应用显式告知模型沙箱可用，
+                        // 否则模型只看到「执行 Shell 命令」的工具描述，用户要求跑代码时不会主动联想到 execute。
+                        // 全局开关关闭等异常场景仍由执行链三分支降级文本兜底，此处只表达应用侧意图。
+                        context.setSystemPrompt(StrUtil.nullToEmpty(context.getSystemPrompt()) + SANDBOX_CAPABILITY_HINT);
                     }
                 }
-                log.info("[AppChat] Config: tools={}, skills={}, mcps={}, kbs={}, dbs={}, thinking={}",
-                        context.getTools() != null ? context.getTools().size() : 0,
-                        context.getSkills() != null ? context.getSkills().size() : 0,
-                        context.getMcps() != null ? context.getMcps().size() : 0,
-                        context.getKnowledges() != null ? context.getKnowledges().size() : 0,
-                        context.getDatabases() != null ? context.getDatabases().size() : 0,
-                        finalEnableThinking);
 
-                // 构建 ModelConfig（maxTokens 从 appConfig 读取，默认 2048）
-                int effectiveMaxTokens = (appConfig != null && appConfig.getMaxTokens() != null)
-                        ? appConfig.getMaxTokens() : 2048;
+                // 执行预算（直聊为 null——引擎侧既有 null 容忍）
+                context.setSummaryThreshold(cfg.getSummaryThreshold());
+                context.setModelRetryTimes(cfg.getModelRetryTimes());
+                context.setMaxSteps(cfg.getMaxSteps());
+                if (cfg.getSummaryPrompt() != null) {
+                    context.getRuntimeState().put("summaryPrompt", cfg.getSummaryPrompt());
+                }
+                log.info("[AppChat] Config: tools={}, skills={}, mcps={}, kbs={}, dbs={}, thinking={}",
+                        cfg.getBindings().getTools().size(),
+                        cfg.getBindings().getSkills().size(),
+                        cfg.getBindings().getMcps().size(),
+                        cfg.getKbScope().size(),
+                        cfg.getBindings().getDatabases().size(),
+                        cfg.getModelRoute().isEnableThinking());
+
+                // 构建 ModelConfig（全部来自有效配置，缺省 2048 已在解析器兜底）
                 ModelConfig modelConfig = ModelConfig.builder()
-                        .model(finalModel)
-                        .apiUrl(finalModelApiUrl)
-                        .apiKey(finalModelApiKey)
-                        .enableThinking(finalEnableThinking)
-                        .temperature(finalTemperature)
-                        .maxTokens(effectiveMaxTokens)
+                        .model(cfg.getModelRoute().getModel())
+                        .apiUrl(cfg.getModelRoute().getApiUrl())
+                        .apiKey(cfg.getModelRoute().getApiKey())
+                        .enableThinking(cfg.getModelRoute().isEnableThinking())
+                        .temperature(cfg.getTemperature())
+                        .maxTokens(cfg.getMaxTokens())
                         .build();
                 context.setModelConfig(modelConfig);
 
@@ -668,15 +656,13 @@ public class AppServiceImpl implements AppService {
                             try {
                                 // 敏感词输出过滤（受安全开关控制）：命中 replaceAnswer 词条时替换文本，
                                 // 并补发 replace 事件让前端把气泡整段替换为过滤后全文
-                                String answerToSave = finalAnswer;
                                 Optional<String> filtered = finalSafetyFilterOn
                                         ? sensitiveWordService.filterOutput(finalAnswer)
                                         : Optional.empty();
                                 if (filtered.isPresent()) {
-                                    answerToSave = filtered.get();
                                     try {
                                         Map<String, Object> fixData = new LinkedHashMap<>();
-                                        fixData.put("content", answerToSave);
+                                        fixData.put("content", filtered.get());
                                         fixData.put("replace", true);
                                         emitter.send(SseEmitter.event().name("message").data(fixData));
                                     } catch (Exception e) {
@@ -684,7 +670,11 @@ public class AppServiceImpl implements AppService {
                                     }
                                 }
                                 long duration = System.currentTimeMillis() - startTime;
-                                saveAssistantMessage(finalConv, answerToSave, finalThinking, finalToolCalls, (int) duration);
+                                // 全 agentic 化：知识来源改自工具调用通道提取（query_kb 的结构化结果投影）
+                                List<Map<String, Object>> sources = extractKbSources(finalToolCalls);
+                                persistAnswer(finalConv, cfg, filtered.orElse(finalAnswer), finalThinking,
+                                        finalToolCalls, (int) duration, sources,
+                                        readIterations(contextRef.get()), persistState, answerSaved);
                             } catch (Exception e) {
                                 log.warn("[AppChat] Failed to save message after stream: {}", e.getMessage());
                             }
@@ -692,10 +682,15 @@ public class AppServiceImpl implements AppService {
             } catch (Exception e) {
                 log.error("[AppChat] Execution failed: sessionId={}", finalSessionId, e);
                 try {
-                    Map<String, Object> errData = new LinkedHashMap<>();
-                    errData.put("message", "对话执行失败: " + e.getMessage());
-                    emitter.send(SseEmitter.event().name("error").data(errData));
-                    emitter.complete();
+                    if (handle.getCancelled().get()) {
+                        // 用户已停止：不补发 error 事件（NFR-03 无孤儿流）
+                        emitter.complete();
+                    } else {
+                        Map<String, Object> errData = new LinkedHashMap<>();
+                        errData.put("message", "对话执行失败: " + e.getMessage());
+                        emitter.send(SseEmitter.event().name("error").data(errData));
+                        emitter.complete();
+                    }
                 } catch (Exception ex) {
                     emitter.completeWithError(ex);
                 }
@@ -711,99 +706,43 @@ public class AppServiceImpl implements AppService {
     // ==================== 内部辅助方法 ====================
 
     /**
-     * RAG 知识库检索
+     * 全 agentic 化（2026-09-30）：知识来源自工具调用通道提取——扫描 toolCallsJson 中
+     * query_kb 调用的结构化结果（result.data.display_type=knowledge_chunks.chunks），
+     * 投影为与原预检索 sources 同构的条目（fileName/score/kbId/content），供 references 落库。
      */
-    private RetrievalContext retrieveContext(String appId, String query) {
-        List<AppKbBinding> kbBindings = kbBindingMapper.selectList(
-                new LambdaQueryWrapper<AppKbBinding>()
-                        .eq(AppKbBinding::getAppId, appId)
-                        .eq(AppKbBinding::getEnabled, 1));
-
-        RetrievalContext ctx = new RetrievalContext();
-        ctx.setSources(new ArrayList<>());
-        if (kbBindings.isEmpty()) return ctx;
-
-        StringBuilder context = new StringBuilder();
-        int refIndex = 1;
-        for (AppKbBinding binding : kbBindings) {
-            try {
-                RetrievalRequest req = new RetrievalRequest();
-                req.setKnowledgeId(binding.getKbId());
-                req.setQuery(query);
-                // 透传 KB 保存的检索配置（如上下文组装策略 parent_chunk/window/auto），
-                // 避免 App 会话检索退化为 concat。App 侧仅设置对话所需的基本预算（top 5）。
-                req.setConfig(buildRetrievalConfig(binding));
-
-                List<SearchResultItem> results = retrievalService.search(req);
-                for (SearchResultItem item : results) {
-                    if (StrUtil.isNotBlank(item.getContent())) {
-                        context.append("【参考资料").append(refIndex++).append("】\n")
-                               .append(item.getContent()).append("\n\n");
-                        // 收集知识来源（文件名 / 相似度 / 内容 / 定位信息）
-                        Map<String, Object> src = new LinkedHashMap<>();
-                        src.put("fileName", item.getFileName());
-                        src.put("score", item.getSimilarity());
-                        src.put("fileId", item.getFileId());
-                        src.put("kbId", binding.getKbId());
-                        src.put("chunkIndex", item.getChunkIndex());
-                        src.put("chunkType", item.getChunkType());
-                        src.put("imageKeys", item.getImageKeys());
-                        src.put("content", item.getContent());
-                        ctx.getSources().add(src);
-                    }
-                }
-            } catch (Exception e) {
-                log.warn("[AppChat] RAG retrieval failed for kbId={}: {}", binding.getKbId(), e.getMessage());
-            }
+    private List<Map<String, Object>> extractKbSources(String toolCallsJson) {
+        List<Map<String, Object>> sources = new ArrayList<>();
+        if (StrUtil.isBlank(toolCallsJson)) {
+            return sources;
         }
-        ctx.setRagContext(context.length() > 0 ? context.toString() : null);
-        return ctx;
-    }
-
-    /**
-     * 构建 App 会话检索的 RetrievalConfig：以 KB 保存的检索配置为基底，
-     * 仅覆盖 App 对话所需的基本预算（topK=5）。
-     *
-     * <p>优先级与 {@code RetrievalServiceImpl.loadAndMergeConfig} 一致：请求参数 &gt; KB 保存配置 &gt; 系统默认。
-     * 因此这里把 KB 保存的配置（含 contextAssemblyStrategy 等）解析出来，
-     * 只设置 topK，其余字段交检索服务按「请求参数 > KB 配置 > 系统默认」合并——
-     * 这样知识库配置的上下文组装策略（auto/parent_chunk/window）在 App 会话检索中同样生效，
-     * 而不是退化为默认 concat。</p>
-     */
-    private RetrievalRequest.RetrievalConfig buildRetrievalConfig(AppKbBinding binding) {
-        RetrievalRequest.RetrievalConfig config = new RetrievalRequest.RetrievalConfig();
-        // App 对话的上下文预算：top 5（避免注入 prompt 的参考资料过多）
-        config.setTopK(5);
         try {
-            KnowledgeBase kb = kbMapper.selectById(binding.getKbId());
-            if (kb != null && StrUtil.isNotBlank(kb.getRetrievalConfig())) {
-                RetrievalRequest.RetrievalConfig saved =
-                        JSONUtil.toBean(kb.getRetrievalConfig(), RetrievalRequest.RetrievalConfig.class);
-                if (saved != null) {
-                    // 仅当 KB 配置里设置了这些语义增强/组装策略时才透传，
-                    // 其余字段保持默认（由检索服务合并系统默认值）
-                    config.setContextAssemblyStrategy(saved.getContextAssemblyStrategy());
-                    config.setEnableClauseRecall(saved.getEnableClauseRecall());
-                    config.setContextWindowSize(saved.getContextWindowSize());
-                    config.setMaxContextTokens(saved.getMaxContextTokens());
-                    config.setEnableRerank(saved.getEnableRerank());
-                    config.setRerankModel(saved.getRerankModel());
-                    config.setEnableMultiQuery(saved.getEnableMultiQuery());
-                    config.setEnableSynonymExpansion(saved.getEnableSynonymExpansion());
+            cn.hutool.json.JSONArray calls = JSONUtil.parseArray(toolCallsJson);
+            for (Object o : calls) {
+                cn.hutool.json.JSONObject call = (cn.hutool.json.JSONObject) o;
+                if (!"query_kb".equals(call.getStr("name"))) {
+                    continue;
+                }
+                cn.hutool.json.JSONObject result = call.getJSONObject("result");
+                cn.hutool.json.JSONObject data = result == null ? null : result.getJSONObject("data");
+                cn.hutool.json.JSONArray chunks = data == null ? null : data.getJSONArray("chunks");
+                if (chunks == null) {
+                    continue;
+                }
+                for (Object c : chunks) {
+                    cn.hutool.json.JSONObject chunk = (cn.hutool.json.JSONObject) c;
+                    Map<String, Object> src = new LinkedHashMap<>();
+                    src.put("fileName", chunk.getStr("source"));
+                    src.put("score", chunk.get("score"));
+                    src.put("kbId", data.getStr("kb_id"));
+                    src.put("chunkIndex", chunk.get("chunk_index"));
+                    src.put("content", chunk.getStr("content"));
+                    sources.add(src);
                 }
             }
         } catch (Exception e) {
-            log.warn("[AppChat] Failed to load KB retrieval config for kbId={}, use defaults: {}",
-                    binding.getKbId(), e.getMessage());
+            log.warn("[AppChat] Failed to extract kb sources from toolCalls: {}", e.getMessage());
         }
-        return config;
-    }
-
-    /** RAG 检索结果：拼接进 system prompt 的上下文 + 供前端展示的知识来源列表 */
-    @Data
-    private static class RetrievalContext {
-        private String ragContext;
-        private List<Map<String, Object>> sources = new ArrayList<>();
+        return sources;
     }
 
     /**
@@ -817,9 +756,10 @@ public class AppServiceImpl implements AppService {
     }
 
     /**
-     * 保存助手消息到数据库
+     * 保存助手消息到数据库（references = 检索来源投影，两通道统一，REQ-F01）
      */
-    private void saveAssistantMessage(AppConversation conv, String content, String thinkingContent, String toolCalls, int latencyMs) {
+    private void saveAssistantMessage(AppConversation conv, String content, String thinkingContent, String toolCalls,
+                                      int latencyMs, List<Map<String, Object>> sources, Integer iterations) {
         AppConversationMessage assistantMsg = new AppConversationMessage();
         assistantMsg.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 32));
         assistantMsg.setConversationId(conv.getId());
@@ -827,6 +767,8 @@ public class AppServiceImpl implements AppService {
         assistantMsg.setContent(content);
         assistantMsg.setThinkingContent(thinkingContent);
         assistantMsg.setToolCalls(toolCalls);
+        assistantMsg.setReferences(projectReferences(sources));
+        assistantMsg.setIterations(iterations);
         assistantMsg.setLatencyMs(latencyMs);
         assistantMsg.setTokens(0);
         assistantMsg.setCreatedAt(LocalDateTime.now());
@@ -841,5 +783,46 @@ public class AppServiceImpl implements AppService {
         }
         conv.setUpdatedAt(LocalDateTime.now());
         convMapper.updateById(conv);
+    }
+
+    /**
+     * 恰一次落库（new-conversation）：引擎回调 / 超时 / 停止三条路径共用，
+     * AtomicBoolean 保证助手消息与请求态固化各至多一次（contract StopRegistry 幂等语义的执行侧）。
+     * 空答案（停止早于任何输出）标记已处理但不落空行。
+     */
+    private void persistAnswer(AppConversation conv, EffectiveDialogConfig cfg, String answer,
+                               String thinkingContent, String toolCalls, int latencyMs,
+                               List<Map<String, Object>> sources, Integer iterations,
+                               ConversationRequestState persistState,
+                               java.util.concurrent.atomic.AtomicBoolean saved) {
+        if (!saved.compareAndSet(false, true)) return;
+        if (answer == null || answer.isEmpty()) return;
+        saveAssistantMessage(conv, answer, thinkingContent, toolCalls, latencyMs, sources, iterations);
+        if (persistState != null) {
+            requestStateStore.persistOnSuccess(conv.getId(), persistState);
+        }
+    }
+
+    /** 从执行上下文读引擎迭代轮数（runtimeState 侧通道，引擎在 onComplete 前写入）；不可得返回 null */
+    private Integer readIterations(BaseContext context) {
+        if (context == null || context.getRuntimeState() == null) return null;
+        Object v = context.getRuntimeState().get("iterations");
+        return v instanceof Number ? ((Number) v).intValue() : null;
+    }
+
+    /**
+     * 消息引用投影（contract data.md MessageReference）：sources 的子集，
+     * 剔除 content（分片全文不随消息持久化，防膨胀）；与流内 sources 事件同源。
+     */
+    private String projectReferences(List<Map<String, Object>> sources) {
+        List<Map<String, Object>> projection = new ArrayList<>();
+        if (sources != null) {
+            for (Map<String, Object> src : sources) {
+                Map<String, Object> p = new LinkedHashMap<>(src);
+                p.remove("content");
+                projection.add(p);
+            }
+        }
+        return JSONUtil.toJsonStr(projection);
     }
 }

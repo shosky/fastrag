@@ -1,6 +1,8 @@
 package com.fastrag.module.application.service;
 import com.fastrag.module.application.dto.AppSessionDTO;
+import com.fastrag.module.application.dto.ConversationRequestState;
 import com.fastrag.module.application.entity.*; import java.util.*;
+import com.fastrag.security.filter.LoginUser;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 public interface AppService {
@@ -42,4 +44,15 @@ public interface AppService {
     // ===== 流式对话 =====
     /** SSE 流式对话 */
     SseEmitter runStream(String appId, String query, String sessionId, String userId, String userName);
+
+    /**
+     * 新通道 SSE 流式对话（new-conversation）：会话一等公民入口。
+     *
+     * @param conversationId 会话 ID（主键定位，app_id 可空）
+     * @param query          用户输入
+     * @param turnState      本轮请求态覆盖（空时回落持久化形状）
+     * @param user           当前用户
+     */
+    SseEmitter runStreamByConversation(String conversationId, String query,
+                                       ConversationRequestState turnState, LoginUser user);
 }

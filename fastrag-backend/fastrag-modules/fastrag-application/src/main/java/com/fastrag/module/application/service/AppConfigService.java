@@ -95,4 +95,11 @@ public interface AppConfigService {
     Map<String,Object> getConversationDetail(String convId);
     void deleteConversation(String convId);
     void exportConversationsCsv(String appId, jakarta.servlet.http.HttpServletResponse resp) throws Exception;
+
+    /**
+     * 绑定有效性预览（app-chat-optimize Step 3a，对齐 WeKnora 有效工具预览）：
+     * 五类绑定逐条做资源存在性校验，供前端渲染「有效 n / 失效 m」chip。
+     * 每项：{type, id, name, exists, enabled}；type ∈ kb/tool/skill/mcp/db。
+     */
+    List<Map<String,Object>> bindingsEffectiveness(String appId);
 }

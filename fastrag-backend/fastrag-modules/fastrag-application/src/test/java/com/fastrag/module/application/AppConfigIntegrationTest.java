@@ -41,6 +41,11 @@ class AppConfigIntegrationTest {
     @Mock private AppSkillBindingMapper skillBindMapper;
     @Mock private AppToolBindingMapper toolBindMapper;
     @Mock private AppMcpBindingMapper mcpBindMapper;
+    @Mock private com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper knowledgeMapper;
+    @Mock private com.fastrag.module.tools.mapper.ToolMapper toolResMapper;
+    @Mock private com.fastrag.module.tools.mapper.SkillMapper skillResMapper;
+    @Mock private com.fastrag.module.tools.mapper.McpServiceMapper mcpResMapper;
+    @Mock private com.fastrag.module.tools.mapper.DbInstanceMapper dbResMapper;
 
     @Captor private ArgumentCaptor<AppConfig> insertCaptor;
     @Captor private ArgumentCaptor<AppConfig> updateCaptor;
@@ -56,8 +61,9 @@ class AppConfigIntegrationTest {
                 configMapper, dbMapper, pubMapper,
                 testMapper, optMapper, autoKbMapper,
                 convMapper, convMsgMapper,
-                objectMapper,
-                skillBindMapper, toolBindMapper, mcpBindMapper
+                skillBindMapper, toolBindMapper, mcpBindMapper,
+                knowledgeMapper, toolResMapper, skillResMapper, mcpResMapper, dbResMapper,
+                objectMapper
         );
     }
 
