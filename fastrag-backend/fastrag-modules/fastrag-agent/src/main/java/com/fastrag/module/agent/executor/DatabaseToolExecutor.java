@@ -40,6 +40,7 @@ public class DatabaseToolExecutor implements ToolExecutor {
         String dbId = (String) tool.getConfig().get("dbId");
 
         try {
+            Map<String, Object> structured = null;
             String output = switch (action) {
                 case "list_tables" -> {
                     List<DbTable> tables = dbInstanceService.listTables(dbId);
@@ -75,12 +76,21 @@ public class DatabaseToolExecutor implements ToolExecutor {
                         yield "Error: missing or blank argument 'sql'";
                     }
                     Map<String, Object> result = dbInstanceService.query(dbId, sql);
+                    // 结构化通道（app-chat-optimize 二批）：display_type+columns/rows 直达前端表格渲染器
+                    structured = new java.util.LinkedHashMap<>();
+                    structured.put("display_type", "database_query");
+                    structured.put("columns", result != null ? result.get("columns") : null);
+                    structured.put("rows", result != null ? result.get("rows") : null);
+                    structured.put("row_count", result != null ? result.get("rowCount") : 0);
+                    structured.put("elapsed_ms", result != null ? result.get("elapsedMs") : null);
                     yield formatQueryResult(result);
                 }
                 default -> "Error: Unknown database action: " + action;
             };
 
-            return ToolResult.success(output, (int) (System.currentTimeMillis() - start));
+            ToolResult result = ToolResult.success(output, (int) (System.currentTimeMillis() - start));
+            if (structured != null) result.setStructured(structured);
+            return result;
         } catch (Exception e) {
             log.error("Database tool execution failed", e);
             return ToolResult.error(e.getMessage(), (int) (System.currentTimeMillis() - start));

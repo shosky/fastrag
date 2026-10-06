@@ -49,6 +49,15 @@
 
     <dependencyManagement>
         <dependencies>
+            <!-- Guava 版本钉死（2026-09-28）：docker-java 3.4.0 直依赖 guava 19.0（路径最近获胜），
+                 而 Milvus SDK 的 grpc 1.59.1 需要新版 Preconditions.checkArgument 重载——
+                 运行期 milvusService 初始化 NoSuchMethodError。钉到 grpc 同款 32.0.1-android，
+                 docker-java 对新版 guava 兼容。 -->
+            <dependency>
+                <groupId>com.google.guava</groupId>
+                <artifactId>guava</artifactId>
+                <version>32.0.1-android</version>
+            </dependency>
             <!-- Internal modules -->
             <dependency>
                 <groupId>com.fastrag</groupId>

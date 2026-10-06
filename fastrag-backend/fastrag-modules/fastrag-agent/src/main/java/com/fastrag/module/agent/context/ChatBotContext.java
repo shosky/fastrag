@@ -30,6 +30,13 @@ import java.util.List;
 @EqualsAndHashCode(callSuper = true)
 public class ChatBotContext extends BaseContext {
 
+    /**
+     * 应用/智能体引用的沙箱配置 ID（REQ-H03 分支②的运行面载体；空 = 未引用沙箱，
+     * 执行门面按「未配置」分支降级）。字段定义归应用域链，本字段为智能体侧运行面消费位。
+     */
+    @ConfigField
+    private String sandboxConfigId;
+
     @ConfigField(type = "list", kind = "subagents")
     private List<String> subagents;
 

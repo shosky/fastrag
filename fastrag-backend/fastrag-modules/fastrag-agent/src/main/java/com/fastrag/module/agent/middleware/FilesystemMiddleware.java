@@ -1,8 +1,9 @@
 package com.fastrag.module.agent.middleware;
 
 import com.fastrag.module.agent.context.BaseContext;
-import com.fastrag.module.agent.sandbox.SandboxBackend;
-import com.fastrag.module.agent.sandbox.SandboxService;
+import com.fastrag.module.agent.context.ChatBotContext;
+import com.fastrag.module.agent.sandbox.SandboxExecutionService;
+import com.fastrag.module.agent.sandbox.SandboxWorkspaceLayout;
 import com.fastrag.ai.model.ChatMessage;
 import com.fastrag.ai.model.ChatResponse;
 import com.fastrag.module.tools.registry.ToolDefinition;
@@ -15,21 +16,23 @@ import java.util.Map;
 import java.util.Set;
 
 /**
- * 文件系统中间件。注册文件系统相关工具并路由到 SandboxBackend。
+ * 文件系统中间件。注册文件系统相关工具并路由到 SandboxExecutionService（执行门面）。
  *
  * <p>执行顺序: Order=1。</p>
  *
- * <p>当 SandboxService 不可用时，仅注册工具定义但实际文件操作返回错误。</p>
+ * <p>REQ-H03（降级三分支）：工具定义<b>恒注册</b>——沙箱不可用不阻断运行，实际文件与命令
+ * 操作由执行门面返回区分三因（总开关关 / 应用未引用或配置禁用 / provider 连接失败）的
+ * 「Error: …」文本回灌 LLM；工具描述中的路径提示由 {@link SandboxWorkspaceLayout#hint()} 生成。</p>
+ *
+ * <p>本中间件同时把沙箱运行面坐标写入 runtimeState（fileThreadId / sandboxConfigId），
+ * 引擎构建 ToolContext 时透传为扩展属性，供 {@code SandboxToolExecutor} 委派门面使用。</p>
  */
 @Slf4j
 @Component
 public class FilesystemMiddleware implements AgentMiddleware {
 
     @Autowired(required = false)
-    private SandboxService sandboxService;
-
-    @Autowired(required = false)
-    private SandboxBackend sandboxBackend;
+    private SandboxExecutionService sandboxExecutionService;
 
     /** 文件操作工具名称集合 */
     private static final Set<String> FS_TOOL_NAMES = Set.of(
@@ -44,15 +47,19 @@ public class FilesystemMiddleware implements AgentMiddleware {
     public BaseContext beforeModelCall(BaseContext context,
                                       List<ChatMessage> messages,
                                       List<ToolDefinition> tools) {
-        boolean sandboxAvailable = sandboxService != null && sandboxService.isSandboxEnabled();
+        // 沙箱运行面坐标（会话键 + 应用引用的沙箱配置 ID）写入 runtimeState，
+        // AgentEngine 构建 ToolContext 时整表透传为扩展属性
+        context.getRuntimeState().put("fileThreadId", sessionIdOf(context));
+        context.getRuntimeState().put("sandboxConfigId", sandboxConfigIdOf(context));
 
-        log.info("[FilesystemMiddleware] Registering filesystem tools, sandboxAvailable={}", sandboxAvailable);
+        String pathHint = SandboxWorkspaceLayout.hint();
+        log.info("[FilesystemMiddleware] Registering filesystem tools, pathHint={}", pathHint);
 
         // read_file
         tools.add(ToolDefinition.builder()
                 .toolId("builtin_read_file")
                 .name("read_file")
-                .description("读取文件内容。返回文件的完整文本内容。")
+                .description("读取文件内容。返回文件的完整文本内容。" + pathHint)
                 .type("sandbox")
                 .inputSchema(Map.of(
                         "type", "object",
@@ -68,7 +75,7 @@ public class FilesystemMiddleware implements AgentMiddleware {
         tools.add(ToolDefinition.builder()
                 .toolId("builtin_write_file")
                 .name("write_file")
-                .description("写入文件内容。如果文件已存在则覆盖，不存在则创建。")
+                .description("写入文件内容。如果文件已存在则覆盖，不存在则创建。" + pathHint)
                 .type("sandbox")
                 .inputSchema(Map.of(
                         "type", "object",
@@ -85,7 +92,7 @@ public class FilesystemMiddleware implements AgentMiddleware {
         tools.add(ToolDefinition.builder()
                 .toolId("builtin_edit_file")
                 .name("edit_file")
-                .description("编辑文件内容（str_replace 模式）。将文件中的 old_string 替换为 new_string。")
+                .description("编辑文件内容（str_replace 模式）。将文件中的 old_string 替换为 new_string。" + pathHint)
                 .type("sandbox")
                 .inputSchema(Map.of(
                         "type", "object",
@@ -104,7 +111,8 @@ public class FilesystemMiddleware implements AgentMiddleware {
         tools.add(ToolDefinition.builder()
                 .toolId("builtin_execute")
                 .name("execute")
-                .description("在沙箱环境中执行 Shell 命令。返回命令的标准输出。")
+                .description("在沙箱环境中执行 Shell 命令并返回标准输出。可用于运行代码：先用 write_file 把代码写入沙箱"
+                        + "（路径须在 /workspace 下），再执行如 `python3 /workspace/main.py`（Node.js 等其他语言同理）。" + pathHint)
                 .type("sandbox")
                 .inputSchema(Map.of(
                         "type", "object",
@@ -122,7 +130,7 @@ public class FilesystemMiddleware implements AgentMiddleware {
         tools.add(ToolDefinition.builder()
                 .toolId("builtin_list_directory")
                 .name("list_directory")
-                .description("列出目录中的文件和子目录。")
+                .description("列出目录中的文件和子目录。" + pathHint)
                 .type("sandbox")
                 .inputSchema(Map.of(
                         "type", "object",
@@ -138,7 +146,7 @@ public class FilesystemMiddleware implements AgentMiddleware {
         tools.add(ToolDefinition.builder()
                 .toolId("builtin_grep")
                 .name("grep")
-                .description("在文件中搜索匹配指定模式的内容。")
+                .description("在文件中搜索匹配指定模式的内容。" + pathHint)
                 .type("sandbox")
                 .inputSchema(Map.of(
                         "type", "object",
@@ -156,7 +164,7 @@ public class FilesystemMiddleware implements AgentMiddleware {
         tools.add(ToolDefinition.builder()
                 .toolId("builtin_glob")
                 .name("glob")
-                .description("按文件模式匹配查找文件。")
+                .description("按文件模式匹配查找文件。" + pathHint)
                 .type("sandbox")
                 .inputSchema(Map.of(
                         "type", "object",
@@ -176,25 +184,43 @@ public class FilesystemMiddleware implements AgentMiddleware {
     @Override
     public ToolCallInterceptor interceptToolCall(BaseContext context,
                                                    ChatMessage.ToolCall toolCall) {
+        // 恒不拦截：工具定义已注册，可用性由执行门面在动作执行时判定（REQ-H03 降级文本）
         String funcName = toolCall.getFunction().getName();
-        if (!FS_TOOL_NAMES.contains(funcName)) {
-            return null;
+        if (FS_TOOL_NAMES.contains(funcName)) {
+            log.debug("[FilesystemMiddleware] Filesystem tool call: {} (routing to sandbox executor)", funcName);
         }
-
-        // 沙箱不可用，让工具执行器返回错误
-        if (sandboxBackend == null || sandboxService == null || !sandboxService.isSandboxEnabled()) {
-            log.warn("[FilesystemMiddleware] Sandbox not available, cannot handle: {}", funcName);
-            return null;
-        }
-
-        // 拦截文件操作工具，设置 fileThreadId 到 ToolContext 的 extensions
-        // 实际执行由 SandboxToolExecutor 完成
-        log.debug("[FilesystemMiddleware] Intercepted filesystem tool: {} (routing to sandbox)", funcName);
-        return null; // 返回 null 表示不阻断，让默认的 SandboxToolExecutor 处理
+        return null;
     }
 
     @Override
     public BaseContext afterModelCall(BaseContext context, ChatResponse response) {
         return context;
+    }
+
+    /** 会话键：fileThreadId 扩展优先，回落 threadId → runId → uid（与执行器旧约定一致）。 */
+    private String sessionIdOf(BaseContext context) {
+        Object fileThreadId = context.getRuntimeState().get("fileThreadId");
+        if (fileThreadId instanceof String s && !s.isBlank()) {
+            return s;
+        }
+        if (context.getThreadId() != null && !context.getThreadId().isBlank()) {
+            return context.getThreadId();
+        }
+        if (context.getRunId() != null && !context.getRunId().isBlank()) {
+            return context.getRunId();
+        }
+        return context.getUid();
+    }
+
+    /** 沙箱配置 ID：runtimeState 已有值优先；ChatBotContext 携带 @ConfigField sandboxConfigId（REQ-H03 分支②载体）。 */
+    private String sandboxConfigIdOf(BaseContext context) {
+        Object existing = context.getRuntimeState().get("sandboxConfigId");
+        if (existing instanceof String s && !s.isBlank()) {
+            return s;
+        }
+        if (context instanceof ChatBotContext chatBot) {
+            return chatBot.getSandboxConfigId();
+        }
+        return null;
     }
 }

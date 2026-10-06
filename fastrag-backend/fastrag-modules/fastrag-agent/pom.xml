@@ -18,10 +18,32 @@
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-infra</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-tools</artifactId></dependency>
         <dependency><groupId>com.fastrag</groupId><artifactId>fastrag-ai</artifactId></dependency>
+        <!-- 沙箱 Docker 后端：Engine API 直连（ADR-0006，容器内零服务端） -->
+        <dependency>
+            <groupId>com.github.docker-java</groupId>
+            <artifactId>docker-java-core</artifactId>
+            <version>3.4.0</version>
+        </dependency>
+        <dependency>
+            <groupId>com.github.docker-java</groupId>
+            <artifactId>docker-java-transport-httpclient5</artifactId>
+            <version>3.4.0</version>
+        </dependency>
         <dependency><groupId>org.projectlombok</groupId><artifactId>lombok</artifactId><optional>true</optional></dependency>
         <dependency>
             <groupId>org.springframework.boot</groupId>
             <artifactId>spring-boot-starter-test</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <!-- S11 Provider 适配器集成测试：真实 daemon（无 Docker 环境自动跳过） -->
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>testcontainers</artifactId>
+            <scope>test</scope>
+        </dependency>
+        <dependency>
+            <groupId>org.testcontainers</groupId>
+            <artifactId>junit-jupiter</artifactId>
             <scope>test</scope>
         </dependency>
     </dependencies>

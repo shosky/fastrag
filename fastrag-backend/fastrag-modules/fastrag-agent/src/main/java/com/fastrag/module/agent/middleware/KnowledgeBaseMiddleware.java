@@ -15,11 +15,19 @@ import java.util.Map;
  *
  * <p>执行顺序: Order=3。</p>
  *
- * <p>当 context.knowledges 非空时，自动注册内置知识库检索工具供 LLM 使用。</p>
+ * <p>当 context.knowledges 非空时，自动注册内置知识库检索工具供 LLM 使用；
+ * 并向 system 消息注入能力提示与检索决策启发（全 agentic 化，2026-09-30——
+ * 预检索管线移除后，8B 级模型对「该不该查库」缺乏指引，常该查不查）。</p>
  */
 @Slf4j
 @Component
 public class KnowledgeBaseMiddleware implements AgentMiddleware {
+
+    /** KB 能力提示（与 FilesystemMiddleware 沙箱提示同型）：告知模型知识库可用、何时该检索、如何引用 */
+    private static final String KB_CAPABILITY_HINT =
+            "\n\n【知识库已接入】本应用绑定了知识库：涉及业务、文档、规程、FAQ 类的问题，请先调用 query_kb 检索相关资料"
+            + "（可多次检索、可更换关键词重试），并基于返回的资料回答，引用资料时在对应句子末尾以 [文件名] 标注来源；"
+            + "与知识库无关的问题（如通用编程、代码执行、常识问答）无需检索，直接回答。";
 
     @Override
     public int getOrder() { return 3; }
@@ -81,6 +89,15 @@ public class KnowledgeBaseMiddleware implements AgentMiddleware {
                     .build());
 
             log.info("[KnowledgeBaseMiddleware] Registered 3 knowledge base tools");
+
+            // 能力提示注入：追加到首条 system 消息（messages 由引擎构建后传入，此处可变）
+            for (ChatMessage msg : messages) {
+                if ("system".equals(msg.getRole())) {
+                    String base = msg.getContent() == null ? "" : msg.getContent();
+                    msg.setContent(base + KB_CAPABILITY_HINT);
+                    break;
+                }
+            }
         } catch (Exception e) {
             log.error("[KnowledgeBaseMiddleware] Failed to register KB tools: {}", e.getMessage());
         }

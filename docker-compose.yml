@@ -20,6 +20,16 @@ services:
       - MINIO_HOST=minio
       - AI_GATEWAY_URL=http://host.docker.internal:11434
       - JWT_SECRET=FastRAGSecretKeyForJWT2024PleaseChangeInProd!
+      # 沙箱（REQ-H07/REQ-H02/REQ-H11 回退键；细粒度配置在 sandbox_config 表）
+      - AGENT_SANDBOX_ENABLED=false
+      - AGENT_SANDBOX_IDLE_TTL=1800
+      - AGENT_SANDBOX_IMAGE=fastrag-sandbox:latest
+      - AGENT_SANDBOX_ORPHAN_GRACE=600
+    # 沙箱 Docker 后端（ADR-0006）：backend 经挂载的 docker.sock 直驱宿主 daemon。
+    # 安全约束：socket = 宿主机 root 等价能力；生产建议改连远端 daemon（TLS 强制），
+    # 或在宿主机按 GID 授权非 root 组——禁止 chmod 666（2026-09-28 grill 裁决）。
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
     depends_on:
       mysql:
         condition: service_healthy
@@ -34,6 +44,19 @@ services:
     networks:
       - fastrag-net
     restart: unless-stopped
+
+  # ==================== Sandbox image（一次性构建，产物供沙箱后端使用）====================
+  # 构建命令：docker compose --profile sandbox build sandbox-image
+  # 产物：fastrag-sandbox:latest（内容物见 fastrag-backend/docker/sandbox.Dockerfile）
+  sandbox-image:
+    image: fastrag-sandbox:latest
+    build:
+      context: ./fastrag-backend
+      dockerfile: docker/sandbox.Dockerfile
+      tags:
+        - "fastrag-sandbox:latest"
+    profiles:
+      - sandbox
 
   # ==================== MySQL ====================
   mysql:
