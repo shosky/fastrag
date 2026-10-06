@@ -6,11 +6,15 @@ import com.fastrag.module.tools.mapper.McpCallLogMapper;
 import com.fastrag.module.tools.mapper.McpServiceMapper;
 import com.fastrag.module.tools.mapper.McpToolMapper;
 import com.fastrag.module.tools.service.impl.McpServiceServiceImpl;
+import com.fastrag.security.filter.LoginUser;
+import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
+import org.springframework.security.core.context.SecurityContextHolder;
 
 import java.time.LocalDateTime;
 import java.util.List;
@@ -42,6 +46,19 @@ class McpServiceServiceTest {
     void setUp() {
         // 创建 service 实例并注入 mock
         service = new McpServiceServiceImpl(mapper, toolMapper, callLogMapper);
+        // Service 层经 SecurityUtil.getCurrentUser() 取当前用户（requireManage/可见性），
+        // 单测无认证过滤器，须显式装配安全上下文（* 权限 = manageable 全通过）
+        LoginUser user = new LoginUser();
+        user.setUserId("u1");
+        user.setUsername("tester");
+        user.setPermissions(List.of("*"));
+        SecurityContextHolder.getContext().setAuthentication(
+                new UsernamePasswordAuthenticationToken(user, null));
+    }
+
+    @AfterEach
+    void tearDown() {
+        SecurityContextHolder.clearContext();
     }
 
     @Test
@@ -256,6 +273,7 @@ class McpServiceServiceTest {
         s.setIsBuiltin(0);
         s.setStatus("online");
         s.setTransport("sse");
+        s.setCreator("u1");
         s.setCreatedAt(LocalDateTime.now());
         return s;
     }

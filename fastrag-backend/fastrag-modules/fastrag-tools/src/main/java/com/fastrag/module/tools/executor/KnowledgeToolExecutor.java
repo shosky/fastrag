@@ -88,6 +88,13 @@ public class KnowledgeToolExecutor implements ToolExecutor {
 
         List<Map<String, Object>> chunks = kbOperationService.queryKnowledgeBase(kbId, query, topK);
 
+        // 结构化通道（app-chat-optimize 二批）：display_type+chunks 直达前端 KnowledgeChunksList
+        Map<String, Object> structured = new java.util.LinkedHashMap<>();
+        structured.put("display_type", "knowledge_chunks");
+        structured.put("kb_id", kbId);
+        structured.put("query", query);
+        structured.put("chunks", chunks == null ? List.of() : chunks);
+
         StringBuilder sb = new StringBuilder();
         sb.append("知识库检索结果（").append(kbId).append("）：\n\n");
         sb.append("查询：").append(query).append("\n\n");
@@ -110,6 +117,8 @@ public class KnowledgeToolExecutor implements ToolExecutor {
             }
         }
 
-        return ToolResult.success(sb.toString(), (int)(System.currentTimeMillis() - t0));
+        ToolResult result = ToolResult.success(sb.toString(), (int) (System.currentTimeMillis() - t0));
+        result.setStructured(structured);
+        return result;
     }
 }

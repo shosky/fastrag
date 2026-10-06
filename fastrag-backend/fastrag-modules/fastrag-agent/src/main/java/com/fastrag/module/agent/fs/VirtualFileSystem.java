@@ -4,7 +4,8 @@ import java.util.List;
 
 /**
  * 虚拟文件系统接口。
- * 不同文件系统通过 mount point 注册，FileSystemManager 按路径前缀路由。
+ * M3-6 已删除 FileSystemManager 路由器与 SkillReadonlyBackend 实现；
+ * 技能正文统一走 DB content + 沙箱物化（SandboxExecutionService.syncSkills）。
  */
 public interface VirtualFileSystem {
 

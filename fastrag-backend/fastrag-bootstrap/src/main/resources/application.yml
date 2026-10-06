@@ -188,3 +188,16 @@ logging:
     com.fastrag.ai.llm.LlmService: DEBUG
     com.fastrag.module.agent.executor.AgentEngine: DEBUG
     org.springframework.security: INFO
+
+# ==================== 沙箱（agent.sandbox.*，回退层）====================
+# 取值优先级：platform-config（sys_config）> 本节 > 内置默认（REQ-H07，2026-09-28）
+agent:
+  sandbox:
+    # 总开关回退键（细粒度在 sandbox_config.enabled）
+    enabled: false
+    # 空闲回收 TTL 秒（REQ-H02，默认 1800s 对齐 WeKnora DefaultDockerIdleTTL）
+    idle-ttl: 1800
+    # Docker 缺省镜像（fastrag-backend/docker/sandbox.Dockerfile 产物）
+    image: fastrag-sandbox:latest
+    # 孤儿对账宽限期秒（REQ-H11）
+    orphan-grace: 600
