@@ -2,6 +2,7 @@
 import { ref, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as api from '@/api'
+import { PROMPT_TEMPLATES, PROMPT_TEMPLATE_NOTE, type PromptTemplate } from '@/constants/promptTemplates'
 
 const props = defineProps<{
   appInfo: {
@@ -48,6 +49,31 @@ const showSummary = ref(false)
 const showRunControl = ref(false)
 const saving = ref(false)
 
+// ── 提示词模板库（app-chat-optimize Step 3c）──
+const selectedTemplate = ref('')
+
+/** 选中模板：空提示词直接写入；非空时 MessageBox 三选——确定=替换 / 取消=追加 / 关闭=不动 */
+async function handleTemplateChange(name: string) {
+  const tpl: PromptTemplate | undefined = PROMPT_TEMPLATES.find(t => t.name === name)
+  if (!tpl) return
+  try {
+    if (promptForm.value.prompt.trim()) {
+      const action: 'replace' | 'append' | 'none' = await ElMessageBox.confirm(
+        '当前提示词非空：点「替换」将以模板覆盖全部内容；点「追加」将模板拼接到末尾。',
+        '插入提示词模板',
+        { distinguishCancelAndClose: true, confirmButtonText: '替换', cancelButtonText: '追加', type: 'warning' }
+      ).then(() => 'replace' as const)
+        .catch((action: string) => (action === 'cancel' ? 'append' as const : 'none' as const))
+      if (action === 'replace') promptForm.value.prompt = tpl.content
+      else if (action === 'append') promptForm.value.prompt = `${promptForm.value.prompt}\n\n${tpl.content}`
+    } else {
+      promptForm.value.prompt = tpl.content
+    }
+  } catch { /* ignore */ }
+  // 复位选择，便于再次选同一模板
+  selectedTemplate.value = ''
+}
+
 // 模型列表
 const modelOptions = ref<{ code: string; name: string }[]>([])
 const modelsLoading = ref(false)
@@ -55,7 +81,7 @@ const modelsLoading = ref(false)
 async function loadModels() {
   modelsLoading.value = true
   try {
-    const list: any[] = await api.getModels({ purpose: 'LLM' })
+    const list: any[] = await api.getModels({ purpose: 'LLM' }) as unknown as any[]
     // 只显示在线模型
     modelOptions.value = (list || [])
       .filter((m: any) => m.status === 'online')
@@ -113,6 +139,19 @@ async function loadConfig() {
   } catch (e) { /* ignore */ }
 }
 
+// 沙箱配置引用（REQ-I01，agent.SandboxExecutionFacade 分支②载体）
+const sandboxConfigs = ref<any[]>([])
+const sandboxConfigId = ref<string>('')
+
+async function loadSandbox() {
+  try {
+    const list: any[] = (await api.getSandboxConfigs()) as any || []
+    sandboxConfigs.value = list.map((c: any) => ({ ...c, enabled: c.enabled === 1 || c.enabled === true }))
+    const detail: any = await api.getAppDetail(appId())
+    sandboxConfigId.value = detail?.sandboxConfigId || ''
+  } catch (e) { /* ignore */ }
+}
+
 async function handleSave() {
   saving.value = true
   try {
@@ -120,6 +159,8 @@ async function handleSave() {
     await api.saveAppAdvanced(appId(), advancedForm.value)
     // 保存系统提示词
     await api.saveAppPrompt(appId(), promptForm.value.prompt)
+    // 保存沙箱配置引用（REQ-I01：空 = 解除引用，对话走未配置降级）
+    await api.updateApp(appId(), { sandboxConfigId: sandboxConfigId.value || '' })
     // 保存上下文压缩配置
     await api.saveAppSummary(appId(), {
       summaryThreshold: summaryForm.value.summaryThreshold,
@@ -141,8 +182,18 @@ onMounted(() => {
   loadBasic()
   loadConfig()
   loadModels()
+  loadSandbox()
 })
 </script>
+
+<style scoped>
+.sandbox-hint {
+  margin-top: 4px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  line-height: 1.5;
+}
+</style>
 
 <template>
   <div class="config-section">
@@ -170,6 +221,18 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="结束语">
           <el-input v-model="basicForm.goodbyeMessage" type="textarea" :rows="2" placeholder="请输入结束语" />
+        </el-form-item>
+        <el-form-item label="沙箱执行">
+          <el-select v-model="sandboxConfigId" clearable placeholder="未选择 = 应用对话不启用沙箱" style="width: 320px">
+            <el-option
+              v-for="c in sandboxConfigs"
+              :key="c.id"
+              :label="`${c.name}（${c.sandboxType}）`"
+              :value="c.id"
+              :disabled="!c.enabled || c.sandboxType === 'disabled'"
+            />
+          </el-select>
+          <div class="sandbox-hint">代码类工具将在所选沙箱容器内隔离执行；配置在「工具与服务 → 沙箱配置」维护，随基础配置一并保存</div>
         </el-form-item>
       </el-form>
     </div>
@@ -231,6 +294,24 @@ onMounted(() => {
         </el-button>
       </div>
       <el-form v-if="showPrompt" label-width="120px">
+        <el-form-item label="提示词模板">
+          <div class="prompt-template-bar">
+            <el-select
+              v-model="selectedTemplate"
+              placeholder="选择模板插入提示词"
+              style="width: 220px"
+              @change="handleTemplateChange"
+            >
+              <el-option
+                v-for="t in PROMPT_TEMPLATES"
+                :key="t.name"
+                :label="t.name"
+                :value="t.name"
+              />
+            </el-select>
+            <span class="prompt-template-note">{{ PROMPT_TEMPLATE_NOTE }}</span>
+          </div>
+        </el-form-item>
         <el-form-item label="提示词">
           <el-input
             v-model="promptForm.prompt"
@@ -326,6 +407,18 @@ onMounted(() => {
   padding: 20px;
   border: 1px solid var(--el-border-color-light);
   margin-bottom: $spacing-base;
+}
+
+.prompt-template-bar {
+  display: flex;
+  align-items: center;
+  gap: $spacing-base;
+  width: 100%;
+
+  .prompt-template-note {
+    font-size: 12px;
+    color: var(--el-text-color-secondary);
+  }
 }
 
 .save-bar {

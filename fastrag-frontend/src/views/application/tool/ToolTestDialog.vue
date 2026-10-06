@@ -320,7 +320,7 @@ async function runTest() {
     if (history.value.length > 50) history.value = history.value.slice(0, 50)
 
     // 失败时自动切换到结果 tab
-    if (resp.status >= 400) {
+    if (respStatus >= 400) {
       activeTab.value = 'result'
     }
 
@@ -328,7 +328,7 @@ async function runTest() {
       const record: TestRecord = {
         id: Date.now(),
         timestamp: new Date().toLocaleTimeString(),
-        params: JSON.parse(JSON.stringify(params)),
+        params: {},
         request: { method: config.method, url: config.url, headers: {}, body: null },
         response: { status: 0, statusText: 'Error', headers: {}, body: '' },
         duration: 0,

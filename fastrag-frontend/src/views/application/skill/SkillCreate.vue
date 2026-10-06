@@ -163,12 +163,12 @@ const selectedSkills = ref<string[]>([])
 
 // ===== 提交 =====
 async function handleSubmit() {
-  if (!form.value.name.trim()) {
+  if (!form.name.trim()) {
     ElMessage.warning('请输入技能名称')
     activeTab.value = 'basic'
     return
   }
-  if (!form.value.identifier.trim()) {
+  if (!form.identifier.trim()) {
     ElMessage.warning('请输入技能标识')
     activeTab.value = 'basic'
     return
@@ -178,21 +178,21 @@ async function handleSubmit() {
 
   saving.value = true
   try {
-    const slug = form.value.identifier.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
+    const slug = form.identifier.trim().toLowerCase().replace(/\s+/g, '_').replace(/[^a-z0-9_]/g, '')
     // 第一步：创建技能
     const skillMd = virtualFiles.value.find((f) => f.path === 'SKILL.md')
     await api.createSkill({
-      name: form.value.name.trim(),
+      name: form.name.trim(),
       identifier: slug,
       slug,
-      description: form.value.description.trim() || form.value.name.trim(),
+      description: form.description.trim() || form.name.trim(),
       source: 'custom',
-      category: form.value.category,
-      trigger: form.value.trigger,
+      category: form.category,
+      trigger: form.trigger,
       content: skillMd?.content || '',
       codeType: 'markdown',
       code: skillMd?.content || '',
-      enabled: form.value.enabled,
+      enabled: form.enabled,
       version: '1.0.0',
     } as any)
 
@@ -224,7 +224,7 @@ async function handleSubmit() {
       }
     }
 
-    ElMessage.success(`技能「${form.value.name}」创建成功`)
+    ElMessage.success(`技能「${form.name}」创建成功`)
     router.push('/application/skill-management')
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || e?.message || '创建失败')

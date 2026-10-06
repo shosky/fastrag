@@ -42,8 +42,6 @@ watch(() => props.visible, (v) => {
   if (v) resetState()
 })
 
-import { watch } from 'vue'
-
 // ---- 下载模板 ----
 async function handleDownloadTemplate() {
   try {

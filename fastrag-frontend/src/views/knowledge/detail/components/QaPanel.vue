@@ -2,7 +2,6 @@
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
-import { getFiles } from '@/mock/files'
 import type { QaPair } from '@/types/knowledge'
 import { usePagination } from '@/composables/usePagination'
 import QaImportDialog from './QaImportDialog.vue'
@@ -42,7 +41,7 @@ const statusOptions = [
 ]
 const STATUS_LABELS: Record<string, string> = { draft: '草稿', confirmed: '已确认', active: '启用', disabled: '停用' }
 const STATUS_COLORS: Record<string, string> = { draft: 'info', confirmed: 'warning', active: 'success', disabled: 'danger' }
-const SOURCE_LABELS: Record<string, string> = { manual: '手动录入' }
+const SOURCE_LABELS: Record<string, string> = { manual: '手动录入', ai: 'AI 提炼' }
 
 const filteredList = computed(() => {
   let list = dataList.value
@@ -152,6 +151,7 @@ function handleSearch() { currentPage.value = 1 }
       </el-select>
       <el-select v-model="filterSource" placeholder="来源" clearable style="width: 120px" @change="handleSearch">
         <el-option label="手动录入" value="manual" />
+        <el-option label="AI 提炼" value="ai" />
       </el-select>
       <span style="color: #909399; font-size: 13px">共 {{ total }} 条</span>
     </div>
@@ -161,6 +161,13 @@ function handleSearch() { currentPage.value = 1 }
       <el-table-column type="index" width="50" />
       <el-table-column prop="question" label="问题" min-width="200" show-overflow-tooltip />
       <el-table-column prop="answer" label="答案" min-width="250" show-overflow-tooltip />
+      <el-table-column label="来源文档" min-width="150" show-overflow-tooltip>
+        <template #default="{ row }">
+          <span v-if="row.fileName">{{ row.fileName }}</span>
+          <span v-else-if="row.fileId" style="color: #909399">文件 {{ row.fileId }}</span>
+          <span v-else style="color: #c0c4cc">—</span>
+        </template>
+      </el-table-column>
       <el-table-column prop="source" label="来源" width="90">
         <template #default="{ row }">
           <el-tag :type="row.source === 'ai' ? 'warning' : 'info'" size="small">{{ SOURCE_LABELS[row.source] || row.source }}</el-tag>

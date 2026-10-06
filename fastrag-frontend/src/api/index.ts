@@ -475,6 +475,20 @@ export async function importQaPairs(kbId: string, file: File, overwrite: boolean
   })
 }
 
+// 触发问答对提炼（qa-generation：受理即返回，任务异步执行）
+export async function triggerQaGeneration(
+  kbId: string,
+  fileId: string,
+  data?: { count?: number; customInstruction?: string; mode?: 'replace' | 'append'; model?: string }
+) {
+  return request.post(`/kb/${kbId}/qa-pairs/generation/${fileId}`, data ?? {})
+}
+
+// 查询问答对提炼任务状态（每文件保留最近一次）
+export async function getQaGenerationStatus(kbId: string, fileId: string) {
+  return request.get(`/kb/${kbId}/qa-pairs/generation/${fileId}`)
+}
+
 // ===========================================================================
 // 解析策略 API
 // ===========================================================================
@@ -1694,6 +1708,10 @@ export async function createAppVariable(appId: string, data: Record<string, unkn
 export async function deleteAppVariable(appId: string, id: string) {
   return request.delete(`/apps/${appId}/global-policy/variables/${id}`)
 }
+/** 绑定有效性预览（app-chat-optimize Step 3a）：[{type:'kb'|'tool'|'skill'|'mcp'|'db', id, name, exists, enabled, reason?}]；资源已删除时 name=null */
+export async function getBindingsEffectiveness(appId: string) {
+  return request.get(`/apps/${appId}/bindings/effectiveness`)
+}
 export async function getAppKbBindings(appId: string) {
   return request.get(`/apps/${appId}/knowledge-bases`)
 }
@@ -1736,6 +1754,9 @@ export async function deleteAppDialogTest(appId: string, id: string) {
 export async function exportAppDialogTests(appId: string) {
   return request.get(`/apps/${appId}/dialog-tests/export`, { responseType: 'blob' })
 }
+// [孤儿标记 2026-09-26] 面板已下架（app-chat-optimize 3b），后端端点保留；恢复消费或删除待产品决策
+// —— 以下 optimizations 组（getAppOptimizations/createAppOptimization/applyAppOptimization/
+//    updateAppOptimization/deleteAppOptimization/exportAppOptimizations）当前无消费方
 export async function getAppOptimizations(appId: string) {
   return request.get(`/apps/${appId}/optimizations`)
 }
@@ -1944,6 +1965,9 @@ export async function getAppDebugInfo(appId: string) {
 export async function saveAppDebugConfig(appId: string, cfg: Record<string, unknown>) {
   return request.post(`/apps/${appId}/debug`, cfg)
 }
+// [孤儿标记 2026-09-26] 面板已下架（app-chat-optimize 3b），后端端点保留；恢复消费或删除待产品决策
+// —— auto-knowledge-update 组（triggerAppKnowledgeUpdate / setAutoKnowledgeUpdate /
+//    getAutoKnowledgeUpdate，set/get 两函数定义在下方模型监控区块后）当前无消费方
 export async function triggerAppKnowledgeUpdate(appId: string, cfg: Record<string, unknown>) {
   return request.post(`/apps/${appId}/knowledge-update`, cfg)
 }
@@ -2005,6 +2029,9 @@ export async function getKnowledgeUpdateLogs(kbId: string, page?: number, pageSi
 export async function markUpdateLogRead(kbId: string, id: string) {
   return request.put(`/kb/${kbId}/update-logs/${id}/read`)
 }
+// [孤儿标记 2026-09-26] 面板已下架（app-chat-optimize 3b），后端端点保留；恢复消费或删除待产品决策
+// —— auto-knowledge-update 组（triggerAppKnowledgeUpdate / setAutoKnowledgeUpdate /
+//    getAutoKnowledgeUpdate）当前无消费方
 export async function setAutoKnowledgeUpdate(appId: string, config: Record<string, unknown>) {
   return request.put(`/apps/${appId}/knowledge-update/config`, config)
 }
@@ -2026,6 +2053,53 @@ export async function deleteAppConversation(appId: string, convId: string) {
 }
 export async function exportAppConversations(appId: string) {
   return request.get(`/apps/${appId}/conversations/export`, { responseType: 'blob' })
+}
+
+// ===========================================================================
+// 会话中心 API（new-conversation 特性）
+// 契约：fastrag-backend docs/contract/interfaces.md ## new-conversation
+// SessionCenter 节；路径按后端设计 /api/conversations**，
+// 以 springdoc 实现后为准（前瞻契约）。
+// ===========================================================================
+
+/** 创建会话（app/kb 均可选，缺省 = 空请求态直聊） */
+export async function createConversation(data?: { appId?: string; kbIds?: string[]; modelId?: string }) {
+  return request.post('/conversations', data || {})
+}
+
+/** 会话列表（置顶优先 + updatedAt 倒序；PageResult{list,total,page,pageSize}） */
+export async function listConversations(params?: { page?: number; pageSize?: number }) {
+  return request.get('/conversations', { params })
+}
+
+/** 会话详情（含 requestState；存量 NULL → 空请求态） */
+export async function getConversation(id: string) {
+  return request.get(`/conversations/${id}`)
+}
+
+/** 置顶 / 取消置顶 */
+export async function pinConversation(id: string, pinned: boolean) {
+  return request.put(`/conversations/${id}/pin`, { pinned })
+}
+
+/** 清空会话全部消息（会话保留，摘要一并置空） */
+export async function clearConversationMessages(id: string) {
+  return request.delete(`/conversations/${id}/messages`)
+}
+
+/** 批量删除会话（逐个物理级联删消息） */
+export async function deleteConversations(ids: string[]) {
+  return request.post('/conversations/batch-delete', { ids })
+}
+
+/** LLM 智能起标题（后端失败/空返回自动回退首问截 30 字，不抛业务错） */
+export async function generateConversationTitle(id: string) {
+  return request.post(`/conversations/${id}/title`)
+}
+
+/** 停止生成（前端 AbortController.abort() 之外的后端双保险；无活跃流时幂等 no-op） */
+export async function stopConversation(id: string) {
+  return request.post(`/conversations/${id}/stop`)
 }
 
 // ===========================================================================
@@ -2071,4 +2145,56 @@ export async function getApiTokens() {
 /** 撤销（删除）API Token */
 export async function deleteApiToken(tokenId: string) {
   return request.delete(`/api-tokens/${tokenId}`)
+}
+
+// ==================== 沙箱配置（agent.SandboxConfigStore，REQ-H17） ====================
+
+/** 获取当前用户可见的沙箱配置列表 */
+export async function getSandboxConfigs() {
+  return request.get('/sandbox-configs')
+}
+
+/** 获取沙箱配置详情 */
+export async function getSandboxConfigDetail(id: string) {
+  return request.get(`/sandbox-configs/${id}`)
+}
+
+/** 创建沙箱配置 */
+export async function createSandboxConfig(data: Record<string, unknown>) {
+  return request.post('/sandbox-configs', data)
+}
+
+/** 更新沙箱配置（空 api_key_ref 不覆盖既有引用） */
+export async function updateSandboxConfig(id: string, data: Record<string, unknown>) {
+  return request.put(`/sandbox-configs/${id}`, data)
+}
+
+/** 删除沙箱配置（名下有实例时被 409 语义拒绝） */
+export async function deleteSandboxConfig(id: string) {
+  return request.delete(`/sandbox-configs/${id}`)
+}
+
+/** 探活验证（Docker ping daemon / Cube·E2B 控制面鉴权） */
+export async function verifySandboxConfig(id: string) {
+  return request.post(`/sandbox-configs/${id}/verify`)
+}
+
+/** 查询配置名下沙箱实例库存（含 paused） */
+export async function getSandboxInstances(id: string) {
+  return request.get(`/sandbox-configs/${id}/sandboxes`)
+}
+
+// ==================== 通知配置（platform 域欠账登记） ====================
+// 注意：NotificationController 目前只有 list/unread-count/create/read/read-all/delete 端点，
+// config 端点后端尚未实现；notification/index.vue 以 try/catch 优雅降级（对话框打开为空态）。
+// 后端补端点时此签名即为契约。
+
+/** 获取通知配置（后端端点待实现，暂 404 降级） */
+export async function getNotificationConfig() {
+  return request.get('/notifications/config')
+}
+
+/** 保存通知配置（后端端点待实现，暂 404 降级） */
+export async function saveNotificationConfig(data: Record<string, unknown>) {
+  return request.put('/notifications/config', data)
 }

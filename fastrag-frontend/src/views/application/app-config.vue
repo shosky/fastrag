@@ -18,6 +18,28 @@ const basicForm = ref({ memoryRounds: 5, outputFormat: 'markdown', timeoutSecond
 const advancedForm = ref({ model: '', temperature: 0.7, maxTokens: 2048, topP: 1, frequencyPenalty: 0, presencePenalty: 0 })
 const showAdvanced = ref(false)
 
+// 沙箱配置（REQ-I01，agent.SandboxExecutionFacade 分支②载体）
+const sandboxConfigs = ref<any[]>([])
+const sandboxConfigId = ref<string>('')
+
+async function loadSandbox() {
+  try {
+    const list: any[] = (await api.getSandboxConfigs()) as any || []
+    sandboxConfigs.value = list.map((c: any) => ({ ...c, enabled: c.enabled === 1 || c.enabled === true }))
+    const detail: any = await api.getAppDetail(appId)
+    sandboxConfigId.value = detail?.sandboxConfigId || ''
+  } catch {}
+}
+
+async function saveSandbox() {
+  try {
+    await api.updateApp(appId, { sandboxConfigId: sandboxConfigId.value || '' })
+    ElMessage.success('沙箱配置已保存')
+  } catch (e: any) {
+    ElMessage.error(e.message || '保存失败')
+  }
+}
+
 async function loadBasic() {
   try { const r: any = await api.getAppBasicConfig(appId); if (r) Object.assign(basicForm.value, r); if (r?.advanced) Object.assign(advancedForm.value, r.advanced) } catch {}
 }
@@ -280,13 +302,13 @@ async function handleDeleteTest(row: any) {
 }
 async function handleExportTests() {
   try {
-    const blob = await api.exportAppDialogTests(appId) as Blob
+    const blob = await api.exportAppDialogTests(appId) as unknown as Blob
     const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `test_report_${Date.now()}.csv`
     a.click(); URL.revokeObjectURL(url); ElMessage.success('已导出')
   } catch { ElMessage.error('导出失败') }
 }
 
-onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadVariables(); loadKbBindings(); loadTests() })
+onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadVariables(); loadKbBindings(); loadTests(); loadSandbox() })
 </script>
 
 <template>
@@ -309,6 +331,21 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
             <el-form-item label="开场白"><el-input v-model="basicForm.greeting" type="textarea" :rows="2" /></el-form-item>
             <el-form-item label="结束语"><el-input v-model="basicForm.goodbyeMessage" type="textarea" :rows="2" /></el-form-item>
             <el-form-item><el-button type="primary" @click="saveBasic">保存基础配置</el-button></el-form-item>
+          </el-form>
+        </div>
+
+        <div class="card-panel" style="margin-top:16px">
+          <div class="section-header">
+            <div class="section-title">沙箱执行（代码类工具隔离环境）</div>
+          </div>
+          <el-form label-width="140px" style="margin-top:16px">
+            <el-form-item label="沙箱配置">
+              <el-select v-model="sandboxConfigId" clearable placeholder="未选择 = 应用对话不启用沙箱" style="width: 320px">
+                <el-option v-for="c in sandboxConfigs" :key="c.id" :label="`${c.name}（${c.sandboxType}）`" :value="c.id" :disabled="!c.enabled || c.sandboxType === 'disabled'" />
+              </el-select>
+              <span class="sandbox-hint">在「工具与服务 → 沙箱配置」中维护；未引用时对话内文件/命令工具返回未配置提示</span>
+            </el-form-item>
+            <el-form-item><el-button type="primary" @click="saveSandbox">保存沙箱配置</el-button></el-form-item>
           </el-form>
         </div>
 
@@ -562,6 +599,11 @@ onMounted(() => { loadBasic(); loadDialog(); loadTriggers(); loadPolicy(); loadV
 .section-title {
   font-size: 15px;
   font-weight: 600;
+}
+.sandbox-hint {
+  margin-left: 8px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
 }
 .card-panel {
   background: var(--el-bg-color-overlay);

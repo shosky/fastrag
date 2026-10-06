@@ -1,5 +1,6 @@
 import { ref } from 'vue'
 import { storage } from '@/utils/storage'
+import { parseSSEBuffer } from '@/utils/sse'
 
 // ==================== 类型定义 ====================
 
@@ -20,6 +21,8 @@ export interface ToolResultEvent {
   durationMs: number
   error?: string
   intercepted?: boolean
+  /** 结构化数据（app-chat-optimize 二批）：后端透传，专用渲染器消费，前端不加工 */
+  data?: Record<string, unknown>
 }
 
 export interface AgentStateEvent {
@@ -313,66 +316,4 @@ export function useAppChatStream() {
 }
 
 // ==================== SSE 解析辅助函数 ====================
-
-interface SSEEvent {
-  event: string
-  data: string
-}
-
-interface SSEParseResult {
-  parsed: SSEEvent[]
-  remainder: string
-}
-
-/**
- * 解析 SSE 格式的 buffer
- * SSE 格式：
- *   event: xxx\n
- *   data: xxx\n
- *   \n（空行分隔事件）
- */
-function parseSSEBuffer(buffer: string): SSEParseResult {
-  const result: SSEParseResult = { parsed: [], remainder: '' }
-
-  // 按双换行分割事件
-  const parts = buffer.split('\n\n')
-  const lastPart = parts.pop() || ''
-
-  for (const part of parts) {
-    const event = parseSingleSSEEvent(part.trim())
-    if (event) {
-      result.parsed.push(event)
-    }
-  }
-
-  // 最后一段可能不完整，保留在 remainder 中
-  if (lastPart.trim()) {
-    // 尝试解析最后一个完整事件
-    const event = parseSingleSSEEvent(lastPart.trim())
-    if (event) {
-      result.parsed.push(event)
-    } else {
-      result.remainder = lastPart
-    }
-  }
-
-  return result
-}
-
-function parseSingleSSEEvent(text: string): SSEEvent | null {
-  const lines = text.split('\n')
-  let event = ''
-  let data = ''
-
-  for (const line of lines) {
-    if (line.startsWith('event:')) {
-      event = line.substring(6).trim()
-    } else if (line.startsWith('data:')) {
-      data += (data ? '\n' : '') + line.substring(5).trim()
-    }
-    // 忽略 id:、retry: 等其他字段
-  }
-
-  if (!data) return null
-  return { event: event || 'message', data }
-}
+// parseSSEBuffer / parseSingleSSEEvent 已抽取至 @/utils/sse 共享（会话中心等消费方复用）

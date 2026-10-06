@@ -73,7 +73,7 @@ async function loadKbOptions() {
 
 async function loadAnalysis() {
   try {
-    const res = (await api.getRetrievalLogAnalysis(kbId.value || undefined)) as AnalysisData | null
+    const res = (await api.getRetrievalLogAnalysis(kbId.value || undefined)) as unknown as AnalysisData | null
     if (res) {
       analysis.value = {
         totalQueries: res.totalQueries ?? 0,

@@ -50,6 +50,14 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '自定义工作台', hidden: true },
       },
 
+      // ===== 会话中心（new-conversation）=====
+      {
+        path: 'conversation',
+        name: 'ConversationCenter',
+        component: () => import('@/views/conversation/index.vue'),
+        meta: { title: '会话中心', icon: 'ChatLineRound' },
+      },
+
       // ===== 知识管理 =====
       {
         path: 'knowledge',
@@ -157,6 +165,12 @@ const routes: RouteRecordRaw[] = [
         name: 'McpManagement',
         component: () => import('@/views/application/mcp-services.vue'),
         meta: { title: 'MCP管理', hidden: true },
+      },
+      {
+        path: 'application/sandbox-management',
+        name: 'SandboxManagement',
+        component: () => import('@/views/application/sandbox-configs.vue'),
+        meta: { title: '沙箱配置', hidden: true },
       },
       {
         path: 'application/mcp-management/create',
@@ -287,6 +301,12 @@ const routes: RouteRecordRaw[] = [
             name: 'GeneralSettings',
             component: () => import('@/views/admin/system/general-settings.vue'),
             meta: { title: '通用设置' },
+          },
+          {
+            path: 'system/sandbox-settings',
+            name: 'SandboxSettings',
+            component: () => import('@/views/admin/system/sandbox-settings.vue'),
+            meta: { title: '沙箱设置' },
           },
           {
             path: 'system/sensitive-words',

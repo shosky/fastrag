@@ -1,0 +1,70 @@
+// ===========================================================================
+// 聊天消息 markdown 渲染样式（.markdown-body 单源）
+//
+// 现 runtime.vue:914-940 与 AppChat.vue:719-762 双份的收敛版（新组件族消费）；
+// 旧两份按 G01（旧通道不动）保留，统一登记为后续深化机会。
+//
+// 使用方式：本文件内含 :deep()，仅供 Vue SFC 的 scoped <style> 中
+// `@use '@/assets/styles/chat-markdown' as *;` 引入（v-html 内容不带
+// scoped 属性，必须经 :deep 穿透）；请勿作为全局样式直接 import。
+// ===========================================================================
+
+@use './variables' as *;
+
+.markdown-body {
+  :deep(h1), :deep(h2), :deep(h3), :deep(h4), :deep(h5), :deep(h6) {
+    margin: 0;
+    font-weight: 600;
+    line-height: 1.1;
+    color: $text-primary;
+    padding-top: 4px;
+    &:first-child { margin-top: 0; padding-top: 0; }
+  }
+  :deep(h1) { font-size: 1.25em; }
+  :deep(h2) { font-size: 1.12em; }
+  :deep(h3) { font-size: 1.04em; }
+  :deep(h4), :deep(h5), :deep(h6) { font-size: 1em; }
+  :deep(p) { margin: 0 0 8px; &:last-child { margin-bottom: 0; } }
+  :deep(pre) {
+    background: #f6f8fa;
+    border-radius: 6px;
+    padding: 6px 8px;
+    overflow-x: auto;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  :deep(code) {
+    background: #f0f0f0;
+    padding: 0 3px;
+    border-radius: 3px;
+    font-size: 13px;
+  }
+  :deep(pre code) { background: none; padding: 0; }
+  :deep(ul), :deep(ol) { padding-left: 16px; margin: 0; }
+  :deep(ul) { list-style: disc; }
+  :deep(ol) { list-style: decimal; }
+  :deep(li) { margin: 0; line-height: 1.3; }
+  :deep(li > ul), :deep(li > ol) { margin: 0; }
+  :deep(blockquote) {
+    border-left: 3px solid $border-light;
+    padding-left: 6px;
+    color: $text-secondary;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.3;
+  }
+  :deep(table) {
+    border-collapse: collapse;
+    margin: 0;
+    font-size: 13px;
+    line-height: 1.3;
+    th, td { border: 1px solid $border-light; padding: 3px 5px; }
+    th { background: #f5f7fa; font-weight: 500; }
+  }
+  :deep(a) { color: $color-primary; text-decoration: none; &:hover { text-decoration: underline; } }
+  :deep(hr) { border: none; border-top: 1px solid $border-light; margin: 4px 0; }
+  :deep(img) { max-width: 100%; border-radius: 6px; margin: 2px 0; }
+  :deep(strong) { font-weight: 600; }
+  :deep(em) { font-style: italic; }
+}

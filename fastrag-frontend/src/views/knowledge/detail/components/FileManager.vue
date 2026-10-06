@@ -14,6 +14,7 @@ import MoveFileDialog from './MoveFileDialog.vue'
 import RenameFileDialog from './RenameFileDialog.vue'
 import RecycleBinDialog from './RecycleBinDialog.vue'
 import StrategyChangeDialog from './StrategyChangeDialog.vue'
+import QaGenerateDialog from './QaGenerateDialog.vue'
 import FileMetadataDialog from './FileMetadataDialog.vue'
 import type { KbTag } from '@/types/knowledge'
 import { useFiles } from '@/composables/useFiles'
@@ -107,6 +108,9 @@ async function handleUpload(_selectedFiles: File[], config: UploadConfig & { fil
     const processConfig: Record<string, unknown> = {}
     if (config.processingMode && config.processingMode !== 'chunk') {
       processConfig.processingMode = config.processingMode
+      if (config.qaGenerationConfig) {
+        processConfig.qaGenerationConfig = config.qaGenerationConfig
+      }
     }
     if (config.parseStrategyId) {
       processConfig.parseStrategyId = config.parseStrategyId
@@ -140,6 +144,25 @@ async function handleUpload(_selectedFiles: File[], config: UploadConfig & { fil
     // 立即开始轮询状态（追踪本次提交的文件 ID）
     startPolling(fileIds)
   }
+}
+
+// --- 生成问答对（qa-generation：单文件入口经 FileTable 事件，批量入口经批量操作栏，共用对话框） ---
+const qaDialogVisible = ref(false)
+const qaDialogFiles = ref<Array<{ id: string; name: string }>>([])
+
+function handleGenerateQa(file: KnowledgeFile) {
+  qaDialogFiles.value = [file]
+  qaDialogVisible.value = true
+}
+
+function handleBulkGenerateQa() {
+  const completed = selectedFiles.value.filter((f) => f.status === 'completed')
+  if (completed.length === 0) {
+    ElMessage.warning('所选文件均未完成解析，无法提炼问答对')
+    return
+  }
+  qaDialogFiles.value = completed
+  qaDialogVisible.value = true
 }
 
 // --- New folder ---
@@ -658,6 +681,7 @@ onBeforeUnmount(() => {
             <span class="file-manager__bulk-count">已选 {{ selectedFiles.length }} 项</span>
             <el-button :icon="Rank" size="small" @click="handleBulkMove">批量移动</el-button>
             <el-button size="small" @click="handleBatchTag">批量打标</el-button>
+            <el-button size="small" type="primary" plain @click="handleBulkGenerateQa">生成问答对</el-button>
             <el-button :icon="Delete" size="small" type="danger" @click="handleBulkDelete">批量删除</el-button>
             <el-button size="small" @click="handleBulkExport">导出</el-button>
           </div>
@@ -683,6 +707,7 @@ onBeforeUnmount(() => {
           @selection-change="handleSelectionChange"
           @change-strategy="handleChangeStrategy"
           @ai-chunk="handleAiChunk"
+          @generate-qa="handleGenerateQa"
           @edit-office="openOnlyOffice"
           @toggle-graph-build="handleToggleGraphBuild"
           @enter-folder="enterFolder"
@@ -742,6 +767,9 @@ onBeforeUnmount(() => {
       :file="strategyChangeFile"
       @submitted="handleStrategyChangeSubmitted"
     />
+
+    <!-- 问答对提炼（qa-generation：单文件/批量共用，带任务进度轮询） -->
+    <QaGenerateDialog v-model="qaDialogVisible" :kb-id="kbId" :files="qaDialogFiles" />
 
     <!-- Batch move target dialog (复用文件树选择) -->
     <MoveFileDialog

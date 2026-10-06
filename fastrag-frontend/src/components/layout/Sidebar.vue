@@ -83,6 +83,9 @@ interface SubMenuItem {
 const allModules: NavModule[] = [
   { key: 'home', title: '首页', icon: 'HomeFilled', path: '/home' },
 
+  // ===== 会话中心（new-conversation：对话一等入口，独立顶级菜单）=====
+  { key: 'conversation', title: '会话中心', icon: 'ChatLineRound', path: '/conversation' },
+
   // ===== 知识库 =====
   {
     key: 'knowledge',
@@ -124,7 +127,8 @@ const allModules: NavModule[] = [
         icon: 'Grid',
         children: [
           { path: '/application', title: '应用中心', icon: 'Grid' },
-          { path: '/application/runtime', title: '应用运行', icon: 'VideoPlay' },
+          // 「应用运行」菜单项已移除（INFERRED-2）：入口收敛到会话中心（/conversation），
+          // 旧路由 /application/runtime 保留兼容旧链接
         ],
       },
       {
@@ -135,6 +139,7 @@ const allModules: NavModule[] = [
           { path: '/application/my-tools', title: '我的工具', icon: 'Tools' },
           { path: '/application/mcp-management', title: 'MCP管理', icon: 'Connection' },
           { path: '/application/skill-management', title: '技能管理', icon: 'MagicStick' },
+          { path: '/application/sandbox-management', title: '沙箱配置', icon: 'Box' },
           { path: '/application/database-management', title: '数据库管理', icon: 'Coin' },
         ],
       },
@@ -165,6 +170,7 @@ const allModules: NavModule[] = [
         requirePerm: 'admin:system',
         children: [
           { path: '/admin/system/general-settings', title: '通用设置', icon: 'Setting' },
+          { path: '/admin/system/sandbox-settings', title: '沙箱设置', icon: 'Box' },
           { path: '/admin/system/kb-config', title: '知识库配置', icon: 'Collection' },
           { path: '/admin/system/sensitive-words', title: '敏感词设置', icon: 'WarningFilled' },
           { path: '/admin/system/dictionary', title: '字典管理', icon: 'Notebook' },
@@ -260,6 +266,7 @@ const navModules = computed<NavModule[]>(() => {
 const activeModule = computed(() => {
   const path = route.path
   if (path.startsWith('/admin')) return 'admin'
+  if (path.startsWith('/conversation')) return 'conversation'
   if (path.startsWith('/application')) return 'application'
 	  if (path.startsWith('/operation/kb-analytics')) return 'knowledge'
   if (path.startsWith('/operation/retrieval-analysis')) return 'knowledge'

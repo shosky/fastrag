@@ -37,7 +37,7 @@ const hotDocs = ref<HotDoc[]>([])
 async function loadAnalytics() {
   loading.value = true
   try {
-    const data = (await api.getKbAnalytics()) as AnalyticsData | null
+    const data = (await api.getKbAnalytics()) as unknown as AnalyticsData | null
     if (data) {
       metrics.value = data.metrics || []
       hotKBs.value = data.hotKBs || []

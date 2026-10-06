@@ -34,6 +34,10 @@ onMounted(async () => {
 
 function handleAdd() { editingId.value = null; formData.value = { ruleType: 'content', enabled: true }; dialogTitle.value = '新增合规规则'; showDialog.value = true }
 function handleEdit(row: any) { editingId.value = row.id; formData.value = { name: row.ruleName || row.name, ruleType: row.ruleType, rule: row.pattern || row.rule, description: row.description, enabled: row.enabled === true || row.enabled === 1 }; dialogTitle.value = '编辑合规规则'; showDialog.value = true }
+function handleExecuteCheck(_row: any) {
+  // 合规检查执行依赖后端 API（前端执行链路未接入），给出明确提示避免点击报错
+  ElMessage.info('合规检查依赖后端执行 API，当前版本未接入；规则的新增/编辑/删除不受影响')
+}
 async function handleDelete(row: any) {
   try {
     await ElMessageBox.confirm(`确定要删除规则「${row.ruleName || row.name}」吗？`, '提示', { type: 'warning' })

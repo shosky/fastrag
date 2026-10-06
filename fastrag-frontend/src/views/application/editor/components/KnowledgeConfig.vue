@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import { Search, ArrowRight } from '@element-plus/icons-vue'
 import * as api from '@/api'
+import EffectivenessBar from './EffectivenessBar.vue'
 
 const props = defineProps<{ appInfo: { id: string } }>()
 const appId = () => props.appInfo.id
@@ -133,6 +134,8 @@ onMounted(async () => {
 
 <template>
   <div class="config-section">
+    <!-- 绑定有效性预览（app-chat-optimize Step 3a） -->
+    <EffectivenessBar :app-info="appInfo" type="kb" />
     <div class="card-panel">
       <div class="section-header">
         <div class="section-title">绑定团队知识库</div>

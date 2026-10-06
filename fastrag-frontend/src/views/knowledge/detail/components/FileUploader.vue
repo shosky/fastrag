@@ -52,6 +52,12 @@ export interface UploadConfig {
     /** per-file 时间裁剪范围（秒），key 为文件名 */
     timeRanges?: Record<string, { start: number; end: number }>
   }
+  /** qa 模式提炼参数（qa-generation：摄入完成后自动触发，mode 恒 replace 语义） */
+  qaGenerationConfig?: {
+    count: number
+    customInstruction?: string
+    model?: string
+  }
 }
 </script>
 
@@ -392,6 +398,24 @@ const processingPriority = ref<ProcessingPriority>('normal')
 // 失败重试次数
 const retryCount = ref(2)
 
+// --- qa 模式提炼参数（qa-generation） ---
+const qaCount = ref(3)
+const qaInstruction = ref('')
+const qaModel = ref('')
+const qaModelOptions = ref<Array<{ label: string; value: string }>>([])
+
+async function loadQaModels() {
+  try {
+    const res: any = await api.getModels()
+    const rows = res?.list || res?.data || res || []
+    qaModelOptions.value = (Array.isArray(rows) ? rows : [])
+      .map((m: any) => ({ label: m.name || m.code || m.id, value: m.code || m.id }))
+      .filter((o: any) => !!o.value)
+  } catch {
+    qaModelOptions.value = []
+  }
+}
+
 // --- 解析策略选项（从 useParseStrategy 取） ---
 const { strategies: strategyList, load: loadStrategies } = useParseStrategy(props.kbId || 'default')
 const strategyOptions = computed(() => [
@@ -644,6 +668,15 @@ async function handleStartUpload() {
     priority: processingPriority.value,
     retryCount: retryCount.value,
     engineConfig: { ...engineConfig.value },
+    ...(processingMode.value === 'qa'
+      ? {
+          qaGenerationConfig: {
+            count: qaCount.value,
+            customInstruction: qaInstruction.value.trim() || undefined,
+            model: qaModel.value || undefined,
+          },
+        }
+      : {}),
     fileIds,
     ...(hasMedia ? { mediaConfig: { ...(Object.keys(timeRanges).length > 0 ? { timeRanges } : {}) } } : {}),
   })
@@ -657,6 +690,7 @@ async function handleStartUpload() {
 watch(dialogVisible, (val) => {
   if (val) {
     loadStrategies()
+    loadQaModels()
   }
 })
 </script>
@@ -919,9 +953,7 @@ watch(dialogVisible, (val) => {
             <label class="file-uploader__form-label">处理方式</label>
             <el-radio-group v-model="processingMode">
               <el-radio value="chunk">分块存储</el-radio>
-              <el-tooltip content="问答对提取功能开发中，暂不可用" placement="top">
-                <el-radio value="qa" disabled>问答对提取</el-radio>
-              </el-tooltip>
+              <el-radio value="qa">问答对提取（AI 提炼）</el-radio>
             </el-radio-group>
           </div>
 
@@ -962,6 +994,36 @@ watch(dialogVisible, (val) => {
                 show-icon
                 description="切片方式、切片长度、分隔符等参数请在「解析策略管理」中配置。上传时将使用所选策略的配置。"
               />
+            </div>
+          </template>
+
+          <!-- qa 模式提炼参数（qa-generation：摄入完成后自动提炼，草稿落库待确认） -->
+          <template v-if="processingMode === 'qa'">
+            <div class="file-uploader__form-item">
+              <label class="file-uploader__form-label">提炼参数</label>
+              <div style="display: flex; align-items: center; gap: 10px; width: 100%">
+                <span style="font-size: 13px; color: #606266">每分片</span>
+                <el-input-number v-model="qaCount" :min="1" :max="10" size="small" />
+                <span style="font-size: 13px; color: #909399">条 · 摄入完成后自动提炼，问答对以草稿落库</span>
+              </div>
+            </div>
+            <div class="file-uploader__form-item">
+              <label class="file-uploader__form-label">自定义指令</label>
+              <el-input
+                v-model="qaInstruction"
+                type="textarea"
+                :rows="2"
+                maxlength="500"
+                show-word-limit
+                style="width: 320px"
+                placeholder="可选，如：只围绕产品参数出题"
+              />
+            </div>
+            <div class="file-uploader__form-item">
+              <label class="file-uploader__form-label">提炼模型</label>
+              <el-select v-model="qaModel" clearable placeholder="系统默认模型" style="width: 320px">
+                <el-option v-for="opt in qaModelOptions" :key="opt.value" :label="opt.label" :value="opt.value" />
+              </el-select>
             </div>
           </template>
         </div>

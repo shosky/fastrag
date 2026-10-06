@@ -8,6 +8,8 @@ import SkillConfig from './components/SkillConfig.vue'
 import ToolConfig from './components/ToolConfig.vue'
 import McpConfig from './components/McpConfig.vue'
 import DatabaseConfig from './components/DatabaseConfig.vue'
+import GlobalConfig from './components/GlobalConfig.vue'
+import DialogTest from './components/DialogTest.vue'
 import AppChat from './components/AppChat.vue'
 import MemberConfig from './components/MemberConfig.vue'
 import ChatLogs from './components/ChatLogs.vue'
@@ -33,6 +35,7 @@ const activeMenu = ref('basic')
 			    { key: 'mcp', label: 'MCP', icon: 'Connection' },
 				    { key: 'database', label: '数据库', icon: 'Coin' },
 				    { key: 'member', label: '成员', icon: 'User' },
+				    { key: 'global', label: '安全策略', icon: 'Lock' },
 			  ],
 	  },
 		  {
@@ -40,6 +43,7 @@ const activeMenu = ref('basic')
 		    expanded: true,
 		    items: [
 			      { key: 'chat', label: '对话调试', icon: 'ChatLineRound' },
+		      { key: 'dialog-test', label: '对话测试', icon: 'Checked' },
 		      { key: 'chat-log', label: '对话记录', icon: 'Document' },
 		    ],
 		  },
@@ -142,8 +146,10 @@ function copyToClipboard(text: string) {
 	      <McpConfig v-if="activeMenu === 'mcp'" :app-info="appInfo" />
       <DatabaseConfig v-if="activeMenu === 'database'" :app-info="appInfo" />
       <MemberConfig v-if="activeMenu === 'member'" :app-info="appInfo" />
+      <GlobalConfig v-if="activeMenu === 'global'" :app-info="appInfo" />
 	      <!-- 对话 -->
 	      <AppChat v-if="activeMenu === 'chat'" :app-info="appInfo" />
+      <DialogTest v-if="activeMenu === 'dialog-test'" :app-info="appInfo" />
 	      <!-- 运营 -->
 	      <ChatLogs v-if="activeMenu === 'chat-log'" :app-info="appInfo" />
 

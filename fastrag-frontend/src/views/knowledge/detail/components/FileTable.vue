@@ -2,7 +2,7 @@
 import type { KnowledgeFile, FileCategory, ProcessStatus, ParseStrategy } from '@/types/knowledge'
 import { FILE_CATEGORY_ICONS, formatFileSize, formatDuration } from '@/types/knowledge'
 import { isOfficeFile } from '@/config'
-import { Refresh, Search, MoreFilled, View, Download, RefreshRight, Delete, Grid, Rank, Edit, Document, Setting, MagicStick } from '@element-plus/icons-vue'
+import { Refresh, Search, MoreFilled, View, Download, RefreshRight, Delete, Grid, Rank, Edit, Document, Setting, MagicStick, ChatDotRound } from '@element-plus/icons-vue'
 import { usePagination } from '@/composables/usePagination'
 import ProcessStatusBar from './ProcessStatusBar.vue'
 
@@ -28,6 +28,7 @@ const emit = defineEmits<{
   (e: 'metadata', file: KnowledgeFile): void
   (e: 'changeStrategy', file: KnowledgeFile): void
   (e: 'aiChunk', file: KnowledgeFile): void
+  (e: 'generateQa', file: KnowledgeFile): void
   (e: 'editOffice', file: KnowledgeFile): void
   (e: 'toggleGraphBuild', file: KnowledgeFile, enabled: boolean): void
   (e: 'enterFolder', folderId: string): void
@@ -174,7 +175,7 @@ function handleRefresh() {
 }
 
 // Handle dropdown command
-type Command = 'preview' | 'manageChunks' | 'download' | 'retry' | 'delete' | 'move' | 'rename' | 'copy' | 'metadata' | 'aiChunk' | 'editOffice'
+type Command = 'preview' | 'manageChunks' | 'download' | 'retry' | 'delete' | 'move' | 'rename' | 'copy' | 'metadata' | 'aiChunk' | 'generateQa' | 'editOffice'
 function handleCommand(command: Command, file: KnowledgeFile) {
   switch (command) {
     case 'preview': emit('preview', file); break
@@ -187,6 +188,7 @@ function handleCommand(command: Command, file: KnowledgeFile) {
     case 'copy': emit('copy', file); break
     case 'metadata': emit('metadata', file); break
     case 'aiChunk': emit('aiChunk', file); break
+    case 'generateQa': emit('generateQa', file); break
     case 'editOffice': emit('editOffice', file); break
   }
 }
@@ -459,6 +461,13 @@ function handleFolderCommand(cmd: string, folder: FolderRow) {
                   :disabled="(row as KnowledgeFile).status === 'processing'"
                 >
                   AI分片
+                </el-dropdown-item>
+                <el-dropdown-item
+                  command="generateQa"
+                  :icon="ChatDotRound"
+                  :disabled="(row as KnowledgeFile).status !== 'completed'"
+                >
+                  生成问答对
                 </el-dropdown-item>
                 <el-dropdown-item
                   v-if="row.status === 'completed'"

@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage } from 'element-plus'
 import * as api from '@/api'
+import EffectivenessBar from './EffectivenessBar.vue'
 
 const props = defineProps<{ appInfo: { id: string } }>()
 const appId = () => props.appInfo.id
@@ -98,6 +99,8 @@ onMounted(loadData)
 
 <template>
   <div class="config-section">
+    <!-- 绑定有效性预览（app-chat-optimize Step 3a） -->
+    <EffectivenessBar :app-info="appInfo" type="mcp" />
     <div class="card-panel">
       <div class="section-header">
         <div class="section-title">MCP 配置</div>

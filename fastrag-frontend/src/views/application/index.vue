@@ -111,8 +111,9 @@ function goToEditor(id: string) {
   router.push(`/application/${id}/editor`)
 }
 
-function goToRuntime(id: string) {
-  router.push(`/application/runtime?appId=${id}`)
+/** ▶运行：带预设进入会话中心（TASK-009；原跳 /application/runtime 旧页已收敛） */
+function goToConversation(id: string) {
+  router.push(`/conversation?appId=${id}`)
 }
 </script>
 
@@ -131,7 +132,7 @@ function goToRuntime(id: string) {
         <div class="app-grid">
           <div v-for="app in filteredApps" :key="app.id" class="app-card">
             <div class="card-actions">
-              <el-button link size="small" type="primary" @click.stop="goToRuntime(app.id)">
+              <el-button link size="small" type="primary" @click.stop="goToConversation(app.id)">
                 <el-icon><VideoPlay /></el-icon>
               </el-button>
               <el-button link size="small" @click.stop="handleCopyId(app.id)">

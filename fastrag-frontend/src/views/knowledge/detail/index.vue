@@ -352,7 +352,7 @@ function handleStartEvaluationFromBenchmark(benchmarkId: string) {
         <QaPanel :kb-id="kbId" />
       </el-tab-pane>
 
-      <el-tab-pane v-if="false" name="publish">
+      <el-tab-pane name="publish" lazy>
         <template #label>
           <span class="kb-detail__tab-label">
             <el-icon><Promotion /></el-icon>

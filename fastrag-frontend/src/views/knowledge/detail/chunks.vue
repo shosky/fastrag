@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 import type { AttrDef } from '@/types/knowledge'
 import FileMetadataEditor from './components/FileMetadataEditor.vue'
+import QaGenerateDialog from './components/QaGenerateDialog.vue'
 
 const route = useRoute()
 const router = useRouter()
@@ -386,6 +387,16 @@ loadChunks()
 
 // --- 问答对状态（仅 QA 模式文件使用） ---
 const isQaMode = computed(() => fileInfo.value.processingMode === 'qa')
+// AI 问答对提炼对话框（qa-generation：本文件为提取单位，触发后轮询进度在对话框内）
+const qaDialogVisible = ref(false)
+const qaDialogFiles = ref<Array<{ id: string; name: string }>>([])
+
+function openQaDialog() {
+  if (!fileInfo.value?.id) return
+  qaDialogFiles.value = [{ id: String(fileInfo.value.id), name: String(fileInfo.value.name || fileInfo.value.id) }]
+  qaDialogVisible.value = true
+}
+
 const qaList = ref<any[]>([])
 const qaLoading = ref(false)
 const qaCurrentPage = ref(1)
@@ -932,6 +943,7 @@ onBeforeUnmount(() => {
       <div class="chunks-page__header-right">
         <el-button type="primary" :icon="Plus" @click="openCreateDialog">新增分片</el-button>
         <el-button :loading="reChunking" @click="handleReChunk">重新分片</el-button>
+        <el-button type="warning" plain @click="openQaDialog">生成问答对</el-button>
         <el-button :icon="Download" @click="handleDownload">下载分片</el-button>
       </div>
     </div>
@@ -1567,6 +1579,9 @@ onBeforeUnmount(() => {
       </template>
       </template> <!-- close 非QA模式 -->
     </div>
+
+    <!-- AI 问答对提炼（qa-generation） -->
+    <QaGenerateDialog v-model="qaDialogVisible" :kb-id="kbId" :files="qaDialogFiles" @submitted="loadQaPairs" />
 
     <!-- Edit Dialog -->
     <el-dialog
