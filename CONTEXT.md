@@ -2,7 +2,7 @@
 
 > 本文件由 idd-grill 维护，所有模块文档共享此术语定义。
 
-> **IDD Metadata**（由 idd-onboard 于 2026-09-16 检测写入）
+> **IDD Metadata**（由 idd-onboard 于 2026-09-16 检测写入；2026-09-21 刷新复核，Role 与 API Contract Source 不变）
 > - **Repository Role:** `backend+frontend`（CERTAIN — 后端：Spring Boot 3.2.5 / 15 个 Maven 模块 / 55 个控制器 / 108 张表；前端：Vue 3 + vue-router + pinia + Element Plus / 60 条路由，双侧强信号）
 > - **API Contract Source:** 本仓库运行时生成 — springdoc-openapi 2.5.0（`GET /v3/api-docs`、`/swagger-ui.html`，服务端口 8081）；仓库内无静态 OpenAPI 文件，控制器无手写 `@Tag`/`@Operation` 注解（fastrag-backend/pom.xml:157-162、fastrag-bootstrap/src/main/resources/application.yml:179-182）
 > - **文档语言：** 中文
@@ -31,7 +31,11 @@
 
 **混合检索（Hybrid Retrieval）** — 向量检索 + 关键词检索 + 重排序（Rerank）组合的检索策略。
 
-**知识图谱（Knowledge Graph）** — 从分片中抽取实体和关系构建的图结构，存储在 Neo4j 或 MySQL Graph Store 中。
+**知识图谱（Knowledge Graph）** — 从分片中抽取实体和关系构建的图结构，存储在 Neo4j Graph Store 中（唯一实现，启动 fail-fast）。
+
+**抽取单元（Extraction Unit）** — 图谱抽取专用的重组文本块：把约 500 字的检索分片重组为约 2000 字符、逻辑完整的单元后送 LLM 抽取三元组，仅服务图谱抽取、不改变检索分片本身（ExtractionUnitAssembler，v1.2 架构）。
+
+**实体合并（Entity Merge）** — 基于实体向量相似度发现合并候选（EntitySimilarity 余弦计算），将同义/同名实体合并入库并写入合并审计（kb_graph_merge_audit）；配套实体名清洗闸门（EntityNameGuard）拦截值型内容与 OCR 幻觉乱码入图。
 
 **图谱评估（Graph Evaluation）** — 通过基准测试（Benchmark）和评测（Evaluation）衡量知识库检索质量。
 
@@ -61,7 +65,7 @@
 
 **SSE（Server-Sent Events）** — 服务端推送事件流，用于 LLM 流式输出和 Agent 实时响应。
 
-**Graph Store** — 知识图谱存储抽象接口，有 MySQL 实现和 Neo4j 实现两种。
+**Graph Store** — 知识图谱存储抽象接口，唯一实现为 Neo4jGraphStore（ADR-0002 已落地：MySQL 实现已于 2026-09 删除，Neo4j 为必需依赖，启动 fail-fast）。
 
 **Vector Store** — 向量存储抽象接口，当前仅有 Milvus 实现。
 
@@ -73,3 +77,9 @@
 - **菜单标题重复（CERTAIN）**：`/operation` 与 `/robot-operation` 的侧边栏标题均为「运营中心」（fastrag-frontend/src/router/routes.ts）。
 - **孤儿路由（CERTAIN）**：`/knowledge-review/*` 与 `/robot-operation/*` 未接入侧边栏导航（fastrag-frontend/src/config/menu-perm-tree.ts:15-18 自述）。
 - **一致性确认（CERTAIN）**：AGENTS.md 分页规范 ↔ 后端 `PageResult{list,total,page,pageSize}` ↔ 前端 `usePagination`（19 个视图在用）三方一致，无冲突。
+
+### 勘误补充（idd-onboard refresh 2026-09-21）
+
+- **feature-entry-map.md 分支归属（CERTAIN）**：`docs/feature-entry-map.md`（功能清单→前端入口对照表）描述的是 `gaosu` 分支（2044d86「功能点补齐 + 真实联调修复 + 演示数据初始化」，2026-09-17）的功能面；`baseline` 分支（IDD 地图基准）不存在 sync.vue / knowledge-manage.vue / smart-search.vue / tags-notes.vue 等页面。合并 gaosu 前不得据其更新特性地图。
+- **docs/ 未纳入版本控制（CERTAIN）**：`.gitignore:33` 忽略整个 `docs/`——IDD 文档链（feature-map / spec / sessions 等）均无 git 保护。建议改为仅忽略 `docs/legacy/FastRAG-API-Doc-Tab-Implementation-Plan/node_modules/` 一类构建产物（处置待用户决策）。
+- **分支态势（CERTAIN）**：`baseline` 领先 `master` 20 个提交（master 停在 06-27）；`gaosu` 在 09-15/09-17 另有功能补齐批次，合并时需与 baseline 对账。

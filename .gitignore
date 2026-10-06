@@ -30,7 +30,8 @@ nul
 NUL
 
 uploads
-docs
+# 仅忽略仓库根 docs/；fastrag-frontend/docs/（前端 IDD 文档树）入库
+/docs/
 # OnlyOffice 运行时/构建产物（插件源码保留，预压缩与运行时目录不入库）
 fastrag-frontend/public/onlyoffice-plugin/**/*.gz
 docker-data/onlyoffice/logs/
