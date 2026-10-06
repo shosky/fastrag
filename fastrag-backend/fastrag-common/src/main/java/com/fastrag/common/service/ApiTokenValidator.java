@@ -10,10 +10,21 @@ package com.fastrag.common.service;
 public interface ApiTokenValidator {
 
     /**
+     * 验证 API Token 是否有效，返回 tokenId 与 permission 范围。
+     *
+     * @param tokenValue 原始 token 字符串
+     * @return 认证信息（tokenId + permission），token 无效则返回 null
+     */
+    TokenAuthInfo validateAndGetAuthInfo(String tokenValue);
+
+    /**
      * 验证 API Token 是否有效，返回关联的 Token ID。
      *
      * @param tokenValue 原始 token 字符串
      * @return 关联的 token id，如果 token 无效则返回 null
      */
-    String validateAndGetTokenId(String tokenValue);
+    default String validateAndGetTokenId(String tokenValue) {
+        TokenAuthInfo info = validateAndGetAuthInfo(tokenValue);
+        return info != null ? info.getTokenId() : null;
+    }
 }

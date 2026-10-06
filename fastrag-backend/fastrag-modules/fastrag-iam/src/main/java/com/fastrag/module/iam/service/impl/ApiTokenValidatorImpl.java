@@ -1,6 +1,7 @@
 package com.fastrag.module.iam.service.impl;
 
 import com.fastrag.common.service.ApiTokenValidator;
+import com.fastrag.common.service.TokenAuthInfo;
 import com.fastrag.module.iam.entity.SysApiToken;
 import com.fastrag.module.iam.service.ApiTokenService;
 import lombok.RequiredArgsConstructor;
@@ -16,8 +17,8 @@ public class ApiTokenValidatorImpl implements ApiTokenValidator {
     private final ApiTokenService apiTokenService;
 
     @Override
-    public String validateAndGetTokenId(String tokenValue) {
+    public TokenAuthInfo validateAndGetAuthInfo(String tokenValue) {
         SysApiToken token = apiTokenService.findValidToken(tokenValue);
-        return token != null ? token.getId() : null;
+        return token != null ? TokenAuthInfo.of(token.getId(), token.getPermission()) : null;
     }
 }

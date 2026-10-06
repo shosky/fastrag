@@ -15,15 +15,16 @@ package com.fastrag.security.filter;
  *   <li>检查 {@link com.fastrag.common.service.ApiTokenValidator} 是否可用（iam 模块引入时才注入），
  *       不可用则跳过</li>
  *   <li>从 Authorization 头提取 Bearer Token，判断是否以 "frag_" 开头</li>
- *   <li>委托 ApiTokenValidator 验证 Token 有效性并获取 tokenId</li>
+ *   <li>委托 ApiTokenValidator 验证 Token 有效性并获取 tokenId 与 permission 范围</li>
  *   <li>验证成功后创建平台级全局认证对象，principal 为 "api-token:{tokenId}"，
- *       授予 "kb:manage" 权限，写入 SecurityContext</li>
+ *       按实体 permission 授权（read → kb:read；write/空向后兼容 → kb:manage），写入 SecurityContext</li>
  * </ol>
  *
  * <p>与其他模块的交互：依赖 fastrag-iam 模块的 {@link com.fastrag.common.service.ApiTokenValidator}
  * 进行 Token 验证（通过 {@code @Autowired(required = false)} 可选注入，iam 模块未引入时自动禁用）。
  */
 import com.fastrag.common.service.ApiTokenValidator;
+import com.fastrag.common.service.TokenAuthInfo;
 import jakarta.servlet.FilterChain;
 import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
@@ -40,6 +41,7 @@ import org.springframework.web.filter.OncePerRequestFilter;
 
 import java.io.IOException;
 import java.util.List;
+import java.util.stream.Collectors;
 
 @Slf4j
 @Component
@@ -71,22 +73,26 @@ public class ApiTokenAuthFilter extends OncePerRequestFilter {
             String token = header.substring(7);
             if (token.startsWith(TOKEN_PREFIX)) {
                 try {
-                    String tokenId = apiTokenValidator.validateAndGetTokenId(token);
-                    if (tokenId != null) {
-                        // 认证成功：平台级全局 Token，创建一个以 tokenId 为 principal、权限为 kb:manage 的认证对象
+                    TokenAuthInfo info = apiTokenValidator.validateAndGetAuthInfo(token);
+                    if (info != null) {
+                        // QF-3：按实体 permission 授权——read 只授 kb:read；write/空（历史数据向后兼容）授 kb:manage
+                        boolean readOnly = "read".equals(info.getPermission());
+                        List<String> permissions = readOnly ? List.of("kb:read") : List.of("kb:manage");
                         LoginUser apiUser = LoginUser.builder()
-                                .userId("api-token:" + tokenId)
+                                .userId("api-token:" + info.getTokenId())
                                 .username("api-token")
                                 .roles(List.of("api_token"))
-                                .permissions(List.of("kb:manage"))
+                                .permissions(permissions)
                                 .build();
                         UsernamePasswordAuthenticationToken auth =
                                 new UsernamePasswordAuthenticationToken(
                                         apiUser, null,
-                                        List.of(new SimpleGrantedAuthority("kb:manage"))
+                                        permissions.stream().map(SimpleGrantedAuthority::new)
+                                                .collect(Collectors.toList())
                                 );
                         SecurityContextHolder.getContext().setAuthentication(auth);
-                        log.debug("API Token authenticated for tokenId={}", tokenId);
+                        log.debug("API Token authenticated for tokenId={}, permission={}, authorities={}",
+                                info.getTokenId(), info.getPermission(), permissions);
                     } else {
                         log.debug("API Token validation failed: token not found or expired");
                     }
