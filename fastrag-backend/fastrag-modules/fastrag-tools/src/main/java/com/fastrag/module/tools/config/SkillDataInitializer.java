@@ -28,17 +28,15 @@ import java.util.Map;
  *
  * <p>实现 {@link CommandLineRunner}，在 Spring Boot 启动时自动执行，
  * 从 classpath {@code builtin-skills/} 目录下扫描所有子目录的 {@code SKILL.md} 文件，
- * 通过 {@link SkillMarkdownParser} 解析后与数据库（{@code skill} 表）进行增量同步。</p>
+ * 通过 {@link SkillMarkdownParser} 解析后播种到数据库（{@code skill} 表）。</p>
  *
- * <h3>核心实现逻辑：</h3>
+ * <h3>播种语义（M3-4，裁决 2026-10-06 3A：DB content 唯一事实源，此裁决取代 spec REQ-B05 的
+ * "MD5 变化更新"语义）：</h3>
  * <ul>
- *   <li>资源扫描：使用 {@link PathMatchingResourcePatternResolver} 匹配
- *       {@code classpath:builtin-skills/&#42;/SKILL.md}，加载每个技能目录的 SKILL.md 内容</li>
- *   <li>内容哈希：对 SKILL.md 做 MD5 摘要，若哈希一致则跳过更新（避免无变化写入）</li>
- *   <li>增量同步：slug 查询无记录时 insert（标记 builtin+recommended），
- *       已有记录且哈希变化时 update（保留 enabled、shareConfig 等用户可修改字段）</li>
- *   <li>文件复制：将整个技能目录（SKILL.md + references/ + scripts/）复制到
- *       {@code ${fastrag.data-dir}/skills/{slug}/} 运行时数据目录，供技能执行时引用</li>
+ *   <li>DB 无该 slug 记录 → insert + 复制整个技能目录到运行时数据目录</li>
+ *   <li>DB 已有该 slug 记录 → 整体跳过：不更新 DB、不覆盖磁盘目录（正文以 DB 为准，
+ *       用户对 SKILL.md 的修改经文件 API 回写 DB，见 SkillFileServiceImpl）</li>
+ *   <li>不再有"每启动 REPLACE_EXISTING 整目录复制"行为</li>
  * </ul>
  *
  * @see Skill
@@ -64,24 +62,24 @@ public class SkillDataInitializer implements CommandLineRunner {
 
         List<BuiltinSkillSpec> specs = loadBuiltinSkillSpecs();
         int created = 0;
-        int updated = 0;
+        int skipped = 0;
 
         for (BuiltinSkillSpec spec : specs) {
             try {
-                if (syncBuiltinSkill(spec)) {
+                if (seedBuiltinSkill(spec)) {
                     created++;
+                    // 仅新播种时复制技能目录（已有记录整体跳过，不覆盖磁盘）
+                    copySkillDir(spec);
                 } else {
-                    updated++;
+                    skipped++;
                 }
-                // 复制整个技能目录到运行时数据目录
-                copySkillDir(spec);
             } catch (Exception e) {
                 log.error("[SkillDataInitializer] 同步技能失败: {}", spec.getSlug(), e);
             }
         }
 
-        log.info("[SkillDataInitializer] 内置技能初始化完成。创建 {} 个，更新 {} 个，共 {} 个",
-            created, updated, specs.size());
+        log.info("[SkillDataInitializer] 内置技能初始化完成。播种 {} 个，跳过 {} 个，共 {} 个",
+            created, skipped, specs.size());
     }
 
     private List<BuiltinSkillSpec> loadBuiltinSkillSpecs() {
@@ -114,6 +112,8 @@ public class SkillDataInitializer implements CommandLineRunner {
                 spec.setCategory(result.getCategory());
                 spec.setIcon(result.getIcon());
                 spec.setMetadata(result.getMetadata());
+                // M3-2（D9）：依赖串规范形态（type:name）随播种写入
+                spec.setDependencyRefs(SkillMarkdownParser.dependencyRefs(result));
                 spec.setContent(content);
                 spec.setContentHash(contentHash);
                 spec.setClasspathDir(cpPath);
@@ -169,50 +169,38 @@ public class SkillDataInitializer implements CommandLineRunner {
         }
     }
 
-    private boolean syncBuiltinSkill(BuiltinSkillSpec spec) {
-        Skill existing = skillMapper.selectBySlug(spec.getSlug());
-
-        if (existing != null) {
-            if (spec.getContentHash().equals(existing.getContentHash())) {
-                log.debug("[SkillDataInitializer] 技能无变化: {}", spec.getSlug());
-                return false;
-            }
-            existing.setName(spec.getName());
-            existing.setDescription(spec.getDescription());
-            existing.setContent(spec.getContent());
-            existing.setContentHash(spec.getContentHash());
-            existing.setVersion(spec.getVersion());
-            existing.setCategory(spec.getCategory());
-            existing.setIcon(spec.getIcon());
-            existing.setMetadata(spec.getMetadata());
-            existing.setSourceType("builtin");
-            existing.setIsBuiltin(1);
-            if (existing.getShareConfig() == null || existing.getShareConfig().isEmpty()) {
-                existing.setShareConfig(Map.of("accessLevel", "global", "departmentIds", List.of(), "userUids", List.of()));
-            }
-            skillMapper.updateById(existing);
-            log.info("[SkillDataInitializer] 更新内置技能: {}", spec.getSlug());
+    /**
+     * 播种单个内置技能：DB 无记录 → insert（含 frontmatter 依赖 JSON，M3-2）返回 true；
+     * DB 已有 → 跳过（不更新 DB、不覆盖磁盘）返回 false。
+     */
+    private boolean seedBuiltinSkill(BuiltinSkillSpec spec) {
+        if (skillMapper.selectBySlug(spec.getSlug()) != null) {
+            log.info("[SkillDataInitializer] 跳过已有技能（DB 为正文事实源）: {}", spec.getSlug());
             return false;
-        } else {
-            Skill s = new Skill();
-            s.setSlug(spec.getSlug());
-            s.setName(spec.getName());
-            s.setDescription(spec.getDescription());
-            s.setSourceType("builtin");
-            s.setIsBuiltin(1);
-            s.setEnabled(1);
-            s.setRecommended(1);
-            s.setContent(spec.getContent());
-            s.setContentHash(spec.getContentHash());
-            s.setVersion(spec.getVersion());
-            s.setCategory(spec.getCategory());
-            s.setIcon(spec.getIcon());
-            s.setMetadata(spec.getMetadata());
-            s.setShareConfig(Map.of("accessLevel", "global", "departmentIds", List.of(), "userUids", List.of()));
-            skillMapper.insert(s);
-            log.info("[SkillDataInitializer] 创建内置技能: {} ({})", spec.getName(), spec.getSlug());
-            return true;
         }
+
+        Skill s = new Skill();
+        s.setSlug(spec.getSlug());
+        s.setName(spec.getName());
+        s.setDescription(spec.getDescription());
+        s.setSourceType("builtin");
+        s.setIsBuiltin(1);
+        s.setEnabled(1);
+        s.setRecommended(1);
+        s.setContent(spec.getContent());
+        s.setContentHash(spec.getContentHash());
+        s.setVersion(spec.getVersion());
+        s.setCategory(spec.getCategory());
+        s.setIcon(spec.getIcon());
+        s.setMetadata(spec.getMetadata());
+        // M3-2（D9）：frontmatter 依赖写入 dependencies JSON（启动期不做存在性校验——技能可先于依赖存在）
+        List<String> depRefs = spec.getDependencyRefs();
+        s.setDependencies(depRefs.isEmpty() ? null : depRefs);
+        s.setCreator("system");
+        s.setShareConfig(Map.of("accessLevel", "global", "departmentIds", List.of(), "userUids", List.of()));
+        skillMapper.insert(s);
+        log.info("[SkillDataInitializer] 播种内置技能: {} ({})", spec.getName(), spec.getSlug());
+        return true;
     }
 
     @lombok.Data
@@ -224,6 +212,7 @@ public class SkillDataInitializer implements CommandLineRunner {
         private String category;
         private String icon;
         private Map<String, Object> metadata;
+        private List<String> dependencyRefs;
         private String content;
         private String contentHash;
         private String classpathDir;

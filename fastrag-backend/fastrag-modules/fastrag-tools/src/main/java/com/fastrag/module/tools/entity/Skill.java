@@ -17,7 +17,7 @@ import lombok.Data; import java.time.LocalDateTime; import java.util.List; impor
  *   <li>{@code contentHash} - 内容 MD5 哈希，用于内置技能同步检测</li>
  *   <li>{@code dependencies} - 依赖的其他技能 slug 列表（JSON）</li>
  *   <li>{@code metadata} - SKILL.md frontmatter 元数据（JSON）</li>
- *   <li>{@code shareConfig} - 分享配置（非 DB 字段，DTO）：accessLevel / departmentIds / userUids</li>
+ *   <li>{@code shareConfig} - 分享配置（share_config JSON 列）：accessLevel / departmentIds / userUids</li>
  *   <li>{@code isBuiltin} - 是否为内置技能（由 {@link SkillDataInitializer} 种子初始化）</li>
  *   <li>{@code orgId} - 归属组织</li>
  *   <li>{@code trigger} - 触发关键词</li>
@@ -89,8 +89,11 @@ public class Skill {
     @TableField(typeHandler = JacksonTypeHandler.class)
     private Map<String, Object> metadata;
 
-    /** 分享配置 JSON：{accessLevel, departmentIds[], userUids[]} */
-    @TableField(typeHandler = JacksonTypeHandler.class, exist = false)
+    /**
+     * 分享配置 JSON：{accessLevel, departmentIds[], userUids[]}
+     * <p>M3-1（D2）：share_config 列持久化（此前 exist=false 改动不落库）。</p>
+     */
+    @TableField(typeHandler = JacksonTypeHandler.class)
     private Map<String, Object> shareConfig;
 
     private Integer enabled;

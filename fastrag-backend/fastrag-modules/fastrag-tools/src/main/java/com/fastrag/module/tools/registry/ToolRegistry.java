@@ -21,7 +21,6 @@ public class ToolRegistry {
     private final ToolHttpConfigMapper httpConfigMapper;
     private final McpToolMapper mcpToolMapper;
     private final McpServiceMapper mcpServiceMapper;
-    private final SkillMapper skillMapper;
 
     /** 根据 toolIds 列表从 DB 加载所有工具定义 */
     public List<ToolDefinition> resolveTools(List<String> toolIds) {
@@ -49,10 +48,8 @@ public class ToolRegistry {
         if (id.startsWith("mcp_") || id.startsWith("mcp:")) {
             return resolveMcpTool(id);
         }
-        // skill: skill_xxx or skill:xxx
-        if (id.startsWith("skill_") || id.startsWith("skill:")) {
-            return resolveSkillTool(id);
-        }
+        // M3-6：skill_/skill: 前缀路由与技能定义构建已删除——技能经 SkillsMiddleware
+        // 三段式渐进加载（prompt 注入 + read_file 激活 + 依赖闭包），不再是单工具形态。
         // Default: try as HTTP/builtin tool
         return resolveHttpTool(id);
     }
@@ -117,46 +114,6 @@ public class ToolRegistry {
         config.put("enabled", service.getEnabled());
         config.put("rawName", mcpTool.getName());
         def.setConfig(config);
-        return def;
-    }
-
-    private ToolDefinition resolveSkillTool(String id) {
-        // 提取技能 ID/slug
-        String skillRef = id.replaceAll("^(skill_|skill:)", "");
-
-        // 先按 ID 查，再按 slug 查
-        Skill skill = skillMapper.selectById(skillRef);
-        if (skill == null) {
-            skill = skillMapper.selectBySlug(skillRef);
-        }
-        if (skill == null || skill.getEnabled() == null || skill.getEnabled() != 1) {
-            return null;
-        }
-
-        ToolDefinition def = new ToolDefinition();
-        def.setToolId("skill_" + skill.getId());
-        def.setName(skill.getSlug() != null ? skill.getSlug() : skill.getName());
-        def.setDescription(skill.getDescription());
-        def.setType("skill");
-        def.setInputSchema(Map.of(
-            "type", "object",
-            "properties", Map.of(
-                "action", Map.of("type", "string", "enum", List.of("read_skill", "activate"),
-                    "description", "read_skill: 读取技能描述; activate: 激活技能"),
-                "slug", Map.of("type", "string", "description", "技能 slug")
-            ),
-            "required", List.of("action")
-        ));
-
-        Map<String, Object> config = new LinkedHashMap<>();
-        config.put("skillId", skill.getId());
-        config.put("slug", skill.getSlug());
-        config.put("name", skill.getName());
-        config.put("description", skill.getDescription());
-        config.put("content", skill.getContent());
-        config.put("dependencies", skill.getDependencies());
-        def.setConfig(config);
-
         return def;
     }
 

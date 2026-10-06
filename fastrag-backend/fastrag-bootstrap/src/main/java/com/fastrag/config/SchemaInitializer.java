@@ -203,6 +203,34 @@ public class SchemaInitializer {
             log.error("Failed to create agent_run: {}", e.getMessage());
         }
 
+        // --- 沙箱配置表（2026-09-28 沙箱实装；与 init-scripts/schema.sql 双处同步）---
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS sandbox_config (
+                    id VARCHAR(32) PRIMARY KEY,
+                    user_id VARCHAR(32) NOT NULL,
+                    name VARCHAR(128) NOT NULL,
+                    sandbox_type VARCHAR(16) NOT NULL,
+                    enabled TINYINT DEFAULT 1,
+                    default_timeout_sec INT DEFAULT 0,
+                    allow_private_endpoints TINYINT DEFAULT 0,
+                    network_policy JSON,
+                    env_vars JSON,
+                    docker_config JSON,
+                    cube_config JSON,
+                    e2b_config JSON,
+                    identity_fingerprint VARCHAR(64),
+                    cordon_at DATETIME NULL,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_user_id (user_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """);
+            log.info("Table sandbox_config OK");
+        } catch (Exception e) {
+            log.error("Failed to create sandbox_config: {}", e.getMessage());
+        }
+
         // --- Skill 表新增字段 ---
         addColumnIfNotExists("skill", "slug", "VARCHAR(128)");
         addColumnIfNotExists("skill", "source_type", "VARCHAR(16) DEFAULT 'custom'");
@@ -211,7 +239,16 @@ public class SchemaInitializer {
         addColumnIfNotExists("skill", "content_hash", "VARCHAR(64)");
         addColumnIfNotExists("skill", "is_builtin", "TINYINT DEFAULT 0");
         addColumnIfNotExists("skill", "metadata", "JSON");
+        // M3-1（D2）：分享配置落库（与 schema.sql 双处同步）
+        addColumnIfNotExists("skill", "share_config", "JSON");
         addColumnIfNotExists("skill", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
+        // M3-7（DDL 双处同步）：slug 检索索引（与 schema.sql idx_slug 对齐）。
+        // 普通索引而非 uk_slug：SkillServiceImpl.create 不强制 slug 唯一，存量数据可能重复。
+        try {
+            jdbc.execute("ALTER TABLE skill ADD INDEX idx_slug (slug)");
+        } catch (Exception e) {
+            log.info("Index skill.idx_slug ensure skipped: {}", e.getMessage());
+        }
 
         // --- MCP Service 表新增字段 ---
         addColumnIfNotExists("mcp_service", "slug", "VARCHAR(128)");
@@ -371,6 +408,8 @@ public class SchemaInitializer {
         // 存量数据回填为系统级（creator='system' / is_builtin=1），保持全员可见现状；
         // 新数据由创建服务写入真实 creator + org_id
         addColumnIfNotExists("app", "org_id", "VARCHAR(32) COMMENT '归属组织（同组织可见）'");
+        // 沙箱配置引用（2026-09-28 沙箱实装；与 schema.sql 双处同步）
+        addColumnIfNotExists("app", "sandbox_config_id", "VARCHAR(32) COMMENT '沙箱配置引用（REQ-H03 分支②载体）'");
         try { jdbc.execute("UPDATE app SET owner='system' WHERE owner IS NULL OR owner=''"); } catch (Exception e) { log.warn("backfill app.owner: {}", e.getMessage()); }
         addColumnIfNotExists("tool", "creator", "VARCHAR(32)");
         addColumnIfNotExists("tool", "org_id", "VARCHAR(32)");
@@ -397,6 +436,55 @@ public class SchemaInitializer {
         addColumnIfNotExists("sys_dictionary", "enabled", "TINYINT NOT NULL DEFAULT 1");
         addColumnIfNotExists("sys_dictionary", "remark", "VARCHAR(255) DEFAULT NULL");
         addColumnIfNotExists("sys_dictionary", "sort_order", "INT NOT NULL DEFAULT 0");
+
+        // --- 会话中心与新建对话（new-conversation）：会话一等公民 DDL（与 schema.sql 双处同步） ---
+        // app_id 放宽可空：NULL = 知识库直聊会话（MODIFY 幂等，存量行不受影响）
+        try {
+            jdbc.execute("ALTER TABLE app_conversation MODIFY COLUMN app_id VARCHAR(32) DEFAULT NULL COMMENT '挂载应用；NULL=知识库直聊会话'");
+            log.info("Modified app_conversation.app_id to nullable");
+        } catch (Exception e) {
+            log.warn("modify app_conversation.app_id nullable: {}", e.getMessage());
+        }
+        addColumnIfNotExists("app_conversation", "request_state",
+                "TEXT COMMENT '会话请求态 JSON（ConversationRequestState）'");
+        addColumnIfNotExists("app_conversation", "is_pinned", "TINYINT DEFAULT 0 COMMENT '置顶标记'");
+        // references 为 MySQL 保留字，列定义须反引号
+        addColumnIfNotExists("app_conversation_message", "`references`",
+                "TEXT COMMENT '消息引用（JSON数组，MessageReference投影）'");
+        addColumnIfNotExists("app_conversation_message", "iterations",
+                "INT DEFAULT NULL COMMENT '引擎迭代轮数'");
+        try {
+            jdbc.execute("ALTER TABLE app_conversation ADD INDEX idx_conv_user (user_id)");
+            log.info("Added index app_conversation.idx_conv_user");
+        } catch (Exception e) {
+            if (getRootSqlErrorCode(e) != 1061) { // 1061 = duplicate key name
+                log.warn("add index app_conversation.idx_conv_user: {}", e.getMessage());
+            }
+        }
+
+        // --- 问答对提炼（qa-generation）：任务账本表 + 两扩列（与 schema.sql 双处同步） ---
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS kb_qa_generation_task (
+                    file_id VARCHAR(32) PRIMARY KEY,
+                    kb_id VARCHAR(32) NOT NULL,
+                    status VARCHAR(16) DEFAULT 'idle',
+                    total_chunks INT DEFAULT 0,
+                    succeeded_chunks INT DEFAULT 0,
+                    failed_chunks INT DEFAULT 0,
+                    config JSON,
+                    error TEXT,
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+                    INDEX idx_qa_task_kb_id (kb_id)
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """);
+            log.info("Table kb_qa_generation_task OK");
+        } catch (Exception e) {
+            log.error("Failed to create kb_qa_generation_task: {}", e.getMessage());
+        }
+        addColumnIfNotExists("kb_qa_pair", "source_chunk_id", "VARCHAR(32) DEFAULT NULL COMMENT '源父分片引用；manual 恒 NULL，ai 对写入，悬空允许'");
+        addColumnIfNotExists("kb_file", "qa_generation_config", "JSON COMMENT 'qa 模式上传参数 {count,customInstruction,model}'");
 
         // --- 角色存量权限补授（幂等）：分类菜单、运营中心菜单改为细分权限键控制 ---
         grantRolePerms("role_kb_admin",

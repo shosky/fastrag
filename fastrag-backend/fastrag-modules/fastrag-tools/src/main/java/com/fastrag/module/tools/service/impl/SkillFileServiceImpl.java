@@ -1,13 +1,21 @@
 package com.fastrag.module.tools.service.impl;
 
+import com.fastrag.common.exception.BusinessException;
+import com.fastrag.module.tools.entity.Skill;
 import com.fastrag.module.tools.entity.SkillFileContent;
 import com.fastrag.module.tools.entity.SkillFileTree;
 import com.fastrag.module.tools.mapper.SkillMapper;
 import com.fastrag.module.tools.service.SkillFileService;
+import com.fastrag.module.tools.skill.SkillMarkdownParser;
+import com.fastrag.module.tools.skill.SlugValidator;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.util.DataScope;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
+import org.springframework.util.DigestUtils;
 
 import java.io.File;
 import java.io.FileOutputStream;
@@ -47,12 +55,45 @@ import java.util.zip.ZipOutputStream;
 public class SkillFileServiceImpl implements SkillFileService {
 
     private final SkillMapper skillMapper;
+    private final SkillMarkdownParser markdownParser;
 
     @Value("${fastrag.data-dir:${user.home}/.fastrag/data}")
     private String dataDir;
 
     private Path getSkillDir(String slug) {
         return Paths.get(dataDir, "skills", slug);
+    }
+
+    // ========== 属主鉴权（读 = visible，写/删 = manageable，对齐 SkillServiceImpl / DataScope 口径） ==========
+
+    /** 查技能记录：slug 先过白名单校验（防路径遍历），查无即报"技能不存在" */
+    private Skill requireSkill(String slug) {
+        SlugValidator.validate(slug);
+        Skill s = skillMapper.selectBySlug(slug);
+        if (s == null) {
+            throw BusinessException.notFound("技能不存在: " + slug);
+        }
+        return s;
+    }
+
+    /** 读类操作：技能须对当前用户可见（属主/同组织/系统级/API Token） */
+    private Skill requireVisible(String slug) {
+        Skill s = requireSkill(slug);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.visible(user, s.getCreator(), s.getOrgId(), s.getIsBuiltin())) {
+            throw BusinessException.forbidden("无权访问该技能");
+        }
+        return s;
+    }
+
+    /** 写/删类操作：当前用户须有管理权（属主/* 权限/API Token） */
+    private Skill requireManageable(String slug) {
+        Skill s = requireSkill(slug);
+        LoginUser user = SecurityUtil.getCurrentUser();
+        if (!DataScope.manageable(user, s.getCreator())) {
+            throw BusinessException.forbidden("无权管理该技能");
+        }
+        return s;
     }
 
     private Path validateAndResolve(String slug, String relativePath) {
@@ -66,6 +107,7 @@ public class SkillFileServiceImpl implements SkillFileService {
 
     @Override
     public SkillFileTree getTree(String slug) {
+        requireVisible(slug);
         Path skillDir = getSkillDir(slug);
         if (!Files.exists(skillDir)) {
             // 如果目录不存在，返回空树
@@ -108,6 +150,7 @@ public class SkillFileServiceImpl implements SkillFileService {
 
     @Override
     public SkillFileContent readFile(String slug, String relativePath) {
+        requireVisible(slug);
         try {
             Path target = validateAndResolve(slug, relativePath);
             if (!Files.exists(target) || Files.isDirectory(target)) {
@@ -136,12 +179,17 @@ public class SkillFileServiceImpl implements SkillFileService {
 
     @Override
     public void createNode(String slug, String relativePath, boolean isDir, String content, String operator) {
+        requireManageable(slug);
         try {
             Path target = validateAndResolve(slug, relativePath);
 
             if (Files.exists(target)) {
                 throw new RuntimeException("目标已存在: " + relativePath);
             }
+
+            // M3-4（D10）：根 SKILL.md 先解析后写盘——解析失败不产生半写文件
+            SkillMarkdownParser.SkillParseResult parsedRootSkillMd =
+                    parseRootSkillMdIfApplies(slug, relativePath, isDir ? null : content);
 
             if (isDir) {
                 Files.createDirectories(target);
@@ -150,6 +198,10 @@ public class SkillFileServiceImpl implements SkillFileService {
                 Files.createDirectories(target.getParent());
                 Files.writeString(target, content != null ? content : "");
                 log.info("[SkillFile] 创建文件: {} (by {})", target, operator);
+            }
+
+            if (parsedRootSkillMd != null) {
+                syncRootSkillMdToDb(slug, parsedRootSkillMd, content != null ? content : "");
             }
         } catch (SecurityException e) {
             throw e;
@@ -160,6 +212,7 @@ public class SkillFileServiceImpl implements SkillFileService {
 
     @Override
     public void updateFile(String slug, String relativePath, String content, String operator) {
+        requireManageable(slug);
         try {
             Path target = validateAndResolve(slug, relativePath);
 
@@ -167,8 +220,17 @@ public class SkillFileServiceImpl implements SkillFileService {
                 throw new RuntimeException("文件不存在: " + relativePath);
             }
 
+            // M3-4（D10，裁决 3A）：DB content 唯一事实源——根 SKILL.md 写盘后经解析回写 DB。
+            // 采用"先解析后写盘"（实现简单且天然原子）：解析失败抛错，文件不被改动。
+            SkillMarkdownParser.SkillParseResult parsedRootSkillMd =
+                    parseRootSkillMdIfApplies(slug, relativePath, content);
+
             Files.writeString(target, content != null ? content : "");
             log.info("[SkillFile] 更新文件: {} (by {})", target, operator);
+
+            if (parsedRootSkillMd != null) {
+                syncRootSkillMdToDb(slug, parsedRootSkillMd, content != null ? content : "");
+            }
         } catch (SecurityException e) {
             throw e;
         } catch (IOException e) {
@@ -176,8 +238,39 @@ public class SkillFileServiceImpl implements SkillFileService {
         }
     }
 
+    /** 根 SKILL.md 写入前置解析（M3-4）；非根 SKILL.md 返回 null 不做 DB 同步 */
+    private SkillMarkdownParser.SkillParseResult parseRootSkillMdIfApplies(
+            String slug, String relativePath, String content) {
+        if (!"SKILL.md".equals(relativePath) || content == null) return null;
+        try {
+            return markdownParser.parse(content);
+        } catch (IllegalArgumentException e) {
+            throw new RuntimeException("SKILL.md 解析失败，文件未写入: " + e.getMessage(), e);
+        }
+    }
+
+    /** M3-4：把解析出的 frontmatter 与正文回写 DB（content/contentHash/name/description/version/category/icon/metadata） */
+    private void syncRootSkillMdToDb(String slug, SkillMarkdownParser.SkillParseResult parsed, String content) {
+        Skill s = skillMapper.selectBySlug(slug);
+        if (s == null) {
+            log.warn("[SkillFile] 根 SKILL.md 更新但技能记录不存在，跳过 DB 回写: {}", slug);
+            return;
+        }
+        s.setName(parsed.getName());
+        s.setDescription(parsed.getDescription());
+        s.setVersion(parsed.getVersion());
+        s.setCategory(parsed.getCategory());
+        s.setIcon(parsed.getIcon());
+        s.setMetadata(parsed.getMetadata());
+        s.setContent(content);
+        s.setContentHash(DigestUtils.md5DigestAsHex(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
+        skillMapper.updateById(s);
+        log.info("[SkillFile] 根 SKILL.md 已回写 DB: {} (name={})", slug, parsed.getName());
+    }
+
     @Override
     public void deleteNode(String slug, String relativePath, String operator) {
+        requireManageable(slug);
         try {
             Path target = validateAndResolve(slug, relativePath);
 
@@ -214,6 +307,7 @@ public class SkillFileServiceImpl implements SkillFileService {
 
     @Override
     public File exportZip(String slug) {
+        requireVisible(slug);
         Path skillDir = getSkillDir(slug);
         if (!Files.exists(skillDir)) {
             throw new RuntimeException("技能目录不存在: " + slug);

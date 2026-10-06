@@ -2,6 +2,8 @@ package com.fastrag.module.tools.skill;
 
 import com.fastrag.module.tools.entity.Skill;
 import com.fastrag.module.tools.mapper.SkillMapper;
+import com.fastrag.security.filter.LoginUser;
+import com.fastrag.security.util.DataScope;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
@@ -108,10 +110,63 @@ public class SkillAccessManager {
         // 实际项目中，这里应该调用 UserService.getUserDepartmentIds(userId)
         // 由于 fastrag-tools 模块可能没有 UserService 依赖，先记录日志
         log.debug("Department access check for user {} against departments {} - 需要集成 UserService", userId, deptIds);
-        
+
         // 占位：如果用户 ID 在 deptIds 中（简化版），返回 true
         // 正式实现时需替换为真正的部门查询
         return false;
+    }
+
+    // ==================== M3-1（D2/V1）：分享可见性接线（生产调用入口） ====================
+
+    /**
+     * 判断技能是否经分享配置对当前用户可见（DataScope 四态之外的第五通道，REQ-B09 三级模型）。
+     *
+     * <p>语义（缺省/解析失败一律按不可见）：</p>
+     * <ul>
+     *   <li>accessLevel=global → 全员可见</li>
+     *   <li>accessLevel=department → user.orgId ∈ departmentIds</li>
+     *   <li>accessLevel=user → user.userId ∈ userUids</li>
+     * </ul>
+     */
+    public boolean shareVisible(LoginUser user, Skill skill) {
+        if (user == null || skill == null) return false;
+
+        Map<String, Object> sc = skill.getShareConfig();
+        if (sc == null || sc.isEmpty()) return false;
+
+        Object levelRaw = sc.get("accessLevel");
+        String accessLevel = levelRaw != null ? levelRaw.toString().strip() : "user";
+        return switch (accessLevel) {
+            case "global" -> true;
+            case "department" -> {
+                List<String> deptIds = stringList(sc.get("departmentIds"));
+                yield deptIds.contains(user.getOrgId());
+            }
+            case "user" -> {
+                List<String> uids = stringList(sc.get("userUids"));
+                yield uids.contains(user.getUserId());
+            }
+            default -> false;
+        };
+    }
+
+    /** 分享配置中的 id 列表取值：缺失/类型不符（解析失败）返回空列表（按不可见语义） */
+    private List<String> stringList(Object raw) {
+        if (raw instanceof List<?> list) {
+            return list.stream().filter(java.util.Objects::nonNull).map(Object::toString).toList();
+        }
+        return List.of();
+    }
+
+    /**
+     * 标准化分享配置（LoginUser 重载，M3-1 降级语义入口）。
+     * 非管理员（无 {@code *} 权限且非 API Token）提交 global/department 一律降级 user。
+     * 管理员判定与 {@link DataScope#manageable} 同口径；实际归一复用 {@link #normalizeShareConfig(Map, String)}。
+     */
+    public Map<String, Object> normalizeShareConfig(Map<String, Object> config, LoginUser user) {
+        boolean admin = user != null
+                && (DataScope.isApiToken(user) || user.hasPermission("*"));
+        return normalizeShareConfig(config, admin ? "admin" : "user");
     }
 
     /**

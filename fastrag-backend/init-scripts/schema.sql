@@ -120,6 +120,7 @@ CREATE TABLE IF NOT EXISTS kb_file (
     chunk_count INT DEFAULT 0,
     processing_mode VARCHAR(16) DEFAULT 'chunk' COMMENT '处理模式: chunk/qa',
     processing_config JSON COMMENT '上传向导处理配置(引擎/语言/编码/优先级/重试/媒体)',
+    qa_generation_config JSON COMMENT 'qa 模式上传参数 {count,customInstruction,model}',
     enable_graph_build TINYINT DEFAULT 0 COMMENT '该文件是否构建知识图谱',
     folder_id VARCHAR(32),
     view_count BIGINT DEFAULT 0,
@@ -211,8 +212,24 @@ CREATE TABLE IF NOT EXISTS kb_qa_pair (
     answer TEXT NOT NULL,
     source VARCHAR(16) DEFAULT 'manual',
     status VARCHAR(16) DEFAULT 'draft',
+    source_chunk_id VARCHAR(32) COMMENT '源父分片引用；manual 恒 NULL，ai 对写入，悬空允许',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_kb_id (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ==================== QA Generation ====================
+CREATE TABLE IF NOT EXISTS kb_qa_generation_task (
+    file_id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    status VARCHAR(16) DEFAULT 'idle',
+    total_chunks INT DEFAULT 0,
+    succeeded_chunks INT DEFAULT 0,
+    failed_chunks INT DEFAULT 0,
+    config JSON,
+    error TEXT,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_qa_task_kb_id (kb_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- ==================== Graph & Evaluation ====================
@@ -367,6 +384,7 @@ CREATE TABLE IF NOT EXISTS app (
     tags JSON,
     status VARCHAR(16) DEFAULT 'draft',
     owner VARCHAR(32),
+    sandbox_config_id VARCHAR(32) COMMENT '沙箱配置引用（REQ-H03 分支②载体；空=工具执行降级）',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -438,6 +456,8 @@ CREATE TABLE IF NOT EXISTS tool_http_config (
 
 CREATE TABLE IF NOT EXISTS skill (
     id VARCHAR(32) PRIMARY KEY,
+    slug VARCHAR(128),
+    source_type VARCHAR(16) DEFAULT 'custom',
     name VARCHAR(128) NOT NULL,
     identifier VARCHAR(128),
     description TEXT,
@@ -450,13 +470,28 @@ CREATE TABLE IF NOT EXISTS skill (
     code TEXT,
     inputs JSON,
     outputs JSON,
+    dir_path VARCHAR(512),
+    dependencies JSON,
+    content_hash VARCHAR(64),
+    is_builtin TINYINT DEFAULT 0,
+    metadata JSON,
+    share_config JSON,
+    creator VARCHAR(32),
+    org_id VARCHAR(32),
     enabled TINYINT DEFAULT 1,
     recommended TINYINT DEFAULT 0,
     usage_count INT DEFAULT 0,
     author VARCHAR(64),
     version VARCHAR(16),
-    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_slug (slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- M3-7（DDL 双处同步）：skill 表补齐 SchemaInitializer 运行时增补的全部列
+--   （slug/source_type/dir_path/dependencies/content_hash/is_builtin/metadata/
+--    share_config/creator/org_id/created_at）+ idx_slug 检索索引。
+--   slug 用普通索引而非 uk_slug：SkillServiceImpl.create 不强制 slug 唯一，
+--   存量数据可能重复，唯一索引有升级失败风险。
 
 CREATE TABLE IF NOT EXISTS skill_dependency (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
@@ -1114,7 +1149,7 @@ CREATE TABLE IF NOT EXISTS app_optimization (
 -- 对话记录
 CREATE TABLE IF NOT EXISTS app_conversation (
     id VARCHAR(32) PRIMARY KEY,
-    app_id VARCHAR(32) NOT NULL,
+    app_id VARCHAR(32) DEFAULT NULL COMMENT '挂载应用；NULL=知识库直聊会话',
     session_id VARCHAR(64),
     user_id VARCHAR(32),
     user_name VARCHAR(128),
@@ -1124,10 +1159,13 @@ CREATE TABLE IF NOT EXISTS app_conversation (
     message_count INT DEFAULT 0,
     token_count INT DEFAULT 0,
     rating TINYINT,
+    request_state TEXT COMMENT '会话请求态 JSON（ConversationRequestState，new-conversation）',
+    is_pinned TINYINT DEFAULT 0 COMMENT '置顶标记（new-conversation）',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_conv_app (app_id),
-    INDEX idx_conv_created (created_at)
+    INDEX idx_conv_created (created_at),
+    INDEX idx_conv_user (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 CREATE TABLE IF NOT EXISTS app_conversation_message (
@@ -1139,6 +1177,8 @@ CREATE TABLE IF NOT EXISTS app_conversation_message (
     latency_ms INT,
     thinking_content TEXT COMMENT '思考过程内容',
     tool_calls TEXT COMMENT '工具调用记录（JSON数组）',
+    iterations INT DEFAULT NULL COMMENT '引擎迭代轮数（new-conversation）',
+    `references` TEXT COMMENT '消息引用（JSON数组，MessageReference投影，new-conversation）',
     feedback VARCHAR(16) DEFAULT NULL COMMENT 'like/dislike/null',
     deleted_at DATETIME DEFAULT NULL COMMENT '软删除时间',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
@@ -1427,60 +1467,48 @@ ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS entity_count INT DEFAULT 0 C
 ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS relation_count INT DEFAULT 0 COMMENT '关系数';
 ALTER TABLE kb_graph_index ADD COLUMN IF NOT EXISTS failed_chunks INT DEFAULT 0 COMMENT '构建失败的切片数';
 
--- 知识图谱实体表（MySQL fallback 存储，确定性 ID 哈希）
-CREATE TABLE IF NOT EXISTS kb_graph_entity (
-    entity_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
-    kb_id VARCHAR(32) NOT NULL,
-    name VARCHAR(256) NOT NULL COMMENT '原始显示名称',
-    normalized_name VARCHAR(256) NOT NULL COMMENT '标准化名称(小写+空白归一化)',
-    original_name VARCHAR(256) COMMENT '原始名称(同name)',
-    entity_type VARCHAR(64) DEFAULT 'UNKNOWN' COMMENT '实体类型/标签',
-    description TEXT COMMENT '描述/属性(兼容字段)',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_kb_entity_identity (kb_id, normalized_name(255), entity_type),
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 知识图谱关系表（MySQL fallback 存储，确定性 ID 哈希）
-CREATE TABLE IF NOT EXISTS kb_graph_relation (
-    triple_id VARCHAR(64) PRIMARY KEY COMMENT '确定性哈希ID(SHA-256)',
-    kb_id VARCHAR(32) NOT NULL,
-    source VARCHAR(256) NOT NULL COMMENT '源实体名称',
-    target VARCHAR(256) NOT NULL COMMENT '目标实体名称',
-    label VARCHAR(128) NOT NULL COMMENT '关系类型',
-    content TEXT COMMENT '关系显示文本',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_kb_relation (kb_id, source(255), target(255), label(127)),
-    INDEX idx_kb_id (kb_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
-
--- 实体提及追踪表（chunk→entity 引用关系）
-CREATE TABLE IF NOT EXISTS kb_graph_entity_mention (
+-- 跨分片图谱抽取辅助表（MySQL 图存储已收敛 Neo4j（ADR-0002），实体/关系数据在 Neo4j；
+-- 以下 3 表与 SchemaInitializer 程序化 DDL 保持一致，源自 docs/design/cross-chunk-graph-extraction.md）
+CREATE TABLE IF NOT EXISTS kb_graph_stitch (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    entity_id VARCHAR(64) NOT NULL,
-    kb_id VARCHAR(32) NOT NULL,
-    file_id VARCHAR(32) NOT NULL,
-    chunk_id VARCHAR(64) NOT NULL,
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_entity_mention (entity_id, chunk_id),
-    INDEX idx_em_kb (kb_id),
-    INDEX idx_em_file (file_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    kb_id VARCHAR(64) NOT NULL COMMENT '知识库ID',
+    file_id VARCHAR(64) COMMENT '文件ID',
+    stitch_type VARCHAR(32) NOT NULL COMMENT 'relation=缝合关系 / merge=合并候选',
+    payload TEXT NOT NULL COMMENT 'JSON载荷',
+    status TINYINT NOT NULL DEFAULT 0 COMMENT '0=待应用(人工候选) 1=已应用(可replay) 2=跳过',
+    chunk_source VARCHAR(64) COMMENT '关系归属分片ID',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_stitch (kb_id, file_id, status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='图谱缝合输出与合并候选';
 
--- 三元组提及追踪表（chunk→triple 引用关系）
-CREATE TABLE IF NOT EXISTS kb_graph_triple_mention (
+-- 图谱抽取单元（单元级缓存与 replay：~500 字分片重组为 ~2000 字符单元后送 LLM 抽取）
+CREATE TABLE IF NOT EXISTS kb_graph_unit (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
-    triple_id VARCHAR(64) NOT NULL,
-    kb_id VARCHAR(32) NOT NULL,
-    file_id VARCHAR(32) NOT NULL,
-    chunk_id VARCHAR(64) NOT NULL,
-    text TEXT COMMENT '关系显示文本',
-    extractor_type VARCHAR(32) COMMENT '提取器类型',
-    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE KEY uk_triple_mention (triple_id, chunk_id),
-    INDEX idx_tm_kb (kb_id),
-    INDEX idx_tm_file (file_id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+    kb_id VARCHAR(64) NOT NULL COMMENT '知识库ID',
+    file_id VARCHAR(64) NOT NULL COMMENT '文件ID',
+    unit_index INT NOT NULL COMMENT '单元序号',
+    content_hash VARCHAR(64) NOT NULL COMMENT '单元内容SHA-256截断哈希(缓存键)',
+    chunk_ids TEXT NOT NULL COMMENT '组成单元的分片ID JSON数组',
+    extraction_result MEDIUMTEXT COMMENT '抽取结果JSON',
+    status TINYINT NOT NULL DEFAULT 0 COMMENT '0=待抽取 1=已完成 2=失败',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME NULL ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_unit (kb_id, file_id, unit_index),
+    KEY idx_unit_hash (kb_id, file_id, content_hash)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='图谱抽取单元(单元级缓存与replay)';
+
+-- 图谱同义实体合并审计（Neo4j 实体 ID，快照支持回滚重建）
+CREATE TABLE IF NOT EXISTS kb_graph_merge_audit (
+    id BIGINT AUTO_INCREMENT PRIMARY KEY,
+    kb_id VARCHAR(64) NOT NULL COMMENT '知识库ID',
+    src_entity_id VARCHAR(64) NOT NULL COMMENT '被合并实体ID',
+    tgt_entity_id VARCHAR(64) NOT NULL COMMENT '保留实体ID',
+    src_snapshot TEXT NOT NULL COMMENT 'source完整属性JSON(回滚重建用)',
+    edge_snapshot TEXT NOT NULL COMMENT '迁移边与mentions清单(回滚用)',
+    operator VARCHAR(64) COMMENT '执行人/系统',
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_audit (kb_id, src_entity_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='图谱同义实体合并审计';
 
 -- 评估基准表
 CREATE TABLE IF NOT EXISTS kb_benchmark (
@@ -1548,4 +1576,25 @@ CREATE TABLE IF NOT EXISTS kb_evaluation_result (
     is_correct TINYINT,
     judge_reason TEXT,
     INDEX idx_evaluation_id (evaluation_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 沙箱后端配置（agent 域，2026-09-28 沙箱实装；与 SchemaInitializer 双处同步）
+CREATE TABLE IF NOT EXISTS sandbox_config (
+    id VARCHAR(32) PRIMARY KEY,
+    user_id VARCHAR(32) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    sandbox_type VARCHAR(16) NOT NULL COMMENT 'docker/cube/e2b/disabled',
+    enabled TINYINT DEFAULT 1,
+    default_timeout_sec INT DEFAULT 0,
+    allow_private_endpoints TINYINT DEFAULT 0,
+    network_policy JSON,
+    env_vars JSON,
+    docker_config JSON COMMENT '{image,host,tls_cert_path,cpu_limit,memory_limit_mb,pids_limit,network_mode,idle_ttl_sec}',
+    cube_config JSON COMMENT '{api_url,proxy_url,sandbox_domain,api_key_ref,template_id,http_timeout_sec,ttl_sec,dns_servers}',
+    e2b_config JSON COMMENT '{api_url,sandbox_domain,api_key_ref,template_id,proxy_url,http_timeout_sec,ttl_sec}',
+    identity_fingerprint VARCHAR(64) COMMENT '身份要素哈希(type+endpoint+api_key_ref+image/template)，REQ-H09 变更重建比对键',
+    cordon_at DATETIME NULL COMMENT '隔离标记：换凭据/底模时置位',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

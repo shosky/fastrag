@@ -9,14 +9,22 @@ import org.springframework.stereotype.Component;
 import java.util.Map;
 
 /**
- * install_skill 工具执行器。
- * 允许 Agent 在对话中从远程仓库或本地路径安装技能。
- * type = "builtin"，由 ToolRegistry 统一注入。
+ * install_skill 工具执行器（M3-3/D14：指引桩坐实为真实导入流水线指引）。
+ *
+ * <p>本执行器不直接落库安装（安装动作属管理面，经鉴权），而是向模型输出可执行的
+ * 导入流水线指引：支持格式（.zip/.md）、上传即装端点 {@code POST /api/skills/import/prepare}、
+ * 两步草稿端点 {@code POST /api/skills/install-drafts/{draftId}/confirm}、
+ * slug 白名单规则与管理页路径。保持 ToolResult success 语义。</p>
+ *
+ * <p>type = "builtin"，由 ToolRegistry 统一注入、AgentEngine 按条件过滤（M3-3 REQ-E03 修订）。</p>
  */
 @Slf4j
 @Component
 @RequiredArgsConstructor
 public class InstallSkillToolExecutor implements ToolExecutor {
+
+    /** 技能 slug 白名单规则（与 SlugValidator 一致） */
+    static final String SLUG_RULE = "^[a-z0-9][a-z0-9._-]{0,63}$";
 
     private final SkillService skillService;
 
@@ -35,15 +43,15 @@ public class InstallSkillToolExecutor implements ToolExecutor {
 
             if (source == null && skillName == null) {
                 return ToolResult.error(
-                    "需要提供 source 参数（GitHub 仓库格式：owner/repo 或 owner/repo@skill-name）",
+                    "需要提供 source 参数（GitHub 仓库格式：owner/repo 或 owner/repo@skill-name，或本地技能 slug）",
                     (int) (System.currentTimeMillis() - t0));
             }
 
             String result;
             if (source != null && source.contains("/")) {
-                result = installFromRemote(source, skillName, ctx);
+                result = installFromRemote(source, skillName);
             } else {
-                result = installFromLocal(source != null ? source : skillName, ctx);
+                result = installFromLocal(source != null ? source : skillName);
             }
 
             return ToolResult.success(result, (int) (System.currentTimeMillis() - t0));
@@ -55,7 +63,27 @@ public class InstallSkillToolExecutor implements ToolExecutor {
         }
     }
 
-    private String installFromRemote(String source, String skillName, ToolContext ctx) {
+    /** 导入流水线指引正文（M3-3：坐实真实端点与规则） */
+    private String pipelineGuidance(String heading) {
+        return heading + "\n\n"
+            + "支持的安装方式：\n"
+            + "1. 上传即装（推荐）：将技能包（.zip）或单个 SKILL.md（.md）文件通过\n"
+            + "   POST /api/skills/import/prepare 上传，服务端解析 frontmatter 后自动完成安装。\n"
+            + "2. 两步草稿：先 POST /api/skills/import/prepare 得到 draftId，再调用\n"
+            + "   POST /api/skills/install-drafts/{draftId}/confirm 确认安装（可携带 shareConfig）。\n"
+            + "3. 管理页操作：进入「技能管理」页面，使用「导入技能 / 远程安装」功能。\n\n"
+            + "约束：\n"
+            + "- 文件格式仅支持 .zip（可含 references/、scripts/ 等子目录）或 .md（SKILL.md）\n"
+            + "- slug 规则：" + SLUG_RULE + "（小写字母或数字开头，仅含 a-z、0-9、.、_、-，长度 1-64）\n"
+            + "- SKILL.md 必须以 --- frontmatter 开头，且包含 name 与 description 字段\n";
+    }
+
+    private String installFromRemote(String source, String skillName) {
+        // M3-3：skill_name 缺省时从 owner/repo@skill-name 形态解析（已安装检查需真实 slug）
+        if (skillName == null && source.contains("@")) {
+            String derived = source.substring(source.indexOf('@') + 1).strip();
+            if (!derived.isEmpty()) skillName = derived;
+        }
         log.info("[InstallSkillTool] 从远程安装: source={}, skill={}", source, skillName);
 
         StringBuilder sb = new StringBuilder();
@@ -63,45 +91,20 @@ public class InstallSkillToolExecutor implements ToolExecutor {
         if (skillName != null) {
             sb.append(" (").append(skillName).append(")");
         }
-        sb.append("\n\n");
-
-        // 解析 source
-        // 格式: owner/repo 或 owner/repo@skill-name
-        String repo;
-        String specificSkill = null;
-        if (source.contains("@")) {
-            String[] parts = source.split("@", 2);
-            repo = parts[0];
-            specificSkill = parts[1];
-        } else {
-            repo = source;
-        }
-
-        String skillToInstall = specificSkill != null ? specificSkill : skillName;
-
-        sb.append("仓库: ").append(repo).append("\n");
-        if (skillToInstall != null) {
-            sb.append("技能: ").append(skillToInstall).append("\n");
-        }
+        sb.append("\n\n仓库: ").append(source.contains("@") ? source.substring(0, source.indexOf('@')) : source);
 
         // 检查技能是否已安装
-        if (skillToInstall != null && skillService.existsBySlug(skillToInstall)) {
-            sb.append("\n⚠️ 技能 '").append(skillToInstall).append("' 已安装。");
-            if (ctx != null) {
-                sb.append("\n\n如需重新安装，请先删除现有技能。");
-            }
+        if (skillName != null && skillService.existsBySlug(skillName)) {
+            sb.append("\n\n技能 '").append(skillName).append("' 已安装。如需重新安装（覆盖重装），")
+              .append("直接重复导入即可——同 slug 安装将原地更新，不影响已有绑定。");
             return sb.toString();
         }
 
-        sb.append("\n安装方式: ");
-        sb.append("\n1. 通过命令行: `npx -y skills add github:").append(repo).append(" --skill ").append(skillToInstall != null ? skillToInstall : "<name>").append(" -g -y --copy`");
-        sb.append("\n2. 通过管理界面: 在「技能管理」页面点击「远程安装」");
-        sb.append("\n\n安装后技能将被自动启用。");
-
+        sb.append("\n").append(pipelineGuidance("请按以下导入流水线安装该技能："));
         return sb.toString();
     }
 
-    private String installFromLocal(String skillName, ToolContext ctx) {
+    private String installFromLocal(String skillName) {
         log.info("[InstallSkillTool] 从本地安装: skill={}", skillName);
 
         if (skillName == null) {
@@ -110,16 +113,9 @@ public class InstallSkillToolExecutor implements ToolExecutor {
 
         // 检查技能是否已安装
         if (skillService.existsBySlug(skillName)) {
-            return "技能 '" + skillName + "' 已安装。如需重新安装，请先删除现有技能。";
+            return "技能 '" + skillName + "' 已安装。如需重新安装（覆盖重装），直接重复导入即可——同 slug 安装将原地更新，不影响已有绑定。";
         }
 
-        StringBuilder sb = new StringBuilder();
-        sb.append("本地安装技能: ").append(skillName).append("\n\n");
-        sb.append("请通过以下方式之一安装此技能：\n");
-        sb.append("1. 将 SKILL.md 文件放在沙箱目录 `/home/gem/user-data/skills/").append(skillName).append("/` 下\n");
-        sb.append("2. 通过技能管理界面上传 ZIP 文件\n");
-        sb.append("3. 使用远程安装命令从仓库安装\n");
-
-        return sb.toString();
+        return pipelineGuidance("本地安装技能: " + skillName);
     }
 }

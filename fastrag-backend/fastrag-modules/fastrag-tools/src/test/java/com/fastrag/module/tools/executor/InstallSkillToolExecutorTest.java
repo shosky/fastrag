@@ -120,4 +120,41 @@ class InstallSkillToolExecutorTest {
         assertNotNull(def.getInputSchema());
         assertTrue(def.getInputSchema().containsKey("properties"));
     }
+
+    // ===== M3-3（D14）：install_skill 指引坐实——输出真实导入流水线 =====
+
+    @Test
+    void testLocalInstall_GuidesRealImportPipeline() {
+        when(skillService.existsBySlug("local-skill")).thenReturn(false);
+
+        ToolDefinition def = new ToolDefinition();
+        def.setName("install_skill");
+        Map<String, Object> args = Map.of("source", "local-skill");
+
+        ToolResult result = executor.execute(def, args, ctx);
+
+        assertTrue(result.isSuccess());
+        String out = result.getOutput();
+        assertTrue(out.contains("/api/skills/import/prepare"), "应指引上传自动安装端点");
+        assertTrue(out.contains("install-drafts/{draftId}/confirm"), "应指引两步草稿确认端点");
+        assertTrue(out.contains(".zip") && out.contains(".md"), "应说明支持格式 .zip/.md");
+        assertTrue(out.contains("^[a-z0-9][a-z0-9._-]{0,63}$"), "应说明 slug 规则");
+        assertTrue(out.contains("技能管理"), "应提示管理页路径");
+    }
+
+    @Test
+    void testRemoteInstall_GuidesRealImportPipeline() {
+        when(skillService.existsBySlug("web-search")).thenReturn(false);
+
+        ToolDefinition def = new ToolDefinition();
+        def.setName("install_skill");
+        Map<String, Object> args = Map.of("source", "owner/repo@web-search", "skill_name", "web-search");
+
+        ToolResult result = executor.execute(def, args, ctx);
+
+        assertTrue(result.isSuccess());
+        String out = result.getOutput();
+        assertTrue(out.contains("/api/skills/import/prepare"), "远端安装同样指引导入流水线");
+        assertTrue(out.contains("owner/repo"), "应保留来源仓库信息");
+    }
 }
