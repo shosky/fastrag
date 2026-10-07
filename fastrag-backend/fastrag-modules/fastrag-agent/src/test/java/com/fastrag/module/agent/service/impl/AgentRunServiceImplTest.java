@@ -3,6 +3,7 @@ package com.fastrag.module.agent.service.impl;
 import com.fastrag.module.agent.context.BaseContext;
 import com.fastrag.module.agent.context.ContextBuilder;
 import com.fastrag.module.agent.entity.AgentRun;
+import com.fastrag.module.agent.event.RunEventPublisher;
 import com.fastrag.module.agent.executor.AgentEngine;
 import com.fastrag.module.agent.executor.AgentResult;
 import com.fastrag.module.agent.mapper.AgentRunMapper;
@@ -13,8 +14,11 @@ import org.junit.jupiter.api.extension.ExtendWith;
 import org.mockito.ArgumentCaptor;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
+import org.springframework.test.util.ReflectionTestUtils;
 
+import java.util.List;
 import java.util.Map;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import static org.junit.jupiter.api.Assertions.*;
 import static org.mockito.ArgumentMatchers.*;
@@ -35,12 +39,16 @@ class AgentRunServiceImplTest {
     private AgentEngine agentEngine;
     @Mock
     private ContextBuilder contextBuilder;
+    @Mock
+    private RunEventPublisher eventPublisher;
 
     private AgentRunServiceImpl service;
 
     @BeforeEach
     void setUp() {
-        service = new AgentRunServiceImpl(agentRunMapper, agentService, agentEngine, contextBuilder);
+        service = new AgentRunServiceImpl(agentRunMapper, agentService, agentEngine,
+                contextBuilder, eventPublisher);
+        ReflectionTestUtils.setField(service, "streamPollIntervalMs", 10L);
     }
 
     private AgentRun newRun() {
@@ -139,5 +147,80 @@ class AgentRunServiceImplTest {
         ArgumentCaptor<AgentRun> captor = ArgumentCaptor.forClass(AgentRun.class);
         verify(agentRunMapper, times(2)).updateById(captor.capture());
         assertEquals("completed", captor.getAllValues().get(1).getStatus());
+    }
+
+    // ===== I2（P0-3）：streamEvents 优先按 afterSeq 增量拉事件推 SSE，run 表轮询仅作终态兜底 =====
+
+    private static Map<String, Object> event(long seq) {
+        return Map.of("runId", "run-1", "eventType", "tool_call",
+                "payload", Map.of("n", seq), "seq", seq);
+    }
+
+    @Test
+    void streamEvents_replaysFromAfterSeqThenPullsIncrementally_untilTerminal() throws Exception {
+        when(agentRunMapper.selectById("run-1")).thenAnswer(inv -> {
+            AgentRun r = newRun();
+            r.setStatus("running");
+            return r;
+        });
+        // 首次全量拉取返回 seq 1、2；之后增量（afterSeq=2）为空
+        when(eventPublisher.getEvents(eq("run-1"), eq(0L)))
+                .thenReturn(List.of(event(1), event(2)));
+        when(eventPublisher.getEvents(eq("run-1"), eq(2L))).thenReturn(List.of());
+
+        service.streamEvents("run-1", null, null);
+
+        // 首拉 offset=0（afterSeq 为空 → 0），其后按 lastSeq=2 增量
+        verify(eventPublisher, timeout(5000)).getEvents("run-1", 0L);
+        verify(eventPublisher, timeout(5000).atLeast(2)).getEvents("run-1", 2L);
+        // 事件通道拉取频次应远高于 run 表轮询（兜底语义）
+        verify(eventPublisher, timeout(5000).atLeast(5)).getEvents(eq("run-1"), anyLong());
+    }
+
+    @Test
+    void streamEvents_parsesAfterSeqStringAsNumericOffset() throws Exception {
+        when(agentRunMapper.selectById("run-1")).thenAnswer(inv -> {
+            AgentRun r = newRun();
+            r.setStatus("running");
+            return r;
+        });
+        when(eventPublisher.getEvents(eq("run-1"), eq(7L))).thenReturn(List.of());
+
+        service.streamEvents("run-1", "7", null);
+
+        verify(eventPublisher, timeout(5000)).getEvents("run-1", 7L);
+    }
+
+    @Test
+    void streamEvents_runTableTerminal_isFallbackTermination() throws Exception {
+        // 事件通道为空，run 表第一次终态检查即 completed
+        when(agentRunMapper.selectById("run-1")).thenAnswer(inv -> {
+            AgentRun r = newRun();
+            r.setStatus("completed");
+            return r;
+        });
+        when(eventPublisher.getEvents(eq("run-1"), eq(0L))).thenReturn(List.of());
+
+        service.streamEvents("run-1", null, null);
+
+        // getRun 同步一次 + 异步循环 tick0 兜底一次（≥2）；不严格限定次数，防抖动
+        verify(agentRunMapper, timeout(5000).atLeast(2)).selectById("run-1");
+        verify(eventPublisher, timeout(5000)).getEvents("run-1", 0L);
+    }
+
+    @Test
+    void executeRunAsync_terminalWrite_clearsEventStream() throws Exception {
+        AgentRun run = newRun();
+        when(contextBuilder.buildContext(run)).thenReturn(new BaseContext());
+        when(agentEngine.executeSync(eq(run), any(BaseContext.class)))
+                .thenReturn(AgentResult.success("done"));
+        AgentRun dbState = new AgentRun();
+        dbState.setId("run-1");
+        dbState.setStatus("running");
+        when(agentRunMapper.selectById("run-1")).thenReturn(dbState);
+
+        service.executeRunAsync(run);
+
+        verify(eventPublisher).clearStream("run-1");
     }
 }
