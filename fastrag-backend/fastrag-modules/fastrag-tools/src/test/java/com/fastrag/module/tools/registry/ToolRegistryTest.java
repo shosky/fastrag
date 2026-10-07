@@ -65,4 +65,33 @@ class ToolRegistryTest {
         assertThat(tools.get(0).getFunction().getDescription()).isEqualTo("query_kb desc");
         assertThat(tools.get(0).getFunction().getParameters()).containsKey("type");
     }
+
+    // ===== I4（P1-4，finding gap-4）：同名工具 first-wins 归并（统一出口，覆盖中间件追加路径） =====
+
+    @Test
+    void toOpenAITools_duplicateNames_firstWins_dropsLaterDuplicates() {
+        ToolDefinition first = def("dup_tool");
+        first.setDescription("first version");
+        ToolDefinition second = def("dup_tool");
+        second.setDescription("second version");
+
+        List<ChatRequest.ToolDefinition> tools = registry.toOpenAITools(
+                new ArrayList<>(List.of(first, def("z_tool"), second)));
+
+        assertThat(tools).extracting(t -> t.getFunction().getName())
+                .containsExactly("dup_tool", "z_tool");
+        assertThat(tools.get(0).getFunction().getDescription()).isEqualTo("first version");
+    }
+
+    @Test
+    void toOpenAITools_middlewareAppendedDuplicates_alsoMergedAtSingleExit() {
+        // 模拟中间件向 tools 列表追加同名工具（resolveTools 后追加路径不改，统一出口归并）
+        List<ToolDefinition> tools = new ArrayList<>(List.of(def("read_file")));
+        tools.add(def("read_file")); // 中间件重复追加
+
+        List<ChatRequest.ToolDefinition> openai = registry.toOpenAITools(tools);
+
+        assertThat(openai).extracting(t -> t.getFunction().getName())
+                .containsExactly("read_file");
+    }
 }

@@ -45,6 +45,22 @@ public interface AgentMiddleware extends Comparable<AgentMiddleware> {
     }
 
     /**
+     * I6（P1-4）：每轮循环边界钩子——本轮消息回灌后、下轮模型调用前调用（含第 0 轮）。
+     * 与 {@link #beforeModelCall}（仅 executeBefore 执行一次）不同，本钩子每轮触发，
+     * 适合「按当前消息规模做处理」的中间件（如 SummarizationMiddleware 的调用点移入处）。
+     *
+     * @param context  运行时上下文
+     * @param messages 消息列表（可修改）
+     * @param tools    当前工具列表
+     * @return 修改后的 context
+     */
+    default BaseContext beforeRound(BaseContext context,
+                                    List<ChatMessage> messages,
+                                    List<ToolDefinition> tools) {
+        return context;
+    }
+
+    /**
      * 后置阶段: LLM 调用后、工具执行前。
      * 可检查/修改 LLM 响应（如检测技能激活）。
      *

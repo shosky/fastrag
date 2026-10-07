@@ -1,5 +1,6 @@
 package com.fastrag.module.tools.executor;
 
+import com.fastrag.common.util.OutputBudget;
 import com.fastrag.common.util.TemplateEngine;
 import com.fastrag.module.tools.registry.ToolDefinition;
 import lombok.RequiredArgsConstructor;
@@ -21,6 +22,16 @@ import java.util.*;
 @RequiredArgsConstructor
 public class HttpToolExecutor implements ToolExecutor {
     private final HttpClient aiHttpClient;
+
+    /** I3（P1-1）：HTTP 响应体输出上限（2M 字符，rune 安全截断）——防单次工具调用撑爆 LLM 上下文与事件通道 */
+    static final int MAX_RESPONSE_CHARS = 2 * 1024 * 1024;
+    private static final String RESPONSE_CAP_MARKER = "\n...(truncated, response exceeds 2MB limit)";
+
+    /** 响应体预算：rune 安全截断（OutputBudget 在 fastrag-common，tools/agent 共用）。 */
+    static String capOutput(String output) {
+        return OutputBudget.truncate(output, MAX_RESPONSE_CHARS, RESPONSE_CAP_MARKER);
+    }
+
     @Override
     public String getType() { return "http"; }
 
@@ -114,6 +125,9 @@ public class HttpToolExecutor implements ToolExecutor {
             if (tool.getOutputMapping() != null && !tool.getOutputMapping().isEmpty() && responseBody != null) {
                 result.setOutput(extractByPath(responseBody, tool.getOutputMapping()));
             }
+
+            // I3：执行器层输出预算（映射后统一施加）
+            result.setOutput(capOutput(result.getOutput()));
 
             return result;
         } catch (Exception e) {

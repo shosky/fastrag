@@ -4,6 +4,7 @@ import com.fastrag.ai.llm.LlmService;
 import com.fastrag.ai.model.ChatMessage;
 import com.fastrag.ai.model.ChatResponse;
 import com.fastrag.module.agent.context.BaseContext;
+import com.fastrag.module.agent.executor.ModelConfig;
 import com.fastrag.module.tools.registry.ToolDefinition;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -20,6 +21,13 @@ import java.util.List;
  * <p>策略：保留 system + 最近 6 条消息，中间消息用 LLM 生成摘要。
  * 默认阈值 8000 tokens，可通过 context.summaryThreshold 自定义。</p>
  *
+ * <p>I6（P1-5）修复：<b>调用点移入每轮循环</b>——原挂在 beforeModelCall（引擎 executeBefore
+ * 仅执行一次），工具循环回灌消息后永不触发，阈值形同虚设。现移至 {@link #beforeRound}
+ * （AgentEngine.executeRoundBoundary，每轮模型调用前调用），阈值判断逻辑不变。</p>
+ *
+ * <p>I6：摘要模型不再硬编码 FALLBACK_MODEL（网关侧通常不存在该模型，摘要静默失败），
+ * 改从 BaseContext 取可用模型（modelConfig 优先，回落 model 字段）；取不到则跳过并 warn。</p>
+ *
  * <p>Token 估算规则：
  * <ul>
  *   <li>中文：每 1.5 个字符 ≈ 1 token</li>
@@ -35,7 +43,6 @@ public class SummarizationMiddleware implements AgentMiddleware {
 
     private static final int DEFAULT_TOKEN_THRESHOLD = 8000;
     private static final int KEEP_RECENT_COUNT = 6;
-    private static final String FALLBACK_MODEL = "gpt-4o-mini";
 
     @Override
     public int getOrder() { return 6; }
@@ -44,6 +51,14 @@ public class SummarizationMiddleware implements AgentMiddleware {
     public BaseContext beforeModelCall(BaseContext context,
                                       List<ChatMessage> messages,
                                       List<ToolDefinition> tools) {
+        // I6：摘要调用点已移入 beforeRound（每轮模型调用前），此处不再重复触发
+        return context;
+    }
+
+    @Override
+    public BaseContext beforeRound(BaseContext context,
+                                   List<ChatMessage> messages,
+                                   List<ToolDefinition> tools) {
         try {
             int threshold = context.getSummaryThreshold() != null
                     ? context.getSummaryThreshold()
@@ -56,12 +71,22 @@ public class SummarizationMiddleware implements AgentMiddleware {
                 return context;
             }
 
+            // I6：摘要模型取自 context（modelConfig 优先，回落 model 字段）；取不到则跳过并 warn
+            String summaryModel = resolveSummaryModel(context);
+            if (summaryModel == null) {
+                log.warn("[SummarizationMiddleware] Tokens ({}) exceeds threshold ({}), "
+                                + "but no usable model found in context (modelConfig/model), skip summarization",
+                        estimatedTokens, threshold);
+                return context;
+            }
+
             log.info("[SummarizationMiddleware] Token count {} exceeds threshold {}, triggering summarization",
                     estimatedTokens, threshold);
 
-            doSummarization(context, messages, threshold);
+            doSummarization(context, messages, threshold, summaryModel);
         } catch (Exception e) {
-            log.error("[SummarizationMiddleware] Summarization failed: {}", e.getMessage());
+            log.warn("[SummarizationMiddleware] Summarization failed (non-fatal, keep original messages): {}",
+                    e.getMessage());
             // 不抛出异常，继续使用原始消息
         }
 
@@ -69,9 +94,22 @@ public class SummarizationMiddleware implements AgentMiddleware {
     }
 
     /**
+     * I6：解析摘要可用模型——modelConfig.model 优先，回落 context.model；均无返回 null。
+     */
+    static String resolveSummaryModel(BaseContext context) {
+        ModelConfig modelConfig = context.getModelConfig();
+        if (modelConfig != null && modelConfig.getModel() != null && !modelConfig.getModel().isBlank()) {
+            return modelConfig.getModel();
+        }
+        String model = context.getModel();
+        return (model != null && !model.isBlank()) ? model : null;
+    }
+
+    /**
      * 对消息列表执行摘要压缩。
      */
-    private void doSummarization(BaseContext context, List<ChatMessage> messages, int threshold) {
+    private void doSummarization(BaseContext context, List<ChatMessage> messages,
+                                 int threshold, String summaryModel) {
         if (messages.size() <= KEEP_RECENT_COUNT + 1) {
             return; // 消息太少，不需要摘要
         }
@@ -97,7 +135,7 @@ public class SummarizationMiddleware implements AgentMiddleware {
         }
 
         // 用 LLM 生成中间消息的摘要
-        String summary = generateSummary(context, middleMessages);
+        String summary = generateSummary(context, middleMessages, summaryModel);
         if (summary == null || summary.isEmpty()) {
             log.warn("[SummarizationMiddleware] Summary generation returned empty, skipping compression");
             return;
@@ -117,9 +155,9 @@ public class SummarizationMiddleware implements AgentMiddleware {
     }
 
     /**
-     * 调用 LLM 生成消息摘要。
+     * 调用 LLM 生成消息摘要（I6：模型取自 context，失败 warn 不静默吞）。
      */
-    private String generateSummary(BaseContext context, List<ChatMessage> messages) {
+    private String generateSummary(BaseContext context, List<ChatMessage> messages, String summaryModel) {
         try {
             // 支持自定义摘要提示词
             String customPrompt = (String) context.getRuntimeState().get("summaryPrompt");
@@ -141,12 +179,12 @@ public class SummarizationMiddleware implements AgentMiddleware {
                     new ChatMessage("user", chatContent.toString())
             );
 
-            // 使用 fallback 模型生成摘要
-            String result = llmService.chat(FALLBACK_MODEL, summaryMessages, 0.3);
-            log.debug("[SummarizationMiddleware] Summary generated using model: {}", FALLBACK_MODEL);
+            String result = llmService.chat(summaryModel, summaryMessages, 0.3);
+            log.debug("[SummarizationMiddleware] Summary generated using model: {}", summaryModel);
             return result;
         } catch (Exception e) {
-            log.error("[SummarizationMiddleware] Failed to generate summary: {}", e.getMessage());
+            log.warn("[SummarizationMiddleware] Failed to generate summary with model {}: {}",
+                    summaryModel, e.getMessage());
             return null;
         }
     }

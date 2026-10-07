@@ -6,10 +6,12 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fastrag.ai.model.*;
 import com.fastrag.ai.llm.LlmService;
 import com.fastrag.common.util.JsonSchemaValidator;
+import com.fastrag.common.util.OutputBudget;
 import com.fastrag.module.agent.context.BaseContext;
 import com.fastrag.module.agent.entity.AgentRun;
 import com.fastrag.module.agent.event.RunEventPublisher;
 import com.fastrag.module.agent.middleware.AgentMiddlewareChain;
+import com.fastrag.module.agent.middleware.ModelRetryMiddleware;
 import com.fastrag.module.agent.middleware.ToolCallInterceptor;
 import com.fastrag.module.tools.executor.*;
 import com.fastrag.module.tools.registry.ToolDefinition;
@@ -101,6 +103,118 @@ public class AgentEngine {
     /** 工具输出截断长度 */
     private static final int TOOL_OUTPUT_MAX = 5000;
 
+    // ==================== I8：只读工具并行执行 ====================
+
+    /** I8：无副作用工具白名单——单轮全为这些工具且 ≥2 个调用时并行执行。 */
+    private static final Set<String> READONLY_PARALLEL_TOOLS = Set.of(
+            "read_file", "list_directory", "grep", "glob",
+            "list_kbs", "query_kb", "list_tables", "describe_table");
+
+    /** I8：并行执行并发上限（信号量）。 */
+    private static final int PARALLEL_MAX_CONCURRENCY = 8;
+
+    /** I8：只读批次执行线程池（守护线程，不阻塞进程退出）。 */
+    private final java.util.concurrent.ExecutorService toolBatchExecutor =
+            java.util.concurrent.Executors.newFixedThreadPool(PARALLEL_MAX_CONCURRENCY, r -> {
+                Thread t = new Thread(r, "agent-tool-batch");
+                t.setDaemon(true);
+                return t;
+            });
+
+    /** I8：单次工具执行结果（含引擎侧计时）。 */
+    private record ToolExecution(ToolResult result, long durationMs) {
+    }
+
+    @jakarta.annotation.PreDestroy
+    void shutdownToolBatchExecutor() {
+        toolBatchExecutor.shutdownNow();
+    }
+
+    /**
+     * I8：全只读白名单轮判定（≥2 个调用且全部命中白名单才并行；调用方已保证批次内全部可执行）。
+     */
+    static boolean isReadOnlyParallelRound(List<ChatMessage.ToolCall> calls) {
+        if (calls == null || calls.size() < 2) {
+            return false;
+        }
+        for (ChatMessage.ToolCall tc : calls) {
+            String name = tc.getFunction() != null ? tc.getFunction().getName() : null;
+            if (name == null || !READONLY_PARALLEL_TOOLS.contains(name)) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /**
+     * I8：工具批次统一执行入口——并行/串行由 {@link #isReadOnlyParallelRound} 判定，
+     * 结果严格按入参顺序返回（toolCallId 对齐回填由调用方按序消费保证）。
+     */
+    private List<ToolExecution> executeToolBatch(List<ChatMessage.ToolCall> calls,
+                                                 List<ToolDefinition> defs,
+                                                 BaseContext context, AgentRun run) {
+        if (calls.isEmpty()) {
+            return List.of();
+        }
+        if (!isReadOnlyParallelRound(calls)) {
+            // 写类与混合轮保持串行
+            List<ToolExecution> results = new ArrayList<>(calls.size());
+            for (int i = 0; i < calls.size(); i++) {
+                results.add(executeOne(defs.get(i), calls.get(i), context, run));
+            }
+            return results;
+        }
+        log.info("[AgentEngine] I8 read-only parallel round: {} tool calls, max {} concurrent",
+                calls.size(), PARALLEL_MAX_CONCURRENCY);
+        java.util.concurrent.Semaphore permits = new java.util.concurrent.Semaphore(PARALLEL_MAX_CONCURRENCY);
+        List<java.util.concurrent.CompletableFuture<ToolExecution>> futures = new ArrayList<>(calls.size());
+        for (int i = 0; i < calls.size(); i++) {
+            ChatMessage.ToolCall tc = calls.get(i);
+            ToolDefinition def = defs.get(i);
+            futures.add(java.util.concurrent.CompletableFuture.supplyAsync(() -> {
+                try {
+                    permits.acquire();
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return new ToolExecution(
+                            ToolResult.error("interrupted while awaiting parallel slot", 0), 0L);
+                }
+                try {
+                    return executeOne(def, tc, context, run);
+                } finally {
+                    permits.release();
+                }
+            }, toolBatchExecutor));
+        }
+        List<ToolExecution> results = new ArrayList<>(calls.size());
+        for (java.util.concurrent.CompletableFuture<ToolExecution> f : futures) {
+            try {
+                results.add(f.get(10, TimeUnit.MINUTES));
+            } catch (Exception e) {
+                log.warn("[AgentEngine] Parallel tool execution failed: {}", e.getMessage());
+                results.add(new ToolExecution(
+                        ToolResult.error("parallel tool execution failed: " + e.getMessage(), 0), 0L));
+            }
+        }
+        return results;
+    }
+
+    /** I8：单次执行（含计时与兜底——执行器抛出的运行时异常转为错误结果，不拖垮整轮）。 */
+    private ToolExecution executeOne(ToolDefinition toolDef, ChatMessage.ToolCall tc,
+                                     BaseContext context, AgentRun run) {
+        long start = System.currentTimeMillis();
+        try {
+            return new ToolExecution(executeTool(toolDef, tc, context, run),
+                    System.currentTimeMillis() - start);
+        } catch (RuntimeException e) {
+            log.warn("[AgentEngine] Tool '{}' execution threw: {}", tc.getFunction().getName(), e.getMessage());
+            return new ToolExecution(
+                    ToolResult.error("Execution failed: " + e.getMessage(),
+                            (int) (System.currentTimeMillis() - start)),
+                    System.currentTimeMillis() - start);
+        }
+    }
+
     // ==================== 流完成回调接口 ====================
     @FunctionalInterface
     public interface StreamCompleteCallback {
@@ -159,9 +273,16 @@ public class AgentEngine {
             // 5. 工具调用循环（maxSteps 可通过 context 配置）
             int maxIterations = (context.getMaxSteps() != null && context.getMaxSteps() > 0)
                     ? context.getMaxSteps() : MAX_ITERATIONS;
+            // I5：防卡死守卫（length 截断/空响应/复读），每 run 一个实例
+            RoundGuard guard = new RoundGuard();
+            // I5：守卫判定终止时若尚无任何输出，走兜底文案
+            boolean guardStopped = false;
             for (int round = 0; round < maxIterations; round++) {
                 totalIterations++;
                 log.info("[AgentEngine] Iteration {}/{}", round + 1, maxIterations);
+
+                // I6：每轮循环边界（本轮消息回灌后、下轮模型调用前）——SummarizationMiddleware 调用点
+                middlewareChain.executeRoundBoundary(context, messages, tools);
 
                 // M2-3（D7）：技能激活追加工具依赖后，本轮模型调用前重算工具
                 List<ChatRequest.ToolDefinition> recomputed = recomputeToolsIfDirty(context, tools);
@@ -172,23 +293,32 @@ public class AgentEngine {
                 // 打印当前消息列表摘要
                 logMessagesSummary(messages, round);
 
-                // 5a. 调用 LLM（流式 + 工具 + thinking）
-                Flux<StreamEvent> flux = llmService.streamChatWithTools(
-                        modelConfig.getModel(), messages, openaiTools,
-                        modelConfig.getTemperature(), modelConfig.getApiUrl(),
-                        modelConfig.getApiKey(), modelConfig.isEnableThinking());
-
-                // 5b. 流式消费 + SSE 推送
-                LlmStreamResult result = consumeStream(
-                        flux, emitter, fullAnswer, thinkingContent);
+                // 5a/5b. 调用 LLM（流式 + 工具 + thinking；I7：瞬时异常指数退避重试）
+                LlmStreamResult result = consumeStreamWithRetry(
+                        context, modelConfig, openaiTools, messages,
+                        emitter, fullAnswer, thinkingContent);
 
                 // 5c. 后置中间件链
                 middlewareChain.executeAfter(context, result.getResponse());
 
-                // 5d. 无工具调用 → 结束循环
-                if (!result.getResponse().hasToolCalls()) {
-                    log.info("[AgentEngine] LLM returned final answer (iterations={})", totalIterations);
+                // 5d. I5 防卡死守卫：裁决本轮走向（执行工具 / 注入提示重试 / 结束）
+                RoundGuard.Action action = guard.evaluate(result.getResponse());
+                if (action == RoundGuard.Action.EXECUTE_TOOLS) {
+                    log.debug("[AgentEngine] Round {} proceeds to tool execution", round + 1);
+                } else if (action == RoundGuard.Action.FINISH) {
+                    if (result.getResponse().hasToolCalls()) {
+                        log.warn("[AgentEngine] Guard stopped tool loop: consecutive length truncation (iterations={})",
+                                totalIterations);
+                    } else {
+                        log.info("[AgentEngine] LLM returned final answer (iterations={})", totalIterations);
+                    }
+                    guardStopped = fullAnswer.isEmpty();
                     break;
+                } else {
+                    // RETRY_LENGTH / RETRY_EMPTY / RETRY_REPEAT：注入 system 提示后重试
+                    messages.add(new ChatMessage("system", action.systemMessage));
+                    log.info("[AgentEngine] Round guard retry ({}): injected system nudge", action);
+                    continue;
                 }
 
                 // 5e. 将 assistant 消息（含 tool_calls）加入历史
@@ -209,6 +339,11 @@ public class AgentEngine {
                 }
 
                 // 5f. 执行每个工具调用
+                // I8：先分类（拦截/缺失 inline 处理 + tool_call 事件），可执行批次统一执行——
+                // 全只读白名单轮 ≥2 个调用时并行（CompletableFuture + 信号量 8 并发），
+                // 写类与混合轮保持串行；结果按原顺序（toolCallId 对齐）回填。
+                List<ChatMessage.ToolCall> batchCalls = new ArrayList<>();
+                List<ToolDefinition> batchDefs = new ArrayList<>();
                 for (ChatMessage.ToolCall tc : result.getResponse().getToolCalls()) {
                     // 中间件拦截（如 SkillsMiddleware 激活技能）
                     ToolCallInterceptor interceptor =
@@ -278,10 +413,17 @@ public class AgentEngine {
                         continue;
                     }
 
-                    // 解析参数 + 执行
-                    long toolStart = System.currentTimeMillis();
-                    ToolResult toolResult = executeTool(toolDef, tc, context, run);
-                    long toolDuration = System.currentTimeMillis() - toolStart;
+                    // I8：可执行调用进入批次（后面统一执行，写类/混合轮串行、全只读轮并行）
+                    batchCalls.add(tc);
+                    batchDefs.add(toolDef);
+                }
+
+                // I8：批次执行——并行/串行由白名单判定；结果严格按 batchCalls 顺序（toolCallId 对齐）
+                List<ToolExecution> executions = executeToolBatch(batchCalls, batchDefs, context, run);
+                for (int i = 0; i < batchCalls.size(); i++) {
+                    ChatMessage.ToolCall tc = batchCalls.get(i);
+                    ToolResult toolResult = executions.get(i).result();
+                    long toolDuration = executions.get(i).durationMs();
 
                     // 发送 tool_result 事件
                     Map<String, Object> resultData = new LinkedHashMap<>();
@@ -299,7 +441,9 @@ public class AgentEngine {
                     }
                     sendSseEvent(emitter, "tool_result", resultData);
 
-                    // 加入消息历史（截断到大模型友好的长度，前端仍然可查看完整结果）
+                    // 加入消息历史（I3 注释修正：SSE tool_result 与事件通道一致只存截断后内容——
+                    // 5000 字符预算。旧注释「前端仍然可查看完整结果」失实：通道层不做全量承诺，
+                    // 需要完整输出的工具应自行分页或落盘后返回引用）
                     String resultContent = toolResult.isSuccess()
                             ? toolResult.getOutput() : "Error: " + toolResult.getError();
                     // 工具返回数据给 LLM 时截断到 5000 字符
@@ -362,9 +506,9 @@ public class AgentEngine {
             // 6. 发送 end 事件
             long totalDuration = System.currentTimeMillis() - totalStart;
 
-            // 检查是否因达到最大迭代次数而导致无最终回答
+            // 检查是否因达到最大迭代次数或守卫终止（I5 连续截断/空响应）而导致无最终回答
             String finalContent = fullAnswer.toString();
-            if (finalContent.isEmpty() && totalIterations >= maxIterations) {
+            if (finalContent.isEmpty() && (totalIterations >= maxIterations || guardStopped)) {
                 finalContent = stepsExhaustedFallback(maxIterations);
                 // 将兜底内容推送给前端
                 sendSseEvent(emitter, "content", Map.of("content", finalContent));
@@ -450,8 +594,14 @@ public class AgentEngine {
             String finalAnswer = "";
             int maxIterationsSync = (context.getMaxSteps() != null && context.getMaxSteps() > 0)
                     ? context.getMaxSteps() : MAX_ITERATIONS;
+            // I5：防卡死守卫；I7：retryConfig 由 ModelRetryMiddleware 预写 runtimeState
+            RoundGuard guard = new RoundGuard();
+            boolean guardStoppedSync = false;
             for (int round = 0; round < maxIterationsSync; round++) {
                 totalIterations++;
+
+                // I6：每轮循环边界（本轮消息回灌后、下轮模型调用前）
+                middlewareChain.executeRoundBoundary(context, messages, tools);
 
                 // M2-3（D7）：技能激活追加工具依赖后，本轮模型调用前重算工具
                 List<ChatRequest.ToolDefinition> recomputed = recomputeToolsIfDirty(context, tools);
@@ -459,15 +609,32 @@ public class AgentEngine {
                     openaiTools = recomputed;
                 }
 
-                ChatResponse resp = llmService.chatWithTools(
-                        mc.getModel(), messages, openaiTools,
-                        mc.getTemperature(), mc.getApiUrl(), mc.getApiKey());
+                // I7：LLM 调用（瞬时异常指数退避重试，retryConfig 读自 runtimeState）
+                List<ChatRequest.ToolDefinition> toolsForCall = openaiTools;
+                ChatResponse resp = callLlmWithRetry(
+                        () -> llmService.chatWithTools(
+                                mc.getModel(), messages, toolsForCall,
+                                mc.getTemperature(), mc.getApiUrl(), mc.getApiKey()),
+                        retryConfigOf(context), "chatWithTools");
 
                 middlewareChain.executeAfter(context, resp);
 
-                if (!resp.hasToolCalls()) {
-                    finalAnswer = resp.getContent();
+                // I5 防卡死守卫：裁决本轮走向
+                RoundGuard.Action action = guard.evaluate(resp);
+                if (action == RoundGuard.Action.EXECUTE_TOOLS) {
+                    // 走工具执行，见下
+                } else if (action == RoundGuard.Action.FINISH) {
+                    if (!resp.hasToolCalls()) {
+                        finalAnswer = resp.getContent();
+                    } else {
+                        log.warn("[AgentEngine] Guard stopped sync tool loop: consecutive length truncation");
+                    }
+                    guardStoppedSync = StrUtil.isBlank(finalAnswer);
                     break;
+                } else {
+                    // RETRY_*：注入 system 提示后重试
+                    messages.add(new ChatMessage("system", action.systemMessage));
+                    continue;
                 }
 
                 // Add assistant message
@@ -478,6 +645,9 @@ public class AgentEngine {
                 messages.add(assistantMsg);
 
                 // Execute tools
+                // I8：先分类（拦截/缺失 inline 处理），可执行批次统一执行（全只读轮并行，其余串行）
+                List<ChatMessage.ToolCall> batchCallsSync = new ArrayList<>();
+                List<ToolDefinition> batchDefsSync = new ArrayList<>();
                 for (ChatMessage.ToolCall tc : resp.getToolCalls()) {
                     // Middleware intercept
                     ToolCallInterceptor interceptor =
@@ -500,9 +670,16 @@ public class AgentEngine {
                         continue;
                     }
 
-                    long toolStart = System.currentTimeMillis();
-                    ToolResult toolResult = executeTool(toolDef, tc, context, run);
-                    long toolDuration = System.currentTimeMillis() - toolStart;
+                    batchCallsSync.add(tc);
+                    batchDefsSync.add(toolDef);
+                }
+
+                // I8：批次执行，结果按 toolCallId 对齐（原顺序）回填
+                List<ToolExecution> executions = executeToolBatch(batchCallsSync, batchDefsSync, context, run);
+                for (int i = 0; i < batchCallsSync.size(); i++) {
+                    ChatMessage.ToolCall tc = batchCallsSync.get(i);
+                    ToolResult toolResult = executions.get(i).result();
+                    long toolDuration = executions.get(i).durationMs();
 
                     String resultContent = toolResult.isSuccess()
                             ? toolResult.getOutput() : "Error: " + toolResult.getError();
@@ -523,8 +700,8 @@ public class AgentEngine {
                 }
             }
 
-            // QF-4：轮次耗尽且无最终回答时，填入与流式分支一致的兜底文案（success 语义不变）
-            if (StrUtil.isBlank(finalAnswer) && totalIterations >= maxIterationsSync) {
+            // QF-4：轮次耗尽（或 I5 守卫终止）且无最终回答时，填入与流式分支一致的兜底文案（success 语义不变）
+            if (StrUtil.isBlank(finalAnswer) && (totalIterations >= maxIterationsSync || guardStoppedSync)) {
                 finalAnswer = stepsExhaustedFallback(maxIterationsSync);
             }
 
@@ -610,12 +787,15 @@ public class AgentEngine {
 
         if (!completed) {
             log.warn("[AgentEngine] Stream timeout after {}s", timeout);
-            throw new RuntimeException("LLM stream timeout after " + timeout + "s");
+            // I7：带上 TimeoutException cause，供瞬时异常判定（可重试）
+            throw new RuntimeException("LLM stream timeout after " + timeout + "s",
+                    new java.util.concurrent.TimeoutException("stream timeout"));
         }
 
         // 处理错误
         if (errorRef.get() != null) {
-            throw new RuntimeException("LLM stream error: " + errorRef.get().getMessage());
+            // I7：带上原始 cause，供瞬时异常判定（可重试）
+            throw new RuntimeException("LLM stream error: " + errorRef.get().getMessage(), errorRef.get());
         }
 
         // 构建 ChatResponse
@@ -625,6 +805,120 @@ public class AgentEngine {
         response.setToolCalls(accumulatedToolCalls);
 
         return new LlmStreamResult(response, false);
+    }
+
+    // ==================== I7：LLM 调用瞬时异常重试 ====================
+
+    /**
+     * 流式调用 + 消费（带 I7 重试）：瞬时异常（IOException/超时/5xx/429）按 retryConfig
+     * 指数退避重试。retryConfig 由 ModelRetryMiddleware 预写 runtimeState（未配置不重试）。
+     * 重试前回滚本次尝试对 fullAnswer/thinkingContent 的部分累积，避免内容重复。
+     */
+    private LlmStreamResult consumeStreamWithRetry(BaseContext context, ModelConfig modelConfig,
+                                                   List<ChatRequest.ToolDefinition> openaiTools,
+                                                   List<ChatMessage> messages,
+                                                   SseEmitter emitter,
+                                                   StringBuilder fullAnswer,
+                                                   StringBuilder thinkingContent) throws InterruptedException {
+        ModelRetryMiddleware.RetryConfig retryConfig = retryConfigOf(context);
+        int maxRetries = retryConfig != null ? Math.max(0, retryConfig.getMaxRetries()) : 0;
+        RuntimeException last = null;
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            if (attempt > 0 && last != null) {
+                long wait = Math.min(retryConfig.getWaitTime(attempt - 1), 30_000L);
+                log.warn("[AgentEngine] Transient LLM failure (streamChatWithTools), retry {}/{} in {}ms: {}",
+                        attempt, maxRetries, wait, last.getMessage());
+                try {
+                    Thread.sleep(wait);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw last;
+                }
+            }
+            int answerLen = fullAnswer.length();
+            int thinkingLen = thinkingContent.length();
+            try {
+                Flux<StreamEvent> flux = llmService.streamChatWithTools(
+                        modelConfig.getModel(), messages, openaiTools,
+                        modelConfig.getTemperature(), modelConfig.getApiUrl(),
+                        modelConfig.getApiKey(), modelConfig.isEnableThinking());
+                return consumeStream(flux, emitter, fullAnswer, thinkingContent);
+            } catch (RuntimeException e) {
+                if (fullAnswer.length() > answerLen) fullAnswer.setLength(answerLen);
+                if (thinkingContent.length() > thinkingLen) thinkingContent.setLength(thinkingLen);
+                if (!isTransientLlmFailure(e)) {
+                    throw e;
+                }
+                last = e;
+            }
+        }
+        throw last;
+    }
+
+    /**
+     * I7：读取 ModelRetryMiddleware 预写的重试配置（无则返回 null = 不重试）。
+     */
+    private ModelRetryMiddleware.RetryConfig retryConfigOf(BaseContext context) {
+        try {
+            Object cfg = context.getRuntimeState().get("retryConfig");
+            return cfg instanceof ModelRetryMiddleware.RetryConfig rc ? rc : null;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    /**
+     * I7：带指数退避的 LLM 调用。仅对瞬时异常（isTransientLlmFailure）重试 maxRetries 次；
+     * 非瞬时异常直接抛出。maxRetries≤0 或无配置时行为与直调一致。
+     */
+    private <T> T callLlmWithRetry(java.util.function.Supplier<T> call,
+                                   ModelRetryMiddleware.RetryConfig config, String desc) {
+        int maxRetries = config != null ? Math.max(0, config.getMaxRetries()) : 0;
+        RuntimeException last = null;
+        for (int attempt = 0; attempt <= maxRetries; attempt++) {
+            if (attempt > 0 && last != null) {
+                long wait = Math.min(config.getWaitTime(attempt - 1), 30_000L);
+                log.warn("[AgentEngine] Transient LLM failure ({}), retry {}/{} in {}ms: {}",
+                        desc, attempt, maxRetries, wait, last.getMessage());
+                try {
+                    Thread.sleep(wait);
+                } catch (InterruptedException ie) {
+                    Thread.currentThread().interrupt();
+                    throw last;
+                }
+            }
+            try {
+                return call.get();
+            } catch (RuntimeException e) {
+                if (!isTransientLlmFailure(e)) {
+                    throw e;
+                }
+                last = e;
+            }
+        }
+        throw last;
+    }
+
+    /**
+     * I7：瞬时异常判定——沿 cause 链找 IOException / 超时 / WebClient 请求异常（连接层失败）
+     * 或 5xx、429 响应。4xx 业务错误不重试。
+     */
+    static boolean isTransientLlmFailure(Throwable e) {
+        Throwable t = e;
+        int depth = 0;
+        while (t != null && depth++ < 8) {
+            if (t instanceof java.io.IOException
+                    || t instanceof java.util.concurrent.TimeoutException
+                    || t instanceof org.springframework.web.reactive.function.client.WebClientRequestException) {
+                return true;
+            }
+            if (t instanceof org.springframework.web.reactive.function.client.WebClientResponseException wcre) {
+                int status = wcre.getStatusCode().value();
+                return status >= 500 || status == 429;
+            }
+            t = t.getCause();
+        }
+        return false;
     }
 
     // ==================== 工具执行 ====================
@@ -844,7 +1138,8 @@ public class AgentEngine {
             payload.put("toolName", tc.getFunction().getName());
             payload.put("toolCallId", tc.getId());
             payload.put("success", result.isSuccess());
-            payload.put("output", result.getOutput());
+            // I3：事件表只存截断后内容（与 I2 容量上限配合，防止大输出撑爆事件存储）
+            payload.put("output", truncate(result.getOutput(), TOOL_OUTPUT_MAX));
             payload.put("error", result.getError());
             payload.put("durationMs", duration);
             eventPublisher.pushEvent(runId, "tool_call", payload);
@@ -912,11 +1207,10 @@ public class AgentEngine {
     }
 
     /**
-     * 截断文本到指定长度。
+     * 截断文本到指定长度（I1：rune 安全——不拆散 emoji 等增补码点，见 OutputBudget）。
      */
     private String truncate(String text, int maxLen) {
-        if (text == null) return "";
-        return text.length() > maxLen ? text.substring(0, maxLen) + "...(truncated)" : text;
+        return OutputBudget.truncate(text, maxLen, OutputBudget.DEFAULT_TRUNCATED_MARKER);
     }
 
     /**

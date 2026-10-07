@@ -1,5 +1,6 @@
 package com.fastrag.module.agent.sandbox;
 
+import com.fastrag.common.util.OutputBudget;
 import com.fastrag.module.agent.sandbox.config.EffectiveConfig;
 import com.fastrag.module.agent.sandbox.config.SandboxConfigService;
 import com.fastrag.module.agent.sandbox.provider.DirEntry;
@@ -46,9 +47,8 @@ public class SandboxExecutionService {
     /** 分支③前缀：provider 连接期失败（附分类原因） */
     public static final String TEXT_UNAVAILABLE_PREFIX = "Error: Sandbox unavailable: ";
 
-    /** 输出截断上限 256KB（承接旧 SandboxBackend 语义） */
+    /** 输出截断上限 256KB（承接旧 SandboxBackend 语义；I3 起为头尾保留式截断） */
     private static final int MAX_OUTPUT_CHARS = 262_144;
-    private static final String TRUNCATION_MARKER = "\n...(truncated)";
     private static final int DEFAULT_EXEC_TIMEOUT_SECONDS = 120;
 
     private final SandboxConfigService configService;
@@ -438,13 +438,8 @@ public class SandboxExecutionService {
     }
 
     private String truncate(String output) {
-        if (output == null) {
-            return "";
-        }
-        if (output.length() > MAX_OUTPUT_CHARS) {
-            return output.substring(0, MAX_OUTPUT_CHARS) + TRUNCATION_MARKER;
-        }
-        return output;
+        // I1+I3：rune 安全 + 头尾保留截断（错误信息常在尾部，中间整体省略）；仅此方法区域改动
+        return OutputBudget.truncateMiddle(output, MAX_OUTPUT_CHARS);
     }
 
     private String sliceLines(String content, Integer offset, Integer limit) {

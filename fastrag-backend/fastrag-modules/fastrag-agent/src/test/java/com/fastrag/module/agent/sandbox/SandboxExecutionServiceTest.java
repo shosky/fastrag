@@ -170,6 +170,19 @@ class SandboxExecutionServiceTest {
         assertThat(readAllowed).isEqualTo("# Web");
     }
 
+    // ---------- 4b. [活动标记保留路径] 写 .fastrag_activity 拒（backlog S3） ----------
+
+    @Test
+    void 活动标记防御_写fastrag_activity时_拒写且provider零调用() {
+        stubAvailable();
+
+        String rejected = facade.writeFile(USER, SESSION, CONFIG_ID,
+                SandboxWorkspaceLayout.ACTIVITY_MARKER, "0");
+
+        assertThat(rejected).startsWith("Error:").contains("not writable");
+        verify(docker, never()).writeFile(any(SandboxHandle.class), anyString(), anyString());
+    }
+
     // ---------- 5. [穿越拒绝] path 含 ../ 时 [拒绝不触 provider] ----------
 
     @Test
@@ -181,20 +194,21 @@ class SandboxExecutionServiceTest {
         verify(docker, never()).create(any(CreateContext.class));
     }
 
-    // ---------- 6. [输出截断] exec 输出超 256KB 时 [截断加标记返回] ----------
+    // ---------- 6. [输出截断] exec 输出超 256KB 时 [头尾保留、中间省略返回]（I3） ----------
 
     @Test
-    void 输出截断_exec输出超256KB时_截断加标记返回() {
+    void 输出截断_exec输出超256KB时_头尾保留中间省略() {
         stubAvailable();
-        String big = "x".repeat(300_000);
+        String big = "x".repeat(300_000) + "\nERROR: exit 1 at tail";
         when(docker.exec(any(SandboxHandle.class), any(ExecRequest.class)))
                 .thenReturn(ExecResult.builder().stdout(big).exitCode(0).build());
 
         String result = facade.execute(USER, SESSION, CONFIG_ID, "cat big.log", null, null);
 
-        int markerLength = "\n...(truncated)".length();
-        assertThat(result.length()).isLessThanOrEqualTo(262_144 + markerLength);
-        assertThat(result).endsWith("...(truncated)");
+        assertThat(result).startsWith("xxx");
+        assertThat(result).endsWith("ERROR: exit 1 at tail");
+        assertThat(result).contains("省略");
+        assertThat(result.length()).isLessThanOrEqualTo(262_144 + 64);
     }
 
     // ---------- 7. [附件暂存] uploads 传入时 [拷入 /workspace/input 并回填沙箱内路径] ----------

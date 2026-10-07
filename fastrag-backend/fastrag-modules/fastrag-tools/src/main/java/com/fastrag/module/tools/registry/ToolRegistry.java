@@ -117,10 +117,33 @@ public class ToolRegistry {
         return def;
     }
 
-    /** 将 ToolDefinition 列表转为 OpenAI function calling 格式（QF-6：按 function name 稳定排序，两条消费路径自动受益） */
+    /** 将 ToolDefinition 列表转为 OpenAI function calling 格式
+     *  （QF-6：按 function name 稳定排序；I4（P1-4）：同名工具 first-wins 归并——
+     *  重复定义会让部分网关直接拒绝请求。resolveTools 与中间件追加路径不动，
+     *  统一出口归并即覆盖所有来源。） */
     public List<ChatRequest.ToolDefinition> toOpenAITools(List<ToolDefinition> tools) {
         if (tools == null) return List.of();
-        return tools.stream().map(t -> {
+
+        // I4：按 name 去重（先到者胜 + warn 列出被丢弃者）；无名的定义不去重、原样保留
+        Map<String, ToolDefinition> unique = new LinkedHashMap<>();
+        List<ToolDefinition> unnamed = new ArrayList<>();
+        for (ToolDefinition t : tools) {
+            if (t == null) continue;
+            if (t.getName() == null) {
+                unnamed.add(t);
+                continue;
+            }
+            ToolDefinition prev = unique.putIfAbsent(t.getName(), t);
+            if (prev != null) {
+                log.warn("[ToolRegistry] duplicate tool name '{}' dropped (first-wins): "
+                                + "kept toolId={}, dropped toolId={}",
+                        t.getName(), prev.getToolId(), t.getToolId());
+            }
+        }
+        List<ToolDefinition> merged = new ArrayList<>(unnamed);
+        merged.addAll(unique.values());
+
+        return merged.stream().map(t -> {
             ChatRequest.ToolDefinition td = new ChatRequest.ToolDefinition();
             td.setType("function");
             ChatRequest.FunctionDef fn = new ChatRequest.FunctionDef();

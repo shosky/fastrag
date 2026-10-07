@@ -50,6 +50,23 @@ public class AgentMiddlewareChain {
     }
 
     /**
+     * I6：每轮循环边界——按顺序执行所有中间件的 beforeRound
+     * （本轮消息回灌后、下轮模型调用前；SummarizationMiddleware 调用点移入处）。
+     */
+    public void executeRoundBoundary(BaseContext context,
+                                     List<ChatMessage> messages,
+                                     List<ToolDefinition> tools) {
+        for (AgentMiddleware m : middlewares) {
+            try {
+                context = m.beforeRound(context, messages, tools);
+            } catch (Exception e) {
+                log.warn("[Middleware] beforeRound error in {}: {}",
+                        m.getName(), e.getMessage());
+            }
+        }
+    }
+
+    /**
      * 后置阶段: 按逆序执行所有中间件的 afterModelCall。
      */
     public void executeAfter(BaseContext context, ChatResponse response) {
