@@ -40,8 +40,17 @@ public class SkillsMiddleware implements AgentMiddleware {
     @Autowired(required = false)
     private SandboxExecutionService sandboxExecutionService;
 
-    private static final Pattern SKILL_READ_PATH_PATTERN = 
+    private static final Pattern SKILL_READ_PATH_PATTERN =
         Pattern.compile(Pattern.quote(SandboxWorkspaceLayout.SKILLS_ROOT) + "/([^/]+)/SKILL\\.md");
+
+    /**
+     * runtimeState 中用户 @ 点名技能列表的键（F1 @提及技能；AppServiceImpl 会话执行核写入，
+     * 条目为技能名称或 slug——@ 下拉数据源为 accessible 列表，二者皆是合法点名形态）。
+     */
+    public static final String PINNED_SKILL_NAMES_KEY = "pinnedSkillNames";
+
+    /** F1：pinned must_use 块单 run 只处理一次的哨兵键（INJECTED_FLAG 模式，工具循环不重复追加/告警） */
+    public static final String MUST_USE_INJECTED_FLAG = "pinnedSkillsMustUseHandled";
 
     @Override
     public int getOrder() { return 4; }
@@ -51,6 +60,8 @@ public class SkillsMiddleware implements AgentMiddleware {
                                       List<ChatMessage> messages,
                                       List<ToolDefinition> tools) {
         if (context.getSkills() == null || context.getSkills().isEmpty()) {
+            // 无绑定技能：点名全为集外，pinned 不新增能力——仅 warn 静默忽略（单 run 一次）
+            applyPinnedSkills(context, messages);
             return context;
         }
 
@@ -68,6 +79,9 @@ public class SkillsMiddleware implements AgentMiddleware {
         if (!skillsPrompt.isEmpty()) {
             injectSystemPrompt(messages, skillsPrompt);
         }
+
+        // Phase 3: F1 @提及技能——pinned 与当轮可用集合求交集，命中追加 must_use 强提示（单 run 一次）
+        applyPinnedSkills(context, messages);
 
         return context;
     }
@@ -232,6 +246,74 @@ public class SkillsMiddleware implements AgentMiddleware {
             return chatBot.getSandboxConfigId();
         }
         return null;
+    }
+
+    /**
+     * F1 @提及技能（skill-feature-batch.md F1，2026-10-07 裁决）：用户 @ 点名的技能
+     * （{@link #PINNED_SKILL_NAMES_KEY}，AppServiceImpl 会话执行核写入）与当轮可用技能集合
+     * （promptSkills 传递闭包，slug 或名称均可命中）求交集；交集非空则追加 {@code <must_use>}
+     * 强提示块——pinned 不收窄白名单、不新增能力（对齐 WeKnora），集外点名静默忽略并 warn
+     * （含被忽略的 name）。单 run 只处理一次（{@link #MUST_USE_INJECTED_FLAG}，工具循环多轮
+     * 模型调用不重复追加、不重复告警）。
+     */
+    private void applyPinnedSkills(BaseContext context, List<ChatMessage> messages) {
+        Map<String, Object> state = context.getRuntimeState();
+        if (state.get(MUST_USE_INJECTED_FLAG) != null) return;
+
+        List<String> pinned = normalizedPinnedNames(state.get(PINNED_SKILL_NAMES_KEY));
+        if (pinned.isEmpty()) return;
+
+        // 可用技能索引：闭包内技能的 slug 与 name 均作命中键（两键同指一个实体时先到先得）
+        Map<String, Skill> entities = context.getRuntimeSkillEntities();
+        Map<String, Skill> available = new LinkedHashMap<>();
+        if (entities != null) {
+            for (Skill s : entities.values()) {
+                if (s.getSlug() != null) available.putIfAbsent(s.getSlug(), s);
+                if (s.getName() != null) available.putIfAbsent(s.getName(), s);
+            }
+        }
+
+        List<Skill> matched = new ArrayList<>();
+        List<String> ignored = new ArrayList<>();
+        Set<String> seenSlugs = new HashSet<>();
+        for (String name : pinned) {
+            Skill s = available.get(name);
+            if (s == null) {
+                ignored.add(name);
+            } else if (seenSlugs.add(s.getSlug())) {
+                matched.add(s); // 同一技能被 slug 与 name 重复点名只注入一次
+            }
+        }
+        if (!ignored.isEmpty()) {
+            log.warn("[SkillsMiddleware] Pinned skills outside available set ignored: {}", ignored);
+        }
+
+        // 无论是否命中都置哨兵：本轮点名已处理，工具循环不再重复告警
+        state.put(MUST_USE_INJECTED_FLAG, Boolean.TRUE);
+        if (matched.isEmpty() || messages == null || messages.isEmpty()) return;
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("\n\n<must_use>\n本轮用户点名了以下技能，必须优先调用 read_file 读取其 SKILL.md 并遵循指引：\n");
+        for (Skill s : matched) {
+            sb.append("- ").append(s.getName() != null ? s.getName() : s.getSlug())
+              .append(" (").append(SandboxWorkspaceLayout.SKILLS_ROOT).append("/")
+              .append(s.getSlug()).append("/SKILL.md)\n");
+        }
+        sb.append("</must_use>\n");
+        injectSystemPrompt(messages, sb.toString());
+        log.debug("[SkillsMiddleware] Injected pinned-skills must_use block: {}", matched.stream().map(Skill::getSlug).toList());
+    }
+
+    /** 点名列表规范化：List 投影 + trim + 去空白 + 去重，保持请求顺序。 */
+    private static List<String> normalizedPinnedNames(Object raw) {
+        if (!(raw instanceof List<?> list) || list.isEmpty()) return List.of();
+        LinkedHashSet<String> out = new LinkedHashSet<>();
+        for (Object o : list) {
+            if (o == null) continue;
+            String n = o.toString().strip();
+            if (!n.isEmpty()) out.add(n);
+        }
+        return new ArrayList<>(out);
     }
 
     /**

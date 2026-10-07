@@ -12,6 +12,7 @@ import com.fastrag.module.agent.executor.AgentEngine;
 import com.fastrag.module.agent.executor.ModelConfig;
 import com.fastrag.module.agent.mapper.SandboxConfigMapper;
 import com.fastrag.module.agent.middleware.HistoryMiddleware;
+import com.fastrag.module.agent.middleware.SkillsMiddleware;
 import com.fastrag.module.application.dto.AppSessionDTO;
 import com.fastrag.module.application.dto.ConversationRequestState;
 import com.fastrag.module.application.entity.*;
@@ -605,6 +606,16 @@ public class AppServiceImpl implements AppService {
                         projectHistory(historyMessages, HISTORY_BUDGET_CHARS));
                 context.getRuntimeState().put(KB_HANDLE_MAP_KEY, new LinkedHashMap<String, Object>());
                 context.getRuntimeState().put(KB_HANDLE_SEQ_KEY, new java.util.concurrent.atomic.AtomicInteger(0));
+
+                // F1 @提及技能：请求态 skillNames（用户 @ 点名）写入 runtimeState，供 SkillsMiddleware
+                // 与当轮可用技能集合求交集后施加 must_use 强提示。双入口汇聚点：新通道=本轮 turnState
+                // （空时回落持久化形状）；旧通道=PRESET_ONLY（无 skillNames，自然无键——请求态字段全忽略）。
+                // pinned 不收窄白名单、不新增能力；集外点名由中间件 warn 静默忽略。
+                if (persistState != null && persistState.getSkillNames() != null
+                        && !persistState.getSkillNames().isEmpty()) {
+                    context.getRuntimeState().put(SkillsMiddleware.PINNED_SKILL_NAMES_KEY,
+                            new ArrayList<>(persistState.getSkillNames()));
+                }
 
                 if (!cfg.getBindings().getTools().isEmpty()) {
                     context.setTools(cfg.getBindings().getTools());

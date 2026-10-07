@@ -14,6 +14,9 @@ import java.util.List;
  * 本轮覆盖，也是持久化在 {@code app_conversation.request_state} 的形状；两者字段集恒等，
  * 禁止演化出第二套形状。toolIds/mcpIds/skillIds/webSearchEnabled 为 B02 死字段——仅存储
  * 不消费，解析器（DialogPresetResolver）禁止读取（data.md「死字段清单的唯一证词」）。
+ * skillNames 为 F1 @提及技能活字段（2026-10-07 裁决）：消费点在会话执行核
+ * （AppServiceImpl 写入 runtimeState.pinnedSkillNames → agent 侧 SkillsMiddleware 施加
+ * must_use 强提示），解析器同样禁止读取。
  */
 @Data
 public class ConversationRequestState {
@@ -22,6 +25,8 @@ public class ConversationRequestState {
     public static final int KB_IDS_MAX = 50;
     /** 工具/MCP/技能列表上限（仅存字段同样设界） */
     public static final int LIST_MAX = 100;
+    /** @提及技能点名上限（F1 裁决：与 kbIds 同款契约校验——超出抛业务错误，不静默截断） */
+    public static final int SKILL_NAMES_MAX = 10;
 
     /** 旧通道哨兵：仅应用预设源 + 内置缺省，忽略一切请求态字段（contract PRESET_ONLY） */
     public static final ConversationRequestState PRESET_ONLY = ofPresetOnly();
@@ -44,6 +49,13 @@ public class ConversationRequestState {
     private List<String> skillIds = new ArrayList<>();
     /** 仅存不消费（web 搜索能力后补） */
     private Boolean webSearchEnabled = Boolean.FALSE;
+    /**
+     * F1 @提及技能（2026-10-07 裁决）：用户在输入框 @ 点名的技能（名称或 slug，@ 下拉数据源
+     * 为 accessible 列表，二者皆是合法点名形态）。本轮对话对所选技能施加 must_use 强提示——
+     * pinned 不收窄白名单、不新增能力（集外点名静默忽略并 warn）；持久化供前端重开会话回显。
+     * 消费链：执行核写入 runtimeState.pinnedSkillNames → SkillsMiddleware 与 promptSkills 交集。
+     */
+    private List<String> skillNames = new ArrayList<>();
 
     private static ConversationRequestState ofPresetOnly() {
         ConversationRequestState s = new ConversationRequestState();
@@ -69,6 +81,11 @@ public class ConversationRequestState {
         toolIds = capped(toolIds);
         mcpIds = capped(mcpIds);
         skillIds = capped(skillIds);
+        if (skillNames == null) skillNames = new ArrayList<>();
+        skillNames = new ArrayList<>(new LinkedHashSet<>(skillNames));
+        if (skillNames.size() > SKILL_NAMES_MAX) {
+            throw BusinessException.badRequest("点名技能数量超限（最多 " + SKILL_NAMES_MAX + " 个）");
+        }
     }
 
     private static List<String> capped(List<String> list) {

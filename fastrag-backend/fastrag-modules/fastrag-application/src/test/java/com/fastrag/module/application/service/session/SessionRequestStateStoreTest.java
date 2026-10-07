@@ -75,6 +75,71 @@ class SessionRequestStateStoreTest {
         assertThat(reloaded).isEqualTo(state);
     }
 
+    // ===== F1 @提及技能：skillNames 契约（去重 + 上限 10，与 kbIds 同款；2026-10-07 裁决） =====
+
+    @Test
+    void validateDedupesSkillNamesPreservingOrder() {
+        // [形状] skillNames 去重且保序（LinkedHashSet 语义，与 kbIds 同款）
+        ConversationRequestState state = new ConversationRequestState();
+        state.setSkillNames(List.of("联网搜索", "web-search", "联网搜索"));
+
+        state.validate();
+
+        assertThat(state.getSkillNames()).containsExactly("联网搜索", "web-search");
+    }
+
+    @Test
+    void validateRejectsMoreThan10DistinctSkillNames() {
+        // [形状] 上限 10：11 个不同点名抛业务错误，不静默截断
+        ConversationRequestState state = new ConversationRequestState();
+        state.setSkillNames(java.util.stream.IntStream.rangeClosed(1, 11)
+                .mapToObj(i -> "skill-" + i).toList());
+
+        assertThatThrownBy(() -> state.validate())
+                .isInstanceOf(BusinessException.class)
+                .hasMessageContaining("10");
+    }
+
+    @Test
+    void validateAcceptsExactly10DistinctSkillNames() {
+        // [边界] 恰好 10 个合法
+        ConversationRequestState state = new ConversationRequestState();
+        state.setSkillNames(java.util.stream.IntStream.rangeClosed(1, 10)
+                .mapToObj(i -> "skill-" + i).toList());
+
+        state.validate();
+
+        assertThat(state.getSkillNames()).hasSize(10);
+    }
+
+    @Test
+    void persistThenLoadRoundTripsSkillNames() {
+        // [对称] requestState JSON 序列化往返携带 skillNames（前端重开会话回显的数据源）
+        when(convMapper.selectById("c2")).thenReturn(new AppConversation());
+        ConversationRequestState state = new ConversationRequestState();
+        state.setSkillNames(List.of("联网搜索", "web-search"));
+
+        store.persistOnSuccess("c2", state);
+
+        ArgumentCaptor<AppConversation> captor = ArgumentCaptor.forClass(AppConversation.class);
+        verify(convMapper).updateById(captor.capture());
+        ConversationRequestState reloaded = store.parse(captor.getValue().getRequestState());
+        assertThat(reloaded).isEqualTo(state);
+        assertThat(reloaded.getSkillNames()).containsExactly("联网搜索", "web-search");
+    }
+
+    @Test
+    void persistRejectsSkillNamesOverLimit() {
+        // [形状] skillNames 上限经 persistOnSuccess 的 validate 同样拒绝
+        ConversationRequestState state = new ConversationRequestState();
+        state.setSkillNames(java.util.stream.IntStream.rangeClosed(1, 11)
+                .mapToObj(i -> "skill-" + i).toList());
+
+        assertThatThrownBy(() -> store.persistOnSuccess("c1", state))
+                .isInstanceOf(BusinessException.class);
+        verify(convMapper, org.mockito.Mockito.never()).updateById(any(AppConversation.class));
+    }
+
     @Test
     void persistRejectsKbIdsOverLimit() {
         // [形状] kbIds 上限 50 拒绝（不静默截断）

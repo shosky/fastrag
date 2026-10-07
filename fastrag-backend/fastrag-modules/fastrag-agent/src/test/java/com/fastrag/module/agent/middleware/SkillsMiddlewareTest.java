@@ -537,6 +537,200 @@ class SkillsMiddlewareTest {
         assertFalse(sysContent.contains("长".repeat(601)), "不应包含超过 600 字符的描述");
     }
 
+    // ===== F1 @提及技能：pinned must_use 强提示（2026-10-07 裁决） =====
+
+    @Test
+    void beforeModelCall_PinnedSkillsInjectMustUseBlockWithSkmdPath() {
+        Skill skill = new Skill();
+        skill.setId("2001");
+        skill.setEnabled(1);
+        skill.setSlug("web-search");
+        skill.setName("联网搜索");
+        skill.setDescription("Search the web");
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        BaseContext context = new BaseContext();
+        context.setSkills(List.of("2001"));
+        context.getRuntimeState().put(SkillsMiddleware.PINNED_SKILL_NAMES_KEY,
+                List.of("联网搜索", "web-search"));
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(new ChatMessage("system", "Base prompt."));
+
+        middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+        String sysContent = messages.get(0).getContent();
+        assertTrue(sysContent.contains("<must_use>"), "交集非空应追加 must_use 块: " + sysContent);
+        assertTrue(sysContent.contains("本轮用户点名了以下技能"), "应含点名指引文案");
+        assertTrue(sysContent.contains("read_file"), "应指明经 read_file 读取 SKILL.md");
+        assertTrue(sysContent.contains("/workspace/skills/web-search/SKILL.md"),
+                "must_use 块应带 SKILL.md 路径供模型直读");
+    }
+
+    @Test
+    void beforeModelCall_PinnedOutsideAvailableIgnoredWithWarnNoInjection() {
+        Skill skill = new Skill();
+        skill.setId("2002");
+        skill.setEnabled(1);
+        skill.setSlug("web-search");
+        skill.setName("联网搜索");
+        skill.setDescription("Search the web");
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        BaseContext context = new BaseContext();
+        context.setSkills(List.of("2002"));
+        context.getRuntimeState().put(SkillsMiddleware.PINNED_SKILL_NAMES_KEY,
+                List.of("ghost-skill", "不存在的技能"));
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(new ChatMessage("system", "Base prompt."));
+
+        ch.qos.logback.classic.Logger logger =
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(SkillsMiddleware.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+            new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+            assertFalse(messages.get(0).getContent().contains("<must_use>"),
+                "交集为空不得注入 must_use");
+            boolean warned = appender.list.stream()
+                .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                    && e.getFormattedMessage().contains("ghost-skill")
+                    && e.getFormattedMessage().contains("不存在的技能"));
+            assertTrue(warned, "集外点名应 warn（含被忽略的 name）");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void beforeModelCall_PartialPinInjectsMatchedAndWarnsIgnored() {
+        Skill skill = new Skill();
+        skill.setId("2003");
+        skill.setEnabled(1);
+        skill.setSlug("web-search");
+        skill.setName("联网搜索");
+        skill.setDescription("Search the web");
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        BaseContext context = new BaseContext();
+        context.setSkills(List.of("2003"));
+        context.getRuntimeState().put(SkillsMiddleware.PINNED_SKILL_NAMES_KEY,
+                List.of("联网搜索", "ghost-skill"));
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(new ChatMessage("system", "Base prompt."));
+
+        ch.qos.logback.classic.Logger logger =
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(SkillsMiddleware.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+            new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+            String sysContent = messages.get(0).getContent();
+            assertTrue(sysContent.contains("<must_use>") && sysContent.contains("web-search"),
+                "命中的点名应注入");
+            boolean warned = appender.list.stream()
+                .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                    && e.getFormattedMessage().contains("ghost-skill"));
+            assertTrue(warned, "集外部分应 warn 且不影响命中注入");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void beforeModelCall_MustUseInjectedOncePerRun() {
+        Skill skill = new Skill();
+        skill.setId("2004");
+        skill.setEnabled(1);
+        skill.setSlug("web-search");
+        skill.setName("联网搜索");
+        skill.setDescription("Search the web");
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        BaseContext context = new BaseContext();
+        context.setSkills(List.of("2004"));
+        context.getRuntimeState().put(SkillsMiddleware.PINNED_SKILL_NAMES_KEY, List.of("web-search"));
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(new ChatMessage("system", "Base prompt."));
+
+        middleware.beforeModelCall(context, messages, new ArrayList<>());
+        // 工具循环第二轮模型调用
+        middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+        String sysContent = messages.get(0).getContent();
+        assertEquals(1, countOccurrences(sysContent, "<must_use>"),
+            "must_use 块单 run 只注入一次（INJECTED_FLAG 模式）: " + sysContent);
+    }
+
+    @Test
+    void beforeModelCall_NoBoundSkillsWithPinsWarnsOnlyNoMessageChange() {
+        // 无绑定技能：点名全为集外 → warn，消息零改动（pinned 不新增能力）
+        BaseContext context = new BaseContext();
+        context.setSkills(null);
+        context.getRuntimeState().put(SkillsMiddleware.PINNED_SKILL_NAMES_KEY, List.of("web-search"));
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(new ChatMessage("system", "Base prompt."));
+
+        ch.qos.logback.classic.Logger logger =
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(SkillsMiddleware.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+            new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+            assertEquals("Base prompt.", messages.get(0).getContent(), "无可用技能时不得注入");
+            boolean warned = appender.list.stream()
+                .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                    && e.getFormattedMessage().contains("web-search"));
+            assertTrue(warned, "无绑定技能时点名应 warn 静默忽略");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void beforeModelCall_NoPinnedNamesLeavesMessagesUntouched() {
+        // runtimeState 无点名键：行为与既有链路完全一致（回归保护）
+        Skill skill = new Skill();
+        skill.setId("2005");
+        skill.setEnabled(1);
+        skill.setSlug("web-search");
+        skill.setName("联网搜索");
+        skill.setDescription("Search the web");
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        BaseContext context = new BaseContext();
+        context.setSkills(List.of("2005"));
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(new ChatMessage("system", "Base prompt."));
+
+        middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+        assertFalse(messages.get(0).getContent().contains("<must_use>"));
+    }
+
+    private static int countOccurrences(String text, String token) {
+        int count = 0;
+        int idx = 0;
+        while ((idx = text.indexOf(token, idx)) != -1) {
+            count++;
+            idx += token.length();
+        }
+        return count;
+    }
+
     // ===== M3-2（D9/M2 衔接）：依赖串规范化——ToolRegistry 可解析形态 =====
 
     @Test

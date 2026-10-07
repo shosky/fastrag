@@ -150,6 +150,59 @@ class ConversationStreamTracerTest {
     }
 
     @Test
+    void pinnedSkillNamesFromTurnStateReachRuntimeState() {
+        // [F1 @提及技能] 请求态 skillNames 写入 runtimeState.pinnedSkillNames，供 SkillsMiddleware 施加 must_use
+        AppConversation conv = directConversation();
+        when(convMapper.selectById("conv-1")).thenReturn(conv);
+        ConversationRequestState turn = new ConversationRequestState();
+        turn.setSkillNames(List.of("联网搜索", "web-search"));
+        when(requestStateStore.load("conv-1")).thenReturn(turn);
+        when(presetResolver.resolve(eq(conv), eq(turn), eq(user))).thenReturn(directDefaults());
+        when(sensitiveWordService.checkInput(any())).thenReturn(Optional.empty());
+        when(convMsgMapper.selectList(any())).thenReturn(List.of());
+        doAnswer(inv -> {
+            StreamCompleteCallback cb = inv.getArgument(4);
+            cb.accept("ok", null, null);
+            return null;
+        }).when(agentEngine).executeStream(any(), any(), any(), any(), any());
+
+        service.runStreamByConversation("conv-1", "q", turn, user);
+
+        ArgumentCaptor<com.fastrag.module.agent.context.BaseContext> ctxCaptor =
+                ArgumentCaptor.forClass(com.fastrag.module.agent.context.BaseContext.class);
+        verify(agentEngine, timeout(3000)).executeStream(ctxCaptor.capture(), any(), any(), any(), any());
+        assertThat(ctxCaptor.getValue().getRuntimeState()
+                .get(com.fastrag.module.agent.middleware.SkillsMiddleware.PINNED_SKILL_NAMES_KEY))
+                .asInstanceOf(org.assertj.core.api.InstanceOfAssertFactories.list(String.class))
+                .containsExactly("联网搜索", "web-search");
+    }
+
+    @Test
+    void emptySkillNamesLeaveRuntimeStateWithoutPinnedKey() {
+        // [F1 回归保护] 无点名 → runtimeState 无 pinnedSkillNames 键（行为与既有链路一致）
+        AppConversation conv = directConversation();
+        when(convMapper.selectById("conv-1")).thenReturn(conv);
+        ConversationRequestState turn = new ConversationRequestState();
+        when(requestStateStore.load("conv-1")).thenReturn(turn);
+        when(presetResolver.resolve(eq(conv), eq(turn), eq(user))).thenReturn(directDefaults());
+        when(sensitiveWordService.checkInput(any())).thenReturn(Optional.empty());
+        when(convMsgMapper.selectList(any())).thenReturn(List.of());
+        doAnswer(inv -> {
+            StreamCompleteCallback cb = inv.getArgument(4);
+            cb.accept("ok", null, null);
+            return null;
+        }).when(agentEngine).executeStream(any(), any(), any(), any(), any());
+
+        service.runStreamByConversation("conv-1", "q", turn, user);
+
+        ArgumentCaptor<com.fastrag.module.agent.context.BaseContext> ctxCaptor =
+                ArgumentCaptor.forClass(com.fastrag.module.agent.context.BaseContext.class);
+        verify(agentEngine, timeout(3000)).executeStream(ctxCaptor.capture(), any(), any(), any(), any());
+        assertThat(ctxCaptor.getValue().getRuntimeState())
+                .doesNotContainKey(com.fastrag.module.agent.middleware.SkillsMiddleware.PINNED_SKILL_NAMES_KEY);
+    }
+
+    @Test
     void mountedConversationRejectsForeignUser() {
         // [归属] 直聊会话非属主 → forbidden（主键定位不变量）
         AppConversation conv = directConversation();
