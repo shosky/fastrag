@@ -68,7 +68,7 @@
 
 **技能（Skill）** — 文件化（Markdown+frontmatter）的可导入导出能力包，具有依赖声明；可见性由「技能分享」治理、能力交付由「技能挂载」治理（见下方两词条，2026-10-06 拆词取代旧「作用域（应用级/知识库级）」混称）。
 
-**技能分享（Skill Visibility）** — 技能可见性的三级模型：global（全员）/ department（指定部门）/ user（缺省，仅属主与指定用户可见），非管理员提交强制降级 user 级（spec REQ-B09）。〔2026-10-06 grill 裁决：按 spec 补齐接线不砍——share_config 落库 + SkillMapper 错列名（created_by→creator）修复 + 导入补 creator + AccessManager 接入 list/requireManage〕Avoid: 作用域、权限级别、scope。
+**技能分享（Skill Visibility）** — 技能可见性的三级模型：global（全员）/ department（指定部门）/ user（缺省，仅属主与指定用户可见），非管理员提交强制降级 user 级（spec REQ-B09）。〔2026-10-06 grill 裁决：按 spec 补齐接线不砍——share_config 落库 + SkillMapper 错列名（created_by→creator）修复 + 导入补 creator + AccessManager 接入 list/requireManage〕〔2026-10-07 拍板：api-token 对非 KB 数据的「全局可见可管理」语义维持现状，capability 立项首项再统一收紧（无模型下半收紧会破坏合法自动化）；skill slug 强制全局唯一——uk_slug 唯一索引 + Service 查重，覆盖重装走 update-in-place 不受影响〕Avoid: 作用域、权限级别、scope。
 
 **技能挂载（Skill Binding）** — 应用经 `app_skill_binding` 表对技能的引用（enabled 开关 + 可选 params）。绑定存技能主键 id，运行时由 id 解析 slug 后参与编排与物化。〔2026-10-06 grill 裁决：绑定语义统一到 id，零迁移〕Avoid: 技能作用域、技能授权、作用域绑定。
 
@@ -79,6 +79,10 @@
 **技能 Slug** — 技能的文件系统安全标识，兼作磁盘目录名与沙箱虚拟路径段（`/workspace/skills/{slug}`）。〔2026-10-06 grill 裁决：入口白名单正则（形如 `^[a-z0-9][a-z0-9._-]{0,63}$`）在创建/导入/文件访问/草稿四入口统一强制，draftId 同字符集；弃「仅出口 normalize 堵穿越」方案〕Avoid: 技能名（name 是展示名，slug 才进路径）。
 
 **技能正文事实源（Skill Content Source of Truth）** — DB `skill.content` 是 SKILL.md 正文的唯一事实源：拦截读以它为源，文件 API 写 SKILL.md 时同步回写（frontmatter 变更顺带更新元数据列），内置技能启动播种只在 DB 无记录时执行、不覆盖。磁盘目录仅为附属文件（脚本/资源）工作区。〔2026-10-06 grill 裁决〕Avoid: 磁盘为源、三源并存。
+
+**技能点名（Skill Pinning/@提及）** — 用户在输入框 @ 点名技能随请求提交（requestState.skillNames，上限 10），该轮对命中技能注入 `<must_use>` 强提示（优先 read_file 其 SKILL.md）；**点名不收窄白名单、不新增能力**（集外点名忽略+warn），对齐 WeKnora pinned 语义。〔2026-10-07 特性批次实施〕Avoid: 技能白名单收紧、技能推荐。
+
+**技能导入两步化（Two-step Skill Import）** — 上传（POST /api/skills/import/upload，建草稿返回 items 预览）与确认安装（既有 confirm 端点）拆分；逐技能 DraftItem 即安装留痕；单步 /import/prepare 保留兼容标 deprecated。〔2026-10-07 特性批次实施；安装进度 SSE 登记不做〕Avoid: 上传即安装（旧单步语义）。
 
 **操作审计（Audit Log）** — 通过 @Loggable 注解 + AOP 切面自动记录的知识库操作日志。
 

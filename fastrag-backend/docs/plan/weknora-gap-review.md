@@ -58,7 +58,7 @@
 ## 遗留决策清单（需用户/产品拍板，未擅动）
 
 1. **宪法级**：业务错误是否从「HTTP 200 + body.code」改为真实状态码（research doc §6.3；涉及全前端契约，建议独立评审）。
-2. **@提及技能（pinned + must_use）**：后端可先行（请求态加 skillNames + must_use 注入），需前端 @ 选择器配套。
+2. ~~**@提及技能**~~ **已实施（2026-10-07 特性批次）**：请求态 skillNames + SkillsMiddleware must_use 注入 + 前端 @ 选择器（见 docs/plan/skill-feature-batch.md）。附带拍板：skill slug 强制全局唯一（uk_slug）、api-token 非 KB 数据语义维持现状（capability 立项首项）。
 3. **可观测性 P1-12**：需定 OTLP 采集端（Langfuse？）与默认开关策略。
 4. **Flyway 版本化迁移**（P2-7 深化）与 parity 全表化：迁移纪律项目。
 5. **沙箱 checkpoint（P2-4）**：镜像 git 能力与存储成本。
