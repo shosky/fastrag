@@ -23,6 +23,15 @@
 - **不做**：安装进度 SSE（当前同步安装秒级完成，异步化待技能包体积/数量增长后立项登记）；自动覆盖确认（slug 冲突时前端显式提示"覆盖重装"再确认）。
 - **前端**：导入组件改两步交互（上传→预览清单（含冲突提示）→确认安装→展示逐项结果）。
 
+## F4 技能运行期凭据通道（Skill Env Channel，2026-10-07 追加）
+
+- **背景**：真实对话实证（QQQ 查询）——模型编造/硬编码 API key 明文进对话，评审 P1「运行期凭据通道缺失」的实例。
+- **声明**：SKILL.md frontmatter 增 `env:`（变量名列表）→ 解析入 `skill.envs` JSON 列（DDL 双处）。
+- **解析**：注入时按变量名从 **fastrag 后端进程环境变量**（System.getenv）解析；缺失项不注入，并在注入点 warn 一次性清单（文案可操作：「请在 fastrag-app 环境配置 X」）。不做 per-skill 值配置 UI、不做 sys_config 存储（登记）。
+- **注入**：**exec 时经容器 exec 的 env 机制**注入（ExecRequest 增 env map → docker ExecConfig withEnv），**不拼进命令行字符串**（值不进 fastrag 日志/事件/prompt）；注入范围=当轮挂载技能声明的并集；模型以 `$VAR` 引用。信任边界=沙箱本身（模型显式 `echo $VAR` 仍可见，WeKnora 同界，登记）。
+- **链路**：SkillsMiddleware 解析挂载技能的 envs（run 级缓存）→ runtimeState.skillEnv → ToolContext.extensions（既有浅拷贝）→ SandboxToolExecutor → SandboxExecutionService.execute 增 env 重载 → adapter。
+- **不做**：per-skill 值 UI、sys_config 存储、按调用者区分（WeKnora caller resolution）——登记。
+
 ## 实施切分
 
 - BE1：F1 后端（application 请求态 + SkillsMiddleware must_use）
