@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { ref, computed, onMounted, nextTick } from 'vue'
-import { Promotion, Close } from '@element-plus/icons-vue'
+import { Promotion, Close, MagicStick } from '@element-plus/icons-vue'
+import { ElMessage } from 'element-plus'
 import * as api from '@/api'
 import KbScopePicker from './KbScopePicker.vue'
 import CapabilityPicker from './CapabilityPicker.vue'
@@ -16,6 +17,9 @@ import type { PresetApp } from '@/types/conversation'
 //   （零新增后端调用）。null（页面态直聊）↔ ''（下拉值域）经 selectedAppId 归一。
 // - 挂预设（presetApp 非空）时 KB 多选禁用并提示「知识库范围由应用决定」（D02），
 //   能力 popover 隐藏（能力走应用绑定）；预设 chip 可移除转直聊（D02）。
+// - @提及技能（F1）：输入 @ 触发技能下拉（数据源 GET /skills/accessible，懒加载一次），
+//   选中项以可删标签呈现在输入区内；随消息提交 skillNames（pinned 只加强提示，
+//   挂应用也透传——集外点名由后端静默忽略；后端去重、上限 10，前端同限防呆）。
 // - Enter 发送 / Shift+Enter 换行（INFERRED-3，沿 runtime 现状）；流式期间禁重复提交。
 // ===========================================================================
 
@@ -37,6 +41,8 @@ const appIdModel = defineModel<string | null>('appId', { default: null })
 const toolIds = defineModel<string[]>('toolIds', { default: () => [] })
 const mcpIds = defineModel<string[]>('mcpIds', { default: () => [] })
 const skillIds = defineModel<string[]>('skillIds', { default: () => [] })
+// F1 @提及技能（pinned）：技能名数组，挂应用也保留（提示性字段，双入口有效）
+const skillNames = defineModel<string[]>('skillNames', { default: () => [] })
 
 // ── 应用下拉（控制栏左侧；'' 为直聊，null 页面态归一）──
 const selectedAppId = computed<string>({
@@ -64,6 +70,84 @@ async function loadApps() {
 const inputText = ref('')
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
 
+// ── @提及技能下拉（F1；交互/样式沿 CapabilityPicker：搜索过滤 + 列表项 hover 高亮）──
+const MAX_PINNED_SKILLS = 10 // 与后端 ConversationRequestState.SKILL_NAMES_MAX 同限（前端防呆）
+
+interface MentionSkill { name: string; slug: string; description: string }
+const mentionSkills = ref<MentionSkill[]>([])
+const mentionLoaded = ref(false)
+const mentionLoading = ref(false)
+const mentionVisible = ref(false)
+const mentionKeyword = ref('')
+const mentionIndex = ref(0)
+
+/** 懒加载一次：首个 @ 触发时拉取可访问技能（enabled + 可见集，即 pinned 合法全集） */
+async function loadMentionSkills() {
+  if (mentionLoading.value || mentionLoaded.value) return
+  mentionLoading.value = true
+  try {
+    const res: any = await api.listAccessibleSkills()
+    const raw = Array.isArray(res) ? res : (res?.list || res?.records || [])
+    mentionSkills.value = (Array.isArray(raw) ? raw : []).map((s: any) => ({
+      name: s.name || s.slug || String(s.id || ''),
+      slug: s.slug || s.identifier || '',
+      description: s.description || '',
+    })).filter((s: MentionSkill) => !!s.name)
+    mentionLoaded.value = true
+  } catch {
+    mentionSkills.value = []
+  } finally {
+    mentionLoading.value = false
+  }
+}
+
+/** 输入即同步提及态：文本尾部 @token（token 不含空白）视为提及中，token 为过滤关键字 */
+const MENTION_RE = /@([^@\s]*)$/
+
+function syncMention() {
+  const m = MENTION_RE.exec(inputText.value)
+  if (m && !props.disabled) {
+    mentionKeyword.value = m[1]
+    mentionIndex.value = 0
+    if (!mentionLoaded.value) loadMentionSkills()
+    mentionVisible.value = true
+  } else {
+    mentionVisible.value = false
+  }
+}
+
+/** 候选 = 已启用可访问 − 已选，按 名称/slug 过滤关键字 */
+const mentionFiltered = computed(() => {
+  const kw = mentionKeyword.value.toLowerCase()
+  return mentionSkills.value
+    .filter(s => !skillNames.value.includes(s.name))
+    .filter(s => !kw || s.name.toLowerCase().includes(kw) || s.slug.toLowerCase().includes(kw))
+})
+
+/** 选中候选：抹掉 @token、入列 pinned（上限 10 防呆）、回焦输入框 */
+function selectMention(skill: MentionSkill) {
+  inputText.value = inputText.value.replace(MENTION_RE, '')
+  mentionVisible.value = false
+  if (!skillNames.value.includes(skill.name)) {
+    if (skillNames.value.length >= MAX_PINNED_SKILLS) {
+      ElMessage.warning(`最多可 @ ${MAX_PINNED_SKILLS} 个技能`)
+      nextTick(() => textareaRef.value?.focus())
+      return
+    }
+    skillNames.value = [...skillNames.value, skill.name]
+  }
+  nextTick(() => textareaRef.value?.focus())
+}
+
+function removePinnedSkill(name: string) {
+  skillNames.value = skillNames.value.filter(n => n !== name)
+}
+
+/** 失焦收起下拉（mousedown.prevent 让选项点击先于 blur 生效） */
+function handleInputBlur() {
+  window.setTimeout(() => { mentionVisible.value = false }, 120)
+}
+
 // ── 模型下拉（过滤 online，沿 BasicConfig.vue:55-71 惯例）──
 const modelOptions = ref<Array<{ code: string; name: string }>>([])
 const modelsLoading = ref(false)
@@ -87,6 +171,30 @@ async function loadModels() {
 const canSubmit = computed(() => !!inputText.value.trim() && !props.disabled)
 
 function handleKeydown(e: KeyboardEvent) {
+  // 提及下拉打开时键盘优先服务候选导航/选中（Enter 不发送）
+  if (mentionVisible.value) {
+    const count = mentionFiltered.value.length
+    if (e.key === 'ArrowDown' && count) {
+      e.preventDefault()
+      mentionIndex.value = (mentionIndex.value + 1) % count
+      return
+    }
+    if (e.key === 'ArrowUp' && count) {
+      e.preventDefault()
+      mentionIndex.value = (mentionIndex.value - 1 + count) % count
+      return
+    }
+    if ((e.key === 'Enter' || e.key === 'Tab') && count) {
+      e.preventDefault()
+      selectMention(mentionFiltered.value[mentionIndex.value]!)
+      return
+    }
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      mentionVisible.value = false
+      return
+    }
+  }
   if (e.key === 'Enter' && !e.shiftKey) {
     e.preventDefault()
     submit()
@@ -129,6 +237,31 @@ defineExpose({ focus, setText })
       </div>
 
       <div class="input-box" :class="{ focused: inputText.length > 0 }">
+        <!-- @提及技能下拉（F1；锚定输入框上方，选中/Esc/失焦收起） -->
+        <div v-if="mentionVisible" class="mention-panel">
+          <div class="mention-header">选择要 @ 的技能（本轮优先遵循其指引）</div>
+          <el-scrollbar max-height="240px" v-loading="mentionLoading">
+            <template v-if="!mentionLoading">
+              <div
+                v-for="(s, i) in mentionFiltered"
+                :key="s.slug || s.name"
+                class="mention-item"
+                :class="{ active: i === mentionIndex }"
+                @mousedown.prevent
+                @click="selectMention(s)"
+                @mousemove="mentionIndex = i"
+              >
+                <el-icon :size="13"><MagicStick /></el-icon>
+                <span class="mention-name">{{ s.name }}</span>
+                <span v-if="s.slug" class="mention-slug">{{ s.slug }}</span>
+                <span class="mention-desc">{{ s.description }}</span>
+              </div>
+              <div v-if="!mentionFiltered.length" class="mention-empty">
+                {{ mentionLoaded ? '无匹配技能' : '技能加载中…' }}
+              </div>
+            </template>
+          </el-scrollbar>
+        </div>
         <div class="input-toolbar">
           <!-- 应用下拉（控制栏左侧；首项直聊，选中应用=挂预设，chip 与下拉同源双向同步） -->
           <el-select
@@ -172,14 +305,28 @@ defineExpose({ focus, setText })
             <el-option v-for="m in modelOptions" :key="m.code" :label="m.name" :value="m.code" />
           </el-select>
         </div>
+        <!-- @提及技能标签（F1）：呈现在输入区上方，可单个移除 -->
+        <div v-if="skillNames.length" class="pinned-strip">
+          <el-tag
+            v-for="name in skillNames"
+            :key="name"
+            closable
+            type="success"
+            size="small"
+            @close="removePinnedSkill(name)"
+          >@{{ name }}</el-tag>
+          <span class="pinned-hint">本轮将优先遵循上述技能指引</span>
+        </div>
         <textarea
           ref="textareaRef"
           v-model="inputText"
           class="user-input"
-          placeholder="输入您的问题..."
+          placeholder="输入您的问题...（输入 @ 唤起技能）"
           :disabled="disabled"
           rows="1"
           @keydown="handleKeydown"
+          @input="syncMention"
+          @blur="handleInputBlur"
         ></textarea>
         <div class="input-footer-bar">
           <div class="footer-left">
@@ -204,7 +351,7 @@ defineExpose({ focus, setText })
         </div>
       </div>
       <div class="input-hint">
-        <span>Enter 发送 · Shift+Enter 换行</span>
+        <span>Enter 发送 · Shift+Enter 换行 · @ 选择技能</span>
       </div>
     </div>
   </div>
@@ -243,6 +390,7 @@ $shadow-md: 0 2px 8px rgba(0,0,0,0.05);
 }
 
 .input-box {
+  position: relative; // @提及下拉锚点
   border: 1px solid $border;
   border-radius: 0.8rem;
   box-shadow: $shadow-md;
@@ -250,6 +398,79 @@ $shadow-md: 0 2px 8px rgba(0,0,0,0.05);
   padding: 0.5rem 0.75rem 0.4rem;
   transition: all 0.3s ease;
   &:focus-within { border-color: $primary-light; box-shadow: 0 0 0 2px rgba(4,106,130,0.08); }
+}
+
+// ── @提及技能标签（F1；同 preset-strip 语义，类型 success 区分能力 chip）──
+.pinned-strip {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-bottom: 4px;
+  .pinned-hint { font-size: 11px; color: $text-muted; margin-left: 4px; }
+}
+
+// ── @提及技能下拉（样式沿 CapabilityPicker 列表项口径）──
+.mention-panel {
+  position: absolute;
+  left: 8px;
+  bottom: calc(100% + 8px);
+  width: 400px;
+  max-width: calc(100% - 16px);
+  background: $bg-card;
+  border: 1px solid $border;
+  border-radius: 6px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.1);
+  z-index: 100;
+  overflow: hidden;
+
+  .mention-header {
+    padding: 8px 12px;
+    font-size: 12px;
+    color: $text-muted;
+    border-bottom: 1px solid $border;
+  }
+
+  .mention-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 7px 12px;
+    cursor: pointer;
+    color: $text-secondary;
+    &:hover, &.active { background: $bg-hover; }
+    .mention-name {
+      flex-shrink: 0;
+      font-size: 13px;
+      color: $text-primary;
+      font-weight: 500;
+    }
+    .mention-slug {
+      flex-shrink: 0;
+      font-size: 11px;
+      font-family: 'Consolas', 'Monaco', monospace;
+      color: $text-muted;
+      background: $bg-hover;
+      border-radius: 3px;
+      padding: 1px 5px;
+    }
+    .mention-desc {
+      flex: 1;
+      min-width: 0;
+      font-size: 12px;
+      color: $text-muted;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+  }
+
+  .mention-empty {
+    padding: 16px 12px;
+    text-align: center;
+    font-size: 12px;
+    color: $text-muted;
+  }
 }
 
 .input-toolbar {

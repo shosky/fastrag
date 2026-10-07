@@ -959,6 +959,11 @@ export async function getSkills(params?: { keyword?: string; category?: string }
   return request.get('/skills', { params })
 }
 
+/** 列出用户可访问的已启用技能（F1 @提及选择器数据源；返回含 name/slug 的 Skill 列表） */
+export async function listAccessibleSkills(params?: { keyword?: string }) {
+  return request.get('/skills/accessible', { params })
+}
+
 export async function getSkillDetail(id: string) {
   return request.get(`/skills/${id}`)
 }
@@ -1031,19 +1036,30 @@ export async function updateSkillShareConfig(id: string, config: Record<string, 
   return request.put(`/skills/${id}/share-config`, config)
 }
 
-// -- 草稿安装 --
-export async function prepareSkillImport(file: File) {
+// -- 技能导入（F3 两步化：upload 仅建草稿预览 → 用户确认 → confirm 安装）--
+
+/**
+ * 上传 ZIP/SKILL.md 创建安装草稿（仅解析预览，不安装）——两步导入第一步。
+ * 返回 SkillInstallDraft { draftId, sourceType, source, items: DraftItem[], expiresAt }；
+ * DraftItem = { slug, name, description, success, errorMsg, metadata }。
+ */
+export async function uploadSkillImport(file: File) {
   const formData = new FormData()
   formData.append('file', file)
-  return request.post('/skills/import/prepare', formData, {
+  return request.post('/skills/import/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' }
   })
 }
 
-export async function confirmSkillDraft(draftId: string, shareConfig?: Record<string, any>) {
-  return request.post(`/skills/install-drafts/${draftId}/confirm`, { shareConfig })
+/**
+ * 确认安装草稿——两步导入第二步。逐技能返回 DraftItem[]（success/errorMsg 即安装结果明细）；
+ * 服务端确认后即清理草稿（成功与失败均不保留）。
+ */
+export async function confirmSkillImport(draftId: string) {
+  return request.post(`/skills/install-drafts/${draftId}/confirm`, {})
 }
 
+/** 丢弃安装草稿（预览后取消时清理服务端草稿） */
 export async function discardSkillDraft(draftId: string) {
   return request.delete(`/skills/install-drafts/${draftId}`)
 }

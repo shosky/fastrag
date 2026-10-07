@@ -25,6 +25,8 @@ export interface ConversationTurnPayload {
   toolIds?: string[]
   mcpIds?: string[]
   skillIds?: string[]
+  /** F1 @提及技能：本轮施加 must_use 强提示的技能名（后端去重、上限 10，集外静默忽略） */
+  skillNames?: string[]
 }
 
 /**
@@ -49,7 +51,7 @@ export function useConversationStream() {
   /**
    * 发送一轮消息并通过 SSE 流式接收回答
    * @param conversationId 会话ID（随首条消息建会话后由页面传入）
-     * @param payload 本轮请求态快照 { query, appId?, kbIds?, modelId?, toolIds?, mcpIds?, skillIds? }
+     * @param payload 本轮请求态快照 { query, appId?, kbIds?, modelId?, toolIds?, mcpIds?, skillIds?, skillNames? }
    * @param callbacks 事件回调（onChunk/onEnd/onError 必填，其余可选）
    */
   async function send(
@@ -84,6 +86,8 @@ export function useConversationStream() {
           toolIds: payload.toolIds && payload.toolIds.length > 0 ? payload.toolIds : undefined,
           mcpIds: payload.mcpIds && payload.mcpIds.length > 0 ? payload.mcpIds : undefined,
           skillIds: payload.skillIds && payload.skillIds.length > 0 ? payload.skillIds : undefined,
+          // F1 @提及技能：同款空数组归一（挂应用也透传——pinned 双入口有效，仅是提示）
+          skillNames: payload.skillNames && payload.skillNames.length > 0 ? payload.skillNames : undefined,
         }),
         signal: abortController.value.signal,
       })

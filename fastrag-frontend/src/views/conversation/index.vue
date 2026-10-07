@@ -44,6 +44,8 @@ const editingMessageId = ref<string | null>(null)
 // ── 输入框范围选择（页面级单一状态）──
 // toolIds/mcpIds/skillIds 为直聊消费字段（B02 演进）：随 stream 请求体装配执行上下文，
 // 挂应用时能力走应用绑定（状态清空、UI 隐藏）。
+// skillNames 为 F1 @提及技能（pinned 提示性字段）：挂应用也保留透传（双入口有效），
+// 随消息提交后以后端固化 request_state 回显为准。
 const composerState = reactive<{
   kbIds: string[]
   modelId: string
@@ -52,7 +54,8 @@ const composerState = reactive<{
   toolIds: string[]
   mcpIds: string[]
   skillIds: string[]
-}>({ kbIds: [], modelId: '', appId: null, appName: '', toolIds: [], mcpIds: [], skillIds: [] })
+  skillNames: string[]
+}>({ kbIds: [], modelId: '', appId: null, appName: '', toolIds: [], mcpIds: [], skillIds: [], skillNames: [] })
 
 const presetApp = computed<PresetApp | null>(() =>
   composerState.appId ? { id: composerState.appId, name: composerState.appName || composerState.appId } : null
@@ -151,6 +154,8 @@ function applyRequestState(rs: any, detail?: any) {
     composerState.mcpIds = Array.isArray(state.mcpIds) ? [...state.mcpIds] : []
     composerState.skillIds = Array.isArray(state.skillIds) ? [...state.skillIds] : []
   }
+  // F1 @提及技能回显（请求态随持久化 JSON 返回；双入口均回显）
+  composerState.skillNames = Array.isArray(state.skillNames) ? [...state.skillNames] : []
   composerState.modelId = state.modelId || ''
 }
 
@@ -247,6 +252,7 @@ async function handleSend(text: string) {
   // 本轮请求态快照（发送成功不本地回写，以后端固化为准）
   // 直聊能力三字段：挂应用时清空发送（能力走应用绑定），直聊随 body 透传（空数组由
   // useConversationStream 归一为 undefined，不占契约字段面）
+  // skillNames（F1 @提及）：pinned 提示性字段，挂应用也透传（集外点名后端静默忽略）
   const payload = {
     appId: composerState.appId || null,
     kbIds: composerState.appId ? [] : [...composerState.kbIds],
@@ -254,6 +260,7 @@ async function handleSend(text: string) {
     toolIds: composerState.appId ? [] : [...composerState.toolIds],
     mcpIds: composerState.appId ? [] : [...composerState.mcpIds],
     skillIds: composerState.appId ? [] : [...composerState.skillIds],
+    skillNames: [...composerState.skillNames],
   }
 
   messages.value.push({ role: 'user', content: text })
@@ -596,6 +603,7 @@ onMounted(() => {
           v-model:tool-ids="composerState.toolIds"
           v-model:mcp-ids="composerState.mcpIds"
           v-model:skill-ids="composerState.skillIds"
+          v-model:skill-names="composerState.skillNames"
           :preset-app="presetApp"
           :disabled="isStreaming"
           @update:app-id="handleComposerAppChange"

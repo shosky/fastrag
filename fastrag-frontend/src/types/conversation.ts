@@ -12,6 +12,8 @@ import type { SourceItem } from '@/composables/useConversationStream'
  * toolIds/mcpIds/skillIds 为直聊消费字段——B02 演进（2026-09-25 用户裁决）：直聊随 stream
  * 请求体装配进执行上下文（与绑定同路径），挂应用时能力走应用绑定、前端不发送；
  * webSearchEnabled 仍为唯一死字段，前端不建模不发送。
+ * skillNames 为 F1 @提及技能字段（2026-10-07 裁决）：pinned 只加强提示不收窄白名单，
+ * 后端去重、上限 10，集外点名由 SkillsMiddleware 静默忽略并 warn。
  */
 export interface ConversationRequestState {
   appId?: string | null
@@ -22,6 +24,8 @@ export interface ConversationRequestState {
   toolIds?: string[]
   mcpIds?: string[]
   skillIds?: string[]
+  /** F1 @提及技能：本轮施加 must_use 强提示的技能名（后端去重、上限 10） */
+  skillNames?: string[]
 }
 
 /** 会话列表项 / 详情（ConversationDTO） */
