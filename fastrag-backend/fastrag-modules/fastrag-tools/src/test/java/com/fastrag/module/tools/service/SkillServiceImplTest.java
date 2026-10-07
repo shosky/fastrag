@@ -148,6 +148,54 @@ class SkillServiceImplTest {
     }
 
     @Test
+    void testCreate_DuplicateSlugRejected() {
+        // 2026-10-07 拍板：slug 全局唯一（uk_slug 兜底 + Service 层查重）
+        Skill dup = new Skill();
+        dup.setId("skill-dup");
+        when(mapper.selectBySlug("dup")).thenReturn(dup);
+
+        Map<String, Object> form = new LinkedHashMap<>();
+        form.put("name", "Dup");
+        form.put("slug", "dup");
+
+        assertThrows(RuntimeException.class, () -> service.create(form));
+        verify(mapper, never()).insert(any(Skill.class));
+    }
+
+    @Test
+    void testUpdate_SlugTakenByOtherRejected() {
+        Skill existing = new Skill();
+        existing.setId("skill-1");
+        when(mapper.selectById("skill-1")).thenReturn(existing);
+        Skill other = new Skill();
+        other.setId("skill-other");
+        when(mapper.selectBySlug("taken")).thenReturn(other);
+
+        Map<String, Object> form = new LinkedHashMap<>();
+        form.put("slug", "taken");
+
+        assertThrows(RuntimeException.class, () -> service.update("skill-1", form));
+        verify(mapper, never()).updateById(any(Skill.class));
+    }
+
+    @Test
+    void testUpdate_KeepOwnSlugAllowed() {
+        Skill existing = new Skill();
+        existing.setId("skill-1");
+        when(mapper.selectById("skill-1")).thenReturn(existing);
+        when(mapper.selectBySlug("own")).thenReturn(existing); // 命中自身，放行
+
+        Map<String, Object> form = new LinkedHashMap<>();
+        form.put("slug", "own");
+        form.put("description", "keep own slug");
+
+        Skill result = service.update("skill-1", form);
+
+        assertNotNull(result);
+        verify(mapper).updateById(any(Skill.class));
+    }
+
+    @Test
     void testUpdate_FullFields() {
         Skill existing = new Skill();
         existing.setId("skill-1");

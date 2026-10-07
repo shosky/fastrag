@@ -108,8 +108,8 @@ class SkillDdlParityTest {
                         "CREATE TABLE IF NOT EXISTS skill \\((.*?)\\)\\s*ENGINE", Pattern.DOTALL)
                 .matcher(ddl);
         assertTrue(m.find(), "schema.sql 缺少 skill 表定义");
-        assertTrue(Pattern.compile("INDEX\\s+idx_slug\\s*\\(\\s*slug\\s*\\)").matcher(m.group(1)).find(),
-                "schema.sql skill 表应有 idx_slug (slug) 索引（M3-7：slug 检索路径 selectBySlug/existsBySlug 无索引全表扫）");
+        assertTrue(Pattern.compile("UNIQUE\\s+INDEX\\s+uk_slug\\s*\\(\\s*slug\\s*\\)").matcher(m.group(1)).find(),
+                "schema.sql skill 表应有 UNIQUE INDEX uk_slug (slug)（2026-10-07 拍板：slug 全局唯一，M3-7 检索路径同源）");
     }
 
     /** skill_dependency 行与实体（SkillDependency: id/skillId/type/name/required）对齐 */

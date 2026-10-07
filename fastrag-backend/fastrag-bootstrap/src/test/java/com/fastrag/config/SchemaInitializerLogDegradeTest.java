@@ -89,14 +89,15 @@ class SchemaInitializerLogDegradeTest {
     }
 
     @Test
-    void 索引ensure失败_skill_idx_slug时_warn且带根因类名() {
-        failSqlContaining("ADD INDEX idx_slug",
-                new SQLException("Duplicate key name 'idx_slug'", "42000", 1061));
+    void 索引ensure失败_skill_uk_slug时_warn且带根因类名() {
+        // 2026-10-07 拍板：idx_slug 原地升级为唯一索引 uk_slug（DROP+ADD 一条 ALTER）
+        failSqlContaining("ADD UNIQUE INDEX uk_slug",
+                new SQLException("Duplicate entry 'web-search' for key 'skill.uk_slug'", "23000", 1062));
 
         initializer.initSchema();
 
         List<String> warns = warnMessages().stream()
-                .filter(m -> m.contains("skill.idx_slug"))
+                .filter(m -> m.contains("skill.uk_slug"))
                 .toList();
         assertThat(warns).isNotEmpty();
         assertThat(warns.get(0)).contains("SQLException");

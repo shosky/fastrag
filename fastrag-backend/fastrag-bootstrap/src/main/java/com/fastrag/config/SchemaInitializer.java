@@ -244,13 +244,13 @@ public class SchemaInitializer {
         // M3-1（D2）：分享配置落库（与 schema.sql 双处同步）
         addColumnIfNotExists("skill", "share_config", "JSON");
         addColumnIfNotExists("skill", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
-        // M3-7（DDL 双处同步）：slug 检索索引（与 schema.sql idx_slug 对齐）。
-        // 普通索引而非 uk_slug：SkillServiceImpl.create 不强制 slug 唯一，存量数据可能重复。
+        // 2026-10-07 拍板：slug 强制唯一——原普通索引 idx_slug 原地升级为唯一索引 uk_slug。
+        // 若存量数据有重复 slug，整体 ALTER 失败（warn 可见），需清理重复后重启重试。
         try {
-            jdbc.execute("ALTER TABLE skill ADD INDEX idx_slug (slug)");
+            jdbc.execute("ALTER TABLE skill DROP INDEX idx_slug, ADD UNIQUE INDEX uk_slug (slug)");
         } catch (Exception e) {
-            // S6 吞错降级：同 idx_kb_parse_strategy_file，skipped 必须 warn 可见
-            log.warn("Index skill.idx_slug ensure skipped: {}: {}",
+            // S6 吞错降级：skipped 必须 warn 可见
+            log.warn("Index skill.uk_slug upgrade skipped: {}: {}",
                     rootCauseClassName(e), e.getMessage());
         }
 

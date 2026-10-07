@@ -132,6 +132,7 @@ public class SkillServiceImpl implements SkillService {
         s.setEnabled(1);
         s.setRecommended(0);
         s.setUsageCount(0);
+        requireSlugAvailable(s.getSlug(), null);
 
         mapper.insert(s);
 
@@ -150,6 +151,7 @@ public class SkillServiceImpl implements SkillService {
         if (s == null) return null;
 
         applyBasicFields(s, form);
+        requireSlugAvailable(s.getSlug(), s.getId());
 
         if (form.containsKey("sourceType")) s.setSourceType((String) form.get("sourceType"));
         if (form.containsKey("enabled")) s.setEnabled((Integer) form.get("enabled"));
@@ -178,10 +180,18 @@ public class SkillServiceImpl implements SkillService {
         return s;
     }
 
+    /** slug 强制唯一（2026-10-07 拍板）：真库已核实零重复 + uk_slug 唯一索引兜底；selfId 非空时豁免自身 */
+    private void requireSlugAvailable(String slug, String selfId) {
+        if (slug == null) return;
+        Skill dup = mapper.selectBySlug(slug);
+        if (dup != null && !dup.getId().equals(selfId)) {
+            throw BusinessException.badRequest("slug 已存在: " + slug + "（技能 slug 全局唯一，请更换）");
+        }
+    }
+
     private void applyBasicFields(Skill s, Map<String, Object> form) {
         if (form.containsKey("name")) s.setName((String) form.get("name"));
-        if (form.containsKey("identifier")) s.setIdentifier((String) form.get("identifier"));
-        // slug 白名单校验；缺省时由 name 派生，无法派生则要求显式提供
+        if (form.containsKey("identifier")) s.setIdentifier((String) form.get("identifier"));        // slug 白名单校验；缺省时由 name 派生，无法派生则要求显式提供
         if (form.containsKey("slug")) {
             s.setSlug(SlugValidator.validate((String) form.get("slug")));
         } else if (form.containsKey("name")) {
