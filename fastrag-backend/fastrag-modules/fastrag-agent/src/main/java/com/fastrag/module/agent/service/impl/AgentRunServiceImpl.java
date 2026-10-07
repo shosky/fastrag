@@ -10,12 +10,14 @@ import com.fastrag.module.agent.entity.Agent;
 import com.fastrag.module.agent.entity.AgentRun;
 import com.fastrag.module.agent.executor.AgentEngine;
 import com.fastrag.module.agent.executor.AgentResult;
+import com.fastrag.module.agent.event.RunEventPublisher;
 import com.fastrag.module.agent.mapper.AgentRunMapper;
 import com.fastrag.module.agent.service.AgentRunService;
 import com.fastrag.module.agent.service.AgentService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
@@ -52,11 +54,22 @@ public class AgentRunServiceImpl implements AgentRunService {
 
     private final AgentRunMapper agentRunMapper;
     private final AgentService agentService;
-    /** M2-4（D12）：agent REST 路径统一走 AgentEngine（完整中间件链），与 App 对话路径同源 */
+    /** M2-4（D12）：agent REST 路径统一走 AgentEngine（完整中间件链），与 App 对话路径同源。
+     *  @Lazy 打断 agentEngine→chain→subAgent→本类 的构造期循环（仅运行期使用；经根 lombok.config 复制到构造参数） */
+    @Lazy
     private final AgentEngine agentEngine;
     private final ContextBuilder contextBuilder;
+    /** I2：可重放事件通道发布端——streamEvents 按 afterSeq 增量拉取推 SSE */
+    private final RunEventPublisher eventPublisher;
 
     private final ExecutorService sseExecutor = Executors.newCachedThreadPool();
+
+    /** I2：事件通道轮询间隔（ms），run 表轮询为每 10 tick 一次的终态兜底 */
+    @Value("${agent.run.stream-poll-interval-ms:500}")
+    private long streamPollIntervalMs = 500;
+
+    /** run 表终态兜底轮询的间隔（tick 数）：每 N 个事件轮询 tick 查一次 DB */
+    private static final int DB_FALLBACK_EVERY_TICKS = 10;
 
     @Lazy
     @Autowired
@@ -126,6 +139,8 @@ public class AgentRunServiceImpl implements AgentRunService {
         run.setFinishedAt(LocalDateTime.now());
         run.setUpdatedAt(LocalDateTime.now());
         agentRunMapper.updateById(run);
+        // I2：终态清理事件流（RunEventPublisher 宽限延迟清理，保活跃 SSE 订阅方尾部消费窗口）
+        eventPublisher.clearStream(runId);
         return buildRunData(run);
     }
 
@@ -138,21 +153,44 @@ public class AgentRunServiceImpl implements AgentRunService {
         emitter.onTimeout(() -> log.info("SSE超时, runId={}", runId));
         emitter.onError(e -> log.error("SSE错误, runId={}", runId, e));
 
+        // I2（P0-3）：afterSeq 为断点续传偏移（已见到的最后一个 seq），空/非法按 0 全量重放。
+        final long startOffset = parseSeq(afterSeq);
+
         sseExecutor.execute(() -> {
+            long lastSeq = startOffset;
+            int tick = 0;
             try {
                 while (true) {
-                    AgentRun fresh = agentRunMapper.selectById(runId);
-                    if (fresh == null) { emitter.complete(); return; }
-                    if (isTerminalStatus(fresh.getStatus())) {
-                        Map<String, Object> event = new HashMap<>();
-                        event.put("status", fresh.getStatus());
-                        event.put("errorType", fresh.getErrorType());
-                        event.put("errorMessage", fresh.getErrorMessage());
-                        emitter.send(SseEmitter.event().name("end").data(event));
-                        emitter.complete();
-                        return;
+                    // 1) 主通道：按 afterSeq 增量拉事件推 SSE（轮询事件通道）
+                    for (Map<String, Object> event : eventPublisher.getEvents(runId, lastSeq)) {
+                        long seq = seqOf(event);
+                        if (seq <= lastSeq) continue;
+                        Object eventType = event.get("eventType");
+                        emitter.send(SseEmitter.event()
+                                .name(eventType != null ? eventType.toString() : "message")
+                                .id(String.valueOf(seq))
+                                .data(event.get("payload")));
+                        lastSeq = seq;
                     }
-                    Thread.sleep(2000);
+                    // 2) 终态兜底：run 表轮询（每 N tick 一次）
+                    if (tick % DB_FALLBACK_EVERY_TICKS == 0) {
+                        AgentRun fresh = agentRunMapper.selectById(runId);
+                        if (fresh == null) {
+                            emitter.complete();
+                            return;
+                        }
+                        if (isTerminalStatus(fresh.getStatus())) {
+                            Map<String, Object> end = new HashMap<>();
+                            end.put("status", fresh.getStatus());
+                            end.put("errorType", fresh.getErrorType());
+                            end.put("errorMessage", fresh.getErrorMessage());
+                            emitter.send(SseEmitter.event().name("end").data(end));
+                            emitter.complete();
+                            return;
+                        }
+                    }
+                    tick++;
+                    Thread.sleep(streamPollIntervalMs);
                 }
             } catch (Exception e) {
                 emitter.completeWithError(e);
@@ -160,6 +198,21 @@ public class AgentRunServiceImpl implements AgentRunService {
         });
 
         return emitter;
+    }
+
+    /** afterSeq 解析：null/非数字按 0（旧协议的毫秒时间戳也与新 seq 单调可比，无需特判）。 */
+    private static long parseSeq(String afterSeq) {
+        if (afterSeq == null || afterSeq.isBlank()) return 0L;
+        try {
+            return Math.max(0L, Long.parseLong(afterSeq.trim()));
+        } catch (NumberFormatException e) {
+            return 0L;
+        }
+    }
+
+    private static long seqOf(Map<String, Object> event) {
+        Object seq = event.get("seq");
+        return seq instanceof Number n ? n.longValue() : 0L;
     }
 
     @Override
@@ -186,6 +239,8 @@ public class AgentRunServiceImpl implements AgentRunService {
         run.setFinishedAt(LocalDateTime.now());
         run.setUpdatedAt(LocalDateTime.now());
         agentRunMapper.updateById(run);
+        // I2：终态清理事件流
+        eventPublisher.clearStream(runId);
     }
 
     @Async("agentTaskExecutor")
@@ -219,6 +274,8 @@ public class AgentRunServiceImpl implements AgentRunService {
             run.setFinishedAt(LocalDateTime.now());
             run.setUpdatedAt(LocalDateTime.now());
             agentRunMapper.updateById(run);
+            // I2：终态清理事件流
+            eventPublisher.clearStream(run.getId());
 
             log.info("[AgentRunService] Run {} 完成: status={}", run.getId(), run.getStatus());
 
@@ -230,6 +287,8 @@ public class AgentRunServiceImpl implements AgentRunService {
             run.setFinishedAt(LocalDateTime.now());
             run.setUpdatedAt(LocalDateTime.now());
             agentRunMapper.updateById(run);
+            // I2：终态清理事件流
+            eventPublisher.clearStream(run.getId());
         }
     }
 
