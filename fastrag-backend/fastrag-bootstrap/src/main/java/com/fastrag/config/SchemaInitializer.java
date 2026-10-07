@@ -496,9 +496,24 @@ public class SchemaInitializer {
                 "menu:operation:kb-analytics", "menu:operation:retrieval-analysis",
                 "menu:operation:feedback", "menu:operation:model-monitor",
                 "kb:manage");
+        ensureWildcardPermission();
         grantRolePerms("role_kb_user", "menu:knowledge:categories");
 
         log.info("Schema initialization completed.");
+    }
+
+    /**
+     * 2026-10-07 修复：sys_permission 缺少字面 '*' 通配键，导致 DataScope.manageable 的
+     * 「超管可管」分支对所有人失效——内置技能（creator='system'）等系统级资源全员只读。
+     * 补键并授予 super_admin（幂等）。
+     */
+    private void ensureWildcardPermission() {
+        try {
+            jdbc.update("INSERT IGNORE INTO sys_permission (perm_key, name, type) VALUES ('*', '超级管理员通配权限', 'action')");
+            grantRolePerms("role_super_admin", "*");
+        } catch (Exception e) {
+            log.warn("Failed to ensure wildcard permission '*': {}", e.getMessage());
+        }
     }
 
     /** 为角色补授权限（INSERT IGNORE，重复执行安全） */
