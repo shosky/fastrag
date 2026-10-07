@@ -238,6 +238,8 @@ public class SchemaInitializer {
         addColumnIfNotExists("skill", "source_type", "VARCHAR(16) DEFAULT 'custom'");
         addColumnIfNotExists("skill", "dir_path", "VARCHAR(512)");
         addColumnIfNotExists("skill", "dependencies", "JSON");
+        // F4 运行期凭据通道（skill-feature-batch.md F4）：env 声明列（变量名列表 JSON，值不落库）
+        addColumnIfNotExists("skill", "envs", "JSON");
         addColumnIfNotExists("skill", "content_hash", "VARCHAR(64)");
         addColumnIfNotExists("skill", "is_builtin", "TINYINT DEFAULT 0");
         addColumnIfNotExists("skill", "metadata", "JSON");
