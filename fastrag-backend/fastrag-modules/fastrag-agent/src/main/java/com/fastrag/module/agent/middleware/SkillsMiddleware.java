@@ -52,6 +52,17 @@ public class SkillsMiddleware implements AgentMiddleware {
     /** F1：pinned must_use 块单 run 只处理一次的哨兵键（INJECTED_FLAG 模式，工具循环不重复追加/告警） */
     public static final String MUST_USE_INJECTED_FLAG = "pinnedSkillsMustUseHandled";
 
+    /**
+     * runtimeState 中技能运行期凭据 Map 的键（F4 技能运行期凭据通道，skill-feature-batch.md F4）。
+     * 值为 name → value 的 Map：由当轮挂载技能声明的 envs 并集从 fastrag 后端进程环境变量解析而来，
+     * 经 AgentEngine 既有 runtimeState → ToolContext.extensions 浅拷贝供 SandboxToolExecutor 消费。
+     * <b>值绝不进 prompt/事件/日志</b>（经沙箱 exec env 机制注入，不拼命令行）。
+     */
+    public static final String SKILL_ENV_KEY = "skillEnv";
+
+    /** 环境变量解析函数（缺省 System.getenv；包内可注入供单测替换，生产不改） */
+    transient java.util.function.Function<String, String> envResolver = System::getenv;
+
     @Override
     public int getOrder() { return 4; }
 
@@ -194,6 +205,59 @@ public class SkillsMiddleware implements AgentMiddleware {
         context.setReadableSkills(new ArrayList<>(closure));
         context.setRuntimeSkillMetadata(metadata);
         context.setRuntimeSkillDependencyMap(depMap);
+
+        // F4 技能运行期凭据通道：汇总闭包内技能 envs 并集并解析（run 级缓存——本方法 skillsLoaded 门控单 run 一次）
+        resolveAndStoreSkillEnvs(context, entityCache.values());
+    }
+
+    /**
+     * F4（skill-feature-batch.md F4，2026-10-07）：解析挂载技能声明的 envs 并集（当轮闭包），
+     * 逐名经 {@link #envResolver}（生产 = System.getenv，fastrag 后端进程环境变量）解析，
+     * 结果 Map 写入 runtimeState.{@link #SKILL_ENV_KEY}。
+     * 缺失项不注入，收集清单 warn 一次（文案可操作「请在 fastrag-app 环境配置」，仅含变量名——
+     * 值绝不进日志/prompt/事件）。声明为空则写空 Map（下游等同默认空 env）。
+     */
+    private void resolveAndStoreSkillEnvs(BaseContext context, Collection<Skill> skills) {
+        SkillEnvResolution resolution = resolveSkillEnvs(skills, envResolver);
+        if (!resolution.missing().isEmpty()) {
+            log.warn("[SkillsMiddleware] Skill env vars missing ({}), 不会注入: {}。请在 fastrag-app 环境配置",
+                    resolution.missing().size(), resolution.missing());
+        }
+        context.getRuntimeState().put(SKILL_ENV_KEY, resolution.resolved());
+        log.debug("[SkillsMiddleware] Skill env resolved: {} vars injected", resolution.resolved().size());
+    }
+
+    /** env 解析结果：resolved = 名值对（仅已配置项），missing = 缺失变量名清单（声明顺序去重）。 */
+    public record SkillEnvResolution(Map<String, String> resolved, List<String> missing) {
+    }
+
+    /**
+     * F4 纯函数：汇总技能集合 envs 并集（去重、保声明顺序）并逐名解析。
+     * null/空白变量名跳过；解析为 null/空白视为缺失；缺失不阻断、只收集。
+     *
+     * @param getenv 环境变量解析函数（生产 System::getenv，测试可注入替身）
+     */
+    static SkillEnvResolution resolveSkillEnvs(Collection<Skill> skills,
+            java.util.function.Function<String, String> getenv) {
+        Map<String, String> resolved = new LinkedHashMap<>();
+        Set<String> seen = new LinkedHashSet<>();
+        List<String> missing = new ArrayList<>();
+        if (skills == null) {
+            return new SkillEnvResolution(resolved, missing);
+        }
+        for (Skill skill : skills) {
+            if (skill == null || skill.getEnvs() == null) continue;
+            for (String name : skill.getEnvs()) {
+                if (name == null || name.isBlank() || !seen.add(name)) continue;
+                String value = getenv != null ? getenv.apply(name) : null;
+                if (value == null || value.isBlank()) {
+                    missing.add(name);
+                } else {
+                    resolved.put(name, value);
+                }
+            }
+        }
+        return new SkillEnvResolution(resolved, missing);
     }
 
     /**

@@ -390,6 +390,22 @@ class DockerSandboxAdapterTest {
     }
 
     @Test
+    void env注入_经ExecCreateWithEnv通道_值不拼进包装命令() {
+        // F4（skill-feature-batch.md F4）：exec() 把 request.env 经 envSlice 喂给 ExecCreate.withEnv；
+        // 包装命令（execWrapper）签名不接收 env——结构上保证凭据值不进命令行字符串。
+        // env → withEnv 的管道单元断言：KEY=VALUE 形态 + null 值健壮性。
+        Map<String, String> env = new java.util.LinkedHashMap<>();
+        env.put("APP_TOKEN", "t-1");
+        env.put("BROKEN", null);
+        assertThat(DockerSandboxAdapter.envSlice(env)).containsExactly("APP_TOKEN=t-1", "BROKEN=");
+
+        String wrapper = DockerSandboxAdapter.execWrapper("echo $APP_TOKEN", 5,
+                "/workspace/.fastrag_activity");
+        assertThat(wrapper).contains("echo $APP_TOKEN");
+        assertThat(wrapper).doesNotContain("t-1");
+    }
+
+    @Test
     void stderr首行截断() {
         assertThat(DockerSandboxAdapter.firstNonEmptyLine("\n  boom: detail \nnext")).isEqualTo("boom: detail");
         assertThat(DockerSandboxAdapter.firstNonEmptyLine("x".repeat(300))).hasSize(201); // 200 + 省略号

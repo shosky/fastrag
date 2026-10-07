@@ -69,6 +69,11 @@ public class SkillMarkdownParser {
         List<String> mcpDeps = stringListValue(meta.get("mcp_dependencies"));
         List<String> skillDeps = stringListValue(meta.get("skill_dependencies"));
 
+        // F4 运行期凭据通道（skill-feature-batch.md F4，2026-10-07）：frontmatter env 声明解析
+        // （变量名列表，容忍 string/list 两种写法；缺省为空列表）——仅声明不解析值，
+        // 值在运行期由 SkillsMiddleware 从后端进程环境变量解析
+        List<String> envs = stringListValue(meta.get("env"));
+
         if (name.isBlank()) {
             throw new IllegalArgumentException("SKILL.md frontmatter 缺少 name 字段");
         }
@@ -89,7 +94,7 @@ public class SkillMarkdownParser {
         }
 
         return new SkillParseResult(slug, name, description, version, category, icon, meta, fm.getBody(),
-                toolDeps, mcpDeps, skillDeps);
+                toolDeps, mcpDeps, skillDeps, envs);
     }
 
     private String getString(Map<String, Object> map, String key, String defaultValue) {
@@ -148,5 +153,7 @@ public class SkillMarkdownParser {
         private List<String> mcpDependencies;
         /** M3-2（D9）：frontmatter skill_dependencies（缺省空列表） */
         private List<String> skillDependencies;
+        /** F4：frontmatter env 声明（所需环境变量名列表，缺省空列表；值运行期从进程环境解析） */
+        private List<String> envs;
     }
 }

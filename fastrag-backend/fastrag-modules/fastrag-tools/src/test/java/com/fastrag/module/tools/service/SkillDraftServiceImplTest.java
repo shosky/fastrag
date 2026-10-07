@@ -287,6 +287,63 @@ class SkillDraftServiceImplTest {
 
     // ========== M3-5（D11）：slug 已存在 → update-in-place（主键不变，绑定天然存活） ==========
 
+    // ========== F4 运行期凭据通道：confirmDraft 落 envs JSON（skill-feature-batch.md F4，2026-10-07） ==========
+
+    @Test
+    void testConfirmDraft_WritesEnvsJsonFromFrontmatter() {
+        byte[] mdContent = ("---\nname: Cred\nslug: cred-skill\ndescription: d\n"
+            + "env:\n  - QQQ_API_KEY\n  - QQQ_API_SECRET\n"
+            + "---\n\nBody").getBytes();
+        SkillInstallDraft draft = service.prepareUpload("cred.md", mdContent, "tester");
+        when(skillMapper.selectBySlug("cred-skill")).thenReturn(null);
+        when(skillMapper.insert(any(Skill.class))).thenAnswer(inv -> {
+            inv.getArgument(0, Skill.class).setId("cred-id");
+            return 1;
+        });
+
+        service.confirmDraft(draft.getDraftId(), Map.of("accessLevel", "user"), "tester");
+
+        org.mockito.ArgumentCaptor<Skill> captor = org.mockito.ArgumentCaptor.forClass(Skill.class);
+        verify(skillMapper).insert(captor.capture());
+        assertEquals(List.of("QQQ_API_KEY", "QQQ_API_SECRET"), captor.getValue().getEnvs(),
+            "frontmatter env 声明应写入 skill.envs JSON（仅变量名，不含值）");
+    }
+
+    @Test
+    void testConfirmDraft_UpdateInPlaceRewritesEnvsAndClearsWhenAbsent() {
+        byte[] mdContent = "---\nname: Existing\nslug: existing\ndescription: Updated desc\n---\n\nNew body".getBytes();
+        SkillInstallDraft draft = service.prepareUpload("existing.md", mdContent, "tester");
+
+        Skill old = new Skill();
+        old.setId("old-id");
+        old.setSlug("existing");
+        old.setName("Old Name");
+        old.setEnabled(0);
+        old.setEnvs(List.of("STALE_VAR"));
+        when(skillMapper.selectBySlug("existing")).thenReturn(old);
+
+        service.confirmDraft(draft.getDraftId(), null, "tester");
+
+        org.mockito.ArgumentCaptor<Skill> captor = org.mockito.ArgumentCaptor.forClass(Skill.class);
+        verify(skillMapper).updateById(captor.capture());
+        assertNull(captor.getValue().getEnvs(),
+            "新 SKILL.md 无 env 声明时应清除旧 envs（随 SKILL.md 全量重写）");
+    }
+
+    @Test
+    void testConfirmDraft_NoEnvDeclarationYieldsNullEnvs() {
+        byte[] mdContent = "---\nname: Plain\nslug: plain-again\ndescription: d\n---\n\nBody".getBytes();
+        SkillInstallDraft draft = service.prepareUpload("plain.md", mdContent, "tester");
+        when(skillMapper.selectBySlug("plain-again")).thenReturn(null);
+        when(skillMapper.insert(any(Skill.class))).thenReturn(1);
+
+        service.confirmDraft(draft.getDraftId(), Map.of("accessLevel", "user"), "tester");
+
+        org.mockito.ArgumentCaptor<Skill> captor = org.mockito.ArgumentCaptor.forClass(Skill.class);
+        verify(skillMapper).insert(captor.capture());
+        assertNull(captor.getValue().getEnvs(), "无 env 声明 envs 应为 null（不写空数组）");
+    }
+
     @Test
     void testConfirmDraft_SlugExistsUpdatesInPlaceKeepingId() {
         byte[] mdContent = "---\nname: Existing\nslug: existing\ndescription: Updated desc\n---\n\nNew body".getBytes();

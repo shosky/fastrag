@@ -181,4 +181,53 @@ class SkillMarkdownParserTest {
         assertEquals(List.of("other-skill"), result.getSkillDependencies());
         assertEquals(List.of("github"), result.getMcpDependencies());
     }
+
+    // ========== F4 运行期凭据通道：frontmatter env 声明解析（skill-feature-batch.md F4，2026-10-07） ==========
+
+    @Test
+    void parse_EnvFrontmatterListForm_YieldsVariableNameList() {
+        // list 写法：env: 下逐行列变量名
+        String content = "---\nname: Cred\nslug: cred\ndescription: d\n"
+            + "env:\n  - QQQ_API_KEY\n  - QQQ_API_SECRET\n"
+            + "---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals(List.of("QQQ_API_KEY", "QQQ_API_SECRET"), result.getEnvs(),
+            "env list 形态应解析为变量名列表");
+    }
+
+    @Test
+    void parse_EnvStringForm_NormalizedToSingleElementList() {
+        // string 写法：单变量名（与依赖三字段同款容忍）
+        String content = "---\nname: Cred1\nslug: cred-1\ndescription: d\n"
+            + "env: SINGLE_TOKEN\n"
+            + "---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals(List.of("SINGLE_TOKEN"), result.getEnvs(),
+            "env string 形态应归一为单元素列表");
+    }
+
+    @Test
+    void parse_EnvAbsent_YieldsEmptyList() {
+        String content = "---\nname: Plain\nslug: plain\ndescription: d\n---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertNotNull(result.getEnvs(), "缺省 env 应为空列表而非 null");
+        assertTrue(result.getEnvs().isEmpty(), "缺省 env 应为空列表");
+    }
+
+    @Test
+    void parse_EnvEmptyListAndBlankEntries_Filtered() {
+        String content = "---\nname: Cred2\nslug: cred-2\ndescription: d\n"
+            + "env:\n  - KEEP_VAR\n  - \"\"\n  -   \n---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals(List.of("KEEP_VAR"), result.getEnvs(),
+            "空串/空白项应过滤，仅保留有效变量名");
+    }
 }

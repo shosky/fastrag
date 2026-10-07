@@ -114,6 +114,8 @@ public class SkillDataInitializer implements CommandLineRunner {
                 spec.setMetadata(result.getMetadata());
                 // M3-2（D9）：依赖串规范形态（type:name）随播种写入
                 spec.setDependencyRefs(SkillMarkdownParser.dependencyRefs(result));
+                // F4：env 声明随播种写入（仅变量名；当前内置技能均未声明，缺省空列表 → null）
+                spec.setEnvs(result.getEnvs());
                 spec.setContent(content);
                 spec.setContentHash(contentHash);
                 spec.setClasspathDir(cpPath);
@@ -196,6 +198,9 @@ public class SkillDataInitializer implements CommandLineRunner {
         // M3-2（D9）：frontmatter 依赖写入 dependencies JSON（启动期不做存在性校验——技能可先于依赖存在）
         List<String> depRefs = spec.getDependencyRefs();
         s.setDependencies(depRefs.isEmpty() ? null : depRefs);
+        // F4：env 声明写入 envs JSON（空列表归 null，不写空数组）
+        List<String> envs = spec.getEnvs();
+        s.setEnvs(envs == null || envs.isEmpty() ? null : envs);
         s.setCreator("system");
         s.setShareConfig(Map.of("accessLevel", "global", "departmentIds", List.of(), "userUids", List.of()));
         skillMapper.insert(s);
@@ -211,9 +216,11 @@ public class SkillDataInitializer implements CommandLineRunner {
         private String version;
         private String category;
         private String icon;
-        private Map<String, Object> metadata;
-        private List<String> dependencyRefs;
-        private String content;
+    private Map<String, Object> metadata;
+    private List<String> dependencyRefs;
+    /** F4：frontmatter env 声明（变量名列表） */
+    private List<String> envs;
+    private String content;
         private String contentHash;
         private String classpathDir;
     }

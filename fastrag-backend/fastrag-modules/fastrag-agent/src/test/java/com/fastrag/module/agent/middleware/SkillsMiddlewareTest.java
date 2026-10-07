@@ -721,6 +721,167 @@ class SkillsMiddlewareTest {
         assertFalse(messages.get(0).getContent().contains("<must_use>"));
     }
 
+    // ===== F4 技能运行期凭据通道：envs 并集解析 + runtimeState.skillEnv（skill-feature-batch.md F4，2026-10-07） =====
+
+    @Test
+    void resolveSkillEnvs_MultiSkillUnion_DedupsAndExcludesMissing() {
+        Skill a = new Skill();
+        a.setSlug("a");
+        a.setEnvs(List.of("A_TOKEN", "SHARED_VAR"));
+        Skill b = new Skill();
+        b.setSlug("b");
+        b.setEnvs(List.of("SHARED_VAR", "B_TOKEN", "MISSING_VAR"));
+
+        SkillsMiddleware.SkillEnvResolution r = SkillsMiddleware.resolveSkillEnvs(
+                List.of(a, b), name -> switch (name) {
+                    case "A_TOKEN" -> "val-a";
+                    case "B_TOKEN" -> "val-b";
+                    default -> null; // SHARED_VAR、MISSING_VAR 均未配置
+                });
+
+        assertEquals(Map.of("A_TOKEN", "val-a", "B_TOKEN", "val-b"), r.resolved(),
+            "已配置变量解析为名值对，重复声明去重");
+        assertEquals(List.of("SHARED_VAR", "MISSING_VAR"), r.missing(),
+            "缺失变量收集清单（按声明顺序、去重），不阻断");
+    }
+
+    @Test
+    void resolveSkillEnvs_NoDeclarationsOrBlankNames_YieldEmptyResolution() {
+        Skill none = new Skill();
+        none.setSlug("none");
+        Skill blank = new Skill();
+        blank.setSlug("blank");
+        blank.setEnvs(List.of("  ", ""));
+
+        SkillsMiddleware.SkillEnvResolution r = SkillsMiddleware.resolveSkillEnvs(
+                List.of(none, blank), name -> "whatever");
+
+        assertTrue(r.resolved().isEmpty(), "无声明/空白变量名不应产出任何条目");
+        assertTrue(r.missing().isEmpty());
+    }
+
+    @Test
+    void beforeModelCall_SkillEnvsUnionWrittenToRuntimeStateOncePerRun() {
+        Skill skill = new Skill();
+        skill.setId("3001");
+        skill.setEnabled(1);
+        skill.setSlug("cred-skill");
+        skill.setName("Cred");
+        skill.setDescription("d");
+        skill.setEnvs(List.of("FAKE_QQQ_TOKEN"));
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        @SuppressWarnings("unchecked")
+        java.util.function.Function<String, String> resolver = mock(java.util.function.Function.class);
+        when(resolver.apply("FAKE_QQQ_TOKEN")).thenReturn("fake-secret-value");
+        org.springframework.test.util.ReflectionTestUtils.setField(middleware, "envResolver", resolver);
+
+        BaseContext context = new BaseContext();
+        context.setSkills(List.of("3001"));
+        List<ChatMessage> messages = new ArrayList<>();
+        middleware.beforeModelCall(context, messages, new ArrayList<>());
+        middleware.beforeModelCall(context, messages, new ArrayList<>()); // 工具循环第二轮
+
+        Object envState = context.getRuntimeState().get(SkillsMiddleware.SKILL_ENV_KEY);
+        assertInstanceOf(Map.class, envState, "skillEnv 应写入 runtimeState");
+        assertEquals(Map.of("FAKE_QQQ_TOKEN", "fake-secret-value"), envState);
+        verify(resolver, times(1)).apply("FAKE_QQQ_TOKEN"); // run 级缓存：装配仅首轮一次
+    }
+
+    @Test
+    void beforeModelCall_MissingEnvsWarnedOnceWithActionableTextNamesOnly() {
+        Skill skill = new Skill();
+        skill.setId("3002");
+        skill.setEnabled(1);
+        skill.setSlug("cred-skill");
+        skill.setName("Cred");
+        skill.setDescription("d");
+        skill.setEnvs(List.of("ABSENT_VAR_X"));
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        org.springframework.test.util.ReflectionTestUtils.setField(middleware, "envResolver",
+                (java.util.function.Function<String, String>) name -> null);
+
+        ch.qos.logback.classic.Logger logger =
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(SkillsMiddleware.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+            new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            BaseContext context = new BaseContext();
+            context.setSkills(List.of("3002"));
+            List<ChatMessage> messages = new ArrayList<>();
+            middleware.beforeModelCall(context, messages, new ArrayList<>());
+            middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+            long warns = appender.list.stream()
+                .filter(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
+                    && e.getFormattedMessage().contains("ABSENT_VAR_X")
+                    && e.getFormattedMessage().contains("请在 fastrag-app 环境配置"))
+                .count();
+            assertEquals(1, warns, "缺失清单应 warn 且单 run 仅一次（文案含可操作指引）");
+            Object envState = context.getRuntimeState().get(SkillsMiddleware.SKILL_ENV_KEY);
+            assertNotNull(envState);
+            assertTrue(((Map<?, ?>) envState).isEmpty(), "缺失变量不注入");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void beforeModelCall_EnvValuesNeverReachPromptOrLogs() {
+        String secret = "super-secret-value-9f3a";
+        Skill skill = new Skill();
+        skill.setId("3003");
+        skill.setEnabled(1);
+        skill.setSlug("cred-skill");
+        skill.setName("Cred");
+        skill.setDescription("d");
+        skill.setEnvs(List.of("SECRET_VAR"));
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        org.springframework.test.util.ReflectionTestUtils.setField(middleware, "envResolver",
+                (java.util.function.Function<String, String>) name -> secret);
+
+        ch.qos.logback.classic.Logger logger =
+            (ch.qos.logback.classic.Logger) org.slf4j.LoggerFactory.getLogger(SkillsMiddleware.class);
+        ch.qos.logback.core.read.ListAppender<ch.qos.logback.classic.spi.ILoggingEvent> appender =
+            new ch.qos.logback.core.read.ListAppender<>();
+        appender.start();
+        logger.addAppender(appender);
+        try {
+            BaseContext context = new BaseContext();
+            context.setSkills(List.of("3003"));
+            List<ChatMessage> messages = new ArrayList<>();
+            messages.add(new ChatMessage("system", "Base prompt."));
+            middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+            assertFalse(messages.get(0).getContent().contains(secret),
+                "凭据值绝不进 prompt");
+            assertTrue(appender.list.stream().noneMatch(
+                    e -> String.valueOf(e.getFormattedMessage()).contains(secret)),
+                "凭据值绝不进日志");
+        } finally {
+            logger.detachAppender(appender);
+        }
+    }
+
+    @Test
+    void beforeModelCall_NoBoundSkills_SkillEnvNotWritten() {
+        BaseContext context = new BaseContext();
+        context.setSkills(null);
+        List<ChatMessage> messages = new ArrayList<>();
+
+        middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+        assertFalse(context.getRuntimeState().containsKey(SkillsMiddleware.SKILL_ENV_KEY),
+            "无绑定技能不写 skillEnv（回归保护：无声明链路零变化）");
+    }
+
     private static int countOccurrences(String text, String token) {
         int count = 0;
         int idx = 0;

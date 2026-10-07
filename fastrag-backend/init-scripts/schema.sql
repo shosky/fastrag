@@ -488,6 +488,7 @@ CREATE TABLE IF NOT EXISTS skill (
     outputs JSON,
     dir_path VARCHAR(512),
     dependencies JSON,
+    envs JSON,
     content_hash VARCHAR(64),
     is_builtin TINYINT DEFAULT 0,
     metadata JSON,
@@ -504,10 +505,11 @@ CREATE TABLE IF NOT EXISTS skill (
     UNIQUE INDEX uk_slug (slug)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 -- M3-7（DDL 双处同步）：skill 表补齐 SchemaInitializer 运行时增补的全部列
---   （slug/source_type/dir_path/dependencies/content_hash/is_builtin/metadata/
+--   （slug/source_type/dir_path/dependencies/envs/content_hash/is_builtin/metadata/
 --    share_config/creator/org_id/created_at）+ slug 唯一索引。
 --   2026-10-07 拍板：slug 强制全局唯一（真库核实零重复，Service 层查重 + uk_slug
 --    兜底）；覆盖重装走 update-in-place 不经此约束。
+--   envs 为 F4 运行期凭据通道声明列（变量名列表 JSON，值不落库）。
 
 CREATE TABLE IF NOT EXISTS skill_dependency (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,

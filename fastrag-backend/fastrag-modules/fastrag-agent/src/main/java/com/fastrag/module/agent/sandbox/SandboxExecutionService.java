@@ -183,9 +183,20 @@ public class SandboxExecutionService {
 
     /**
      * 执行命令：超时 = 工具参数 &gt; 配置 defaultTimeoutSec &gt; 120s；输出截断 256KB + 标记。
+     * 空环境变量（F4 前的既有七动作调用方兼容入口）。
      */
     public String execute(String userId, String sessionId, String sandboxConfigId,
                           String command, Integer timeoutSec, String cwd) {
+        return execute(userId, sessionId, sandboxConfigId, command, timeoutSec, cwd, Map.of());
+    }
+
+    /**
+     * 执行命令（F4 技能运行期凭据通道重载，skill-feature-batch.md F4，2026-10-07）：
+     * {@code env} 以容器 exec 的 env 机制附加（docker ExecCreate withEnv），<b>绝不拼进命令行字符串</b>，
+     * 值不进 fastrag 日志/事件/prompt。null/空 env 与原签名行为完全一致。
+     */
+    public String execute(String userId, String sessionId, String sandboxConfigId,
+                          String command, Integer timeoutSec, String cwd, Map<String, String> env) {
         String cleanCwd = null;
         try {
             if (cwd != null && !cwd.isBlank()) {
@@ -204,6 +215,7 @@ public class SandboxExecutionService {
                     .command(command)
                     .timeout(Duration.ofSeconds(effective))
                     .workDir(cleanCwd)
+                    .env(env == null ? Map.of() : env)
                     .build();
             ExecResult result = r.client().exec(r.handle(), request);
             StringBuilder sb = new StringBuilder(result.getStdout() == null ? "" : result.getStdout());

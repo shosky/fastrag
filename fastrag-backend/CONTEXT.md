@@ -84,6 +84,8 @@
 
 **技能导入两步化（Two-step Skill Import）** — 上传（POST /api/skills/import/upload，建草稿返回 items 预览）与确认安装（既有 confirm 端点）拆分；逐技能 DraftItem 即安装留痕；单步 /import/prepare 保留兼容标 deprecated。〔2026-10-07 特性批次实施；安装进度 SSE 登记不做〕Avoid: 上传即安装（旧单步语义）。
 
+**技能凭据通道（Skill Env Channel）** — 技能在 SKILL.md frontmatter 声明 `env:`（变量名列表，落 skill.envs 列），会话执行时按当轮挂载技能并集从 fastrag 后端进程环境解析（缺失 warn 不注入），经容器 exec env 机制注入（ExecConfig withEnv，**不拼命令行**）——凭据值不进 prompt/事件/日志；模型以 `$VAR` 引用，信任边界=沙箱本身。〔2026-10-07 F4〕Avoid: 技能内硬编码密钥、per-skill 值 UI（登记不做）。
+
 **操作审计（Audit Log）** — 通过 @Loggable 注解 + AOP 切面自动记录的知识库操作日志。
 
 **沙箱（Sandbox）** — 为智能体工具代码执行提供的隔离环境，多后端抽象对齐 WeKnora：`docker`/`cube`/`e2b`/`disabled` 四类型（`host` 为桌面客户端专属，不做）。容器侧协议按后端各自实现——Docker = Docker Engine API 直连（exec/archive，容器内零服务端），Cube/E2B = 控制面 REST + 容器内 envd 数据面；fastrag 早期「容器内 HTTP API」设计已废弃〔2026-09-27 grill 裁决〕。

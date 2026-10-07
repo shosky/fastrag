@@ -233,6 +233,8 @@ public class SkillDraftServiceImpl implements SkillDraftService {
                             existing.setMetadata(parseResult.getMetadata());
                             existing.setAuthor(operator);
                             existing.setDependencies(depRefs.isEmpty() ? null : depRefs);
+                            // F4：env 声明随 SKILL.md 全量重写（无声明清空旧值）
+                            existing.setEnvs(envsOf(parseResult));
                             skillMapper.updateById(existing);
                             writeDependencyRows(existingId, validDeps);
                         } else {
@@ -256,6 +258,8 @@ public class SkillDraftServiceImpl implements SkillDraftService {
                             s.setCategory(parseResult.getCategory());
                             s.setAuthor(operator);
                             s.setDependencies(depRefs.isEmpty() ? null : depRefs);
+                            // F4：env 声明落库（仅变量名，值运行期从进程环境解析）
+                            s.setEnvs(envsOf(parseResult));
                             skillMapper.insert(s);
                             writeDependencyRows(s.getId(), validDeps);
                         }
@@ -336,6 +340,15 @@ public class SkillDraftServiceImpl implements SkillDraftService {
     private List<String> dependencyRefsOf(List<SkillDependencyInfo> validDeps) {
         if (validDeps == null || validDeps.isEmpty()) return List.of();
         return validDeps.stream().map(d -> d.getType() + ":" + d.getName()).toList();
+    }
+
+    /**
+     * F4：frontmatter env 声明转 {@code Skill.envs}（变量名列表 JSON）。
+     * 空列表归 null（不写空数组，与 dependencies 空值语义一致）。
+     */
+    private List<String> envsOf(SkillMarkdownParser.SkillParseResult parseResult) {
+        List<String> envs = parseResult.getEnvs();
+        return envs == null || envs.isEmpty() ? null : envs;
     }
 
     /** M3-2：依赖行先删后插（主键确定后调用；新装主键来自 ASSIGN_ID insert 回填） */

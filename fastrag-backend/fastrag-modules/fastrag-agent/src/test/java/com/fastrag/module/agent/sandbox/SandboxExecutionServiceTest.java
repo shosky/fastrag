@@ -459,4 +459,53 @@ class SandboxExecutionServiceTest {
         assertThat(synced).containsKeys("web");
         verify(docker, times(1)).writeFile(eq(handle), eq("/workspace/skills/web/SKILL.md"), anyString());
     }
+
+    // ---------- F4 运行期凭据通道：execute env 重载（skill-feature-batch.md F4） ----------
+
+    @Test
+    void 执行_env重载传入时_ExecRequest携带env且值不拼命令行() {
+        stubAvailable();
+        when(docker.exec(any(SandboxHandle.class), any(ExecRequest.class)))
+                .thenReturn(ExecResult.builder().stdout("ok").exitCode(0).build());
+
+        String result = facade.execute(USER, SESSION, CONFIG_ID, "run.py", null, null,
+                Map.of("APP_TOKEN", "val-1", "APP_SECRET", "val-2"));
+
+        assertThat(result).isEqualTo("ok");
+        org.mockito.ArgumentCaptor<ExecRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(ExecRequest.class);
+        verify(docker).exec(eq(handle), captor.capture());
+        assertThat(captor.getValue().getEnv())
+                .containsEntry("APP_TOKEN", "val-1")
+                .containsEntry("APP_SECRET", "val-2");
+        assertThat(captor.getValue().getCommand()).doesNotContain("val-1").doesNotContain("val-2");
+    }
+
+    @Test
+    void 执行_env重载传null时_按空env处理() {
+        stubAvailable();
+        when(docker.exec(any(SandboxHandle.class), any(ExecRequest.class)))
+                .thenReturn(ExecResult.builder().stdout("ok").exitCode(0).build());
+
+        facade.execute(USER, SESSION, CONFIG_ID, "echo ok", null, null, null);
+
+        org.mockito.ArgumentCaptor<ExecRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(ExecRequest.class);
+        verify(docker).exec(eq(handle), captor.capture());
+        assertThat(captor.getValue().getEnv()).isEmpty();
+    }
+
+    @Test
+    void 执行_原签名时_env为空_兼容既有七动作调用方() {
+        stubAvailable();
+        when(docker.exec(any(SandboxHandle.class), any(ExecRequest.class)))
+                .thenReturn(ExecResult.builder().stdout("ok").exitCode(0).build());
+
+        facade.execute(USER, SESSION, CONFIG_ID, "echo ok", null, null);
+
+        org.mockito.ArgumentCaptor<ExecRequest> captor =
+                org.mockito.ArgumentCaptor.forClass(ExecRequest.class);
+        verify(docker).exec(eq(handle), captor.capture());
+        assertThat(captor.getValue().getEnv()).isEmpty();
+    }
 }

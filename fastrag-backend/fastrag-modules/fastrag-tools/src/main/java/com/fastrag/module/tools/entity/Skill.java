@@ -77,6 +77,14 @@ public class Skill {
     @TableField(typeHandler = JacksonTypeHandler.class)
     private List<String> dependencies;
 
+    /**
+     * SKILL.md frontmatter env 声明（所需环境变量名列表，JSON；F4 运行期凭据通道）。
+     * <p>仅存变量名——值永不落库，运行期由 SkillsMiddleware 从 fastrag 后端进程环境变量解析
+     * 并经沙箱 exec env 机制注入（值不进 prompt/事件/日志）。</p>
+     */
+    @TableField(typeHandler = JacksonTypeHandler.class)
+    private List<String> envs;
+
     /** 技能内容哈希，用于内置技能同步检测 */
     private String contentHash;
 

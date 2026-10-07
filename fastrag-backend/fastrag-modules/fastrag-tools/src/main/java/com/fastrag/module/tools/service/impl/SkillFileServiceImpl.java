@@ -249,7 +249,7 @@ public class SkillFileServiceImpl implements SkillFileService {
         }
     }
 
-    /** M3-4：把解析出的 frontmatter 与正文回写 DB（content/contentHash/name/description/version/category/icon/metadata） */
+    /** M3-4：把解析出的 frontmatter 与正文回写 DB（content/contentHash/name/description/version/category/icon/metadata/envs） */
     private void syncRootSkillMdToDb(String slug, SkillMarkdownParser.SkillParseResult parsed, String content) {
         Skill s = skillMapper.selectBySlug(slug);
         if (s == null) {
@@ -262,6 +262,8 @@ public class SkillFileServiceImpl implements SkillFileService {
         s.setCategory(parsed.getCategory());
         s.setIcon(parsed.getIcon());
         s.setMetadata(parsed.getMetadata());
+        // F4：env 声明随 frontmatter 回写（空列表归 null，与导入/播种同口径）
+        s.setEnvs(parsed.getEnvs() == null || parsed.getEnvs().isEmpty() ? null : parsed.getEnvs());
         s.setContent(content);
         s.setContentHash(DigestUtils.md5DigestAsHex(content.getBytes(java.nio.charset.StandardCharsets.UTF_8)));
         skillMapper.updateById(s);

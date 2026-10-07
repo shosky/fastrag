@@ -1,5 +1,6 @@
 package com.fastrag.module.agent.executor;
 
+import com.fastrag.module.agent.middleware.SkillsMiddleware;
 import com.fastrag.module.agent.sandbox.SandboxExecutionService;
 import com.fastrag.module.agent.sandbox.SandboxWorkspaceLayout;
 import com.fastrag.module.tools.executor.ToolContext;
@@ -78,7 +79,12 @@ public class SandboxToolExecutor implements ToolExecutor {
                     Integer timeout = args.containsKey("timeout")
                             ? ((Number) args.get("timeout")).intValue() : null;
                     String cwd = (String) args.get("cwd");
-                    yield sandboxExecutionService.execute(uid, fileThreadId, sandboxConfigId, command, timeout, cwd);
+                    // F4 技能运行期凭据通道（skill-feature-batch.md F4）：runtimeState.skillEnv
+                    // 经 AgentEngine 既有浅拷贝到达 extensions，随容器 exec env 机制注入（不拼命令行）。
+                    // 无技能/非 Map 形态一律空 env——值绝不进输出/日志（门面恒文本化返回）。
+                    Map<String, String> skillEnv = skillEnvOf(ctx);
+                    yield sandboxExecutionService.execute(uid, fileThreadId, sandboxConfigId,
+                            command, timeout, cwd, skillEnv);
                 }
                 case "list_directory" -> {
                     String path = (String) args.getOrDefault("dir_path", SandboxWorkspaceLayout.ROOT);
@@ -102,5 +108,25 @@ public class SandboxToolExecutor implements ToolExecutor {
         } catch (Exception e) {
             return ToolResult.error(e.getMessage(), (int)(System.currentTimeMillis() - start));
         }
+    }
+
+    /**
+     * F4：从 extensions 取技能运行期凭据 Map（键 {@link SkillsMiddleware#SKILL_ENV_KEY}，
+     * SkillsMiddleware 装配阶段写入 runtimeState、AgentEngine 浅拷贝至此）。
+     * 缺失/形态不符返回空 Map（无技能链路与旧行为完全一致）。
+     */
+    private static Map<String, String> skillEnvOf(ToolContext ctx) {
+        Object raw = ctx.getExtension(SkillsMiddleware.SKILL_ENV_KEY);
+        if (raw instanceof Map<?, ?> map && !map.isEmpty()) {
+            Map<String, String> env = new java.util.LinkedHashMap<>();
+            for (Map.Entry<?, ?> entry : map.entrySet()) {
+                if (entry.getKey() instanceof String key && !key.isBlank()
+                        && entry.getValue() instanceof String value) {
+                    env.put(key, value);
+                }
+            }
+            return env;
+        }
+        return Map.of();
     }
 }
