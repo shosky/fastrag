@@ -109,7 +109,7 @@
 - Shared state：agent_run 表（唯一持久状态）；sseExecutor 为类内自建 cachedThreadPool（非 Spring 托管）
 
 **Decisions & Deviations:**
-- ① ~~走旧 AgentExecutor~~ 已消解（M2-4，见 ExecutionEngine Deviations①）；② 取消无信号传播：cancelled 可被执行线程随后的 completed/failed 覆盖（last-write-wins，无锁无版本号）——**终态覆盖已保护（2026-10-06 快修）**：executeRunAsync 回写终态前查库，非 running 不覆盖并保留 cancelled（引擎循环内真中断/插话通道仍待立项，见 docs/plan/weknora-gap-review.md P0-2）；③ streamEvents 选择「DB 轮询」而非「事件订阅」——与 RunEventPublisher 写而不读互为因果（事件通道闭环未建，先以状态轮询保底）；④ @Lazy self 注入是为绕 @Async 自调用失效的 Spring 惯用法
+- ① ~~走旧 AgentExecutor~~ 已消解（M2-4，见 ExecutionEngine Deviations①）；② 取消无信号传播：~~cancelled 可被执行线程随后的 completed/failed 覆盖~~ **终态覆盖已保护（2026-10-06 快修）**：executeRunAsync 回写终态前查库，非 running 不覆盖并保留 cancelled（引擎循环内真中断/插话通道仍待立项，见 docs/plan/weknora-gap-review.md P0-2）；③ ~~streamEvents 选择「DB 轮询」~~ **事件通道已接通（2026-10-07 backlog I2）**：streamEvents 按 afterSeq 增量拉 StreamManager 事件推 SSE（500ms），run 表轮询仅终态兜底；RunEventPublisher 改造为 StreamManager 接口 + memory/Redis 双实现（RPush/LTrim 500 条/TTL 24h/异常粘性降级），seq 自增单调，终态宽限 60s 清理；④ @Lazy self 注入是为绕 @Async 自调用失效的 Spring 惯用法；⑤ **构造期循环依赖（M2-4 回归，2026-10-07 启动 smoke 发现）**：agentEngine→chain→subAgent→agentRunServiceImpl→agentEngine 使应用无法启动（单测无全上下文装配测试未暴露）——根 lombok.config 使字段 @Lazy 复制到 Lombok 构造参数 + AgentRunServiceImpl.agentEngine @Lazy 断环
 
 **Parent Trace:** AgentRunServiceImpl → agent.AgentRunGateway → RunOrchestrationModule → REQ-C01~C08、D02~D03
 
@@ -120,7 +120,7 @@
 `executeBefore`：FOR m ∈ 正序：try context=m.beforeModelCall(ctx, msgs, tools) catch→warn 继续
 `executeAfter`：FOR i ∈ 逆序：try 同上
 `getToolCallInterceptor`：FOR 正序：首个非 null 即返；null 兜底
-12 中间件行为要点（order）：Context 0=模型加载桩（仅日志，等外部注入 modelConfig）；Filesystem 1=注册 read_file/write_file/edit_file/execute/list_directory/grep/glob，拦截路由 SandboxBackend，沙箱不可用仍注册但操作报错；Attachment 2=runtimeState.uploads→system prompt 追加；KnowledgeBase 3=注册 list_kbs/query_kb/find_kb_document（knowledges 非空时）；Skills 4=三段式渐进加载（M2 后）：首轮装配（绑定 id→listByIds→enabled 过滤→与 listAccessible 交集→expandSkillClosure 闭包→实体缓存入 context；run 级缓存，后续轮零查询 M2-5）→ prompt 注入（描述截 600 字符，M2-6）→ 沙箱 syncSkills（slug 集不变跳过）；拦截 read_file(SKILL.md) 返回全文（`# name+desc+---+content`，DB content 为源，M2-1）并按依赖闭包追加规范化工具 id（`tool:xxx`→裸 id，M3-2）+ 置 context.toolsDirty；SubAgent 5=注册 task 工具+拦截委派（见下）；Summarization 6=token 估算超阈值（默认 8000）压缩中段保留 system+尾 6 条；TodoList 7=拦截 write_todos 解析参数更新 runtimeState.todos；PatchToolCalls 8=after 修补空 ID/空名（参数名反推）/未闭合 JSON；ModelRetry 9=写 RetryConfig 入 runtimeState（默认 2 次指数退避，引擎侧未消费）；Database 10=每库注册 list_tables/describe_table/query_database；Mcp 11=mcp_tool 表 enabled 工具注册为 type=mcp 定义。
+12 中间件行为要点（order）：Context 0=模型加载桩（仅日志，等外部注入 modelConfig）；Filesystem 1=注册 read_file/write_file/edit_file/execute/list_directory/grep/glob，拦截路由 SandboxBackend，沙箱不可用仍注册但操作报错；Attachment 2=runtimeState.uploads→system prompt 追加；KnowledgeBase 3=注册 list_kbs/query_kb/find_kb_document（knowledges 非空时）；Skills 4=三段式渐进加载（M2 后）：首轮装配（绑定 id→listByIds→enabled 过滤→与 listAccessible 交集→expandSkillClosure 闭包→实体缓存入 context；run 级缓存，后续轮零查询 M2-5）→ prompt 注入（描述截 600 字符，M2-6）→ 沙箱 syncSkills（slug 集不变跳过）；拦截 read_file(SKILL.md) 返回全文（`# name+desc+---+content`，DB content 为源，M2-1）并按依赖闭包追加规范化工具 id（`tool:xxx`→裸 id，M3-2）+ 置 context.toolsDirty；SubAgent 5=注册 task 工具+拦截委派（见下）；Summarization 6=token 估算超阈值（默认 8000）压缩中段保留 system+尾 6 条（2026-10-07 I6：经 beforeRound 钩子在每轮循环边界调用，摘要模型 modelConfig→context 回退、失败 warn）；TodoList 7=拦截 write_todos 解析参数更新 runtimeState.todos；PatchToolCalls 8=after 修补空 ID/空名（参数名反推）/未闭合 JSON；ModelRetry 9=写 RetryConfig 入 runtimeState（默认 2 次指数退避，2026-10-07 I7 起引擎两处 LLM 调用消费：瞬时异常判定+fullAnswer 回滚防重复）；History 12=new-conversation 历史注入（2026-10-07 R1：读 runtimeState.conversationHistory 追加 system 附加块，单 run 一次）；Database 10=每库注册 list_tables/describe_table/query_database；Mcp 11=mcp_tool 表 enabled 工具注册为 type=mcp 定义。
 SubAgentMiddleware 拦截路径：校验 subagent_type 存在→建 childRun（threadId=新子线程、requestId=UUID、runType=subagent、input={query,description}）→createRunDirect 落库→childContext 构建→agentEngine.executeSync→updateSubAgentState（SubAgentRunState 入 ctx）→结果文本作拦截消息回灌。
 
 **Module Interactions:**
@@ -129,7 +129,7 @@ SubAgentMiddleware 拦截路径：校验 subagent_type 存在→建 childRun（t
 - Shared state：BaseContext.runtimeState（todos/artifacts/uploads/retryConfig/summaryPrompt 的运行期共享黑板）
 
 **Decisions & Deviations:**
-- ① 三钩子异常一律隔离（warn）——契约 E_MW_ISOLATED 的实现形态；② ModelRetryMiddleware 只写配置不执行重试（javadoc 自述由引擎读取执行，AgentEngine 实际未读 retryConfig——**配置写而不读**，与 RunEventPublisher 同型债务）；③ ContextMiddleware 桩化：跨模块 ModelRecordMapper 未接入，模型配置实际由调用方（AppServiceImpl/ContextBuilder 缺省链）注入
+- ① 三钩子异常一律隔离（warn）——契约 E_MW_ISOLATED 的实现形态；② ~~ModelRetryMiddleware 只写配置不执行重试~~ **已消解（2026-10-07 I7）**：引擎 callLlmWithRetry/consumeStreamWithRetry 消费 retryConfig（瞬时异常分类+指数退避）；③ ContextMiddleware 桩化：跨模块 ModelRecordMapper 未接入，模型配置实际由调用方（AppServiceImpl/ContextBuilder 缺省链）注入
 
 **Parent Trace:** AgentMiddlewareChain + 12 中间件 → agent.MiddlewareChain → MiddlewareChainModule → REQ-F01~F03、H03
 

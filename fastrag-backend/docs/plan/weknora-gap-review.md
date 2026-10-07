@@ -1,54 +1,65 @@
-# WeKnora 对标缺口评审报告 — idd-review（2026-10-06）
+# WeKnora 对标缺口评审报告 — idd-review（2026-10-06/07）
 
-> 五单元并行评审（技能与工具治理 / Agent 运行时 / 沙箱 / 检索管线 / 安全与工程化），对标 `docs/research/weknora-vs-fastrag.md` 与 WeKnora 本地检出。27 项 finding：P0×8（合并后）/ P1×12 / P2×7。
-> **快修批次（同日实施）**：下表 P0-1/P0-2/P0-4/P0-5/P0-7~P0-9 与 P1-2、P2-3 共 8 项已实施（见文末登记），其余为待立项 backlog。
+> 五单元并行评审（技能与工具治理 / Agent 运行时 / 沙箱 / 检索管线 / 安全与工程化），对标 `docs/research/weknora-vs-fastrag.md` 与 WeKnora 本地检出。27 项 finding。
+> **处置终态（2026-10-07 backlog 批次收口）**：✅ 已修 23 项 ｜ ◐ 部分 1 项 ｜ ⬜ 待立项 3 项（P1-12 可观测性、P2-2 安装进度 SSE、P2-4 沙箱 checkpoint——均需采集端/产品/存储决策）。
+> 另：评审后实施期间，启动 smoke 额外发现并修复 1 项 P0 回归（M2-4 引入的构造期 Bean 循环依赖，应用无法启动——lombok.config @Lazy 复制 + AgentRunServiceImpl 断环）。
 
-## P0 — 功能正确性
-
-| # | 位置 | 问题 | 后果 | 状态 |
-|---|---|---|---|---|
-| P0-1 | AgentEngine.java:905 / SandboxExecutionService.java:440 | 工具输出截断按 UTF-16 substring，代理对中间切断 | 序列化非法字符，部分厂商 API 400，该轮结果丢失 | ✅ 快修（rune 安全） |
-| P0-2 | AgentRunServiceImpl.java:120-130,208 | cancelRun 只改 DB；异步终态无条件覆盖 cancelled；引擎无取消检查点 | 取消后继续烧 token，状态被改回成功 | ✅ 快修（回写前查库保护；引擎内真中断待立项） |
-| P0-3 | RunEventPublisher.java:44-81 | 事件表内存 Map、seq 同毫秒重号、无上限无清理；SSE 只轮询 run 表不读事件 | 前端全程黑盒、断线不可续传、多副本失效（=research P0-3） | ⬜ 立项：StreamManager |
-| P0-4 | AgentEngine.java:443,519 | executeSync 耗尽轮次且空答案返回 success("") | 成功+空内容入库，监控失真 | ✅ 快修（兜底文案对齐流式分支） |
-| P0-5 | KnowledgeToolExecutor.java:98 / AppServiceImpl.java:713-746 | 引用无请求级句柄协议，UUID 进 prompt；投影丢 file_id | 同 KB 多文件引用溯源歧义、无法精确回跳 | ✅ 快修（file_id 已补）；句柄协议待立项 |
-| P0-6 | AppServiceImpl.java:574-580 | historyMessages 死代码，多轮历史未注入引擎，memoryRounds 失效 | 应用对话每轮失忆（用户可直接感知） | ⬜ 立项首位：历史注入 |
-| P0-7 | schema-h2.sql:757 vs schema.sql | sys_api_token 不在 MySQL 建库链路 | MySQL 部署 API Token 功能报表不存在 | ✅ 快修（DDL 补入+全表 parity 方向） |
-| P0-8 | ApiTokenAuthFilter.java:74-88 | 不读 permission 字段统一授 kb:manage | read token 可自我提权、管理全部非 KB 数据 | ✅ 快修（read→kb:read） |
-
-## P1 — 本轮该修
+## P0 — 功能正确性（8/8 已修）
 
 | # | 位置 | 问题 | 状态 |
 |---|---|---|---|
-| P1-1 | AgentEngine.java:282,835 | 输出预算单层：shell 只保头、SSE 截 5000 与注释矛盾、全量进内存事件、HTTP 无大小限制 | ⬜ 随 StreamManager/预算分层立项 |
-| P1-2 | ToolRegistry.java:121-144 | toOpenAITools 不排序，prompt cache 每轮全量 miss | ✅ 快修（按名稳定排序） |
-| P1-3 | ToolRegistry.java:26-44 + 六中间件 | 同名工具无 first-wins，可被抢占执行路径 | ⬜ |
-| P1-4 | AgentEngine.java:180,461,543 | 四类防卡死守卫仅存其一；finishReason 已捕获不消费 | ⬜ 随 Agent 治理迭代 |
-| P1-5 | SummarizationMiddleware.java:36-104 | 压缩只在循环外调一次从不生效；摘要模型硬编码 gpt-4o-mini 必 404 且静默吞 | ⬜ |
-| P1-6 | ModelRetryMiddleware.java:41 | retryConfig 写而不读，管理端配置是无效开关 | ⬜ |
-| P1-7 | DockerSandboxAdapter.java:498-521 | 活动标记在工作区内且无未来时间戳防御，可被模型伪造免回收 | ⬜（建议随沙箱迭代） |
-| P1-8 | SandboxWorkspaceLayout.java:22 | /workspace/output 只进不出，产物随回收销毁 | ⬜ 立项：产物回传 |
-| P1-9 | RetrievalServiceImpl.java:1139-1192 | rerank 无阈值降级链、无 passage 工程 | ⬜ 随检索质量包 |
-| P1-10 | RetrievalServiceImpl.java:674,687 | 默认 hybrid 仍加权融合；multiChannel 池深=topK | ⬜ 随检索质量包 |
-| P1-11 | 审计三日志 | status 两态、监听器同步吞错，安全事件不留痕 | ⬜ |
-| P1-12 | 全仓 pom | 可观测性零落地；/actuator/** permitAll | ⬜ 立项：micrometer-tracing opt-in |
+| P0-1 | AgentEngine / SandboxExecutionService truncate | UTF-16 substring 切断代理对 | ✅ backlog I1：common OutputBudget（offsetByCodePoints + 头尾保留） |
+| P0-2 | AgentRunServiceImpl | cancelRun 只改 DB、终态无条件覆盖 cancelled | ✅ 快修（回写前查库）；引擎内真中断待立项（登记） |
+| P0-3 | RunEventPublisher | 事件内存 Map 写而不读、seq 重号、无清理；SSE 只轮询状态 | ✅ backlog I2：StreamManager 接口 + memory/Redis 双实现（RPush/LTrim 500/TTL 24h/粘性降级）+ streamEvents 真接事件通道（afterSeq 增量 + 终态兜底）+ 宽限延迟清理；run 内容不落库另立项 |
+| P0-4 | AgentEngine executeSync | 耗尽轮次空答案 success("") | ✅ 快修（stepsExhaustedFallback 对齐流式） |
+| P0-5 | KnowledgeToolExecutor / AppServiceImpl | 引用无句柄协议、投影丢 file_id | ✅ 快修（file_id）+ backlog R2（cN 句柄 + runtimeState 映射 + fail-closed，结构化通道保留真实 id） |
+| P0-6 | AppServiceImpl:574 | historyMessages 死代码，多轮历史未注入 | ✅ backlog R1 最小恢复版：projectHistory 预填（6000 字符预算裁旧）+ HistoryMiddleware(order=12) system 附加块；真多轮 messages 待引擎立项 |
+| P0-7 | schema.sql 缺 sys_api_token | MySQL 新装建不出表 | ✅ backlog S1：CREATE TABLE + 双索引入 schema.sql（真库列结构核实版）；遗留：SysApiToken 实体缺 kbId 字段（IAM 侧待补） |
+| P0-8 | ApiTokenAuthFilter | 不读 permission 统一授 kb:manage，read 可自我提权 | ✅ 快修（read→kb:read）；DataScope 全局语义待 capability 立项 |
 
-## P2 — 择机
+## P1 — 质量与治理（11/12 已修）
 
 | # | 问题 | 状态 |
 |---|---|---|
-| P2-1 | 工具串行执行，无只读白名单并发（WeKnora 上限 8） | ⬜ |
-| P2-2 | 技能导入同步单步，无进度 SSE/安装 transcript | ⬜ |
-| P2-3 | writeFile 走 tar 绕过活动标记 touch，纯写会话被误回收 | ✅ 快修（mkdir+touch 复合命令） |
-| P2-4 | 沙箱无 checkpoint（轮末 git commit），误操作不可撤销 | ⬜ |
-| P2-5 | 融合/去重排序无确定性 tie-break，评测指标被抖动污染 | ⬜ |
-| P2-6 | 查询改写双 stub（suggest/applyQueryRules）+ 图谱通道重复嵌入 + 多 KB 无共享向量 | ⬜ |
-| P2-7 | 权限执行点与装配层零测试（本批已建 security/bootstrap 首批测试）；parity 测试仅 4 表；Flyway 未引入 | ◐ 部分缓解 |
+| P1-1 | 输出预算单层（shell 只保头/SSE 注释失实/事件表全量/HTTP 无上限） | ✅ backlog I3：HttpToolExecutor 2MB 上限、truncateMiddle 头尾保留、SSE 注释修正、事件只存截断后内容 |
+| P1-2 | toOpenAITools 不排序，prompt cache 全量 miss | ✅ 快修（按名稳定排序） |
+| P1-3 | 同名工具无 first-wins | ✅ backlog I4：统一出口按名归并（先到者胜 + warn） |
+| P1-4 | 四类防卡死守卫仅存其一，finishReason 不消费 | ✅ backlog I5：RoundGuard（length 丢弃不完整 toolCall+注入重试、3 次终止；空响应 nudge≤2；复读有界推进）；溢出压缩重试登记不做 |
+| P1-5 | 压缩只在循环外调一次从不生效；摘要模型硬编码必 404 | ✅ backlog I6：beforeRound 钩子移入每轮；模型 modelConfig→context 回退、失败 warn |
+| P1-6 | retryConfig 写而不读（无效配置开关） | ✅ backlog I7：引擎消费实现瞬时异常指数退避（含 fullAnswer 回滚防重复） |
+| P1-7 | 沙箱活动标记无未来时间戳防御且在工作区内 | ✅ backlog S3：>now+2min 回退 StartedAt；.fastrag_activity 列保留路径拒写 |
+| P1-8 | /workspace/output 只进不出，产物随回收销毁 | ✅ backlog S4 最小版：删除/回收/身份变更前 tar 打包落 {data-dir}/sandbox-outputs/（失败不阻断，8M 上限）；前端展示/消息绑定待后续 |
+| P1-9 | rerank 无阈值降级链、无 passage 工程 | ✅ backlog R3：阈值→×0.7→top-1→原序四级链 + 【fileName】passage + [RerankGate] 诊断 |
+| P1-10 | 默认 hybrid 加权融合；multiChannel 池深=topK | ✅ backlog R4：主路径 RRF 路权变体 + 池深 max(5×topK,50) 上限 500 + EmbeddingTopK≥RerankTopK 钳制 |
+| P1-11 | 审计两态、同步监听器吞错 | ✅ backlog S5：@Async + 失败计数周期告警 + AuditOutcome 枚举；敏感词拦截埋点待立项 |
+| P1-12 | 可观测性零落地；actuator permitAll | ⬜ 待立项（需 OTLP 采集端部署决策；actuator 收敛需核对 compose healthcheck 依赖） |
+
+## P2 — 择机（4/7 已修）
+
+| # | 问题 | 状态 |
+|---|---|---|
+| P2-1 | 工具串行执行无只读并发 | ✅ backlog I8：8 工具只读白名单、信号量 8 并发、写类屏障、toolCallId 对齐回填 |
+| P2-2 | 技能导入同步单步无进度 SSE/transcript | ⬜ 待立项（需前端契约） |
+| P2-3 | writeFile 绕过活动标记 touch | ✅ 快修（mkdir+touch 复合命令） |
+| P2-4 | 沙箱无 checkpoint | ⬜ 待立项（镜像 git 能力/存储策略待定） |
+| P2-5 | 融合/去重无确定性 tie-break | ✅ backlog R5：fileId→chunkIndex→chunkType 次级键接入三处排序 |
+| P2-6 | 查询改写双 stub + 重复嵌入 + 多 KB 无共享向量 | ✅ backlog R6：suggest 并入 expandQueries、query_rule 正则级接线、图谱通道复用主向量、(model,query) 60s LRU 共享 |
+| P2-7 | 权限执行点/装配层零测试；parity 仅 4 表；Flyway 未引入 | ◐ security/bootstrap/operation 已建首批测试（4/6/5 用例）+ SchemaSqlSmokeTest；parity 全表化与 Flyway 待立项 |
 
 ## 已确认闭合 / 无需动作
 
-技能描述截断、@提及登记在案、Schema 校验+JSON 修复、per-config sweep 与确定性容器名、特权安装模式与脚本物化（裁决性 OUT-of-scope）、MMR（默认关）、QA 召回准入（ADR-0005）、闲聊零检索（agentic 门控）、邻块窗口扩展、宪法级 HTTP 状态码议题维持待决议。
+技能描述截断、@提及登记在案、Schema 校验+JSON 修复、per-config sweep 与确定性容器名、特权安装模式与脚本物化（裁决性 OUT-of-scope）、MMR（默认关）、QA 召回准入（ADR-0005）、闲聊零检索（agentic 门控）、邻块窗口扩展。
 
-## 快修批次实施登记（2026-10-06）
+## 实施批次登记
 
-7 项（QF-1~QF-7 对应 P0-5/P0-9/P0-8/P0-4/P0-2/P1-2/P2-3）经 /idd-tdd 先红后绿完成；全仓 16 模块 mvn test BUILD SUCCESS（agent 167 / tools 229 / application 78 / security 首建 4 用例 / bootstrap 首建 1 用例）。改动 13 个已跟踪文件 + 5 个新文件。Deviation：DataScope api-token 全局语义、引擎内真中断、model_call_log.org_id 列缺口——均登记待后续。
+- **快修批次（2026-10-06）**：7 项（QF-1~7 → P0-5 止血/P0-9/P0-8/P0-4/P0-2/P1-2/P2-3），全仓绿。见会话档案 `fastrag/.tmp/idd-quickfix-task.md`。
+- **backlog 批次（2026-10-07）**：三路并行 20 项（I1~I8 / R1~R6 / S1~S6）全部完成；另修复评审期间启动 smoke 发现的构造期循环依赖（lombok.config + AgentRunServiceImpl @Lazy）。测试终态：agent 244+11skip / tools 246 / retrieval 48 / application 85 / common 10 / security 4 / bootstrap 6 / operation 5。任务书：`fastrag/.tmp/idd-backlog-task.md`。
+
+## 遗留决策清单（需用户/产品拍板，未擅动）
+
+1. **宪法级**：业务错误是否从「HTTP 200 + body.code」改为真实状态码（research doc §6.3；涉及全前端契约，建议独立评审）。
+2. **@提及技能（pinned + must_use）**：后端可先行（请求态加 skillNames + must_use 注入），需前端 @ 选择器配套。
+3. **可观测性 P1-12**：需定 OTLP 采集端（Langfuse？）与默认开关策略。
+4. **Flyway 版本化迁移**（P2-7 深化）与 parity 全表化：迁移纪律项目。
+5. **沙箱 checkpoint（P2-4）**：镜像 git 能力与存储成本。
+6. **40+ 存量特性债务**：见 feature-map 各链登记，按链立项。
