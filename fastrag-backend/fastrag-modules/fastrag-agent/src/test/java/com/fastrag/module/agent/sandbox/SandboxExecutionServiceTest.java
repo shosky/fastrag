@@ -31,8 +31,11 @@ import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
+
+import org.springframework.test.util.ReflectionTestUtils;
 
 /**
  * SandboxExecutionFacade 用例（docs/tdd/agent.md S7 SandboxExecutionFacade 表 9 条，
@@ -296,5 +299,164 @@ class SandboxExecutionServiceTest {
         String sliced = facade.readFile(USER, SESSION, CONFIG_ID, "/workspace/a.txt", 1, 2);
 
         assertThat(sliced).isEqualTo("l2\nl3");
+    }
+
+    // ---------- F2 全目录物化（docs/plan/skill-feature-batch.md F2） ----------
+
+    /** 构造 DB 侧 web 技能（content 为 SKILL.md 渲染事实源） */
+    private Skill webSkill() {
+        Skill web = new Skill();
+        web.setSlug("web");
+        web.setName("Web");
+        web.setDescription("Web skill");
+        web.setContent("# Web content");
+        return web;
+    }
+
+    /** 在假 data-dir 下为 slug 建磁盘目录 */
+    private Path newSkillDir(Path dataDir, String slug) throws Exception {
+        Path dir = dataDir.resolve("skills").resolve(slug);
+        Files.createDirectories(dir);
+        return dir;
+    }
+
+    @Test
+    void 全目录物化_附属文件存在时_复制到skills子树同名相对路径(@TempDir Path dataDir) throws Exception {
+        stubAvailable();
+        Path dir = newSkillDir(dataDir, "web");
+        Files.createDirectories(dir.resolve("scripts"));
+        Files.createDirectories(dir.resolve("references"));
+        Files.writeString(dir.resolve("scripts/run.py"), "print('hi')");
+        Files.writeString(dir.resolve("references/api.md"), "api doc");
+        ReflectionTestUtils.setField(facade, "dataDir", dataDir.toString());
+        when(skillService.getBySlug("web")).thenReturn(webSkill());
+
+        Map<String, String> synced = facade.syncSkills(USER, SESSION, CONFIG_ID, List.of("web"));
+
+        assertThat(synced).containsKeys("web");
+        verify(docker).writeFile(handle, "/workspace/skills/web/scripts/run.py", "print('hi')");
+        verify(docker).writeFile(handle, "/workspace/skills/web/references/api.md", "api doc");
+    }
+
+    @Test
+    void 全目录物化_SKILL_md时_仍以DB渲染而非磁盘内容(@TempDir Path dataDir) throws Exception {
+        stubAvailable();
+        Path dir = newSkillDir(dataDir, "web");
+        // 磁盘 SKILL.md 与 DB content 不同——DB 为事实源，磁盘版不得落沙箱
+        Files.writeString(dir.resolve("SKILL.md"), "---\nname: disk\n---\ndisk body");
+        Files.writeString(dir.resolve("notes.txt"), "note");
+        ReflectionTestUtils.setField(facade, "dataDir", dataDir.toString());
+        when(skillService.getBySlug("web")).thenReturn(webSkill());
+
+        facade.syncSkills(USER, SESSION, CONFIG_ID, List.of("web"));
+
+        // SKILL.md 恰好写一次，内容 = renderSkillMd(DB skill)
+        verify(docker, times(1)).writeFile(eq(handle), eq("/workspace/skills/web/SKILL.md"), anyString());
+        verify(docker).writeFile(handle, "/workspace/skills/web/SKILL.md",
+                "---\nname: Web\nslug: web\ndescription: Web skill\n---\n\n# Web content\n");
+        verify(docker, never()).writeFile(any(SandboxHandle.class),
+                eq("/workspace/skills/web/SKILL.md"), eq("disk body"));
+    }
+
+    @Test
+    void 全目录物化_隐藏文件与排除目录时_跳过不物化(@TempDir Path dataDir) throws Exception {
+        stubAvailable();
+        Path dir = newSkillDir(dataDir, "web");
+        Files.createDirectories(dir.resolve(".git").resolve("objects").resolve("ab"));
+        Files.createDirectories(dir.resolve("node_modules").resolve("pkg"));
+        Files.createDirectories(dir.resolve("venv").resolve("bin"));
+        Files.createDirectories(dir.resolve("__pycache__"));
+        Files.writeString(dir.resolve(".git/objects/ab/cd"), "x");
+        Files.writeString(dir.resolve(".hidden.md"), "h");
+        Files.writeString(dir.resolve("node_modules/pkg/index.js"), "x");
+        Files.writeString(dir.resolve("venv/bin/python"), "x");
+        Files.writeString(dir.resolve("__pycache__/m.pyc"), "x");
+        ReflectionTestUtils.setField(facade, "dataDir", dataDir.toString());
+        when(skillService.getBySlug("web")).thenReturn(webSkill());
+
+        facade.syncSkills(USER, SESSION, CONFIG_ID, List.of("web"));
+
+        // 仅 SKILL.md 一次写入，排除物一个不落
+        verify(docker, times(1)).writeFile(eq(handle), anyString(), anyString());
+        verify(docker, never()).writeFile(any(SandboxHandle.class), org.mockito.ArgumentMatchers.contains(".git"), anyString());
+        verify(docker, never()).writeFile(any(SandboxHandle.class), org.mockito.ArgumentMatchers.contains("node_modules"), anyString());
+        verify(docker, never()).writeFile(any(SandboxHandle.class), org.mockito.ArgumentMatchers.contains("venv"), anyString());
+        verify(docker, never()).writeFile(any(SandboxHandle.class), org.mockito.ArgumentMatchers.contains("__pycache__"), anyString());
+        verify(docker, never()).writeFile(any(SandboxHandle.class), org.mockito.ArgumentMatchers.contains(".hidden"), anyString());
+    }
+
+    @Test
+    void 全目录物化_单文件超2MB时_跳过超限文件继续其余(@TempDir Path dataDir) throws Exception {
+        stubAvailable();
+        Path dir = newSkillDir(dataDir, "web");
+        byte[] big = new byte[2 * 1024 * 1024 + 1];
+        Files.write(dir.resolve("a-big.bin"), big);
+        Files.writeString(dir.resolve("b-small.txt"), "small");
+        ReflectionTestUtils.setField(facade, "dataDir", dataDir.toString());
+        when(skillService.getBySlug("web")).thenReturn(webSkill());
+
+        facade.syncSkills(USER, SESSION, CONFIG_ID, List.of("web"));
+
+        verify(docker, never()).writeFile(any(SandboxHandle.class),
+                eq("/workspace/skills/web/a-big.bin"), anyString());
+        verify(docker).writeFile(handle, "/workspace/skills/web/b-small.txt", "small");
+    }
+
+    @Test
+    void 全目录物化_文件数超200时_按序只物化前200个(@TempDir Path dataDir) throws Exception {
+        stubAvailable();
+        Path dir = newSkillDir(dataDir, "web");
+        for (int i = 0; i < 202; i++) {
+            Files.writeString(dir.resolve(String.format("f%03d.txt", i)), "x");
+        }
+        ReflectionTestUtils.setField(facade, "dataDir", dataDir.toString());
+        when(skillService.getBySlug("web")).thenReturn(webSkill());
+
+        Map<String, String> synced = facade.syncSkills(USER, SESSION, CONFIG_ID, List.of("web"));
+
+        assertThat(synced).containsKeys("web");
+        // SKILL.md 1 次 + 附属文件恰 200 次
+        verify(docker, times(201)).writeFile(eq(handle), anyString(), anyString());
+        verify(docker).writeFile(handle, "/workspace/skills/web/f000.txt", "x");
+        verify(docker).writeFile(handle, "/workspace/skills/web/f199.txt", "x");
+        verify(docker, never()).writeFile(any(SandboxHandle.class),
+                eq("/workspace/skills/web/f200.txt"), anyString());
+        verify(docker, never()).writeFile(any(SandboxHandle.class),
+                eq("/workspace/skills/web/f201.txt"), anyString());
+    }
+
+    @Test
+    void 全目录物化_总量超20MB时_超限文件跳过(@TempDir Path dataDir) throws Exception {
+        stubAvailable();
+        Path dir = newSkillDir(dataDir, "web");
+        byte[] chunk = new byte[1900 * 1024]; // ≈1.86MB < 2MB 单文件限
+        for (int i = 0; i < 11; i++) {
+            Files.write(dir.resolve(String.format("c%02d.bin", i)), chunk);
+        }
+        ReflectionTestUtils.setField(facade, "dataDir", dataDir.toString());
+        when(skillService.getBySlug("web")).thenReturn(webSkill());
+
+        Map<String, String> synced = facade.syncSkills(USER, SESSION, CONFIG_ID, List.of("web"));
+
+        assertThat(synced).containsKeys("web");
+        // 前 10 个 ≈18.6MB 未超总量；第 11 个累计 >20MB 被跳过
+        verify(docker, times(11)).writeFile(eq(handle), anyString(), anyString());
+        verify(docker).writeFile(handle, "/workspace/skills/web/c09.bin",
+                new String(chunk, java.nio.charset.StandardCharsets.UTF_8));
+        verify(docker, never()).writeFile(any(SandboxHandle.class),
+                eq("/workspace/skills/web/c10.bin"), anyString());
+    }
+
+    @Test
+    void 全目录物化_磁盘目录缺失时_仅物化SKILL_md不报错(@TempDir Path dataDir) throws Exception {
+        stubAvailable();
+        // 不建磁盘目录（纯 DB 技能，如内置种子）
+        ReflectionTestUtils.setField(facade, "dataDir", dataDir.toString());
+        when(skillService.getBySlug("web")).thenReturn(webSkill());
+
+        Map<String, String> synced = facade.syncSkills(USER, SESSION, CONFIG_ID, List.of("web"));
+
+        assertThat(synced).containsKeys("web");
+        verify(docker, times(1)).writeFile(eq(handle), eq("/workspace/skills/web/SKILL.md"), anyString());
     }
 }

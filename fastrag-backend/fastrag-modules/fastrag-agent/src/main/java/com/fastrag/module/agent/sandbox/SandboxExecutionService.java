@@ -12,15 +12,18 @@ import com.fastrag.module.agent.sandbox.provider.SandboxProviderRegistry;
 import com.fastrag.module.tools.entity.Skill;
 import com.fastrag.module.tools.service.SkillService;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Duration;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Stream;
 
 /**
  * 沙箱执行门面（contract agent.SandboxExecutionFacade 目标态，design SandboxExecutionModule，切片 S7）。
@@ -50,6 +53,24 @@ public class SandboxExecutionService {
     /** 输出截断上限 256KB（承接旧 SandboxBackend 语义；I3 起为头尾保留式截断） */
     private static final int MAX_OUTPUT_CHARS = 262_144;
     private static final int DEFAULT_EXEC_TIMEOUT_SECONDS = 120;
+
+    // ---------- F2 附属文件物化限额（docs/plan/skill-feature-batch.md F2，对齐 WeKnora staging） ----------
+
+    /** 单附属文件上限 2MB */
+    private static final long MAX_ATTACHMENT_FILE_BYTES = 2L * 1024 * 1024;
+    /** 单技能附属文件总量上限 20MB */
+    private static final long MAX_ATTACHMENT_TOTAL_BYTES = 20L * 1024 * 1024;
+    /** 单技能附属文件个数上限 200 */
+    private static final int MAX_ATTACHMENT_FILES = 200;
+    /** 排除目录名（VCS / 依赖 / 虚拟环境 / 字节码缓存） */
+    private static final List<String> EXCLUDED_DIR_NAMES = List.of(".git", "node_modules", "venv", "__pycache__");
+
+    /**
+     * 技能磁盘目录根（{data-dir}/skills/{slug}/，与 tools 侧 SkillFileService 同款布局）。
+     * 字段注入（对齐 SkillFileServiceImpl 口径），未配置/未注入（单测）时仅物化 SKILL.md。
+     */
+    @Value("${fastrag.data-dir:${user.home}/.fastrag/data}")
+    private String dataDir;
 
     private final SandboxConfigService configService;
     private final SandboxLifecycleService lifecycleService;
@@ -330,10 +351,16 @@ public class SandboxExecutionService {
     // ---------- 技能物化（REQ-H12） ----------
 
     /**
-     * 技能物化到 {@code /workspace/skills/{slug}/SKILL.md}（只读子树）；
-     * 沙箱不可用返回空 Map（M3-6 已删虚拟文件系统后端，技能正文以 DB content 为准，降级不阻断）。
+     * 技能物化到 {@code /workspace/skills/{slug}/}（只读子树，F2 全目录物化）：
+     * <ul>
+     *   <li>SKILL.md 以 DB content 渲染写入（正文事实源裁决不变）</li>
+     *   <li>附属文件（scripts/references 等）自磁盘目录 {@code {data-dir}/skills/{slug}/}
+     *       复制到沙箱同名相对路径，限额：排除 .git/node_modules/venv/__pycache__ 与隐藏文件，
+     *       单文件 ≤2MB、总量 ≤20MB、文件数 ≤200，超限跳过并 warn</li>
+     * </ul>
+     * 沙箱不可用返回空 Map（降级不阻断）；磁盘目录缺失（纯 DB 技能）仅物化 SKILL.md。
      *
-     * @return slug → 沙箱内路径
+     * @return slug → SKILL.md 沙箱内路径
      */
     public Map<String, String> syncSkills(String userId, String sessionId, String sandboxConfigId,
                                           List<String> slugs) {
@@ -359,11 +386,89 @@ public class SandboxExecutionService {
                 String target = SandboxWorkspaceLayout.SKILLS_ROOT + "/" + slug + "/SKILL.md";
                 r.client().writeFile(r.handle(), target, renderSkillMd(skill));
                 synced.put(slug, target);
+                materializeAttachments(r, slug);
             } catch (Exception e) {
                 log.warn("[SandboxExecution] syncSkills '{}' failed, continue: {}", slug, e.getMessage());
             }
         }
         return synced;
+    }
+
+    /**
+     * F2：附属文件全目录物化（磁盘 → 沙箱 {@code /workspace/skills/{slug}/}）。
+     * 限额超限跳过 + warn（降级基调：恒不抛异常、恒不阻断）；逐文件失败同样 warn 跳过。
+     */
+    private void materializeAttachments(Resolution r, String slug) {
+        if (dataDir == null || dataDir.isBlank()) {
+            return; // 未注入数据目录（如单测）：仅 SKILL.md，DB 事实源不受影响
+        }
+        Path skillDir = Paths.get(dataDir, "skills", slug);
+        if (!Files.isDirectory(skillDir)) {
+            return; // 纯 DB 技能（如内置种子）无磁盘目录，静默跳过
+        }
+        List<Path> files;
+        try (Stream<Path> walk = Files.walk(skillDir)) {
+            files = walk.filter(Files::isRegularFile)
+                    .filter(p -> !isExcluded(skillDir, p))
+                    .filter(p -> !isRootSkillMd(skillDir, p))
+                    .sorted()
+                    .toList();
+        } catch (Exception e) {
+            log.warn("[SandboxExecution] materializeAttachments '{}' walk failed, skip: {}",
+                    slug, e.getMessage());
+            return;
+        }
+        int count = 0;
+        long total = 0;
+        for (Path file : files) {
+            try {
+                long size = Files.size(file);
+                if (size > MAX_ATTACHMENT_FILE_BYTES) {
+                    log.warn("[SandboxExecution] materializeAttachments '{}': file '{}' {} bytes > {} cap, skip",
+                            slug, file.getFileName(), size, MAX_ATTACHMENT_FILE_BYTES);
+                    continue;
+                }
+                if (count >= MAX_ATTACHMENT_FILES) {
+                    log.warn("[SandboxExecution] materializeAttachments '{}': file count cap {} reached, skip rest",
+                            slug, MAX_ATTACHMENT_FILES);
+                    break;
+                }
+                if (total + size > MAX_ATTACHMENT_TOTAL_BYTES) {
+                    log.warn("[SandboxExecution] materializeAttachments '{}': total bytes cap {} reached at '{}', skip",
+                            slug, MAX_ATTACHMENT_TOTAL_BYTES, file.getFileName());
+                    continue;
+                }
+                String relative = skillDir.relativize(file).toString().replace('\\', '/');
+                String target = SandboxWorkspaceLayout.SKILLS_ROOT + "/" + slug + "/" + relative;
+                r.client().writeFile(r.handle(), target,
+                        new String(Files.readAllBytes(file), StandardCharsets.UTF_8));
+                count++;
+                total += size;
+            } catch (Exception e) {
+                log.warn("[SandboxExecution] materializeAttachments '{}': file '{}' failed, continue: {}",
+                        slug, file, e.getMessage());
+            }
+        }
+        if (count > 0) {
+            log.info("[SandboxExecution] materializeAttachments '{}': {} files / {} bytes synced",
+                    slug, count, total);
+        }
+    }
+
+    /** 排除判定：相对路径上任一段为隐藏文件（. 开头）或命中排除目录名（.git/node_modules/venv/__pycache__）。 */
+    private static boolean isExcluded(Path skillDir, Path file) {
+        for (Path part : skillDir.relativize(file)) {
+            String name = part.toString();
+            if (name.startsWith(".") || EXCLUDED_DIR_NAMES.contains(name)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 根 SKILL.md 不走磁盘复制（DB content 为正文事实源，已单独渲染写入）。 */
+    private static boolean isRootSkillMd(Path skillDir, Path file) {
+        return skillDir.relativize(file).toString().equals("SKILL.md");
     }
 
     // ---------- 内部 ----------

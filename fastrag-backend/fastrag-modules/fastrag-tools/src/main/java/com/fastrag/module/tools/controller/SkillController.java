@@ -36,11 +36,12 @@ package com.fastrag.module.tools.controller;
  *   <li>{@code GET    /api/skills/{slug}/export} - 导出技能为 ZIP</li>
  * </ul>
  *
- * <h3>安装草稿流水线：</h3>
+ * <h3>安装草稿流水线（F3 两步化：上传 → 预览 → 确认）：</h3>
  * <ul>
- *   <li>{@code POST   /api/skills/import/prepare} - 上传 ZIP/SKILL.md 并自动安装</li>
+ *   <li>{@code POST   /api/skills/import/upload} - 上传 ZIP/SKILL.md 建草稿（仅预览，不安装）</li>
  *   <li>{@code POST   /api/skills/install-drafts/{draftId}/confirm} - 确认安装草稿</li>
  *   <li>{@code DELETE /api/skills/install-drafts/{draftId}} - 丢弃安装草稿</li>
+ *   <li>{@code POST   /api/skills/import/prepare} - （@deprecated）单步上传并自动安装，兼容保留</li>
  * </ul>
  *
  * @see SkillService
@@ -262,9 +263,39 @@ public class SkillController {
         }
     }
 
-    // ========== 安装草稿流水线 ==========
+    // ========== 安装草稿流水线（F3 两步化） ==========
 
-    /** 上传 ZIP/SKILL.md 并自动完成安装（创建草稿 → 确认安装 → 清理草稿） */
+    /**
+     * 上传 ZIP/SKILL.md，创建安装草稿（仅解析预览，<b>不安装</b>）——两步化导入第一步。
+     *
+     * <p>返回 {@link SkillInstallDraft}（draftId + items 预览 + expiresAt，1 小时过期）；
+     * 用户确认后调 {@code POST /api/skills/install-drafts/{draftId}/confirm} 完成安装，
+     * 也可 {@code DELETE /api/skills/install-drafts/{draftId}} 丢弃。</p>
+     *
+     * <p>审计裁决：upload 仅建草稿（可丢弃、非技能状态变更），<b>不埋 @Loggable</b>；
+     * {@code skill_created} 留给 confirm 端点（真实安装时刻），避免废弃草稿刷审计噪音。</p>
+     */
+    @PostMapping("/import/upload")
+    public ApiResponse<?> uploadImport(@RequestParam("file") MultipartFile file) {
+        try {
+            String operator = SecurityUtil.getCurrentUserId();
+            return ApiResponse.success(
+                skillDraftService.prepareUpload(
+                    file.getOriginalFilename(), file.getBytes(), operator));
+        } catch (IOException e) {
+            return ApiResponse.error(400, "文件读取失败: " + e.getMessage());
+        }
+    }
+
+    /**
+     * 上传 ZIP/SKILL.md 并自动完成安装（创建草稿 → 确认安装 → 清理草稿）。
+     *
+     * @deprecated 两步化迁移（F3，2026-10-07 裁决）：请改用两步流程——
+     *     {@code POST /api/skills/import/upload}（建草稿返回预览，不安装）→
+     *     {@code POST /api/skills/install-drafts/{draftId}/confirm}（确认安装）。
+     *     本单步端点仅为既有前端兼容保留，后续版本移除。
+     */
+    @Deprecated
     @Loggable(category = LogCategory.operation, action = ActionType.skill_created)
     @PostMapping("/import/prepare")
     public ApiResponse<?> prepareImport(@RequestParam("file") MultipartFile file) {

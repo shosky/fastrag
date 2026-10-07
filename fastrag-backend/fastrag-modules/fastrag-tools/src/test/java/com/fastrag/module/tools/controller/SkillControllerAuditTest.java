@@ -78,6 +78,23 @@ class SkillControllerAuditTest {
         assertOperation(loggable("confirmDraft", String.class, Map.class), ActionType.skill_created, "#draftId");
     }
 
+    // ========== F3 导入两步化（2026-10-07 裁决） ==========
+
+    @Test
+    void uploadImport_notAudited() throws Exception {
+        // upload 仅建草稿（可丢弃、非技能状态变更），不埋审计；skill_created 归 confirm 端点
+        assertNull(loggable("uploadImport", org.springframework.web.multipart.MultipartFile.class),
+            "uploadImport 不应埋 @Loggable");
+    }
+
+    @Test
+    void prepareImport_markedDeprecated() throws Exception {
+        // 单步 prepare 保留兼容但须标注 @Deprecated（两步化迁移标记）
+        assertNotNull(SkillController.class
+            .getMethod("prepareImport", org.springframework.web.multipart.MultipartFile.class)
+            .getAnnotation(Deprecated.class), "prepareImport 应标 @Deprecated");
+    }
+
     // ========== 文件端点：使用新增 skill_file_* 动作 ==========
 
     @Test
