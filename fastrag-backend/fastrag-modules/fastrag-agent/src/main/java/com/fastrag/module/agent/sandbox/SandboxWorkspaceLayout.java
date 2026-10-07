@@ -21,11 +21,19 @@ public final class SandboxWorkspaceLayout {
     public static final String INPUT_DIR = "/workspace/input";
     public static final String OUTPUT_DIR = "/workspace/output";
     public static final String SKILLS_ROOT = "/workspace/skills";
+    /**
+     * 沙箱活动标记（backlog S3 / gap-review P1-7）：由 provider 适配器私有维护
+     * （exec wrapper touch / 空闲回收读 mtime），工具面拒写删——路径单一事实源在本类，
+     * DockerSandboxAdapter 的 touch 与本类的保留路径校验同源。
+     */
+    public static final String ACTIVITY_MARKER = ROOT + "/.fastrag_activity";
 
     /** 可读根：/workspace 全部（output/input/skills 均在其下） */
     private static final List<String> READ_ROOTS = List.of(ROOT);
     /** 附加拒写子树：附件只读、技能只读 */
     private static final List<String> READ_ONLY_SUBTREES = List.of(INPUT_DIR, SKILLS_ROOT);
+    /** 保留路径（精确匹配拒写删）：活动标记——模型若可改写即能让空闲回收永不触发 */
+    private static final List<String> RESERVED_PATHS = List.of(ACTIVITY_MARKER);
 
     private SandboxWorkspaceLayout() {
     }
@@ -51,7 +59,7 @@ public final class SandboxWorkspaceLayout {
     }
 
     /**
-     * 可写判定：/workspace 下除 input 与 skills 子树（REQ-H12）。
+     * 可写判定：/workspace 下除 input 与 skills 子树（REQ-H12）与保留路径（S3 活动标记）。
      * 根本身是目录而非可写文件路径，调用方语义层处理。
      */
     public static boolean isWritable(String path) {
@@ -59,7 +67,8 @@ public final class SandboxWorkspaceLayout {
         if (!isReadable(p)) {
             return false;
         }
-        return READ_ONLY_SUBTREES.stream().noneMatch(p::equals)
+        return RESERVED_PATHS.stream().noneMatch(p::equals)
+                && READ_ONLY_SUBTREES.stream().noneMatch(p::equals)
                 && READ_ONLY_SUBTREES.stream().noneMatch(p::startsWith);
     }
 

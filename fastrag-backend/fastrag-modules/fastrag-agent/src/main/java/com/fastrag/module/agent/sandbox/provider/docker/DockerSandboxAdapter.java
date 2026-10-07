@@ -88,8 +88,14 @@ public class DockerSandboxAdapter implements SandboxProviderClient {
     static final String LABEL_MANAGED = "com.fastrag.sandbox.managed";
     static final String LABEL_CONFIG_ID = "com.fastrag.sandbox.config-id";
     static final String LABEL_IDLE_TTL = "com.fastrag.sandbox.idle-ttl-seconds";
-    /** 活动标记（REQ-H02）：每次 exec 的包装器 touch，空闲回收读 mtime */
-    static final String ACTIVITY_MARKER = SandboxWorkspaceLayout.ROOT + "/.fastrag_activity";
+    /** 活动标记（REQ-H02）：每次 exec 的包装器 touch，空闲回收读 mtime（S3 起路径常量收敛到布局类，与保留路径校验同源） */
+    static final String ACTIVITY_MARKER = SandboxWorkspaceLayout.ACTIVITY_MARKER;
+
+    /**
+     * 活动标记防御容差（backlog S3 / gap-review P1-7）：容器/宿主小幅时钟漂移容忍上限。
+     * 标记超前超过该值即判脏数据，回退 StartedAt——否则空闲回收永不触发。
+     */
+    static final Duration MARKER_FUTURE_TOLERANCE = Duration.ofMinutes(2);
 
     /** 客户端 deadline = 超时 + 10s grace（对齐 WeKnora dockerExecGrace）：让容器内 wrapper 先杀并回报 killed */
     static final Duration EXEC_GRACE = Duration.ofSeconds(10);
@@ -507,9 +513,11 @@ public class DockerSandboxAdapter implements SandboxProviderClient {
                     SandboxWorkspaceLayout.ROOT, null, null, Duration.ofSeconds(15), "lastActivity");
             if (captured.exitCode() == 0) {
                 Instant marker = parseEpochSeconds(captured.stdoutText());
-                if (marker != null) {
-                    return marker;
+                Instant safeMarker = defensiveMarker(marker, Instant.now());
+                if (safeMarker != null) {
+                    return safeMarker;
                 }
+                // 标记判脏（未来时间超容差）→ 落入 StartedAt 回退
             }
         } catch (NotFoundException gone) {
             throw wrapOp("lastActivity", gone); // 实例消失 = NOT_FOUND（契约锚例）
@@ -1186,6 +1194,25 @@ public class DockerSandboxAdapter implements SandboxProviderClient {
         } catch (NumberFormatException e) {
             return null;
         }
+    }
+
+    /**
+     * 活动标记防御（backlog S3 / gap-review P1-7）：解析后的标记若超前 now+{@link #MARKER_FUTURE_TOLERANCE}
+     * 以上，视为脏数据（旧实例残留/时钟错乱/被工具面伪造），warn 并返回 null 让调用方回退 StartedAt。
+     * 容差内的未来漂移（时钟不同步）照常采信；过去时间与 null 行为不变。
+     */
+    static Instant defensiveMarker(Instant marker, Instant now) {
+        if (marker == null) {
+            return null;
+        }
+        if (marker.isAfter(now.plus(MARKER_FUTURE_TOLERANCE))) {
+            log.warn("docker sandbox activity marker {} is {}s ahead of now (tolerance {}s) "
+                            + "- treating as corrupted, fall back to StartedAt",
+                    marker, marker.getEpochSecond() - now.getEpochSecond(),
+                    MARKER_FUTURE_TOLERANCE.getSeconds());
+            return null;
+        }
+        return marker;
     }
 
     /** RFC3339Nano → Instant；零值（0001-01-01…）或解析失败 → EPOCH */

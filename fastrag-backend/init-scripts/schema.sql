@@ -66,6 +66,22 @@ CREATE TABLE IF NOT EXISTS sys_org (
     sort INT DEFAULT 0
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
+-- API Token（平台级程序化访问；列结构以真库 DESCRIBE 为准——kb_id 标注归属知识库，存量库已存在本表，schema.sql 只服务新装）
+CREATE TABLE IF NOT EXISTS sys_api_token (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    name VARCHAR(128) NOT NULL,
+    token VARCHAR(256) NOT NULL,
+    permission VARCHAR(16) DEFAULT 'read',
+    expires_at DATETIME DEFAULT NULL,
+    revoked INT DEFAULT 0,
+    created_by VARCHAR(32),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_api_token_value (token),
+    INDEX idx_api_token_kb (kb_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
 CREATE TABLE IF NOT EXISTS kb_acl (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     kb_id VARCHAR(32) NOT NULL,
@@ -595,6 +611,7 @@ CREATE TABLE IF NOT EXISTS model_call_log (
     id BIGINT AUTO_INCREMENT PRIMARY KEY,
     model_id VARCHAR(32) NOT NULL,
     caller VARCHAR(64),
+    org_id VARCHAR(32),
     duration INT,
     tokens INT,
     status VARCHAR(16) DEFAULT 'success' COMMENT 'success|failed',

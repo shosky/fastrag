@@ -42,4 +42,20 @@ class SandboxWorkspaceLayoutTest {
         assertThat(SandboxWorkspaceLayout.normalize("")).isEqualTo("/workspace");
         assertThat(SandboxWorkspaceLayout.normalize("/workspace///out/")).isEqualTo("/workspace/out");
     }
+
+    // ---------- 活动标记防御（backlog S3 / gap-review P1-7） ----------
+
+    @Test
+    void 活动标记保留路径_常量指向workspace下fastrag_activity() {
+        assertThat(SandboxWorkspaceLayout.ACTIVITY_MARKER).isEqualTo("/workspace/.fastrag_activity");
+    }
+
+    @Test
+    void 活动标记保留路径_拒写但保留可读() {
+        // 标记由 provider 适配器私有维护（exec touch），工具面拒写删；读取无害（纯时间戳）
+        assertThat(SandboxWorkspaceLayout.isWritable(SandboxWorkspaceLayout.ACTIVITY_MARKER)).isFalse();
+        assertThat(SandboxWorkspaceLayout.isReadable(SandboxWorkspaceLayout.ACTIVITY_MARKER)).isTrue();
+        // 大小写/规范化变体同被拒（normalize 先行）
+        assertThat(SandboxWorkspaceLayout.isWritable("/workspace/.fastrag_activity/")).isFalse();
+    }
 }

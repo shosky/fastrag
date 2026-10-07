@@ -13,6 +13,7 @@ import com.fastrag.module.agent.sandbox.provider.SandboxProviderException;
 import com.fastrag.module.agent.sandbox.provider.SandboxProviderRegistry;
 import jakarta.annotation.PreDestroy;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Service;
@@ -53,6 +54,13 @@ public class SandboxLifecycleServiceImpl implements SandboxLifecycleService {
     private final SandboxBindingStore bindingStore;
     /** 启用中的 docker 配置枚举（按配置逐 daemon 扫描；WeKnora per-config sweep 同款） */
     private final SandboxConfigService sandboxConfigService;
+
+    /**
+     * 产物回传兜底（backlog S4 / gap-review P1-8 最小版，可选依赖）：
+     * 删除前打包 /workspace/output 落盘；字段注入以兼容既有 4 参构造（单测/最小装配缺省跳过）。
+     */
+    @Autowired(required = false)
+    private SandboxOutputCollector outputCollector;
 
     /** 空闲 TTL 秒（yml 回退键，agent.sandbox.idle-ttl） */
     @Value("${agent.sandbox.idle-ttl:1800}")
@@ -104,6 +112,7 @@ public class SandboxLifecycleServiceImpl implements SandboxLifecycleService {
             // 路径③：身份已变（REQ-H09）→ 销毁旧实例 → create 新 → casRebind
             log.info("[SandboxLifecycle] identity changed for session {}:{}, rebuild (old={})",
                     userId, sessionId, binding.getSandboxId());
+            backupOutputs(binding, userId, sessionId);
             deleteQuietly(binding);
             SandboxHandle fresh = createOrThrow(client, config, userId, sessionId);
             BindingRecord freshRecord = recordOf(fresh, config, userId, sessionId);
@@ -150,6 +159,7 @@ public class SandboxLifecycleServiceImpl implements SandboxLifecycleService {
         if (binding == null) {
             return; // 幂等
         }
+        backupOutputs(binding, userId, sessionId);
         bindingStore.delete(userId, sessionId);
         deleteQuietly(binding);
     }
@@ -219,6 +229,7 @@ public class SandboxLifecycleServiceImpl implements SandboxLifecycleService {
         if (now.isAfter(lastActivity.plusSeconds(ttlSeconds))) {
             log.info("[SandboxLifecycle] reclaim idle sandbox {} (idle since {}, ttl={}s)",
                     instance.getSandboxId(), lastActivity, ttlSeconds);
+            backupOutputsForInstance(instance);
             safeDelete(client, instance);
             deleteBindingBySandboxId(instance.getSandboxId());
         }
@@ -304,6 +315,33 @@ public class SandboxLifecycleServiceImpl implements SandboxLifecycleService {
     }
 
     // ---------- 内部 ----------
+
+    /**
+     * 删除前产物回传兜底（backlog S4）：output 非空时打包落盘到
+     * {@code agent.sandbox.output-backup-dir}（缺省 ./data/sandbox-outputs）。
+     * 任何失败仅 warn，<b>绝不阻断删除</b>。
+     */
+    private void backupOutputs(BindingRecord binding, String userId, String sessionId) {
+        if (outputCollector == null || binding.getProvider() == null || binding.getSandboxId() == null) {
+            return;
+        }
+        try {
+            registry.find(binding.getProvider()).ifPresent(client ->
+                    outputCollector.collect(client, handleOf(binding), userId + ":" + sessionId, now()));
+        } catch (Exception e) {
+            log.warn("[SandboxLifecycle] output backup before delete failed for session {}:{}: {}",
+                    userId, sessionId, e.getMessage());
+        }
+    }
+
+    /** 空闲回收路径（S4）：实例按 sandboxId 反查绑定会话键；无绑定（对账视角）则跳过回传。 */
+    private void backupOutputsForInstance(SandboxHandle instance) {
+        bindingStore.listAll().stream()
+                .filter(entry -> entry.record() != null
+                        && instance.getSandboxId().equals(entry.record().getSandboxId()))
+                .findFirst()
+                .ifPresent(entry -> backupOutputs(entry.record(), entry.userId(), entry.sessionId()));
+    }
 
     private void requireUsableConfig(EffectiveConfig config) {
         if (config == null) {

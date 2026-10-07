@@ -8,14 +8,19 @@ import com.fastrag.module.agent.sandbox.config.EffectiveConfig;
 import com.fastrag.module.agent.sandbox.config.SandboxConfigService;
 import com.fastrag.module.agent.sandbox.memory.InMemorySandboxBindingStore;
 import com.fastrag.module.agent.sandbox.provider.CreateContext;
+import com.fastrag.module.agent.sandbox.provider.ExecRequest;
+import com.fastrag.module.agent.sandbox.provider.ExecResult;
 import com.fastrag.module.agent.sandbox.provider.SandboxProviderClient;
 import com.fastrag.module.agent.sandbox.provider.SandboxProviderErrorKind;
 import com.fastrag.module.agent.sandbox.provider.SandboxProviderException;
 import com.fastrag.module.agent.sandbox.provider.SandboxProviderRegistry;
 import com.fastrag.module.agent.sandbox.redis.RedisSandboxBindingStore;
+import org.apache.commons.compress.archivers.tar.TarArchiveEntry;
+import org.apache.commons.compress.archivers.tar.TarArchiveOutputStream;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.extension.ExtendWith;
+import org.junit.jupiter.api.io.TempDir;
 import org.mockito.Mock;
 import org.mockito.junit.jupiter.MockitoExtension;
 import org.mockito.junit.jupiter.MockitoSettings;
@@ -24,13 +29,20 @@ import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.data.redis.core.ValueOperations;
 import org.springframework.test.util.ReflectionTestUtils;
 
+import java.io.ByteArrayOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.time.Instant;
+import java.util.Base64;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
+import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
@@ -314,5 +326,111 @@ class SandboxLifecycleServiceTest {
         assertThat(looked).isNotNull();
         assertThat(looked.getSandboxId()).isEqualTo("inst-42");
         assertThat(looked.getProvider()).isEqualTo("docker");
+    }
+
+    // ---------- 产物回传兜底（backlog S4 / gap-review P1-8 最小版） ----------
+
+    private static String base64OfTarOneFile() throws Exception {
+        ByteArrayOutputStream buf = new ByteArrayOutputStream();
+        try (TarArchiveOutputStream out = new TarArchiveOutputStream(buf)) {
+            byte[] bytes = "hello artifact".getBytes(StandardCharsets.UTF_8);
+            TarArchiveEntry entry = new TarArchiveEntry("result.txt");
+            entry.setSize(bytes.length);
+            out.putArchiveEntry(entry);
+            out.write(bytes);
+            out.closeArchiveEntry();
+            out.finish();
+        }
+        return Base64.getEncoder().encodeToString(buf.toByteArray());
+    }
+
+    private void stubBackupExec(String stdout) {
+        when(docker.exec(any(SandboxHandle.class), any(ExecRequest.class))).thenReturn(ExecResult.builder()
+                .stdout(stdout).exitCode(0).build());
+    }
+
+    @Test
+    void 产物回传_release删除前_output非空时_落盘且实例仍删除(@TempDir Path dir) throws Exception {
+        createIssuesNewInstances();
+        service.acquire(USER, SESSION, config());
+        ReflectionTestUtils.setField(service, "outputCollector", new SandboxOutputCollector(dir.toString()));
+        stubBackupExec(base64OfTarOneFile());
+
+        service.release(USER, SESSION);
+
+        verify(docker).delete(any(SandboxHandle.class)); // 回传失败也不阻断，成功更不阻断
+        assertThat(store.get(USER, SESSION)).isNull();
+        try (Stream<Path> entries = Files.list(dir)) {
+            Path sessionDir = entries.findFirst().orElseThrow();
+            assertThat(sessionDir.getFileName().toString()).startsWith("u1_s1-"); // 会话键消毒
+            assertThat(sessionDir.resolve("output.tar")).exists();
+        }
+    }
+
+    @Test
+    void 产物回传_身份变更销毁前_output非空时_落盘后重建(@TempDir Path dir) throws Exception {
+        createIssuesNewInstances();
+        connectRestoresRunning();
+        service.acquire(USER, SESSION, config());
+        ReflectionTestUtils.setField(service, "outputCollector", new SandboxOutputCollector(dir.toString()));
+        stubBackupExec(base64OfTarOneFile());
+        service.onConfigIdentityChanged("cfg-1");
+
+        service.acquire(USER, SESSION, config()); // 路径③：销毁重建
+
+        verify(docker).delete(any(SandboxHandle.class));
+        assertThat(fileCount(dir)).isEqualTo(1); // 旧实例产物已落盘
+        assertThat(store.get(USER, SESSION).getSandboxId()).isEqualTo("inst-2");
+    }
+
+    @Test
+    void 产物回传_空闲回收删除前_output非空时_落盘且绑定清除(@TempDir Path dir) throws Exception {
+        createIssuesNewInstances();
+        SandboxHandle handle = service.acquire(USER, SESSION, config());
+        ReflectionTestUtils.setField(service, "outputCollector", new SandboxOutputCollector(dir.toString()));
+        when(docker.list(any(), any(), any(), any(), anyBoolean())).thenReturn(List.of(handle));
+        when(docker.lastActivity(any(SandboxHandle.class))).thenReturn(T0);
+        stubBackupExec(base64OfTarOneFile());
+
+        clock.set(T0.plusSeconds(1801));
+        service.reclaimIdle();
+
+        verify(docker).delete(handle);
+        assertThat(store.get(USER, SESSION)).isNull();
+        assertThat(fileCount(dir)).isEqualTo(1); // 按 sandboxId 反查会话键后回传
+    }
+
+    @Test
+    void 产物回传_exec失败时_仅跳过回传不阻断删除(@TempDir Path dir) throws Exception {
+        createIssuesNewInstances();
+        service.acquire(USER, SESSION, config());
+        ReflectionTestUtils.setField(service, "outputCollector", new SandboxOutputCollector(dir.toString()));
+        when(docker.exec(any(SandboxHandle.class), any(ExecRequest.class)))
+                .thenThrow(new RuntimeException("container already stopped"));
+
+        assertThatCode(() -> service.release(USER, SESSION)).doesNotThrowAnyException();
+
+        verify(docker).delete(any(SandboxHandle.class));
+        assertThat(store.get(USER, SESSION)).isNull();
+        assertThat(fileCount(dir)).isZero();
+    }
+
+    @Test
+    void 产物回传_output为空时_不落盘且正常删除(@TempDir Path dir) throws Exception {
+        createIssuesNewInstances();
+        service.acquire(USER, SESSION, config());
+        ReflectionTestUtils.setField(service, "outputCollector", new SandboxOutputCollector(dir.toString()));
+        stubBackupExec("");
+
+        service.release(USER, SESSION);
+
+        verify(docker).delete(any(SandboxHandle.class));
+        assertThat(fileCount(dir)).isZero();
+    }
+
+    private static int fileCount(Path dir) throws Exception {
+        try (Stream<Path> entries = Files.list(dir)) {
+            return (int) entries.count();
+        }
     }
 }

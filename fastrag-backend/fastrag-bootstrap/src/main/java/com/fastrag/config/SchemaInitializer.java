@@ -133,7 +133,9 @@ public class SchemaInitializer {
         try {
             jdbc.execute("ALTER TABLE kb_parse_strategy ADD INDEX idx_kb_parse_strategy_file (file_id)");
         } catch (Exception e) {
-            log.info("Index kb_parse_strategy.file_id ensure skipped: {}", e.getMessage());
+            // S6 吞错降级：ensure skipped 属异常路径，INFO 会掩盖真实故障（smoke 实证），warn + 根因类名
+            log.warn("Index kb_parse_strategy.file_id ensure skipped: {}: {}",
+                    rootCauseClassName(e), e.getMessage());
         }
 
         // kb_file 上传向导处理配置（引擎/语言/编码/优先级/重试/媒体，JSON）
@@ -247,7 +249,9 @@ public class SchemaInitializer {
         try {
             jdbc.execute("ALTER TABLE skill ADD INDEX idx_slug (slug)");
         } catch (Exception e) {
-            log.info("Index skill.idx_slug ensure skipped: {}", e.getMessage());
+            // S6 吞错降级：同 idx_kb_parse_strategy_file，skipped 必须 warn 可见
+            log.warn("Index skill.idx_slug ensure skipped: {}: {}",
+                    rootCauseClassName(e), e.getMessage());
         }
 
         // --- MCP Service 表新增字段 ---
@@ -519,7 +523,9 @@ public class SchemaInitializer {
             if (getRootSqlErrorCode(e) == 1060) {
                 log.info("Column {}.{} already exists", table, column);
             } else {
-                log.warn("Failed to add column {}.{}: {}", table, column, e.getMessage());
+                // S6 吞错降级：非 duplicate 的失败同样是异常路径，带根因类名
+                log.warn("Failed to add column {}.{}: {}: {}",
+                        table, column, rootCauseClassName(e), e.getMessage());
             }
         }
     }
@@ -538,5 +544,14 @@ public class SchemaInitializer {
             return sqlEx.getErrorCode();
         }
         return -1;
+    }
+
+    /** 根因异常类名（S6 吞错降级：warn 消息可定位驱动层错误来源）。 */
+    private static String rootCauseClassName(Throwable e) {
+        Throwable t = e;
+        while (t.getCause() != null && t.getCause() != t) {
+            t = t.getCause();
+        }
+        return t.getClass().getSimpleName();
     }
 }

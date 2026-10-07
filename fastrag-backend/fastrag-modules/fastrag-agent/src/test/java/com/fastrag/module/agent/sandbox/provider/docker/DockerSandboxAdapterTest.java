@@ -1,5 +1,6 @@
 package com.fastrag.module.agent.sandbox.provider.docker;
 
+import com.fastrag.module.agent.sandbox.SandboxWorkspaceLayout;
 import com.fastrag.module.agent.sandbox.provider.CreateContext;
 import com.fastrag.module.agent.sandbox.provider.DirEntry;
 import com.fastrag.module.agent.sandbox.provider.SandboxProviderErrorKind;
@@ -409,5 +410,39 @@ class DockerSandboxAdapterTest {
         assertThat(DockerSandboxAdapter.EXEC_GRACE).isEqualTo(Duration.ofSeconds(10));
         assertThat(DockerSandboxAdapter.FS_OP_TIMEOUT).isEqualTo(Duration.ofSeconds(30));
         assertThat(DockerSandboxAdapter.START_READY_TIMEOUT).isEqualTo(Duration.ofSeconds(15));
+    }
+
+    // ---------- 活动标记防御（backlog S3 / gap-review P1-7） ----------
+
+    private static final Instant S3_NOW = Instant.parse("2026-09-28T08:00:00Z");
+
+    @Test
+    void 活动标记防御_标记在未来超2分钟时_判脏返回null触发StartedAt回退() {
+        // 标记比 now+2min 还晚 = 脏数据（残留/时钟错乱/伪造），不得采信（否则空闲回收永不触发）
+        assertThat(DockerSandboxAdapter.defensiveMarker(S3_NOW.plusSeconds(121), S3_NOW)).isNull();
+        assertThat(DockerSandboxAdapter.defensiveMarker(S3_NOW.plusSeconds(3600), S3_NOW)).isNull();
+    }
+
+    @Test
+    void 活动标记防御_未来漂移在2分钟容差内_照常采信() {
+        // 容器与宿主的小幅时钟漂移属正常，容差内不误杀
+        assertThat(DockerSandboxAdapter.defensiveMarker(S3_NOW.plusSeconds(119), S3_NOW))
+                .isEqualTo(S3_NOW.plusSeconds(119));
+        assertThat(DockerSandboxAdapter.defensiveMarker(S3_NOW, S3_NOW)).isEqualTo(S3_NOW);
+    }
+
+    @Test
+    void 活动标记防御_过去时间或不可解析_行为不变() {
+        assertThat(DockerSandboxAdapter.defensiveMarker(S3_NOW.minusSeconds(3600), S3_NOW))
+                .isEqualTo(S3_NOW.minusSeconds(3600));
+        assertThat(DockerSandboxAdapter.defensiveMarker(null, S3_NOW)).isNull(); // null 仍由调用方回退 StartedAt
+    }
+
+    @Test
+    void 活动标记路径_常量统一引用布局类() {
+        // S3：标记路径单一事实源收敛到 SandboxWorkspaceLayout（保留路径与 adapter touch 同源）
+        assertThat(DockerSandboxAdapter.ACTIVITY_MARKER)
+                .isEqualTo(SandboxWorkspaceLayout.ACTIVITY_MARKER)
+                .isEqualTo("/workspace/.fastrag_activity");
     }
 }
