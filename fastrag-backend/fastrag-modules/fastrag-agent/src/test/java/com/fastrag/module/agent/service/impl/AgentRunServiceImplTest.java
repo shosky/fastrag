@@ -188,7 +188,8 @@ class AgentRunServiceImplTest {
 
         service.streamEvents("run-1", "7", null);
 
-        verify(eventPublisher, timeout(5000)).getEvents("run-1", 7L);
+        // 500ms 轮询在满载机器上会多次进入循环——断言「以数字偏移 7L 调用过」即可，不锁次数
+        verify(eventPublisher, timeout(5000).atLeastOnce()).getEvents("run-1", 7L);
     }
 
     @Test
