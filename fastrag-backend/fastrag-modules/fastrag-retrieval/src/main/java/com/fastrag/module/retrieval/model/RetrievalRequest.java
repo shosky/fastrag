@@ -64,6 +64,7 @@ public class RetrievalRequest {
         // ===== 重排序 =====
         private Boolean enableRerank;             // 可空：null 不覆盖，true/false 可开可关
         private String rerankModel;                // Rerank 模型选择
+        private Double rerankScoreThreshold;       // R3 质量闸门：rerank 相关性分阈值（低于丢弃；全灭 ×0.7 放宽；仍空 top-1 保底；缺省 0.05）
         private Boolean enableLLMRerank;           // LLM 重排序
         private Boolean enableMMR;                 // MMR 多样性控制
         private Double mmrLambda;                  // MMR lambda 参数 (0=多样性, 1=相关性)

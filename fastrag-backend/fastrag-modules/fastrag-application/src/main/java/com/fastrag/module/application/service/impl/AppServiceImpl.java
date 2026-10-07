@@ -11,6 +11,7 @@ import com.fastrag.module.agent.entity.AgentRun;
 import com.fastrag.module.agent.executor.AgentEngine;
 import com.fastrag.module.agent.executor.ModelConfig;
 import com.fastrag.module.agent.mapper.SandboxConfigMapper;
+import com.fastrag.module.agent.middleware.HistoryMiddleware;
 import com.fastrag.module.application.dto.AppSessionDTO;
 import com.fastrag.module.application.dto.ConversationRequestState;
 import com.fastrag.module.application.entity.*;
@@ -49,6 +50,17 @@ public class AppServiceImpl implements AppService {
             "\n\n【沙箱已启用】本应用接入了代码执行沙箱：需要运行代码、执行命令或处理文件时，请主动使用沙箱工具——"
                     + "先用 write_file 把代码写入沙箱（路径必须在 /workspace 下，如 /workspace/main.py），"
                     + "再用 execute 执行（例如 `python3 /workspace/main.py`），并基于命令输出来回答用户。";
+
+    /** R1（P0-6）：会话历史投影字符预算，超限裁最旧 */
+    private static final int HISTORY_BUDGET_CHARS = 6000;
+
+    /** R2（P0-5）：请求级 KB 句柄注册表键（cN → {kbId,fileId,chunkIndex}）。
+     * AgentEngine 将 runtimeState 浅拷贝进 ToolContext.extensions——嵌套 Map 是共享引用，
+     * KnowledgeToolExecutor 就地写入即请求级可见（结构化通道另保留真实 id）。 */
+    static final String KB_HANDLE_MAP_KEY = "kbHandleMap";
+
+    /** R2：句柄编号游标（AtomicInteger，跨同一请求内多次 query_kb 连续编号，避免 cN 冲突覆盖） */
+    static final String KB_HANDLE_SEQ_KEY = "kbHandleSeq";
 
     private final AppMapper appMapper;
     private final AppConfigMapper configMapper;
@@ -571,7 +583,7 @@ public class AppServiceImpl implements AppService {
                 // 换来无关问题（如纯代码执行）不再产生检索延迟与噪音上下文。
                 String effectiveSystemPrompt = cfg.getSystemPrompt();
 
-                // 构建历史消息
+                // 构建历史消息（R1/P0-6 复活：原为死代码，现投影进 runtimeState 供 HistoryMiddleware 注入）
                 List<AppConversationMessage> historyMessages = convMsgMapper.selectList(
                         new LambdaQueryWrapper<AppConversationMessage>()
                                 .eq(AppConversationMessage::getConversationId, finalConv.getId())
@@ -585,6 +597,14 @@ public class AppServiceImpl implements AppService {
                 context.setSystemPrompt(effectiveSystemPrompt);
                 context.setModel(cfg.getModelRoute().getModel());
                 contextRef.set(context);
+
+                // R1（P0-6）会话历史最小恢复版：最近 N 轮投影 [{role,content}] 存 runtimeState（字符预算内，超限裁最旧），
+                // 由 HistoryMiddleware（order=12）作为 system prompt 附加块注入。
+                // Deviation：真多轮 messages 注入待引擎侧立项；请求级句柄注册表（R2）同处预填。
+                context.getRuntimeState().put(HistoryMiddleware.HISTORY_KEY,
+                        projectHistory(historyMessages, HISTORY_BUDGET_CHARS));
+                context.getRuntimeState().put(KB_HANDLE_MAP_KEY, new LinkedHashMap<String, Object>());
+                context.getRuntimeState().put(KB_HANDLE_SEQ_KEY, new java.util.concurrent.atomic.AtomicInteger(0));
 
                 if (!cfg.getBindings().getTools().isEmpty()) {
                     context.setTools(cfg.getBindings().getTools());
@@ -670,8 +690,10 @@ public class AppServiceImpl implements AppService {
                                     }
                                 }
                                 long duration = System.currentTimeMillis() - startTime;
-                                // 全 agentic 化：知识来源改自工具调用通道提取（query_kb 的结构化结果投影）
-                                List<Map<String, Object>> sources = extractKbSources(finalToolCalls);
+                                // 全 agentic 化：知识来源改自工具调用通道提取（query_kb 的结构化结果投影）；
+                                // R2：引用投影按请求级句柄注册表（cN→真实 id）解析，未识别句柄 fail-closed 丢弃
+                                List<Map<String, Object>> sources = extractKbSources(finalToolCalls,
+                                        handleMapOf(contextRef.get()));
                                 persistAnswer(finalConv, cfg, filtered.orElse(finalAnswer), finalThinking,
                                         finalToolCalls, (int) duration, sources,
                                         readIterations(contextRef.get()), persistState, answerSaved);
@@ -706,11 +728,61 @@ public class AppServiceImpl implements AppService {
     // ==================== 内部辅助方法 ====================
 
     /**
+     * R1（P0-6）会话历史投影：转为 [{role,content}] 列表（旧→新），供 HistoryMiddleware 渲染 system 附加块。
+     * <ul>
+     *   <li>剔除列表末尾的当前轮 user 消息——streamChat 先落库当前问题再查历史，
+     *       该消息会由引擎作为本轮 user 消息构建，历史块不得重复</li>
+     *   <li>空内容条目跳过</li>
+     *   <li>字符预算按渲染长度（"role: content\n"）累计，从最新往最旧收，超限裁最旧（保持最近连续段）</li>
+     * </ul>
+     */
+    private List<Map<String, Object>> projectHistory(List<AppConversationMessage> historyMessages, int budgetChars) {
+        List<Map<String, Object>> projected = new ArrayList<>();
+        if (historyMessages == null || historyMessages.isEmpty()) {
+            return projected;
+        }
+        List<AppConversationMessage> msgs = new ArrayList<>(historyMessages);
+        if (!msgs.isEmpty() && "user".equals(msgs.get(msgs.size() - 1).getRole())) {
+            msgs.remove(msgs.size() - 1);
+        }
+        Deque<Map<String, Object>> kept = new ArrayDeque<>();
+        int used = 0;
+        for (int i = msgs.size() - 1; i >= 0; i--) {
+            AppConversationMessage m = msgs.get(i);
+            String content = m.getContent();
+            if (content == null || content.isBlank()) continue;
+            String role = m.getRole() == null || m.getRole().isBlank() ? "user" : m.getRole();
+            int cost = role.length() + 2 + content.length() + 1;
+            if (used + cost > budgetChars) break;
+            used += cost;
+            Map<String, Object> entry = new LinkedHashMap<>();
+            entry.put("role", role);
+            entry.put("content", content);
+            kept.addFirst(entry);
+        }
+        projected.addAll(kept);
+        return projected;
+    }
+
+    /**
      * 全 agentic 化（2026-09-30）：知识来源自工具调用通道提取——扫描 toolCallsJson 中
      * query_kb 调用的结构化结果（result.data.display_type=knowledge_chunks.chunks），
      * 投影为与原预检索 sources 同构的条目（fileName/fileId/score/kbId/chunkIndex/content），供 references 落库。
      */
     private List<Map<String, Object>> extractKbSources(String toolCallsJson) {
+        return extractKbSources(toolCallsJson, null);
+    }
+
+    /**
+     * R2（P0-5）句柄协议投影：带请求级句柄注册表（cN → {kbId,fileId,chunkIndex}）的提取。
+     * <ul>
+     *   <li>chunk 带 handle：从注册表解析真实 id（fileId/kbId/chunkIndex）；
+     *       句柄未注册 → 该条丢弃（fail-closed，模型幻觉句柄不产生假引用）</li>
+     *   <li>chunk 无 handle（旧格式/其他调用方）：沿用旧投影（真实 id 直接取 chunk 字段）</li>
+     *   <li>fileName/score/content 属展示信息，仍取自 chunk 本体</li>
+     * </ul>
+     */
+    private List<Map<String, Object>> extractKbSources(String toolCallsJson, Map<String, Object> handleMap) {
         List<Map<String, Object>> sources = new ArrayList<>();
         if (StrUtil.isBlank(toolCallsJson)) {
             return sources;
@@ -730,12 +802,32 @@ public class AppServiceImpl implements AppService {
                 }
                 for (Object c : chunks) {
                     cn.hutool.json.JSONObject chunk = (cn.hutool.json.JSONObject) c;
+                    String handle = chunk.getStr("handle");
+                    String fileId;
+                    String kbId;
+                    Object chunkIndex;
+                    if (handle != null && !handle.isBlank()) {
+                        // R2：句柄 → 真实 id（请求级注册表）；未识别句柄丢弃（fail-closed）
+                        Object refObj = handleMap == null ? null : handleMap.get(handle);
+                        if (!(refObj instanceof Map)) {
+                            log.debug("[AppChat] Unresolved KB handle '{}' dropped from references (fail-closed)", handle);
+                            continue;
+                        }
+                        Map<?, ?> ref = (Map<?, ?>) refObj;
+                        fileId = ref.get("fileId") == null ? null : String.valueOf(ref.get("fileId"));
+                        kbId = ref.get("kbId") == null ? data.getStr("kb_id") : String.valueOf(ref.get("kbId"));
+                        chunkIndex = ref.get("chunkIndex") instanceof Number ? ref.get("chunkIndex") : 0;
+                    } else {
+                        fileId = chunk.getStr("file_id"); // QF-1：上游结构化通道已含 file_id，投影不再丢弃
+                        kbId = data.getStr("kb_id");
+                        chunkIndex = chunk.get("chunk_index");
+                    }
                     Map<String, Object> src = new LinkedHashMap<>();
                     src.put("fileName", chunk.getStr("source"));
-                    src.put("fileId", chunk.getStr("file_id")); // QF-1：上游结构化通道已含 file_id，投影不再丢弃
+                    src.put("fileId", fileId);
                     src.put("score", chunk.get("score"));
-                    src.put("kbId", data.getStr("kb_id"));
-                    src.put("chunkIndex", chunk.get("chunk_index"));
+                    src.put("kbId", kbId);
+                    src.put("chunkIndex", chunkIndex);
                     src.put("content", chunk.getStr("content"));
                     sources.add(src);
                 }
@@ -809,6 +901,13 @@ public class AppServiceImpl implements AppService {
         if (context == null || context.getRuntimeState() == null) return null;
         Object v = context.getRuntimeState().get("iterations");
         return v instanceof Number ? ((Number) v).intValue() : null;
+    }
+
+    /** R2：从执行上下文取请求级句柄注册表（runtimeState 与 ToolContext.extensions 共享同一 Map 引用） */
+    private Map<String, Object> handleMapOf(BaseContext context) {
+        if (context == null) return null;
+        Object v = context.getRuntimeState().get(KB_HANDLE_MAP_KEY);
+        return v instanceof Map ? (Map<String, Object>) v : null;
     }
 
     /**

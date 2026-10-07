@@ -71,6 +71,11 @@ public class KnowledgeToolExecutor implements ToolExecutor {
         return ToolResult.success(sb.toString(), (int)(System.currentTimeMillis() - t0));
     }
 
+    /** R2（P0-5）：请求级句柄注册表键（与 AppServiceImpl.KB_HANDLE_MAP_KEY 同值，跨模块契约由测试钉住） */
+    static final String KB_HANDLE_MAP_KEY = "kbHandleMap";
+    /** R2：句柄编号游标键（与 AppServiceImpl.KB_HANDLE_SEQ_KEY 同值） */
+    static final String KB_HANDLE_SEQ_KEY = "kbHandleSeq";
+
     private ToolResult queryKnowledgeBase(Map<String, Object> args, ToolContext ctx, long t0) {
         String kbId = (String) args.get("kb_id");
         if (kbId == null) kbId = (String) args.get("knowledge_base");
@@ -87,33 +92,61 @@ public class KnowledgeToolExecutor implements ToolExecutor {
         }
 
         List<Map<String, Object>> chunks = kbOperationService.queryKnowledgeBase(kbId, query, topK);
+        // R2：上游可能返回不可变 Map（如 knowledge 模块桩实现），统一拷贝为可变条目再追加 handle
+        List<Map<String, Object>> mutableChunks = new java.util.ArrayList<>();
+        if (chunks != null) {
+            for (Map<String, Object> chunk : chunks) {
+                mutableChunks.add(chunk == null ? new java.util.LinkedHashMap<>()
+                        : new java.util.LinkedHashMap<>(chunk));
+            }
+        }
 
-        // 结构化通道（app-chat-optimize 二批）：display_type+chunks 直达前端 KnowledgeChunksList
+        // 结构化通道（app-chat-optimize 二批）：display_type+chunks 直达前端 KnowledgeChunksList。
+        // R2（P0-5）：结构化通道保留真实 id（file_id/kb_id/chunk_index，前端用），条目追加 handle 供引用解析
         Map<String, Object> structured = new java.util.LinkedHashMap<>();
         structured.put("display_type", "knowledge_chunks");
         structured.put("kb_id", kbId);
         structured.put("query", query);
-        structured.put("chunks", chunks == null ? List.of() : chunks);
+        structured.put("chunks", mutableChunks);
+
+        // R2：请求级句柄注册表。AgentEngine 把 BaseContext.runtimeState 浅拷贝进 extensions——
+        // 嵌套 Map/AtomicInteger 为共享引用，这里就地写入即请求级可见；未预填时降级为本调用内编号
+        Map<String, Object> handleMap = ctx.getExtension(KB_HANDLE_MAP_KEY);
+        if (handleMap == null) {
+            handleMap = new java.util.LinkedHashMap<>();
+        }
+        java.util.concurrent.atomic.AtomicInteger seq = ctx.getExtension(KB_HANDLE_SEQ_KEY);
+        if (seq == null) {
+            seq = new java.util.concurrent.atomic.AtomicInteger(0);
+        }
 
         StringBuilder sb = new StringBuilder();
-        sb.append("知识库检索结果（").append(kbId).append("）：\n\n");
+        sb.append("知识库检索结果（共 ").append(mutableChunks.size())
+          .append(" 条，引用资料时请使用 [cN] 编号标注来源）：\n\n");
         sb.append("查询：").append(query).append("\n\n");
 
-        if (chunks == null || chunks.isEmpty()) {
+        if (mutableChunks.isEmpty()) {
             sb.append("未找到相关结果。\n");
         } else {
-            for (int i = 0; i < chunks.size(); i++) {
-                Map<String, Object> chunk = chunks.get(i);
-                sb.append("--- 结果 ").append(i + 1);
+            for (Map<String, Object> chunk : mutableChunks) {
+                // 连续编号：同一请求内多次 query_kb 不断号，cN→真实 id 映射跨调用累积
+                String handle = "c" + seq.incrementAndGet();
+                chunk.put("handle", handle);
+                Object fileId = chunk.get("file_id");
+                Object chunkIndex = chunk.get("chunk_index");
+                Map<String, Object> ref = new java.util.LinkedHashMap<>();
+                ref.put("kbId", chunk.getOrDefault("kb_id", kbId));
+                ref.put("fileId", fileId);
+                ref.put("chunkIndex", chunkIndex instanceof Number ? chunkIndex : 0);
+                handleMap.put(handle, ref);
+
+                // 模型可见文本：[cN] fileName | 内容——不含任何真实 UUID
+                sb.append("[").append(handle).append("] ")
+                  .append(chunk.get("source") != null ? chunk.get("source") : "（未知来源）");
                 if (chunk.containsKey("score")) {
                     sb.append(" (相关性: ").append(String.format("%.2f", chunk.get("score"))).append(")");
                 }
-                sb.append(" ---\n");
-                sb.append(chunk.getOrDefault("content", "")).append("\n");
-                if (chunk.containsKey("source") && chunk.get("source") != null) {
-                    sb.append("来源: ").append(chunk.get("source")).append("\n");
-                }
-                sb.append("\n");
+                sb.append(" | ").append(chunk.getOrDefault("content", "")).append("\n\n");
             }
         }
 

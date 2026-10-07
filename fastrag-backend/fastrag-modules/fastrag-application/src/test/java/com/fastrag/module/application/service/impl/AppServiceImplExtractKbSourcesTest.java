@@ -87,4 +87,99 @@ class AppServiceImplExtractKbSourcesTest {
         assertThat(src.get("chunkIndex")).isEqualTo(2);
         assertThat(src.get("content")).isEqualTo("text-a");
     }
+
+    // ========================================================================
+    //  R2（P0-5）句柄协议：references 投影按 cN 解析回真实 id；
+    //  模型引用未识别句柄时投影响不到即自然丢弃（fail-closed）
+    // ========================================================================
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extract(String toolCallsJson, Map<String, Object> handleMap) {
+        return (List<Map<String, Object>>) ReflectionTestUtils.invokeMethod(
+                service, "extractKbSources", toolCallsJson, handleMap);
+    }
+
+    @Test
+    void extractKbSources_withHandleMap_resolvesRealIdsFromRegistry() {
+        String toolCallsJson = """
+                [
+                  {
+                    "name": "query_kb",
+                    "result": {
+                      "data": {
+                        "kb_id": "kb-shown",
+                        "chunks": [
+                          {"handle": "c2", "source": "a.pdf", "score": 0.91, "content": "text-a"}
+                        ]
+                      }
+                    }
+                  }
+                ]
+                """;
+        Map<String, Object> handleMap = new java.util.HashMap<>();
+        handleMap.put("c2", Map.of("kbId", "kb-real", "fileId", "file-real", "chunkIndex", 5));
+
+        List<Map<String, Object>> sources = extract(toolCallsJson, handleMap);
+
+        assertThat(sources).hasSize(1);
+        Map<String, Object> src = sources.get(0);
+        assertThat(src.get("fileId")).isEqualTo("file-real");
+        assertThat(src.get("kbId")).isEqualTo("kb-real");
+        assertThat(src.get("chunkIndex")).isEqualTo(5);
+        assertThat(src.get("fileName")).isEqualTo("a.pdf");
+        assertThat(src.get("content")).isEqualTo("text-a");
+    }
+
+    @Test
+    void extractKbSources_unknownHandle_droppedFailClosed_legacyChunksKept() {
+        String toolCallsJson = """
+                [
+                  {
+                    "name": "query_kb",
+                    "result": {
+                      "data": {
+                        "kb_id": "kb-1",
+                        "chunks": [
+                          {"handle": "c9", "source": "ghost.pdf", "score": 0.9, "content": "未注册句柄"},
+                          {"source": "legacy.pdf", "score": 0.8, "file_id": "file-legacy",
+                           "chunk_index": 1, "content": "无句柄旧条目"}
+                        ]
+                      }
+                    }
+                  }
+                ]
+                """;
+        Map<String, Object> handleMap = Map.of(
+                "c1", Map.of("kbId", "kb-1", "fileId", "file-1", "chunkIndex", 0));
+
+        List<Map<String, Object>> sources = extract(toolCallsJson, handleMap);
+
+        // c9 不在注册表 → fail-closed 丢弃；无 handle 条目走旧投影保留
+        assertThat(sources).hasSize(1);
+        assertThat(sources.get(0).get("fileId")).isEqualTo("file-legacy");
+        assertThat(sources.get(0).get("fileName")).isEqualTo("legacy.pdf");
+    }
+
+    @Test
+    void extractKbSources_handlePresentButRegistryNull_droppedFailClosed() {
+        String toolCallsJson = """
+                [
+                  {
+                    "name": "query_kb",
+                    "result": {
+                      "data": {
+                        "kb_id": "kb-1",
+                        "chunks": [
+                          {"handle": "c1", "source": "a.pdf", "score": 0.9, "content": "t"}
+                        ]
+                      }
+                    }
+                  }
+                ]
+                """;
+
+        List<Map<String, Object>> sources = extract(toolCallsJson, null);
+
+        assertThat(sources).isEmpty();
+    }
 }

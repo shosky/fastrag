@@ -5,6 +5,8 @@ import com.fastrag.ai.llm.LlmService;
 import com.fastrag.common.exception.BusinessException;
 import com.fastrag.infra.graph.GraphStore;
 import com.fastrag.module.platform.entity.ModelRecord;
+import com.fastrag.module.platform.entity.TermLibrary;
+import com.fastrag.module.platform.entity.TermRecord;
 import com.fastrag.module.platform.service.TermService;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
 import com.fastrag.module.retrieval.service.QueryEnhanceService;
@@ -26,9 +28,9 @@ import java.util.regex.Pattern;
  *
  * <h3>核心实现逻辑：</h3>
  * <ul>
- *   <li>{@code suggest} - 查询建议（当前为占位实现，直接返回原始查询）</li>
+ *   <li>{@code suggest} - 查询建议：并入 {@code expandQueries} 统一实现（LLM 变体改写，失败降级原查询）</li>
  *   <li>{@code expandSynonyms} - 同义词扩展，调用 {@link TermService} 获取同义词列表拼入查询</li>
- *   <li>{@code applyQueryRules} - 查询规则改写（当前为占位实现，直接返回原始查询）</li>
+ *   <li>{@code applyQueryRules} - 查询规则改写：正则级最小接线（全角→半角 / 空白归一 / 术语别名→规范名）</li>
  *   <li>{@code extractEntities} - NER 实体提取：通过 LLM 从查询中提取命名实体，
  *       无 NER 模型配置时降级为基于正则的简单分词（英文按词、中文按连续块 + n-gram 切分）</li>
  *   <li>{@code expandGraph} - 图谱扩展：先用 NER 提取实体，再通过 {@link GraphStore} 在知识图谱中
@@ -66,11 +68,26 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
         }
     }
 
+    /**
+     * 查询建议：R6（P2-6）并入 {@link #expandQueries} 统一实现——复用同一 LLM 变体改写机制
+     * （取 1 个变体），首个与原查询不同的变体作为建议查询；LLM 失败/无可用变体时降级为
+     * 原查询且 reason 为空（等价无建议）。原占位实现（直接返回原查询）移除。
+     */
     @Override
     public Map<String, Object> suggest(String query) {
         var r = new HashMap<String, Object>();
-        r.put("suggestedQuery", query);
-        r.put("reason", "");
+        if (query == null || query.isBlank()) {
+            r.put("suggestedQuery", query);
+            r.put("reason", "");
+            return r;
+        }
+        List<String> variants = expandQueries(query, 2, null, null);
+        String suggested = variants.stream()
+                .filter(v -> !v.equals(query))
+                .findFirst()
+                .orElse(query);
+        r.put("suggestedQuery", suggested);
+        r.put("reason", suggested.equals(query) ? "" : "LLM 变体改写（expandQueries 统一实现）");
         return r;
     }
 
@@ -88,12 +105,104 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
         return r;
     }
 
+    /**
+     * 查询规则改写：R6（P2-6）最小接线——检索主路径正则级改写（原占位实现移除）。
+     * <ol>
+     *   <li>halfwidth：全角 ASCII（字母/数字/标点/空格）归一为半角；</li>
+     *   <li>whitespace：连续空白归一为单空格并去首尾；</li>
+     *   <li>term_alias：术语库别名 → 规范术语名（长别名优先替换，避免子串嵌套部分替换）。</li>
+     * </ol>
+     * 术语库加载失败仅 warn 跳过（规则改写不阻断检索主路径）。
+     */
     @Override
     public Map<String, Object> applyQueryRules(String query) {
         var r = new HashMap<String, Object>();
-        r.put("rewritten", query);
-        r.put("appliedRules", List.of());
+        List<String> applied = new ArrayList<>();
+        if (query == null || query.isBlank()) {
+            r.put("rewritten", query);
+            r.put("appliedRules", applied);
+            return r;
+        }
+        String rewritten = query;
+
+        String halfwidth = toHalfWidth(rewritten);
+        if (!halfwidth.equals(rewritten)) {
+            applied.add("halfwidth");
+            rewritten = halfwidth;
+        }
+        String collapsed = rewritten.replaceAll("\\s{2,}", " ").trim();
+        if (!collapsed.equals(rewritten)) {
+            applied.add("whitespace");
+            rewritten = collapsed;
+        }
+        try {
+            String termRewritten = applyTermAliases(rewritten);
+            if (!termRewritten.equals(rewritten)) {
+                applied.add("term_alias");
+                rewritten = termRewritten;
+            }
+        } catch (Exception e) {
+            log.warn("[QueryRules] term alias rewrite failed, skip: {}", e.getMessage());
+        }
+
+        r.put("rewritten", rewritten);
+        r.put("appliedRules", applied);
         return r;
+    }
+
+    /** 全角 ASCII 区（U+FF01~U+FF5E）与全角空格（U+3000）归一为半角 */
+    private static String toHalfWidth(String s) {
+        StringBuilder sb = new StringBuilder(s.length());
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c == '\u3000') {
+                sb.append(' ');
+            } else if (c >= '\uFF01' && c <= '\uFF5E') {
+                sb.append((char) (c - 0xFEE0));
+            } else {
+                sb.append(c);
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 术语别名 → 规范术语名（启用状态术语库；长别名优先替换） */
+    private String applyTermAliases(String query) {
+        List<TermLibrary> libraries = termService.listLibraries();
+        if (libraries == null || libraries.isEmpty()) {
+            return query;
+        }
+        List<TermRecord> terms = new ArrayList<>();
+        for (TermLibrary lib : libraries) {
+            if (lib == null || lib.getId() == null) continue;
+            List<TermRecord> libTerms = termService.listTerms(lib.getId());
+            if (libTerms != null) terms.addAll(libTerms);
+        }
+        record AliasRule(String alias, String term) {}
+        List<AliasRule> rules = new ArrayList<>();
+        for (TermRecord tr : terms) {
+            if (tr == null || tr.getStatus() == null || tr.getStatus() != 1) continue;
+            String term = tr.getTerm();
+            if (term == null || term.isBlank() || term.equals(query)) continue;
+            if (tr.getAlias() == null || tr.getAlias().isBlank()) continue;
+            for (String a : tr.getAlias().split("[,，]")) {
+                String alias = a.trim();
+                if (!alias.isEmpty() && !alias.equals(term) && query.contains(alias)) {
+                    rules.add(new AliasRule(alias, term));
+                }
+            }
+        }
+        if (rules.isEmpty()) {
+            return query;
+        }
+        rules.sort((x, y) -> Integer.compare(y.alias().length(), x.alias().length()));
+        String rewritten = query;
+        for (AliasRule rule : rules) {
+            if (rewritten.contains(rule.alias())) {
+                rewritten = rewritten.replace(rule.alias(), rule.term());
+            }
+        }
+        return rewritten;
     }
 
     // ==================== 多查询改写（Multi-Query）====================

@@ -127,6 +127,15 @@ public class RetrievalServiceImpl implements RetrievalService {
     private static final int RRF_K = 60;
 
     // ========================================================================
+    //  R3: rerank 质量闸门
+    // ========================================================================
+
+    /** rerank 相关性分缺省阈值：低于此分的候选视为不相关（可经 config.rerankScoreThreshold 覆盖） */
+    private static final double DEFAULT_RERANK_SCORE_THRESHOLD = 0.05;
+    /** 全灭放宽系数：全部候选低于阈值时按阈值 ×0.7 放行 */
+    private static final double RERANK_RELAX_FACTOR = 0.7;
+
+    // ========================================================================
     //  主入口
     // ========================================================================
 
@@ -161,10 +170,13 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
 
         // ---- Phase 2 + Phase 5: 核心检索 ----
+        // R6-1（P2-6）：主查询向量只 embed 一次——向量检索与图谱通道（向量实体匹配）复用同一向量，
+        // 省一次 embedding API 往返；失败降级为下游各自 embed（行为等同旧实现）
+        List<Float> mainQueryVector = needsQueryEmbedding(config) ? safeEmbedQuery(kbId, query) : null;
         // Multi-Query：LLM 改写 N 个变体查询分别召回后 RRF 融合（弥补分片切断导致的单一查询漏召）
         List<SearchResultItem> results = Boolean.TRUE.equals(config.getEnableMultiQuery())
-                ? multiQuerySearch(kbId, query, config)
-                : executeSearch(kbId, query, config);
+                ? multiQuerySearch(kbId, query, config, mainQueryVector)
+                : executeSearch(kbId, query, config, mainQueryVector);
 
         // ---- 图谱通道（方案 A）：固定参与一路图谱召回，与主检索结果 RRF 融合 ----
         // 不再把实体名/关系标签拼入 query 再向量化（避免稀释 embedding），
@@ -174,7 +186,8 @@ public class RetrievalServiceImpl implements RetrievalService {
         boolean graphChannelDegraded = false;
         if (Boolean.TRUE.equals(config.getEnableGraphExpand())) {
             int graphCount = config.getGraphRecallCount() != null ? config.getGraphRecallCount() : 5;
-            List<SearchResultItem> graphHits = safeSearch(() -> graphChannelRecall(kbId, query, config, graphCount));
+            List<SearchResultItem> graphHits = safeSearch(
+                    () -> graphChannelRecall(kbId, query, config, graphCount, mainQueryVector));
             if (graphHits == null) {
                 graphChannelDegraded = true;
                 graphHits = Collections.emptyList();
@@ -409,6 +422,7 @@ public class RetrievalServiceImpl implements RetrievalService {
 
         // 重排序细化
         if (source.getEnableLLMRerank() != null) target.setEnableLLMRerank(source.getEnableLLMRerank());
+        if (source.getRerankScoreThreshold() != null) target.setRerankScoreThreshold(source.getRerankScoreThreshold());
         if (source.getEnableMMR() != null) target.setEnableMMR(source.getEnableMMR());
         if (source.getMmrLambda() != null) target.setMmrLambda(source.getMmrLambda());
 
@@ -484,18 +498,19 @@ public class RetrievalServiceImpl implements RetrievalService {
     // ========================================================================
 
     private List<SearchResultItem> executeSearch(String kbId, String query,
-                                                  RetrievalRequest.RetrievalConfig config) {
+                                                  RetrievalRequest.RetrievalConfig config,
+                                                  List<Float> precomputedVector) {
         // 多路召回模式
         if (Boolean.TRUE.equals(config.getEnableMultiRetrieval())) {
-            return multiChannelRecall(kbId, query, config);
+            return multiChannelRecall(kbId, query, config, precomputedVector);
         }
 
         // 单一模式
         String mode = config.getMode() != null ? config.getMode() : "hybrid";
         return switch (mode) {
-            case "vector" -> vectorSearch(kbId, query, config);
+            case "vector" -> vectorSearch(kbId, query, config, precomputedVector);
             case "fulltext" -> fulltextSearch(kbId, query, config);
-            default -> hybridSearch(kbId, query, config);
+            default -> hybridSearch(kbId, query, config, precomputedVector);
         };
     }
 
@@ -509,7 +524,8 @@ public class RetrievalServiceImpl implements RetrievalService {
      * <p>降级：改写失败 / 只有一个变体时退化为单查询 executeSearch，不改变现有行为。</p>
      */
     private List<SearchResultItem> multiQuerySearch(String kbId, String query,
-                                                     RetrievalRequest.RetrievalConfig config) {
+                                                     RetrievalRequest.RetrievalConfig config,
+                                                     List<Float> mainQueryVector) {
         int target = config.getMultiQueryCount() != null ? config.getMultiQueryCount() : 3;
         List<String> queries;
         try {
@@ -519,13 +535,14 @@ public class RetrievalServiceImpl implements RetrievalService {
             queries = List.of(query);
         }
         if (queries.size() < 2) {
-            return executeSearch(kbId, query, config);
+            return executeSearch(kbId, query, config, mainQueryVector);
         }
 
-        // 每个变体独立召回（safeSearch：单路失败不拖垮整体）
+        // 每个变体独立召回（safeSearch：单路失败不拖垮整体）；主查询变体复用预 embed 向量，其余自 embed
         List<List<SearchResultItem>> channels = new ArrayList<>();
         for (String q : queries) {
-            channels.add(safeSearch(() -> executeSearch(kbId, q, config)));
+            List<Float> variantVector = q.equals(query) ? mainQueryVector : null;
+            channels.add(safeSearch(() -> executeSearch(kbId, q, config, variantVector)));
         }
         // 融合数上浮（topK*3 且至少 50），供后续 graph 融合 / rerank 裁剪
         int fusedTopK = Math.max(config.getTopK() * 3, 50);
@@ -560,18 +577,27 @@ public class RetrievalServiceImpl implements RetrievalService {
 
     private List<SearchResultItem> vectorSearch(String kbId, String query,
                                                   RetrievalRequest.RetrievalConfig config) {
+        return vectorSearch(kbId, query, config, null);
+    }
+
+    private List<SearchResultItem> vectorSearch(String kbId, String query,
+                                                  RetrievalRequest.RetrievalConfig config,
+                                                  List<Float> precomputedVector) {
         int topK = config.getTopK();
         double threshold = config.getSimilarityThreshold();
 
         try {
-            // 1. 生成查询向量（通过模型管理解析知识库配置的嵌入模型 API）
-            EmbeddingModelConfig embedConfig = getEmbeddingModelConfig(kbId);
-            List<List<Float>> queryEmbeddings = embeddingService.embed(
-                    embedConfig != null ? embedConfig.model() : null,
-                    List.of(query),
-                    embedConfig != null ? embedConfig.apiUrl() : null,
-                    embedConfig != null ? embedConfig.apiKey() : null);
-            List<Float> queryVector = queryEmbeddings.get(0);
+            // 1. 生成查询向量（R6-1：主查询向量已预 embed 时直接复用）
+            List<Float> queryVector = precomputedVector;
+            if (queryVector == null) {
+                EmbeddingModelConfig embedConfig = getEmbeddingModelConfig(kbId);
+                List<List<Float>> queryEmbeddings = embeddingService.embed(
+                        embedConfig != null ? embedConfig.model() : null,
+                        List.of(query),
+                        embedConfig != null ? embedConfig.apiUrl() : null,
+                        embedConfig != null ? embedConfig.apiKey() : null);
+                queryVector = queryEmbeddings.get(0);
+            }
 
             // 2. Milvus 搜索（多取一些以便后续过滤）
             String collection = "kb_" + kbId.replace("-", "_");
@@ -658,23 +684,31 @@ public class RetrievalServiceImpl implements RetrievalService {
     // ========================================================================
 
     private List<SearchResultItem> hybridSearch(String kbId, String query,
-                                                  RetrievalRequest.RetrievalConfig config) {
+                                                  RetrievalRequest.RetrievalConfig config,
+                                                  List<Float> precomputedVector) {
         int topK = config.getTopK();
         int recallCount = Math.max(topK * 3, 50); // 各路多召回一些用于融合
 
-        // 1. 向量检索候选
+        // 1. 向量检索候选（R6-1：复用主查询向量）
         RetrievalRequest.RetrievalConfig vectorCfg = copyWithMode(config, "vector", recallCount);
-        List<SearchResultItem> vectorResults = safeSearch(() -> vectorSearch(kbId, query, vectorCfg));
+        List<SearchResultItem> vectorResults = safeSearch(() -> vectorSearch(kbId, query, vectorCfg, precomputedVector));
 
         // 2. 全文检索候选
         RetrievalRequest.RetrievalConfig fulltextCfg = copyWithMode(config, "fulltext", recallCount);
         List<SearchResultItem> fulltextResults = safeSearch(() -> fulltextSearch(kbId, query, fulltextCfg));
 
-        // 3. 加权融合（使用前端可调的 vectorWeight / bm25Weight）
-        List<SearchResultItem> fused = weightedFusion(List.of(vectorResults, fulltextResults), config, topK);
+        // 3. R4（P1-10）：主路径改 RRF 融合——vectorWeight/bm25Weight 归一为 RRF 路权。
+        //    RRF 按 1/(k+rank) 计分，对各路池深不敏感（weightedFusion 的线性衰减分依赖 channel size，
+        //    池深越深头部优势被稀释）；路权保留前端可调的 vector/bm25 相对偏好
+        double vWeight = config.getVectorWeight() != null ? config.getVectorWeight() : 0.5;
+        double fWeight = config.getBm25Weight() != null ? config.getBm25Weight() : 0.5;
+        double totalWeight = vWeight + fWeight;
+        double[] routeWeights = totalWeight > 0 ? new double[]{vWeight / totalWeight, fWeight / totalWeight} : null;
+        List<SearchResultItem> fused = rrfFusionMulti(List.of(vectorResults, fulltextResults), topK, routeWeights);
 
-        log.info("[HybridSearch] kbId={}, query={}, vector={}, fulltext={}, fused={}",
-                kbId, query, vectorResults.size(), fulltextResults.size(), fused.size());
+        log.info("[HybridSearch] kbId={}, query={}, vector={}, fulltext={}, fused={} (rrf routeWeights=[{}, {}])",
+                kbId, query, vectorResults.size(), fulltextResults.size(), fused.size(),
+                routeWeights != null ? routeWeights[0] : 0.5, routeWeights != null ? routeWeights[1] : 0.5);
         return fused;
     }
 
@@ -683,18 +717,21 @@ public class RetrievalServiceImpl implements RetrievalService {
     // ========================================================================
 
     private List<SearchResultItem> multiChannelRecall(String kbId, String query,
-                                                       RetrievalRequest.RetrievalConfig config) {
-        int vCount = config.getVectorRecallCount() != null ? config.getVectorRecallCount() : config.getTopK();
-        int fCount = config.getFulltextRecallCount() != null ? config.getFulltextRecallCount() : config.getTopK();
+                                                       RetrievalRequest.RetrievalConfig config,
+                                                       List<Float> precomputedVector) {
+        // R4（P1-10）：各路池深下限 max(5×topK, 50)、上限 500，显式配置不再小于 rerank topK
+        int vCount = clampRecallPool(config.getVectorRecallCount(), config.getTopK());
+        int fCount = clampRecallPool(config.getFulltextRecallCount(), config.getTopK());
         int qCount = config.getQaRecallCount() != null ? config.getQaRecallCount() : 0;
         String strategy = config.getFusionStrategy() != null ? config.getFusionStrategy() : "rrf";
 
         // 各路并行召回（图谱通道统一在 search() 主流程参与融合，不在此处重复）
         List<List<SearchResultItem>> channels = new ArrayList<>();
 
-        // 向量通道
+        // 向量通道（R6-1：复用主查询向量）
         RetrievalRequest.RetrievalConfig vCfg = copyWithMode(config, "vector", vCount);
-        channels.add(safeSearch(() -> vectorSearch(kbId, query, vCfg)));
+        List<Float> vectorChannelVector = precomputedVector;
+        channels.add(safeSearch(() -> vectorSearch(kbId, query, vCfg, vectorChannelVector)));
 
         // 全文通道
         RetrievalRequest.RetrievalConfig fCfg = copyWithMode(config, "fulltext", fCount);
@@ -714,10 +751,12 @@ public class RetrievalServiceImpl implements RetrievalService {
     }
 
     /**
-     * 图谱子图召回：实体匹配（文本 CONTAINS + 向量语义双路）→ 邻居实体 LIKE 召回关联 chunk
+     * 图谱子图召回：实体匹配（文本 CONTAINS + 向量语义双路）→ 邻居实体 LIKE 召回关联 chunk。
+     * R6-1（P2-6）：向量实体匹配复用主查询向量（precomputedVector），为空时自行 embed（旧行为）。
      */
     private List<SearchResultItem> graphChannelRecall(String kbId, String query,
-                                                       RetrievalRequest.RetrievalConfig config, int count) {
+                                                       RetrievalRequest.RetrievalConfig config, int count,
+                                                       List<Float> precomputedVector) {
         try {
             // 1. 文本实体匹配（NER/降级分词 + CONTAINS）
             Map<String, Object> graphResult = queryEnhanceService.expandGraph(
@@ -740,16 +779,19 @@ public class RetrievalServiceImpl implements RetrievalService {
             EmbeddingModelConfig embCfg = getEmbeddingModelConfig(kbId);
             if (embCfg != null && embCfg.model() != null) {
                 try {
-                    List<Float> queryVector = embeddingService.embed(
-                            embCfg.model(), List.of(query), embCfg.apiUrl(), embCfg.apiKey()).get(0);
+                    List<Float> queryVector = precomputedVector;
+                    if (queryVector == null) {
+                        queryVector = embeddingService.embed(
+                                embCfg.model(), List.of(query), embCfg.apiUrl(), embCfg.apiKey()).get(0);
+                    }
                     List<Map<String, Object>> vecEntities = graphStore.searchEntitiesByVector(kbId, queryVector, 5);
                     for (Map<String, Object> e : vecEntities) {
                         String name = (String) e.get("name");
                         if (name != null && !name.isBlank()) entityNames.add(name);
                     }
                     if (!vecEntities.isEmpty()) {
-                        log.info("[GraphChannel] Vector entity match: {} entities for kb={}, query='{}'",
-                                vecEntities.size(), kbId, query);
+                        log.info("[GraphChannel] Vector entity match: {} entities for kb={}, query='{}' (vector reused={})",
+                                vecEntities.size(), kbId, query, precomputedVector != null);
                     }
                 } catch (Exception e) {
                     log.warn("[GraphChannel] Vector entity match failed for kb={}, fallback to text: {}",
@@ -1015,6 +1057,17 @@ public class RetrievalServiceImpl implements RetrievalService {
     // ========================================================================
 
     /**
+     * R4（P1-10）召回池深钳制：下限 max(5×topK, 50)、上限 500。
+     * 显式配置小于 rerank topK 时抬到 topK（EmbeddingTopK ≥ RerankTopK 钳制——
+     * 召回池不够深时 rerank 的 top_n 无意义）；未配置时直接取池深下限。
+     */
+    private int clampRecallPool(Integer configured, int topK) {
+        int floor = Math.max(5 * topK, 50);
+        int depth = configured != null ? Math.max(configured, topK) : floor;
+        return Math.min(Math.max(depth, floor), 500);
+    }
+
+    /**
      * RRF 融合（两路）
      */
     private List<SearchResultItem> rrfFusion(List<SearchResultItem> list1,
@@ -1023,30 +1076,56 @@ public class RetrievalServiceImpl implements RetrievalService {
     }
 
     /**
-     * RRF 融合（多路）
+     * RRF 融合（多路，各路等权）
      */
     private List<SearchResultItem> rrfFusionMulti(List<List<SearchResultItem>> channels, int topK) {
+        return rrfFusionMulti(channels, topK, null);
+    }
+
+    /**
+     * RRF 融合（多路，带路权）。
+     *
+     * <p>R4（P1-10）：hybrid 主路径用此变体——vectorWeight/bm25Weight 归一后作为 RRF 路权
+     * （routeWeights 按通道下标对齐；null 或超界按等权 1.0）。
+     * R5（P2-5）：同分排序以 fileId → chunkIndex → chunkType 次级键稳定 tie-break。</p>
+     */
+    private List<SearchResultItem> rrfFusionMulti(List<List<SearchResultItem>> channels, int topK,
+                                                   double[] routeWeights) {
         // 计算每个结果的 RRF score
         Map<String, SearchResultItem> itemMap = new LinkedHashMap<>();
         Map<String, Double> scoreMap = new HashMap<>();
 
-        for (List<SearchResultItem> channel : channels) {
+        for (int ch = 0; ch < channels.size(); ch++) {
+            double weight = routeWeights != null && ch < routeWeights.length ? routeWeights[ch] : 1.0;
+            List<SearchResultItem> channel = channels.get(ch);
             for (int rank = 0; rank < channel.size(); rank++) {
                 SearchResultItem item = channel.get(rank);
                 String key = item.getFileId() + "_" + item.getChunkIndex();
                 // 以第一个出现的为准保留元信息
                 itemMap.putIfAbsent(key, item);
-                // RRF score = 1 / (k + rank)
-                scoreMap.merge(key, 1.0 / (RRF_K + rank), Double::sum);
+                // RRF score = weight / (k + rank)
+                scoreMap.merge(key, weight * (1.0 / (RRF_K + rank)), Double::sum);
             }
         }
 
         return scoreMap.entrySet().stream()
-                .sorted(Map.Entry.<String, Double>comparingByValue().reversed())
+                .sorted(Map.Entry.<String, Double>comparingByValue().reversed()
+                        .thenComparing(e -> resultTieBreakKey(itemMap.get(e.getKey()))))
                 .limit(topK)
                 // 只按 RRF 分排序，保留各路的原始 similarity/distance（RRF 排名分不是相似度语义）
                 .map(e -> itemMap.get(e.getKey()))
                 .collect(Collectors.toList());
+    }
+
+    /**
+     * R5（P2-5）结果 tie-break 次级键：fileId → chunkIndex → chunkType。
+     * 融合分/相似度并列时保证确定性次序（跨请求可复现，且同文件块天然相邻）。
+     */
+    private String resultTieBreakKey(SearchResultItem item) {
+        if (item == null) return "||";
+        return (item.getFileId() == null ? "" : item.getFileId())
+                + "|" + item.getChunkIndex()
+                + "|" + (item.getChunkType() == null ? "" : item.getChunkType());
     }
 
     /**
@@ -1134,15 +1213,21 @@ public class RetrievalServiceImpl implements RetrievalService {
     }
 
     /**
-     * Rerank 模型重排（通过模型管理解析 API 配置）
+     * Rerank 模型重排（通过模型管理解析 API 配置）。
+     *
+     * <p>R3 质量闸门（四级降级）：</p>
+     * <ol>
+     *   <li><b>阈值过滤</b>：relevance_score 低于阈值（config.rerankScoreThreshold，缺省 0.05）的候选丢弃；</li>
+     *   <li><b>全灭放宽</b>：全部低于阈值时按阈值 ×0.7 放行（阈值偏高的自愈）；</li>
+     *   <li><b>top-1 保底</b>：放宽后仍空时保留 rerank 分最高的一条（至少给模型一个候选）；</li>
+     *   <li><b>原序返回</b>：模型异常/空返回时原序返回 topK，warn 带 [RerankGate] 诊断标记。</li>
+     * </ol>
+     * <p>passage 拼装：送 rerank 的文档 content 前拼 fileName 标题行（文档级语义对齐），
+     * 仅作用于 rerank 输入，不改写返回条目的 content。</p>
      */
     private List<SearchResultItem> rerankResults(List<SearchResultItem> candidates, String query,
                                                    RetrievalRequest.RetrievalConfig config, String kbId) {
         try {
-            List<String> documents = candidates.stream()
-                    .map(SearchResultItem::getContent)
-                    .collect(Collectors.toList());
-
             String rerankModel = config.getRerankModel();
             if (rerankModel == null || rerankModel.isBlank()) {
                 log.warn("[Rerank] No rerank model configured, skip rerank");
@@ -1166,17 +1251,39 @@ public class RetrievalServiceImpl implements RetrievalService {
             }
 
             List<Map<String, Object>> rerankResults = rerankService.rerank(
-                    rerankModel, query, documents, config.getTopK(), apiUrl, apiKey);
+                    rerankModel, query, buildRerankPassages(candidates), config.getTopK(), apiUrl, apiKey);
 
             if (rerankResults.isEmpty()) {
+                log.warn("[RerankGate] rerank returned empty (diagnostic: rerank_empty), keep original order topK");
                 return candidates.subList(0, Math.min(config.getTopK(), candidates.size()));
+            }
+
+            // R3 四级降级闸门
+            double threshold = config.getRerankScoreThreshold() != null
+                    ? config.getRerankScoreThreshold() : DEFAULT_RERANK_SCORE_THRESHOLD;
+            List<Map<String, Object>> passed = rerankResults.stream()
+                    .filter(rr -> relevanceScore(rr) >= threshold)
+                    .collect(Collectors.toList());
+            if (passed.isEmpty()) {
+                double relaxed = threshold * RERANK_RELAX_FACTOR;
+                passed = rerankResults.stream()
+                        .filter(rr -> relevanceScore(rr) >= relaxed)
+                        .collect(Collectors.toList());
+                log.warn("[RerankGate] all {} candidates below threshold {} — relaxed to {} (x0.7), passed={} "
+                                + "(diagnostic: threshold_relaxed)",
+                        rerankResults.size(), threshold, relaxed, passed.size());
+            }
+            if (passed.isEmpty()) {
+                passed = List.of(rerankResults.get(0));
+                log.warn("[RerankGate] still empty after relax — top-1 fallback score={} (diagnostic: top1_fallback)",
+                        relevanceScore(rerankResults.get(0)));
             }
 
             // rerank 返回的 index 指向原始 candidates 的位置
             List<SearchResultItem> reranked = new ArrayList<>();
-            for (Map<String, Object> rr : rerankResults) {
+            for (Map<String, Object> rr : passed) {
                 int index = ((Number) rr.get("index")).intValue();
-                double score = ((Number) rr.get("relevance_score")).doubleValue();
+                double score = relevanceScore(rr);
                 if (index >= 0 && index < candidates.size()) {
                     SearchResultItem item = candidates.get(index);
                     item.setSimilarity(score);
@@ -1184,11 +1291,48 @@ public class RetrievalServiceImpl implements RetrievalService {
                     reranked.add(item);
                 }
             }
+            log.info("[RerankGate] threshold={}, candidates={}, passed={}", threshold, candidates.size(), reranked.size());
             return reranked;
         } catch (Exception e) {
-            log.warn("[Rerank] Failed, return topK candidates", e);
+            log.warn("[RerankGate] rerank failed (diagnostic: rerank_error), return original order topK", e);
             return candidates.subList(0, Math.min(config.getTopK(), candidates.size()));
         }
+    }
+
+    /** 读取 rerank 返回条目的相关性分（缺失按 0 计，闸门自然丢弃） */
+    private double relevanceScore(Map<String, Object> rerankEntry) {
+        Object s = rerankEntry.get("relevance_score");
+        return s instanceof Number ? ((Number) s).doubleValue() : 0.0;
+    }
+
+    /**
+     * R3 passage 拼装：content 前拼 fileName 标题行（如 "【政策A.pdf】\n..."），
+     * 帮助 rerank 模型把分片与文档主题对齐；无文件名的候选保持原 content。
+     * 仅作用于 rerank 输入，不改写返回条目的 content（返回载荷保持纯净）。
+     */
+    private List<String> buildRerankPassages(List<SearchResultItem> candidates) {
+        Map<String, String> idToName = new HashMap<>();
+        Set<String> fileIds = candidates.stream()
+                .map(SearchResultItem::getFileId)
+                .filter(fid -> fid != null && !fid.isBlank())
+                .collect(Collectors.toSet());
+        if (!fileIds.isEmpty()) {
+            try {
+                for (KbFile file : fileMapper.selectBatchIds(fileIds)) {
+                    idToName.put(file.getId(), file.getName());
+                }
+            } catch (Exception e) {
+                log.warn("[RerankGate] resolve file names for passages failed: {}", e.getMessage());
+            }
+        }
+        return candidates.stream()
+                .map(item -> {
+                    String name = item.getFileName() != null && !item.getFileName().isBlank()
+                            ? item.getFileName() : idToName.get(item.getFileId());
+                    String content = item.getContent() == null ? "" : item.getContent();
+                    return (name == null || name.isBlank()) ? content : "【" + name + "】\n" + content;
+                })
+                .collect(Collectors.toList());
     }
 
     /**
@@ -1232,7 +1376,7 @@ public class RetrievalServiceImpl implements RetrievalService {
                 }
             }
 
-            // 贪婪选择
+            // 贪婪选择（R5：MMR 分并列时按 tie-break 次级键选取，消除选择顺序不确定性）
             List<SearchResultItem> selected = new ArrayList<>();
             boolean[] used = new boolean[n];
             double[] querySim = new double[n];
@@ -1241,9 +1385,11 @@ public class RetrievalServiceImpl implements RetrievalService {
                 // 更精确应该用 query 向量，但这里复用候选向量近似
             }
 
+            final double eps = 1e-9;
             for (int iter = 0; iter < Math.min(topK, n); iter++) {
                 int bestIdx = -1;
                 double bestScore = -Double.MAX_VALUE;
+                String bestKey = null;
                 for (int i = 0; i < n; i++) {
                     if (used[i]) continue;
                     double maxSimToSelected = 0;
@@ -1253,8 +1399,13 @@ public class RetrievalServiceImpl implements RetrievalService {
                     }
                     double mmrScore = lambda * candidates.get(i).getSimilarity()
                             - (1 - lambda) * maxSimToSelected;
-                    if (mmrScore > bestScore) {
+                    String tieKey = resultTieBreakKey(candidates.get(i));
+                    boolean better = bestIdx < 0
+                            || mmrScore > bestScore + eps
+                            || (mmrScore >= bestScore - eps && tieKey.compareTo(bestKey) < 0);
+                    if (better) {
                         bestScore = mmrScore;
+                        bestKey = tieKey;
                         bestIdx = i;
                     }
                 }
@@ -1602,6 +1753,74 @@ public class RetrievalServiceImpl implements RetrievalService {
     /** 嵌入模型配置 */
     private record EmbeddingModelConfig(String model, String apiUrl, String apiKey) {}
 
+    /**
+     * R6-1：本次检索是否需要主查询向量（向量路 / 图谱通道向量实体匹配任一存在即需要）。
+     * multiRetrieval 模式向量通道恒在；multiQuery 变体各自 embed（仅主查询变体复用）。
+     */
+    private boolean needsQueryEmbedding(RetrievalRequest.RetrievalConfig config) {
+        if (Boolean.TRUE.equals(config.getEnableGraphExpand())) return true;
+        if (Boolean.TRUE.equals(config.getEnableMultiRetrieval())) return true;
+        String mode = config.getMode() != null ? config.getMode() : "hybrid";
+        return !"fulltext".equals(mode);
+    }
+
+    // ========================================================================
+    //  R6（P2-6）：查询向量短 TTL 缓存（多 KB 共享）
+    // ========================================================================
+
+    /** 缓存最大条目数（LRU 驱逐） */
+    private static final int QUERY_VECTOR_CACHE_MAX_ENTRIES = 128;
+    /** 缓存 TTL：同一请求内多 KB 连续检索必然命中；跨请求命中亦安全（同 (model,apiUrl,query) 向量确定） */
+    private static final long QUERY_VECTOR_CACHE_TTL_MS = 60_000L;
+
+    /** 缓存条目：查询向量 + 写入时刻 */
+    private record CachedQueryVector(List<Float> vector, long cachedAt) {}
+
+    /** 查询向量 LRU+TTL 缓存（键 = model|apiUrl|query；多 KB 共用同一嵌入模型时共享向量） */
+    private final Map<String, CachedQueryVector> queryVectorCache = Collections.synchronizedMap(
+            new LinkedHashMap<>(16, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<String, CachedQueryVector> eldest) {
+                    return size() > QUERY_VECTOR_CACHE_MAX_ENTRIES;
+                }
+            });
+
+    /**
+     * R6-1：主查询向量预 embed（失败返回 null，下游各自 embed 兜底）。
+     * R6（P2-6）：命中短 TTL 缓存（同查询 + 同嵌入模型）时复用，不再重复调 embedding API——
+     * agentic 请求内模型对多个 KB 连续 query_kb（每 KB 一次 search）时只 embed 一次。
+     */
+    private List<Float> safeEmbedQuery(String kbId, String query) {
+        EmbeddingModelConfig embedConfig = getEmbeddingModelConfig(kbId);
+        String model = embedConfig != null ? embedConfig.model() : null;
+        String apiUrl = embedConfig != null ? embedConfig.apiUrl() : null;
+        String apiKey = embedConfig != null ? embedConfig.apiKey() : null;
+        String cacheKey = (model == null ? "" : model) + "|" + (apiUrl == null ? "" : apiUrl) + "|" + query;
+        long now = System.currentTimeMillis();
+        CachedQueryVector cached = queryVectorCache.get(cacheKey);
+        if (cached != null && now - cached.cachedAt() <= QUERY_VECTOR_CACHE_TTL_MS) {
+            return new ArrayList<>(cached.vector());
+        }
+        if (cached != null) {
+            queryVectorCache.remove(cacheKey); // 过期驱逐
+        }
+        try {
+            List<List<Float>> embeddings = embeddingService.embed(model, List.of(query), apiUrl, apiKey);
+            if (embeddings == null || embeddings.isEmpty()) {
+                return null;
+            }
+            List<Float> vector = embeddings.get(0);
+            if (vector != null && !vector.isEmpty()) {
+                queryVectorCache.put(cacheKey, new CachedQueryVector(List.copyOf(vector), now));
+            }
+            return vector == null ? null : new ArrayList<>(vector);
+        } catch (Exception e) {
+            log.warn("[Retrieval] Pre-embed main query failed for kbId={}, downstream self-embed: {}",
+                    kbId, e.getMessage());
+            return null;
+        }
+    }
+
     /** 检查文件是否已软删除 */
     private boolean isFileDeleted(String kbId, String fileId) {
         try {
@@ -1669,7 +1888,7 @@ public class RetrievalServiceImpl implements RetrievalService {
         return cjk + (int) Math.ceil(other / 4.0);
     }
 
-    /** 按内容去重：同一 content 只保留相似度最高的一条 */
+    /** 按内容去重：同一 content 只保留质量最高的一条（R5：相似度并列时按 tie-break 次级键定胜负） */
     private List<SearchResultItem> deduplicateResults(List<SearchResultItem> results) {
         if (results.size() <= 1) return results;
 
@@ -1680,13 +1899,23 @@ public class RetrievalServiceImpl implements RetrievalService {
             // 用内容前 500 字符 + 长度做去重 key，兼顾性能和准确度
             String key = content.length() > 500 ? content.substring(0, 500) + "_" + content.length() : content;
             bestByContent.merge(key, item, (existing, candidate) ->
-                    candidate.getSimilarity() > existing.getSimilarity() ? candidate : existing
+                    compareByQualityDesc(candidate, existing) < 0 ? candidate : existing
             );
         }
 
         List<SearchResultItem> deduped = new ArrayList<>(bestByContent.values());
-        deduped.sort(Comparator.comparingDouble(SearchResultItem::getSimilarity).reversed());
+        deduped.sort(this::compareByQualityDesc);
         return deduped;
+    }
+
+    /**
+     * R5（P2-5）质量降序比较器：主键 similarity 降序，并列时按 tie-break 次级键
+     * （fileId → chunkIndex → chunkType）升序——同分结果确定性排序，跨请求可复现。
+     */
+    private int compareByQualityDesc(SearchResultItem a, SearchResultItem b) {
+        int byScore = Double.compare(b.getSimilarity(), a.getSimilarity());
+        if (byScore != 0) return byScore;
+        return resultTieBreakKey(a).compareTo(resultTieBreakKey(b));
     }
 
     /** 安全执行搜索，失败返回空列表 */
