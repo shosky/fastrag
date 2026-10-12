@@ -537,34 +537,38 @@ class SkillsMiddlewareTest {
         assertFalse(sysContent.contains("长".repeat(601)), "不应包含超过 600 字符的描述");
     }
 
-    // ===== F1 @提及技能：pinned must_use 强提示（2026-10-07 裁决） =====
+    // ===== F1+（a 点名直注 + b 描述自动匹配）：匹配技能全文直注 system（2026-10-07） =====
 
     @Test
-    void beforeModelCall_PinnedSkillsInjectMustUseBlockWithSkmdPath() {
+    void beforeModelCall_PinnedSkillInjectsFullInstructionBlock() {
         Skill skill = new Skill();
         skill.setId("2001");
         skill.setEnabled(1);
         skill.setSlug("web-search");
         skill.setName("联网搜索");
         skill.setDescription("Search the web");
+        skill.setContent("# 联网搜索\n先检索再综合，交叉验证。");
         when(skillService.listByIds(any())).thenReturn(List.of(skill));
         when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
 
         BaseContext context = new BaseContext();
         context.setSkills(List.of("2001"));
         context.getRuntimeState().put(SkillsMiddleware.PINNED_SKILL_NAMES_KEY,
-                List.of("联网搜索", "web-search"));
+                List.of("联网搜索", "web-search")); // name + slug 重复点名同一技能
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(new ChatMessage("system", "Base prompt."));
 
         middleware.beforeModelCall(context, messages, new ArrayList<>());
 
         String sysContent = messages.get(0).getContent();
-        assertTrue(sysContent.contains("<must_use>"), "交集非空应追加 must_use 块: " + sysContent);
-        assertTrue(sysContent.contains("本轮用户点名了以下技能"), "应含点名指引文案");
-        assertTrue(sysContent.contains("read_file"), "应指明经 read_file 读取 SKILL.md");
-        assertTrue(sysContent.contains("/workspace/skills/web-search/SKILL.md"),
-                "must_use 块应带 SKILL.md 路径供模型直读");
+        assertTrue(sysContent.contains("<skill_instruction skill=\"联网搜索\">"),
+                "命中技能应直注 skill_instruction 块: " + sysContent);
+        assertTrue(sysContent.contains("无需再 read_file"), "应注明已展开无需再读文件");
+        assertTrue(sysContent.contains("先检索再综合，交叉验证。"),
+                "SKILL.md 全文（entity content）必须直注，不得只给路径赌模型自觉: " + sysContent);
+        assertFalse(sysContent.contains("<must_use>"), "must_use 提示文案已被直注替代");
+        assertEquals(1, countOccurrences(sysContent, "<skill_instruction "),
+                "同一技能被 slug 与 name 重复点名只直注一次");
     }
 
     @Test
@@ -575,6 +579,7 @@ class SkillsMiddlewareTest {
         skill.setSlug("web-search");
         skill.setName("联网搜索");
         skill.setDescription("Search the web");
+        skill.setContent("正文");
         when(skillService.listByIds(any())).thenReturn(List.of(skill));
         when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
 
@@ -594,8 +599,10 @@ class SkillsMiddlewareTest {
         try {
             middleware.beforeModelCall(context, messages, new ArrayList<>());
 
-            assertFalse(messages.get(0).getContent().contains("<must_use>"),
-                "交集为空不得注入 must_use");
+            assertFalse(messages.get(0).getContent().contains("<skill_instruction"),
+                "交集为空不得注入 skill_instruction");
+            assertFalse(messages.get(0).getContent().contains("正文"),
+                "未命中技能全文不得进 system");
             boolean warned = appender.list.stream()
                 .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
                     && e.getFormattedMessage().contains("ghost-skill")
@@ -614,6 +621,7 @@ class SkillsMiddlewareTest {
         skill.setSlug("web-search");
         skill.setName("联网搜索");
         skill.setDescription("Search the web");
+        skill.setContent("命中技能全文");
         when(skillService.listByIds(any())).thenReturn(List.of(skill));
         when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
 
@@ -634,8 +642,9 @@ class SkillsMiddlewareTest {
             middleware.beforeModelCall(context, messages, new ArrayList<>());
 
             String sysContent = messages.get(0).getContent();
-            assertTrue(sysContent.contains("<must_use>") && sysContent.contains("web-search"),
-                "命中的点名应注入");
+            assertTrue(sysContent.contains("<skill_instruction skill=\"联网搜索\">")
+                    && sysContent.contains("命中技能全文"),
+                "命中的点名应直注全文");
             boolean warned = appender.list.stream()
                 .anyMatch(e -> e.getLevel() == ch.qos.logback.classic.Level.WARN
                     && e.getFormattedMessage().contains("ghost-skill"));
@@ -646,13 +655,14 @@ class SkillsMiddlewareTest {
     }
 
     @Test
-    void beforeModelCall_MustUseInjectedOncePerRun() {
+    void beforeModelCall_SkillInstructionInjectedOncePerRun() {
         Skill skill = new Skill();
         skill.setId("2004");
         skill.setEnabled(1);
         skill.setSlug("web-search");
         skill.setName("联网搜索");
         skill.setDescription("Search the web");
+        skill.setContent("全文指令");
         when(skillService.listByIds(any())).thenReturn(List.of(skill));
         when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
 
@@ -667,8 +677,8 @@ class SkillsMiddlewareTest {
         middleware.beforeModelCall(context, messages, new ArrayList<>());
 
         String sysContent = messages.get(0).getContent();
-        assertEquals(1, countOccurrences(sysContent, "<must_use>"),
-            "must_use 块单 run 只注入一次（INJECTED_FLAG 模式）: " + sysContent);
+        assertEquals(1, countOccurrences(sysContent, "<skill_instruction "),
+            "直注块单 run 只注入一次（INJECTED_FLAG 哨兵守卫）: " + sysContent);
     }
 
     @Test
@@ -700,14 +710,15 @@ class SkillsMiddlewareTest {
     }
 
     @Test
-    void beforeModelCall_NoPinnedNamesLeavesMessagesUntouched() {
-        // runtimeState 无点名键：行为与既有链路完全一致（回归保护）
+    void beforeModelCall_NoPinsNoQueryMatchLeavesSystemWithoutInstruction() {
+        // 无点名且查询无命中 → 只注入可用技能列表，不加 skill_instruction 块（展开集为空维持现状）
         Skill skill = new Skill();
         skill.setId("2005");
         skill.setEnabled(1);
         skill.setSlug("web-search");
         skill.setName("联网搜索");
         skill.setDescription("Search the web");
+        skill.setContent("全文指令");
         when(skillService.listByIds(any())).thenReturn(List.of(skill));
         when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
 
@@ -715,10 +726,169 @@ class SkillsMiddlewareTest {
         context.setSkills(List.of("2005"));
         List<ChatMessage> messages = new ArrayList<>();
         messages.add(new ChatMessage("system", "Base prompt."));
+        messages.add(new ChatMessage("user", "帮我写一个冒泡排序"));
 
         middleware.beforeModelCall(context, messages, new ArrayList<>());
 
-        assertFalse(messages.get(0).getContent().contains("<must_use>"));
+        assertFalse(messages.get(0).getContent().contains("<skill_instruction"),
+            "无命中不得注入: " + messages.get(0).getContent());
+        assertTrue(messages.get(0).getContent().contains("可用技能"),
+            "展开集为空时可用技能列表注入维持现状");
+    }
+
+    // ----- b 描述自动匹配：integration（query ↔ keywords/name 命中 → 全文直注） -----
+
+    @Test
+    void beforeModelCall_QueryKeywordMatchInjectsFullSkillInstruction() {
+        Skill skill = new Skill();
+        skill.setId("2101");
+        skill.setEnabled(1);
+        skill.setSlug("web-search");
+        skill.setName("联网搜索");
+        skill.setDescription("Search the web");
+        skill.setContent("行情查询技能全文指令");
+        skill.setMetadata(Map.of("keywords", List.of("股价", "行情", "QQQ")));
+        when(skillService.listByIds(any())).thenReturn(List.of(skill));
+        when(skillService.listAccessible(any(), any(), any())).thenReturn(List.of(skill));
+
+        BaseContext context = new BaseContext();
+        context.setSkills(List.of("2101"));
+        List<ChatMessage> messages = new ArrayList<>();
+        messages.add(new ChatMessage("system", "Base prompt."));
+        messages.add(new ChatMessage("user", "QQQ 现在多少钱？"));
+
+        middleware.beforeModelCall(context, messages, new ArrayList<>());
+
+        String sysContent = messages.get(0).getContent();
+        assertTrue(sysContent.contains("<skill_instruction skill=\"联网搜索\">"),
+                "query 命中 keywords 应直注: " + sysContent);
+        assertTrue(sysContent.contains("行情查询技能全文指令"),
+                "命中后 SKILL.md 全文进 system: " + sysContent);
+        assertTrue(sysContent.contains("无需再 read_file"));
+    }
+
+    // ----- 纯函数：expandMatched（pinned ∪ keywords/name 命中，参照 resolveSkillEnvs 先例） -----
+
+    @Test
+    void expandMatched_KeywordListHitTriggersExpansion() {
+        Skill s = skillOf("s1", "web-search", "联网搜索",
+                Map.of("keywords", List.of("股价", "行情", "QQQ")));
+
+        SkillsMiddleware.SkillExpansion r = SkillsMiddleware.expandMatched(
+                List.of(s), List.of(), "帮我看看QQQ的最新走势");
+
+        assertEquals(1, r.matched().size(), "keywords 命中应展开");
+        assertEquals("web-search", r.matched().get(0).getSlug());
+        assertTrue(r.ignoredPinned().isEmpty());
+    }
+
+    @Test
+    void expandMatched_KeywordMatchIsCaseInsensitive() {
+        Skill s = skillOf("s1", "web-search", "联网搜索",
+                Map.of("keywords", List.of("QQQ", "股价")));
+
+        SkillsMiddleware.SkillExpansion r = SkillsMiddleware.expandMatched(
+                List.of(s), List.of(), "qqq 现在多少钱");
+
+        assertEquals(1, r.matched().size(), "关键词命中不区分大小写");
+    }
+
+    @Test
+    void expandMatched_KeywordCommaStringFormSplitsAndHits() {
+        Skill s = skillOf("s1", "web-search", "联网搜索",
+                Map.of("keywords", "股价, 行情, 美股"));
+
+        SkillsMiddleware.SkillExpansion r = SkillsMiddleware.expandMatched(
+                List.of(s), List.of(), "最近行情怎么样");
+
+        assertEquals(1, r.matched().size(), "逗号分隔 string 形态应拆分后命中");
+    }
+
+    @Test
+    void expandMatched_NameContainedInQueryTriggersExpansion() {
+        Skill s = skillOf("s1", "web-search", "联网搜索", null);
+
+        SkillsMiddleware.SkillExpansion r = SkillsMiddleware.expandMatched(
+                List.of(s), List.of(), "请用联网搜索查一下北京天气");
+
+        assertEquals(1, r.matched().size(), "技能 name 被 query 包含应命中");
+    }
+
+    @Test
+    void expandMatched_NoKeywordNoNameHitYieldsEmpty() {
+        Skill s = skillOf("s1", "web-search", "联网搜索",
+                Map.of("keywords", List.of("股价", "QQQ")));
+
+        SkillsMiddleware.SkillExpansion r = SkillsMiddleware.expandMatched(
+                List.of(s), List.of(), "帮我写一个冒泡排序");
+
+        assertTrue(r.matched().isEmpty(), "无命中不展开");
+        assertTrue(r.ignoredPinned().isEmpty());
+    }
+
+    @Test
+    void expandMatched_PinnedAndKeywordUnionDedupsBySlug() {
+        Skill s = skillOf("s1", "web-search", "联网搜索",
+                Map.of("keywords", List.of("股价")));
+
+        SkillsMiddleware.SkillExpansion r = SkillsMiddleware.expandMatched(
+                List.of(s), List.of("联网搜索", "web-search"), "查一下股价");
+
+        assertEquals(1, r.matched().size(), "pinned 与 keyword 双通道命中同一技能按 slug 去重");
+        assertTrue(r.ignoredPinned().isEmpty());
+    }
+
+    @Test
+    void expandMatched_PinnedMissStillWarnsIgnored() {
+        Skill s = skillOf("s1", "web-search", "联网搜索", null);
+
+        SkillsMiddleware.SkillExpansion r = SkillsMiddleware.expandMatched(
+                List.of(s), List.of("ghost-skill"), null);
+
+        assertTrue(r.matched().isEmpty(), "集外点名不展开");
+        assertEquals(List.of("ghost-skill"), r.ignoredPinned());
+    }
+
+    @Test
+    void extractLastUserQuery_TakesLastUserMessage() {
+        List<ChatMessage> messages = List.of(
+                new ChatMessage("system", "sys"),
+                new ChatMessage("user", "第一条"),
+                new ChatMessage("assistant", "回复"),
+                new ChatMessage("user", "第二条"));
+        assertEquals("第二条", SkillsMiddleware.extractLastUserQuery(messages));
+
+        assertNull(SkillsMiddleware.extractLastUserQuery(null));
+        assertNull(SkillsMiddleware.extractLastUserQuery(List.of(new ChatMessage("system", "sys"))));
+    }
+
+    @Test
+    void keywordsOf_ListCommaStringAndMissingForms() {
+        assertNullToEmpty(SkillsMiddleware.keywordsOf(null));
+        assertTrue(SkillsMiddleware.keywordsOf(new Skill()).isEmpty(), "无 metadata 应为空列表");
+        assertEquals(List.of("股价", "QQQ"),
+                SkillsMiddleware.keywordsOf(skillOf("s", "a", "A", Map.of("keywords", List.of("股价", "QQQ")))),
+                "list 形态逐项读出");
+        assertEquals(List.of("股价", "行情", "美股"),
+                SkillsMiddleware.keywordsOf(skillOf("s", "a", "A", Map.of("keywords", "股价, 行情,美股"))),
+                "逗号分隔 string 形态拆分、trim、去空项");
+    }
+
+    private static void assertNullToEmpty(List<String> keywords) {
+        assertNotNull(keywords, "null 技能应返回空列表而非 null");
+        assertTrue(keywords.isEmpty());
+    }
+
+    private static Skill skillOf(String id, String slug, String name, Map<String, Object> metadata) {
+        Skill s = new Skill();
+        s.setId(id);
+        s.setEnabled(1);
+        s.setSlug(slug);
+        s.setName(name);
+        s.setDescription("d");
+        s.setContent(slug + "-content");
+        if (metadata != null) s.setMetadata(metadata);
+        return s;
     }
 
     // ===== F4 技能运行期凭据通道：envs 并集解析 + runtimeState.skillEnv（skill-feature-batch.md F4，2026-10-07） =====

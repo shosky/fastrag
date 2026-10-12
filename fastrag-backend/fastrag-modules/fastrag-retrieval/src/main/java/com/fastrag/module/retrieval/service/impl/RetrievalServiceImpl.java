@@ -4,6 +4,7 @@ import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.ai.embedding.EmbeddingService;
+import com.fastrag.ai.llm.LlmService;
 import com.fastrag.ai.rerank.RerankService;
 import com.fastrag.common.exception.BusinessException;
 import com.fastrag.infra.graph.GraphStore;
@@ -164,7 +165,8 @@ public class RetrievalServiceImpl implements RetrievalService {
                 config.getEnableRerank(), config.getFusionStrategy(), config.getContextAssemblyStrategy());
 
         // ---- Phase 3: 查询预处理 ----
-        String query = preprocessQuery(kbId, originalQuery, config);
+        PreprocessOutcome pre = preprocessQuery(kbId, originalQuery, config);
+        String query = pre.query();
         if (!query.equals(originalQuery)) {
             log.info("[Retrieval] Query after preprocess: '{}'", query);
         }
@@ -268,7 +270,8 @@ public class RetrievalServiceImpl implements RetrievalService {
                 kbId, originalQuery, results.size(), System.currentTimeMillis() - startMs);
 
         // ---- 日志记录 ----
-        recordLog(kbId, originalQuery, config, results, startMs, graphChannelDegraded);
+        recordLog(kbId, originalQuery, config, results, startMs, graphChannelDegraded,
+                enhanceModelLabel(config), pre.enhanceStatus());
 
         return results;
     }
@@ -288,6 +291,78 @@ public class RetrievalServiceImpl implements RetrievalService {
                         .eq(KbChunk::getKbId, kbId)
                         .in(KbChunk::getFileId, activeFileIds)
                         .ne(KbChunk::getChunkType, "parent"));
+    }
+
+    /** 默认 LLM 网关（与 LlmService 同源配置；无 KB/系统级模型时查询增强走此网关） */
+    @org.springframework.beans.factory.annotation.Value("${ai.gateway.url:http://localhost:11434}")
+    private String defaultGatewayUrl;
+
+    @Override
+    public Map<String, Object> enhanceStatus(String kbId, String model) {
+        // 解析链与检索主流程一致：指定 model > KB 保存配置 > 系统默认 > 默认网关
+        String resolved = (model != null && !model.isBlank()) ? model : null;
+        String gatewayUrl;
+        if (resolved == null && kbId != null && !kbId.isBlank()) {
+            try {
+                KnowledgeBase kb = kbMapper.selectById(kbId);
+                if (kb != null && kb.getRetrievalConfig() != null) {
+                    RetrievalRequest.RetrievalConfig saved =
+                            JSONUtil.toBean(kb.getRetrievalConfig(), RetrievalRequest.RetrievalConfig.class);
+                    if (saved != null && saved.getLlmModel() != null && !saved.getLlmModel().isBlank()) {
+                        resolved = saved.getLlmModel();
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("[EnhanceStatus] Failed to load KB config for kbId={}: {}", kbId, e.getMessage());
+            }
+        }
+        if (resolved == null) {
+            try {
+                SysConfig c = configService.getConfig("general_retrieval_llm_model");
+                if (c != null && c.getConfigValue() != null && !c.getConfigValue().isBlank()) {
+                    resolved = c.getConfigValue().trim();
+                }
+            } catch (Exception e) {
+                log.warn("[EnhanceStatus] Failed to load system config: {}", e.getMessage());
+            }
+        }
+
+        if (resolved != null && !"default".equals(resolved)) {
+            ModelRecord mr = modelRecordMapper.selectOne(new LambdaQueryWrapper<ModelRecord>()
+                    .eq(ModelRecord::getCode, resolved)
+                    .eq(ModelRecord::getStatus, "online")
+                    .last("LIMIT 1"));
+            if (mr != null && mr.getApiUrl() != null && !mr.getApiUrl().isBlank()) {
+                gatewayUrl = mr.getApiUrl();
+            } else {
+                gatewayUrl = defaultGatewayUrl; // 模型表未命中：与检索主流程一致落默认网关
+            }
+        } else {
+            resolved = "default";
+            gatewayUrl = defaultGatewayUrl;
+        }
+
+        boolean reachable = pingGateway(gatewayUrl);
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("model", resolved);
+        r.put("gateway", gatewayUrl);
+        r.put("reachable", reachable);
+        return r;
+    }
+
+    /** TCP 探活网关（800ms 超时；只判断端口可达，不校验模型可用性） */
+    private boolean pingGateway(String url) {
+        try {
+            java.net.URI uri = java.net.URI.create(url);
+            int port = uri.getPort() > 0 ? uri.getPort()
+                    : ("https".equalsIgnoreCase(uri.getScheme()) ? 443 : 80);
+            try (java.net.Socket socket = new java.net.Socket()) {
+                socket.connect(new java.net.InetSocketAddress(uri.getHost(), port), 800);
+                return true;
+            }
+        } catch (Exception e) {
+            return false;
+        }
     }
 
     // ========================================================================
@@ -362,6 +437,17 @@ public class RetrievalServiceImpl implements RetrievalService {
             config.setEnableRerank(false);
         }
 
+        // 查询增强 LLM 系统级默认（自动纠错/多查询改写/NER 共用）：
+        // 优先级 请求 > KB 保存配置 > 此处系统默认 > 默认网关（ai.gateway.url）
+        try {
+            SysConfig c = configService.getConfig("general_retrieval_llm_model");
+            if (c != null && c.getConfigValue() != null && !c.getConfigValue().isBlank()) {
+                config.setLlmModel(c.getConfigValue().trim());
+            }
+        } catch (Exception e) {
+            // 无系统级配置时留空 = 默认网关
+        }
+
         config.setSimilarityThreshold(0.2);
         // 图谱通道默认开启（方案 A，对标 LightRAG 一等检索通道）：与 vector/fulltext 路 RRF 融合
         config.setEnableGraphExpand(true);
@@ -396,6 +482,7 @@ public class RetrievalServiceImpl implements RetrievalService {
         if (source.getRerankModel() != null) target.setRerankModel(source.getRerankModel());
 
         // 预处理
+        if (source.getLlmModel() != null) target.setLlmModel(source.getLlmModel());
         if (source.getEnableAutoCorrection() != null) target.setEnableAutoCorrection(source.getEnableAutoCorrection());
         if (source.getEnableQueryRewrite() != null) target.setEnableQueryRewrite(source.getEnableQueryRewrite());
         if (source.getEnableSynonymExpansion() != null) target.setEnableSynonymExpansion(source.getEnableSynonymExpansion());
@@ -442,17 +529,27 @@ public class RetrievalServiceImpl implements RetrievalService {
     //  Phase 3: 查询预处理
     // ========================================================================
 
-    private String preprocessQuery(String kbId, String query, RetrievalRequest.RetrievalConfig config) {
-        String processed = query;
+    /** 查询预处理结果：query=预处理后的检索 query；enhanceStatus=LLM 查询增强状态（写检索日志：ok/fallback/off） */
+    private record PreprocessOutcome(String query, String enhanceStatus) {}
 
-        // 自动纠错
+    private PreprocessOutcome preprocessQuery(String kbId, String query, RetrievalRequest.RetrievalConfig config) {
+        String processed = query;
+        String enhanceStatus = Boolean.TRUE.equals(config.getEnableAutoCorrection()) ? "fallback" : "off";
+
+        // 自动纠错（LLM 变体改写）
         if (Boolean.TRUE.equals(config.getEnableAutoCorrection())) {
             try {
-                Map<String, Object> suggest = queryEnhanceService.suggest(processed);
+                Map<String, Object> suggest = queryEnhanceService.suggest(processed, resolveEnhanceModel(null, config));
                 String corrected = (String) suggest.get("suggestedQuery");
-                if (corrected != null && !corrected.isBlank() && !corrected.equals(processed)) {
+                // 末道防线：LLM 失败/空响应文案绝不能顶替真实 query（2026-10-09 检索事故：
+                // 网关不可达时错误文案被当作建议查询，11 条无关 image 分片顶掉目标文本分片）
+                if (corrected != null && LlmService.isFailureText(corrected)) {
+                    log.warn("[Preprocess] Auto-correct degraded: LLM failure text detected ({}), keep original query",
+                            corrected);
+                } else if (corrected != null && !corrected.isBlank() && !corrected.equals(processed)) {
                     log.info("[Preprocess] Auto-correct: '{}' -> '{}'", processed, corrected);
                     processed = corrected;
+                    enhanceStatus = "ok";
                 }
             } catch (Exception e) {
                 log.warn("[Preprocess] Auto-correct failed", e);
@@ -490,7 +587,23 @@ public class RetrievalServiceImpl implements RetrievalService {
             }
         }
 
-        return processed;
+        return new PreprocessOutcome(processed, enhanceStatus);
+    }
+
+    /**
+     * 查询增强 LLM 解析：功能级覆盖（multiQueryModel/nerModel）优先，
+     * 否则用 KB/请求/系统级 llmModel（合并链：请求 > KB 保存配置 > sys_config general_retrieval_llm_model）；
+     * 仍为空 = 系统默认网关（ai.gateway.url，expandQueries 内部按 default 处理）。
+     */
+    private String resolveEnhanceModel(String featureOverride, RetrievalRequest.RetrievalConfig config) {
+        if (featureOverride != null && !featureOverride.isBlank()) return featureOverride;
+        return config.getLlmModel();
+    }
+
+    /** 检索日志用：增强模型展示标签（未配置记 default，即系统默认网关） */
+    private String enhanceModelLabel(RetrievalRequest.RetrievalConfig config) {
+        String m = config.getLlmModel();
+        return m == null || m.isBlank() ? "default" : m;
     }
 
     // ========================================================================
@@ -529,7 +642,8 @@ public class RetrievalServiceImpl implements RetrievalService {
         int target = config.getMultiQueryCount() != null ? config.getMultiQueryCount() : 3;
         List<String> queries;
         try {
-            queries = queryEnhanceService.expandQueries(query, target, config.getMultiQueryModel(), kbId);
+            queries = queryEnhanceService.expandQueries(query, target,
+                    resolveEnhanceModel(config.getMultiQueryModel(), config), kbId);
         } catch (Exception e) {
             log.warn("[MultiQuery] Expand failed for kb={}, fallback to single query: {}", kbId, e.getMessage());
             queries = List.of(query);
@@ -761,7 +875,7 @@ public class RetrievalServiceImpl implements RetrievalService {
             // 1. 文本实体匹配（NER/降级分词 + CONTAINS）
             Map<String, Object> graphResult = queryEnhanceService.expandGraph(
                     kbId, query, config.getGraphExpandDepth(),
-                    config.getGraphMaxEntities(), config.getNerModel());
+                    config.getGraphMaxEntities(), resolveEnhanceModel(config.getNerModel(), config));
 
             @SuppressWarnings("unchecked")
             List<Map<String, Object>> entities = (List<Map<String, Object>>)
@@ -1969,7 +2083,8 @@ public class RetrievalServiceImpl implements RetrievalService {
     // ========================================================================
 
     private void recordLog(String kbId, String originalQuery, RetrievalRequest.RetrievalConfig config,
-                            List<SearchResultItem> results, long startMs, boolean graphChannelDegraded) {
+                            List<SearchResultItem> results, long startMs, boolean graphChannelDegraded,
+                            String enhanceModel, String enhanceStatus) {
         long elapsed = System.currentTimeMillis() - startMs;
         try {
             // 图谱通道命中数（可观测性：日志面板可看图谱贡献）
@@ -1984,6 +2099,10 @@ public class RetrievalServiceImpl implements RetrievalService {
             logEntry.setHasResult(!results.isEmpty());
             logEntry.setLatencyMs((int) elapsed);
             logEntry.setGraphEntityCount((int) graphHits);
+            // 查询增强可观测性：实际使用的 LLM 模型 + 改写是否生效
+            // （ok=改写被采纳 / fallback=LLM 失败或无变体，用原始查询 / off=自动纠错未启用）
+            logEntry.setEnhanceModel(enhanceModel);
+            logEntry.setEnhanceStatus(enhanceStatus);
             logEntry.setUserId(SecurityUtil.getCurrentUserId());
             logEntry.setCreatedAt(LocalDateTime.now());
             logService.log(logEntry);
@@ -2007,6 +2126,9 @@ public class RetrievalServiceImpl implements RetrievalService {
             extra.put("graphHits", graphHits);
             // 图谱通道健康状态：ok / degraded（整路失败，通常为 Neo4j 不可达，见服务端告警日志）
             extra.put("graphChannel", graphChannelDegraded ? "degraded" : "ok");
+            // 查询增强（LLM 改写）状态：与 kb_retrieval_log.enhance_* 同源
+            extra.put("enhanceModel", enhanceModel);
+            extra.put("enhanceStatus", enhanceStatus);
             kbLog.setExtra(JSONUtil.toJsonStr(extra));
             kbLog.setTimestamp(LocalDateTime.now());
             kbLogMapper.insert(kbLog);

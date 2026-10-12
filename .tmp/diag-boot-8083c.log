@@ -1,0 +1,585 @@
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+ :: Spring Boot ::                (v3.2.5)
+
+2026-10-10T16:40:40.044+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.FastRagApplication           : Starting FastRagApplication using Java 21.0.11 with PID 6312 (D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-bootstrap\target\classes started by 63179 in D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-bootstrap)
+2026-10-10T16:40:40.048+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.FastRagApplication           : No active profile set, falling back to 1 default profile: "default"
+2026-10-10T16:40:43.924+08:00  INFO 6312 --- [fastrag-backend] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-10-10T16:40:43.928+08:00  INFO 6312 --- [fastrag-backend] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2026-10-10T16:40:44.031+08:00  INFO 6312 --- [fastrag-backend] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 62 ms. Found 0 Redis repository interfaces.
+2026-10-10T16:40:46.392+08:00  INFO 6312 --- [fastrag-backend] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8083 (http)
+2026-10-10T16:40:46.411+08:00  INFO 6312 --- [fastrag-backend] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-10-10T16:40:46.411+08:00  INFO 6312 --- [fastrag-backend] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.20]
+2026-10-10T16:40:46.595+08:00  INFO 6312 --- [fastrag-backend] [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-10-10T16:40:46.596+08:00  INFO 6312 --- [fastrag-backend] [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 6443 ms
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        3.5.5 
+2026-10-10T16:41:03.909+08:00 ERROR 6312 --- [fastrag-backend] [           main] i.m.client.AbstractMilvusGrpcClient      : HasCollectionRequest collectionName:_milvus_ping_ RPC failed! Exception:{}
+
+io.grpc.StatusRuntimeException: DEADLINE_EXCEEDED: deadline exceeded after 14.958115900s. Name resolution delay 0.003333600 seconds. [closed=[], open=[[wait_for_ready, buffered_nanos=14961027600, waiting_for_connection]]]
+	at io.grpc.stub.ClientCalls.toStatusRuntimeException(ClientCalls.java:268) ~[grpc-stub-1.59.1.jar:1.59.1]
+	at io.grpc.stub.ClientCalls.getUnchecked(ClientCalls.java:249) ~[grpc-stub-1.59.1.jar:1.59.1]
+	at io.grpc.stub.ClientCalls.blockingUnaryCall(ClientCalls.java:167) ~[grpc-stub-1.59.1.jar:1.59.1]
+	at io.milvus.grpc.MilvusServiceGrpc$MilvusServiceBlockingStub.hasCollection(MilvusServiceGrpc.java:3992) ~[milvus-sdk-java-2.3.4.jar:na]
+	at io.milvus.client.AbstractMilvusGrpcClient.hasCollection(AbstractMilvusGrpcClient.java:372) ~[milvus-sdk-java-2.3.4.jar:na]
+	at io.milvus.client.MilvusServiceClient.lambda$hasCollection$1(MilvusServiceClient.java:362) ~[milvus-sdk-java-2.3.4.jar:na]
+	at io.milvus.client.MilvusServiceClient.retry(MilvusServiceClient.java:285) ~[milvus-sdk-java-2.3.4.jar:na]
+	at io.milvus.client.MilvusServiceClient.hasCollection(MilvusServiceClient.java:362) ~[milvus-sdk-java-2.3.4.jar:na]
+	at com.fastrag.infra.milvus.MilvusService.init(MilvusService.java:84) ~[fastrag-infra-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor$LifecycleMethod.invoke(InitDestroyAnnotationBeanPostProcessor.java:457) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor$LifecycleMetadata.invokeInitMethods(InitDestroyAnnotationBeanPostProcessor.java:401) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor.postProcessBeforeInitialization(InitDestroyAnnotationBeanPostProcessor.java:219) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.applyBeanPostProcessorsBeforeInitialization(AbstractAutowireCapableBeanFactory.java:422) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.initializeBean(AbstractAutowireCapableBeanFactory.java:1778) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:600) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBean(AbstractAutowireCapableBeanFactory.java:522) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.lambda$doGetBean$0(AbstractBeanFactory.java:326) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:234) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:324) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:200) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.preInstantiateSingletons(DefaultListableBeanFactory.java:975) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.context.support.AbstractApplicationContext.finishBeanFactoryInitialization(AbstractApplicationContext.java:962) ~[spring-context-6.1.6.jar:6.1.6]
+	at org.springframework.context.support.AbstractApplicationContext.refresh(AbstractApplicationContext.java:624) ~[spring-context-6.1.6.jar:6.1.6]
+	at org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext.refresh(ServletWebServerApplicationContext.java:146) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.refresh(SpringApplication.java:754) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.refreshContext(SpringApplication.java:456) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:334) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1354) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1343) ~[spring-boot-3.2.5.jar:3.2.5]
+	at com.fastrag.FastRagApplication.main(FastRagApplication.java:36) ~[classes/:na]
+
+2026-10-10T16:41:03.923+08:00  WARN 6312 --- [fastrag-backend] [           main] com.fastrag.infra.milvus.MilvusService   : Milvus connect to 39.97.60.18:19530 but ping failed: DEADLINE_EXCEEDED: deadline exceeded after 14.958115900s. Name resolution delay 0.003333600 seconds. [closed=[], open=[[wait_for_ready, buffered_nanos=14961027600, waiting_for_connection]]]
+2026-10-10T16:41:09.615+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.agent.backend.AgentBackendManager  : Registered 2 agent backends: [ChatbotAgent, SubAgentBackend]
+2026-10-10T16:41:09.666+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.a.middleware.AgentMiddlewareChain  : [MiddlewareChain] Initialized with 13 middlewares (sorted by order): [ContextMiddleware(0), FilesystemMiddleware(1), AttachmentMiddleware(2), KnowledgeBaseMiddleware(3), SkillsMiddleware(4), SubAgentMiddleware(5), SummarizationMiddleware(6), TodoListMiddleware(7), PatchToolCallsMiddleware(8), ModelRetryMiddleware(9), DatabaseMiddleware(10), McpMiddleware(11), HistoryMiddleware(12)]
+2026-10-10T16:41:11.377+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.t.e.InstallSkillToolDefinition     : [InstallSkillTool] install_skill 工具定义已注册
+2026-10-10T16:41:12.966+08:00  WARN 6312 --- [fastrag-backend] [           main] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: 0bd74209-8d07-4902-b8d3-bdb744db34f0
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-10-10T16:41:14.583+08:00  INFO 6312 --- [fastrag-backend] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 1 endpoint(s) beneath base path '/actuator'
+2026-10-10T16:41:14.791+08:00  INFO 6312 --- [fastrag-backend] [           main] o.s.s.web.DefaultSecurityFilterChain     : Will secure any request with [org.springframework.security.web.session.DisableEncodeUrlFilter@23d030b1, org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter@13653a0b, org.springframework.security.web.context.SecurityContextHolderFilter@4b9da2f0, org.springframework.security.web.header.HeaderWriterFilter@79ac02a9, org.springframework.web.filter.CorsFilter@31bbcced, org.springframework.security.web.authentication.logout.LogoutFilter@2523730b, com.fastrag.security.filter.ApiTokenAuthFilter@6b6f73d, com.fastrag.security.filter.JwtAuthFilter@662b199, org.springframework.security.web.savedrequest.RequestCacheAwareFilter@797bbeae, org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter@291fbdc9, org.springframework.security.web.authentication.AnonymousAuthenticationFilter@32a37d12, org.springframework.security.web.session.SessionManagementFilter@3f31ccef, org.springframework.security.web.access.ExceptionTranslationFilter@3f27a95b, org.springframework.security.web.access.intercept.AuthorizationFilter@36aacc46]
+2026-10-10T16:41:16.795+08:00  INFO 6312 --- [fastrag-backend] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8083 (http) with context path ''
+2026-10-10T16:41:16.800+08:00  INFO 6312 --- [fastrag-backend] [           main] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T16:41:16.958+08:00  INFO 6312 --- [fastrag-backend] [           main] o.s.a.r.c.CachingConnectionFactory       : Created new connection: rabbitConnectionFactory#7cd6b76a:0/SimpleConnection@7d65286a [delegate=amqp://fastrag@127.0.0.1:5672/, localPort=57239]
+2026-10-10T16:41:17.246+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.FastRagApplication           : Started FastRagApplication in 38.12 seconds (process running for 39.441)
+2026-10-10T16:41:17.428+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.tools.config.McpBuiltinSeeder      : [McpBuiltinSeeder] 开始初始化内置 MCP 服务...
+2026-10-10T16:41:17.594+08:00  INFO 6312 --- [fastrag-backend] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-10-10T16:41:17.882+08:00  WARN 6312 --- [fastrag-backend] [   scheduling-1] c.f.m.a.s.i.SandboxLifecycleServiceImpl  : [SandboxLifecycle] reconcileOrphans: provider cube sweep default failed: cube 适配器按实装次序预留，控制面接线后启用
+2026-10-10T16:41:17.937+08:00  INFO 6312 --- [fastrag-backend] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@3f698ab8
+2026-10-10T16:41:17.944+08:00  INFO 6312 --- [fastrag-backend] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-10-10T16:41:18.098+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.tools.config.McpBuiltinSeeder      : [McpBuiltinSeeder] 内置 MCP 服务初始化完成，共 3 个
+2026-10-10T16:41:18.100+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 开始初始化内置技能...
+2026-10-10T16:41:18.132+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 跳过已有技能（DB 为正文事实源）: code-generate
+2026-10-10T16:41:18.135+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 跳过已有技能（DB 为正文事实源）: kb-qa
+2026-10-10T16:41:18.139+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 跳过已有技能（DB 为正文事实源）: web-search
+2026-10-10T16:41:18.139+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 内置技能初始化完成。播种 0 个，跳过 3 个，共 3 个
+2026-10-10T16:41:18.141+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Checking and creating missing tables...
+2026-10-10T16:41:18.155+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table sensitive_word OK
+2026-10-10T16:41:18.160+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table sys_user_role OK
+2026-10-10T16:41:18.164+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table sys_dictionary OK
+2026-10-10T16:41:18.172+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_publish_history OK
+2026-10-10T16:41:18.241+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_parse_strategy.llm_model already exists
+2026-10-10T16:41:18.244+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb.graph_llm_model already exists
+2026-10-10T16:41:18.247+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_parse_strategy.file_id already exists
+2026-10-10T16:41:18.250+08:00  WARN 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Index kb_parse_strategy.file_id ensure skipped: SQLSyntaxErrorException: StatementCallback; bad SQL grammar [ALTER TABLE kb_parse_strategy ADD INDEX idx_kb_parse_strategy_file (file_id)]
+2026-10-10T16:41:18.254+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_file.processing_config already exists
+2026-10-10T16:41:18.257+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_folder.created_at already exists
+2026-10-10T16:41:18.259+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_folder.updated_at already exists
+2026-10-10T16:41:18.263+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table agent OK
+2026-10-10T16:41:18.266+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table agent_run OK
+2026-10-10T16:41:18.270+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table sandbox_config OK
+2026-10-10T16:41:18.274+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.slug already exists
+2026-10-10T16:41:18.277+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.source_type already exists
+2026-10-10T16:41:18.279+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.dir_path already exists
+2026-10-10T16:41:18.282+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.dependencies already exists
+2026-10-10T16:41:18.285+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.envs already exists
+2026-10-10T16:41:18.287+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.content_hash already exists
+2026-10-10T16:41:18.289+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.is_builtin already exists
+2026-10-10T16:41:18.292+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.metadata already exists
+2026-10-10T16:41:18.294+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.share_config already exists
+2026-10-10T16:41:18.297+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.created_at already exists
+2026-10-10T16:41:18.299+08:00  WARN 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Index skill.uk_slug upgrade skipped: SQLSyntaxErrorException: StatementCallback; bad SQL grammar [ALTER TABLE skill DROP INDEX idx_slug, ADD UNIQUE INDEX uk_slug (slug)]
+2026-10-10T16:41:18.301+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.slug already exists
+2026-10-10T16:41:18.304+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.transport already exists
+2026-10-10T16:41:18.306+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.command already exists
+2026-10-10T16:41:18.309+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.args already exists
+2026-10-10T16:41:18.312+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.env already exists
+2026-10-10T16:41:18.315+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.is_builtin already exists
+2026-10-10T16:41:18.317+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.config_hash already exists
+2026-10-10T16:41:18.321+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.metadata already exists
+2026-10-10T16:41:18.323+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.updated_at already exists
+2026-10-10T16:41:18.326+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_tool.tool_id already exists
+2026-10-10T16:41:18.329+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_tool.enabled already exists
+2026-10-10T16:41:18.333+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : FULLTEXT index idx_content_fulltext: already exists
+2026-10-10T16:41:18.336+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb.org_id already exists
+2026-10-10T16:41:18.338+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Backfilled kb.org_id from creator's org
+2026-10-10T16:41:18.341+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_category.org_id already exists
+2026-10-10T16:41:18.344+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Backfilled kb_category.org_id from creator's org
+2026-10-10T16:41:18.380+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Changed kb_evaluation_result.retrieval_metrics from JSON to TEXT
+2026-10-10T16:41:18.383+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_evaluation_result.recall_at_1 already exists
+2026-10-10T16:41:18.386+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_evaluation_result.recall_at_3 already exists
+2026-10-10T16:41:18.389+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_evaluation_result.recall_at_5 already exists
+2026-10-10T16:41:18.392+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_evaluation_result.recall_at_10 already exists
+2026-10-10T16:41:18.395+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_retrieval_log.graph_entity_count already exists
+2026-10-10T16:41:18.419+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_retrieval_log.enhance_model already exists
+2026-10-10T16:41:18.422+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_retrieval_log.enhance_status already exists
+2026-10-10T16:41:18.425+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column model.context_window already exists
+2026-10-10T16:41:18.428+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column model.enable_thinking already exists
+2026-10-10T16:41:18.434+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table email_verification OK
+2026-10-10T16:41:18.437+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_graph_index.failed_chunks already exists
+2026-10-10T16:41:18.442+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_chunk.title already exists
+2026-10-10T16:41:18.447+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_chunk.heading_path already exists
+2026-10-10T16:41:18.451+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_graph_stitch OK
+2026-10-10T16:41:18.455+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_graph_unit OK
+2026-10-10T16:41:18.459+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_graph_merge_audit OK
+2026-10-10T16:41:18.462+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app.org_id already exists
+2026-10-10T16:41:18.464+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app.sandbox_config_id already exists
+2026-10-10T16:41:18.468+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column tool.creator already exists
+2026-10-10T16:41:18.470+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column tool.org_id already exists
+2026-10-10T16:41:18.472+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column tool.is_builtin already exists
+2026-10-10T16:41:18.476+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.creator already exists
+2026-10-10T16:41:18.478+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.org_id already exists
+2026-10-10T16:41:18.482+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.creator already exists
+2026-10-10T16:41:18.484+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.org_id already exists
+2026-10-10T16:41:18.488+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column db_instance.org_id already exists
+2026-10-10T16:41:18.492+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column user_feedback.org_id already exists
+2026-10-10T16:41:18.497+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column model_call_log.org_id already exists
+2026-10-10T16:41:18.502+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column term_record.status already exists
+2026-10-10T16:41:18.505+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column sys_dictionary.label already exists
+2026-10-10T16:41:18.507+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column sys_dictionary.enabled already exists
+2026-10-10T16:41:18.509+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column sys_dictionary.remark already exists
+2026-10-10T16:41:18.512+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column sys_dictionary.sort_order already exists
+2026-10-10T16:41:18.537+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Modified app_conversation.app_id to nullable
+2026-10-10T16:41:18.540+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app_conversation.request_state already exists
+2026-10-10T16:41:18.543+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app_conversation.is_pinned already exists
+2026-10-10T16:41:18.546+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app_conversation_message.`references` already exists
+2026-10-10T16:41:18.548+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app_conversation_message.iterations already exists
+2026-10-10T16:41:18.554+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_qa_generation_task OK
+2026-10-10T16:41:18.558+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_qa_pair.source_chunk_id already exists
+2026-10-10T16:41:18.565+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_file.qa_generation_config already exists
+2026-10-10T16:41:18.603+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Granted 6 permission(s) to role role_kb_admin
+2026-10-10T16:41:18.613+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Granted 1 permission(s) to role role_super_admin
+2026-10-10T16:41:18.617+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Granted 1 permission(s) to role role_kb_user
+2026-10-10T16:41:18.617+08:00  INFO 6312 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Schema initialization completed.
+2026-10-10T16:41:18.617+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.agent.runner.AgentDataInitializer  : Initializing built-in agents...
+2026-10-10T16:41:18.665+08:00  WARN 6312 --- [fastrag-backend] [   scheduling-1] c.f.m.a.s.i.SandboxLifecycleServiceImpl  : [SandboxLifecycle] reconcileOrphans: provider e2b sweep default failed: e2b 适配器按实装次序预留，控制面接线后启用
+2026-10-10T16:41:18.689+08:00  INFO 6312 --- [fastrag-backend] [           main] c.f.m.agent.runner.AgentDataInitializer  : Built-in agent initialization complete.
+2026-10-10T16:41:19.262+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-10-10T16:41:19.263+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-10-10T16:41:19.266+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 3 ms
+2026-10-10T16:42:08.621+08:00 ERROR 6312 --- [fastrag-backend] [nio-8083-exec-3] c.f.c.exception.GlobalExceptionHandler   : Unhandled exception
+
+org.springframework.web.servlet.resource.NoResourceFoundException: No static resource api/retrieval/enhance-status.
+	at org.springframework.web.servlet.resource.ResourceHttpRequestHandler.handleRequest(ResourceHttpRequestHandler.java:585) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.mvc.HttpRequestHandlerAdapter.handle(HttpRequestHandlerAdapter.java:52) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.FrameworkServlet.doGet(FrameworkServlet.java:903) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:564) ~[tomcat-embed-core-10.1.20.jar:6.0]
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658) ~[tomcat-embed-core-10.1.20.jar:6.0]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:206) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51) ~[tomcat-embed-websocket-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:108) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.FilterChainProxy.lambda$doFilterInternal$3(FilterChainProxy.java:231) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$FilterObservation$SimpleFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:479) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:340) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator.lambda$wrapSecured$0(ObservationFilterChainDecorator.java:82) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:128) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.access.intercept.AuthorizationFilter.doFilter(AuthorizationFilter.java:100) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:126) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:120) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:131) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:85) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.authentication.AnonymousAuthenticationFilter.doFilter(AnonymousAuthenticationFilter.java:100) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter.doFilter(SecurityContextHolderAwareRequestFilter.java:179) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.savedrequest.RequestCacheAwareFilter.doFilter(RequestCacheAwareFilter.java:63) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at com.fastrag.security.filter.JwtAuthFilter.doFilterInternal(JwtAuthFilter.java:95) ~[fastrag-security-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at com.fastrag.security.filter.ApiTokenAuthFilter.doFilterInternal(ApiTokenAuthFilter.java:104) ~[fastrag-security-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:107) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:93) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.CorsFilter.doFilterInternal(CorsFilter.java:91) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.header.HeaderWriterFilter.doHeadersAfter(HeaderWriterFilter.java:90) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.header.HeaderWriterFilter.doFilterInternal(HeaderWriterFilter.java:75) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:82) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:69) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter.doFilterInternal(WebAsyncManagerIntegrationFilter.java:62) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.session.DisableEncodeUrlFilter.doFilterInternal(DisableEncodeUrlFilter.java:42) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$0(ObservationFilterChainDecorator.java:323) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:224) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.FilterChainProxy.doFilterInternal(FilterChainProxy.java:233) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.FilterChainProxy.doFilter(FilterChainProxy.java:191) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.handler.HandlerMappingIntrospector.lambda$createCacheFilter$3(HandlerMappingIntrospector.java:195) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.CompositeFilter.doFilter(CompositeFilter.java:74) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.config.annotation.web.configuration.WebMvcSecurityConfiguration$CompositeFilterChainProxy.doFilter(WebMvcSecurityConfiguration.java:230) ~[spring-security-config-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.DelegatingFilterProxy.invokeDelegate(DelegatingFilterProxy.java:352) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.DelegatingFilterProxy.doFilter(DelegatingFilterProxy.java:268) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1736) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]
+
+2026-10-10T16:42:08.760+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.RetrievalServiceImpl      : [Retrieval] ====== Search start kb=2096146641693196290, query='小微ICT营销6步法'
+2026-10-10T16:42:08.863+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.RetrievalServiceImpl      : [Retrieval] Effective config: mode=hybrid, topK=3, threshold=0.1, keywordMatch=true, multiRetrieval=false, rerank=false, fusionStrategy=rrf, contextStrategy=window
+2026-10-10T16:42:09.816+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.fastrag.ai.embedding.EmbeddingService  : Embedding success: 1 texts -> 1 vectors, model=BAAI/bge-m3, apiUrl=https://api.siliconflow.cn/
+2026-10-10T16:42:09.816+08:00  WARN 6312 --- [fastrag-backend] [nio-8083-exec-4] com.fastrag.infra.milvus.MilvusService   : Milvus client not available, returning empty results for: kb_2096146641693196290
+2026-10-10T16:42:09.816+08:00  WARN 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.RetrievalServiceImpl      : [VectorSearch] No results from Milvus for kbId=2096146641693196290
+2026-10-10T16:42:10.320+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.RetrievalServiceImpl      : [FulltextSearch] kbId=2096146641693196290, query=小微ICT营销6步法, hits=50 (filtered 0)
+2026-10-10T16:42:10.325+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.RetrievalServiceImpl      : [HybridSearch] kbId=2096146641693196290, query=小微ICT营销6步法, vector=0, fulltext=50, fused=3
+2026-10-10T16:42:10.327+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.QueryEnhanceServiceImpl   : [NER] No NER model configured, skip LLM extraction
+2026-10-10T16:42:10.328+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.QueryEnhanceServiceImpl   : [GraphExpand] kb=2096146641693196290, query='小微ICT营销6步法', extracted entities: [小微, ICT, 营销, 步法]
+2026-10-10T16:42:10.458+08:00 ERROR 6312 --- [fastrag-backend] [nio-8083-exec-4] c.fastrag.infra.neo4j.Neo4jGraphStore    : Neo4j expandGraph failed: kb=2096146641693196290, error=Unsupported authentication token, scheme 'none' is only allowed when auth is disabled.
+
+org.neo4j.driver.exceptions.AuthenticationException: Unsupported authentication token, scheme 'none' is only allowed when auth is disabled.
+	at org.neo4j.driver.internal.util.Futures.blockingGet(Futures.java:108) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+	at org.neo4j.driver.internal.InternalSession.beginTransaction(InternalSession.java:195) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+	at org.neo4j.driver.internal.InternalSession.lambda$transaction$5(InternalSession.java:176) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+	at org.neo4j.driver.internal.retry.ExponentialBackoffRetryLogic.retry(ExponentialBackoffRetryLogic.java:113) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+	at org.neo4j.driver.internal.InternalSession.transaction(InternalSession.java:175) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+	at org.neo4j.driver.internal.InternalSession.readTransaction(InternalSession.java:110) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+	at org.neo4j.driver.internal.InternalSession.readTransaction(InternalSession.java:104) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+	at com.fastrag.infra.neo4j.Neo4jGraphStore.expandGraph(Neo4jGraphStore.java:393) ~[fastrag-infra-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.aop.support.AopUtils.invokeJoinpointUsingReflection(AopUtils.java:354) ~[spring-aop-6.1.6.jar:6.1.6]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.invokeJoinpoint(ReflectiveMethodInvocation.java:196) ~[spring-aop-6.1.6.jar:6.1.6]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:163) ~[spring-aop-6.1.6.jar:6.1.6]
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768) ~[spring-aop-6.1.6.jar:6.1.6]
+	at org.springframework.dao.support.PersistenceExceptionTranslationInterceptor.invoke(PersistenceExceptionTranslationInterceptor.java:137) ~[spring-tx-6.1.6.jar:6.1.6]
+	at org.springframework.aop.framework.ReflectiveMethodInvocation.proceed(ReflectiveMethodInvocation.java:184) ~[spring-aop-6.1.6.jar:6.1.6]
+	at org.springframework.aop.framework.CglibAopProxy$CglibMethodInvocation.proceed(CglibAopProxy.java:768) ~[spring-aop-6.1.6.jar:6.1.6]
+	at org.springframework.aop.framework.CglibAopProxy$DynamicAdvisedInterceptor.intercept(CglibAopProxy.java:720) ~[spring-aop-6.1.6.jar:6.1.6]
+	at com.fastrag.infra.neo4j.Neo4jGraphStore$$SpringCGLIB$$0.expandGraph(<generated>) ~[fastrag-infra-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at com.fastrag.module.retrieval.service.impl.QueryEnhanceServiceImpl.expandGraph(QueryEnhanceServiceImpl.java:342) ~[fastrag-retrieval-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at com.fastrag.module.retrieval.service.impl.RetrievalServiceImpl.graphChannelRecall(RetrievalServiceImpl.java:723) ~[fastrag-retrieval-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at com.fastrag.module.retrieval.service.impl.RetrievalServiceImpl.lambda$search$0(RetrievalServiceImpl.java:177) ~[fastrag-retrieval-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at com.fastrag.module.retrieval.service.impl.RetrievalServiceImpl.safeSearch(RetrievalServiceImpl.java:1695) ~[fastrag-retrieval-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at com.fastrag.module.retrieval.service.impl.RetrievalServiceImpl.search(RetrievalServiceImpl.java:177) ~[fastrag-retrieval-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at com.fastrag.module.retrieval.controller.RetrievalController.search(RetrievalController.java:41) ~[fastrag-retrieval-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.web.method.support.InvocableHandlerMethod.doInvoke(InvocableHandlerMethod.java:255) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.method.support.InvocableHandlerMethod.invokeForRequest(InvocableHandlerMethod.java:188) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.mvc.method.annotation.ServletInvocableHandlerMethod.invokeAndHandle(ServletInvocableHandlerMethod.java:118) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.invokeHandlerMethod(RequestMappingHandlerAdapter.java:926) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerAdapter.handleInternal(RequestMappingHandlerAdapter.java:831) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.mvc.method.AbstractHandlerMethodAdapter.handle(AbstractHandlerMethodAdapter.java:87) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.DispatcherServlet.doDispatch(DispatcherServlet.java:1089) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.DispatcherServlet.doService(DispatcherServlet.java:979) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.FrameworkServlet.processRequest(FrameworkServlet.java:1014) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.FrameworkServlet.doPost(FrameworkServlet.java:914) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:590) ~[tomcat-embed-core-10.1.20.jar:6.0]
+	at org.springframework.web.servlet.FrameworkServlet.service(FrameworkServlet.java:885) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at jakarta.servlet.http.HttpServlet.service(HttpServlet.java:658) ~[tomcat-embed-core-10.1.20.jar:6.0]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:206) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.websocket.server.WsFilter.doFilter(WsFilter.java:51) ~[tomcat-embed-websocket-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:110) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:108) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.FilterChainProxy.lambda$doFilterInternal$3(FilterChainProxy.java:231) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$FilterObservation$SimpleFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:479) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$1(ObservationFilterChainDecorator.java:340) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator.lambda$wrapSecured$0(ObservationFilterChainDecorator.java:82) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:128) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.access.intercept.AuthorizationFilter.doFilter(AuthorizationFilter.java:100) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:126) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.access.ExceptionTranslationFilter.doFilter(ExceptionTranslationFilter.java:120) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:131) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.session.SessionManagementFilter.doFilter(SessionManagementFilter.java:85) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.authentication.AnonymousAuthenticationFilter.doFilter(AnonymousAuthenticationFilter.java:100) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter.doFilter(SecurityContextHolderAwareRequestFilter.java:179) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.savedrequest.RequestCacheAwareFilter.doFilter(RequestCacheAwareFilter.java:63) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at com.fastrag.security.filter.JwtAuthFilter.doFilterInternal(JwtAuthFilter.java:95) ~[fastrag-security-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at com.fastrag.security.filter.ApiTokenAuthFilter.doFilterInternal(ApiTokenAuthFilter.java:104) ~[fastrag-security-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:107) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.authentication.logout.LogoutFilter.doFilter(LogoutFilter.java:93) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.CorsFilter.doFilterInternal(CorsFilter.java:91) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.header.HeaderWriterFilter.doHeadersAfter(HeaderWriterFilter.java:90) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.header.HeaderWriterFilter.doFilterInternal(HeaderWriterFilter.java:75) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:82) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.context.SecurityContextHolderFilter.doFilter(SecurityContextHolderFilter.java:69) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter.doFilterInternal(WebAsyncManagerIntegrationFilter.java:62) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:227) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.session.DisableEncodeUrlFilter.doFilterInternal(DisableEncodeUrlFilter.java:42) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.wrapFilter(ObservationFilterChainDecorator.java:240) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$AroundFilterObservation$SimpleAroundFilterObservation.lambda$wrap$0(ObservationFilterChainDecorator.java:323) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$ObservationFilter.doFilter(ObservationFilterChainDecorator.java:224) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.ObservationFilterChainDecorator$VirtualFilterChain.doFilter(ObservationFilterChainDecorator.java:137) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.FilterChainProxy.doFilterInternal(FilterChainProxy.java:233) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.security.web.FilterChainProxy.doFilter(FilterChainProxy.java:191) ~[spring-security-web-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.servlet.handler.HandlerMappingIntrospector.lambda$createCacheFilter$3(HandlerMappingIntrospector.java:195) ~[spring-webmvc-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.CompositeFilter$VirtualFilterChain.doFilter(CompositeFilter.java:113) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.CompositeFilter.doFilter(CompositeFilter.java:74) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.security.config.annotation.web.configuration.WebMvcSecurityConfiguration$CompositeFilterChainProxy.doFilter(WebMvcSecurityConfiguration.java:230) ~[spring-security-config-6.2.4.jar:6.2.4]
+	at org.springframework.web.filter.DelegatingFilterProxy.invokeDelegate(DelegatingFilterProxy.java:352) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.DelegatingFilterProxy.doFilter(DelegatingFilterProxy.java:268) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.RequestContextFilter.doFilterInternal(RequestContextFilter.java:100) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.FormContentFilter.doFilterInternal(FormContentFilter.java:93) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.ServerHttpObservationFilter.doFilterInternal(ServerHttpObservationFilter.java:109) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.springframework.web.filter.CharacterEncodingFilter.doFilterInternal(CharacterEncodingFilter.java:201) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.springframework.web.filter.OncePerRequestFilter.doFilter(OncePerRequestFilter.java:116) ~[spring-web-6.1.6.jar:6.1.6]
+	at org.apache.catalina.core.ApplicationFilterChain.internalDoFilter(ApplicationFilterChain.java:175) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.ApplicationFilterChain.doFilter(ApplicationFilterChain.java:150) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.StandardWrapperValve.invoke(StandardWrapperValve.java:167) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.StandardContextValve.invoke(StandardContextValve.java:90) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.authenticator.AuthenticatorBase.invoke(AuthenticatorBase.java:482) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.StandardHostValve.invoke(StandardHostValve.java:115) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.valves.ErrorReportValve.invoke(ErrorReportValve.java:93) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.core.StandardEngineValve.invoke(StandardEngineValve.java:74) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.catalina.connector.CoyoteAdapter.service(CoyoteAdapter.java:344) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.coyote.http11.Http11Processor.service(Http11Processor.java:391) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.coyote.AbstractProcessorLight.process(AbstractProcessorLight.java:63) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.coyote.AbstractProtocol$ConnectionHandler.process(AbstractProtocol.java:896) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.net.NioEndpoint$SocketProcessor.doRun(NioEndpoint.java:1736) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.net.SocketProcessorBase.run(SocketProcessorBase.java:52) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor.runWorker(ThreadPoolExecutor.java:1191) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.threads.ThreadPoolExecutor$Worker.run(ThreadPoolExecutor.java:659) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at org.apache.tomcat.util.threads.TaskThread$WrappingRunnable.run(TaskThread.java:63) ~[tomcat-embed-core-10.1.20.jar:10.1.20]
+	at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]
+	Suppressed: org.neo4j.driver.exceptions.ServiceUnavailableException: Connection to the database terminated. Please ensure that your database is listening on the correct host and port and that you have compatible encryption settings both on Neo4j server and driver. Note that the default encryption setting has changed in Neo4j 4.0.
+		at org.neo4j.driver.internal.util.ErrorUtil.newConnectionTerminatedError(ErrorUtil.java:46) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at org.neo4j.driver.internal.util.ErrorUtil.newConnectionTerminatedError(ErrorUtil.java:40) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at org.neo4j.driver.internal.async.inbound.ChannelErrorHandler.channelInactive(ChannelErrorHandler.java:65) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelInactive(AbstractChannelHandlerContext.java:303) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelInactive(AbstractChannelHandlerContext.java:281) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.fireChannelInactive(AbstractChannelHandlerContext.java:274) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.handler.codec.ByteToMessageDecoder.channelInputClosed(ByteToMessageDecoder.java:412) ~[netty-codec-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.handler.codec.ByteToMessageDecoder.channelInactive(ByteToMessageDecoder.java:377) ~[netty-codec-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelInactive(AbstractChannelHandlerContext.java:303) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelInactive(AbstractChannelHandlerContext.java:281) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.fireChannelInactive(AbstractChannelHandlerContext.java:274) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.handler.codec.ByteToMessageDecoder.channelInputClosed(ByteToMessageDecoder.java:412) ~[netty-codec-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.handler.codec.ByteToMessageDecoder.channelInactive(ByteToMessageDecoder.java:377) ~[netty-codec-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelInactive(AbstractChannelHandlerContext.java:303) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelInactive(AbstractChannelHandlerContext.java:281) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.fireChannelInactive(AbstractChannelHandlerContext.java:274) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.DefaultChannelPipeline$HeadContext.channelInactive(DefaultChannelPipeline.java:1405) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelInactive(AbstractChannelHandlerContext.java:301) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelInactive(AbstractChannelHandlerContext.java:281) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.DefaultChannelPipeline.fireChannelInactive(DefaultChannelPipeline.java:901) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannel$AbstractUnsafe$7.run(AbstractChannel.java:813) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.concurrent.AbstractEventExecutor.runTask(AbstractEventExecutor.java:173) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.concurrent.AbstractEventExecutor.safeExecute(AbstractEventExecutor.java:166) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.concurrent.SingleThreadEventExecutor.runAllTasks(SingleThreadEventExecutor.java:470) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:566) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		... 1 common frames omitted
+	Suppressed: org.neo4j.driver.internal.util.ErrorUtil$InternalExceptionCause: null
+		at org.neo4j.driver.internal.util.ErrorUtil.newNeo4jError(ErrorUtil.java:62) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at org.neo4j.driver.internal.async.inbound.InboundMessageDispatcher.handleFailureMessage(InboundMessageDispatcher.java:111) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at org.neo4j.driver.internal.messaging.common.CommonMessageReader.unpackFailureMessage(CommonMessageReader.java:62) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at org.neo4j.driver.internal.messaging.common.CommonMessageReader.read(CommonMessageReader.java:46) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at org.neo4j.driver.internal.async.inbound.InboundMessageHandler.channelRead0(InboundMessageHandler.java:78) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at org.neo4j.driver.internal.async.inbound.InboundMessageHandler.channelRead0(InboundMessageHandler.java:34) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at io.netty.channel.SimpleChannelInboundHandler.channelRead(SimpleChannelInboundHandler.java:99) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.handler.codec.ByteToMessageDecoder.fireChannelRead(ByteToMessageDecoder.java:346) ~[netty-codec-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:318) ~[netty-codec-4.1.109.Final.jar:4.1.109.Final]
+		at org.neo4j.driver.internal.async.inbound.MessageDecoder.channelRead(MessageDecoder.java:40) ~[neo4j-java-driver-5.19.0.jar:5.19.0-6da7f62de02aa3f9f0084bda8c619812b1a190ac]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.handler.codec.ByteToMessageDecoder.fireChannelRead(ByteToMessageDecoder.java:346) ~[netty-codec-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.handler.codec.ByteToMessageDecoder.channelRead(ByteToMessageDecoder.java:318) ~[netty-codec-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:444) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.fireChannelRead(AbstractChannelHandlerContext.java:412) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.DefaultChannelPipeline$HeadContext.channelRead(DefaultChannelPipeline.java:1410) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:440) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.AbstractChannelHandlerContext.invokeChannelRead(AbstractChannelHandlerContext.java:420) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.DefaultChannelPipeline.fireChannelRead(DefaultChannelPipeline.java:919) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.nio.AbstractNioByteChannel$NioByteUnsafe.read(AbstractNioByteChannel.java:166) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.nio.NioEventLoop.processSelectedKey(NioEventLoop.java:788) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.nio.NioEventLoop.processSelectedKeysOptimized(NioEventLoop.java:724) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.nio.NioEventLoop.processSelectedKeys(NioEventLoop.java:650) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.channel.nio.NioEventLoop.run(NioEventLoop.java:562) ~[netty-transport-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.concurrent.SingleThreadEventExecutor$4.run(SingleThreadEventExecutor.java:997) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.internal.ThreadExecutorMap$2.run(ThreadExecutorMap.java:74) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		at io.netty.util.concurrent.FastThreadLocalRunnable.run(FastThreadLocalRunnable.java:30) ~[netty-common-4.1.109.Final.jar:4.1.109.Final]
+		... 1 common frames omitted
+
+2026-10-10T16:42:10.464+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.QueryEnhanceServiceImpl   : [GraphExpand] kb=2096146641693196290, graph matched: 0 entities, 0 relations (depth=1, maxEntities=10)
+2026-10-10T16:42:10.464+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.QueryEnhanceServiceImpl   : [GraphExpand] kb=2096146641693196290, query='小微ICT营销6步法', graph expansion empty (no matched entity names/labels appended)
+2026-10-10T16:42:10.660+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.fastrag.ai.embedding.EmbeddingService  : Embedding success: 1 texts -> 1 vectors, model=BAAI/bge-m3, apiUrl=https://api.siliconflow.cn/
+2026-10-10T16:42:10.733+08:00  WARN 6312 --- [fastrag-backend] [nio-8083-exec-4] c.fastrag.infra.neo4j.Neo4jGraphStore    : Neo4j vector index creation failed, entity vector search will fall back to text matching: Unsupported authentication token, scheme 'none' is only allowed when auth is disabled.
+2026-10-10T16:42:10.733+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.RetrievalServiceImpl      : [Retrieval] Graph channel: no graph hits for kb=2096146641693196290, query='小微ICT营销6步法'
+2026-10-10T16:42:10.816+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.RetrievalServiceImpl      : [Retrieval] QA keyword match: 1 QA results prepended for kb=2096146641693196290, query='小微ICT营销6步法'
+2026-10-10T16:42:10.821+08:00  INFO 6312 --- [fastrag-backend] [nio-8083-exec-4] c.f.m.r.s.impl.RetrievalServiceImpl      : [Retrieval] ====== Search done kb=2096146641693196290, query='小微ICT营销6步法', results=10, elapsed=2062ms ======
+2026-10-10T16:46:18.678+08:00  WARN 6312 --- [fastrag-backend] [   scheduling-1] c.f.m.a.s.i.SandboxLifecycleServiceImpl  : [SandboxLifecycle] reconcileOrphans: provider cube sweep default failed: cube 适配器按实装次序预留，控制面接线后启用
+2026-10-10T16:46:18.702+08:00  WARN 6312 --- [fastrag-backend] [   scheduling-1] c.f.m.a.s.i.SandboxLifecycleServiceImpl  : [SandboxLifecycle] reconcileOrphans: provider e2b sweep default failed: e2b 适配器按实装次序预留，控制面接线后启用
+[ERROR] Failed to execute goal org.springframework.boot:spring-boot-maven-plugin:3.2.5:run (default-cli) on project fastrag-bootstrap: Process terminated with exit code: 1 -> [Help 1]
+[ERROR] 
+[ERROR] To see the full stack trace of the errors, re-run Maven with the -e switch.
+[ERROR] Re-run Maven using the -X switch to enable full debug logging.
+[ERROR] 
+[ERROR] For more information about the errors and possible solutions, please read the following articles:
+[ERROR] [Help 1] http://cwiki.apache.org/confluence/display/MAVEN/MojoExecutionException

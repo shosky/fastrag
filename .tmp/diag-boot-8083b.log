@@ -1,0 +1,333 @@
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+
+  .   ____          _            __ _ _
+ /\\ / ___'_ __ _ _(_)_ __  __ _ \ \ \ \
+( ( )\___ | '_ | '_| | '_ \/ _` | \ \ \ \
+ \\/  ___)| |_)| | | | | || (_| |  ) ) ) )
+  '  |____| .__|_| |_|_| |_\__, | / / / /
+ =========|_|==============|___/=/_/_/_/
+ :: Spring Boot ::                (v3.2.5)
+
+2026-10-09T21:56:22.361+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.FastRagApplication           : Starting FastRagApplication using Java 21.0.11 with PID 15264 (D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-bootstrap\target\classes started by 63179 in D:\Workspace\java\github\rag\fastrag\fastrag-backend\fastrag-bootstrap)
+2026-10-09T21:56:22.365+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.FastRagApplication           : No active profile set, falling back to 1 default profile: "default"
+2026-10-09T21:56:24.868+08:00  INFO 15264 --- [fastrag-backend] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Multiple Spring Data modules found, entering strict repository configuration mode
+2026-10-09T21:56:24.870+08:00  INFO 15264 --- [fastrag-backend] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Bootstrapping Spring Data Redis repositories in DEFAULT mode.
+2026-10-09T21:56:24.931+08:00  INFO 15264 --- [fastrag-backend] [           main] .s.d.r.c.RepositoryConfigurationDelegate : Finished Spring Data repository scanning in 47 ms. Found 0 Redis repository interfaces.
+2026-10-09T21:56:26.149+08:00  INFO 15264 --- [fastrag-backend] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat initialized with port 8083 (http)
+2026-10-09T21:56:26.173+08:00  INFO 15264 --- [fastrag-backend] [           main] o.apache.catalina.core.StandardService   : Starting service [Tomcat]
+2026-10-09T21:56:26.173+08:00  INFO 15264 --- [fastrag-backend] [           main] o.apache.catalina.core.StandardEngine    : Starting Servlet engine: [Apache Tomcat/10.1.20]
+2026-10-09T21:56:26.286+08:00  INFO 15264 --- [fastrag-backend] [           main] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring embedded WebApplicationContext
+2026-10-09T21:56:26.287+08:00  INFO 15264 --- [fastrag-backend] [           main] w.s.c.ServletWebServerApplicationContext : Root WebApplicationContext: initialization completed in 3823 ms
+Standard Commons Logging discovery in action with spring-jcl: please remove commons-logging.jar from classpath in order to avoid potential conflicts
+ _ _   |_  _ _|_. ___ _ |    _ 
+| | |\/|_)(_| | |_\  |_)||_|_\ 
+     /               |         
+                        3.5.5 
+2026-10-09T21:56:43.252+08:00 ERROR 15264 --- [fastrag-backend] [           main] i.m.client.AbstractMilvusGrpcClient      : HasCollectionRequest collectionName:_milvus_ping_ RPC failed! Exception:{}
+
+io.grpc.StatusRuntimeException: DEADLINE_EXCEEDED: deadline exceeded after 14.957509300s. Name resolution delay 0.001269800 seconds. [closed=[], open=[[wait_for_ready, buffered_nanos=14966643500, waiting_for_connection]]]
+	at io.grpc.stub.ClientCalls.toStatusRuntimeException(ClientCalls.java:268) ~[grpc-stub-1.59.1.jar:1.59.1]
+	at io.grpc.stub.ClientCalls.getUnchecked(ClientCalls.java:249) ~[grpc-stub-1.59.1.jar:1.59.1]
+	at io.grpc.stub.ClientCalls.blockingUnaryCall(ClientCalls.java:167) ~[grpc-stub-1.59.1.jar:1.59.1]
+	at io.milvus.grpc.MilvusServiceGrpc$MilvusServiceBlockingStub.hasCollection(MilvusServiceGrpc.java:3992) ~[milvus-sdk-java-2.3.4.jar:na]
+	at io.milvus.client.AbstractMilvusGrpcClient.hasCollection(AbstractMilvusGrpcClient.java:372) ~[milvus-sdk-java-2.3.4.jar:na]
+	at io.milvus.client.MilvusServiceClient.lambda$hasCollection$1(MilvusServiceClient.java:362) ~[milvus-sdk-java-2.3.4.jar:na]
+	at io.milvus.client.MilvusServiceClient.retry(MilvusServiceClient.java:285) ~[milvus-sdk-java-2.3.4.jar:na]
+	at io.milvus.client.MilvusServiceClient.hasCollection(MilvusServiceClient.java:362) ~[milvus-sdk-java-2.3.4.jar:na]
+	at com.fastrag.infra.milvus.MilvusService.init(MilvusService.java:84) ~[fastrag-infra-1.0.0-SNAPSHOT.jar:1.0.0-SNAPSHOT]
+	at java.base/jdk.internal.reflect.DirectMethodHandleAccessor.invoke(DirectMethodHandleAccessor.java:103) ~[na:na]
+	at java.base/java.lang.reflect.Method.invoke(Method.java:580) ~[na:na]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor$LifecycleMethod.invoke(InitDestroyAnnotationBeanPostProcessor.java:457) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor$LifecycleMetadata.invokeInitMethods(InitDestroyAnnotationBeanPostProcessor.java:401) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.annotation.InitDestroyAnnotationBeanPostProcessor.postProcessBeforeInitialization(InitDestroyAnnotationBeanPostProcessor.java:219) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.applyBeanPostProcessorsBeforeInitialization(AbstractAutowireCapableBeanFactory.java:422) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.initializeBean(AbstractAutowireCapableBeanFactory.java:1778) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.doCreateBean(AbstractAutowireCapableBeanFactory.java:600) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractAutowireCapableBeanFactory.createBean(AbstractAutowireCapableBeanFactory.java:522) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.lambda$doGetBean$0(AbstractBeanFactory.java:326) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.DefaultSingletonBeanRegistry.getSingleton(DefaultSingletonBeanRegistry.java:234) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.doGetBean(AbstractBeanFactory.java:324) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.AbstractBeanFactory.getBean(AbstractBeanFactory.java:200) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.beans.factory.support.DefaultListableBeanFactory.preInstantiateSingletons(DefaultListableBeanFactory.java:975) ~[spring-beans-6.1.6.jar:6.1.6]
+	at org.springframework.context.support.AbstractApplicationContext.finishBeanFactoryInitialization(AbstractApplicationContext.java:962) ~[spring-context-6.1.6.jar:6.1.6]
+	at org.springframework.context.support.AbstractApplicationContext.refresh(AbstractApplicationContext.java:624) ~[spring-context-6.1.6.jar:6.1.6]
+	at org.springframework.boot.web.servlet.context.ServletWebServerApplicationContext.refresh(ServletWebServerApplicationContext.java:146) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.refresh(SpringApplication.java:754) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.refreshContext(SpringApplication.java:456) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:334) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1354) ~[spring-boot-3.2.5.jar:3.2.5]
+	at org.springframework.boot.SpringApplication.run(SpringApplication.java:1343) ~[spring-boot-3.2.5.jar:3.2.5]
+	at com.fastrag.FastRagApplication.main(FastRagApplication.java:36) ~[classes/:na]
+
+2026-10-09T21:56:43.262+08:00  WARN 15264 --- [fastrag-backend] [           main] com.fastrag.infra.milvus.MilvusService   : Milvus connect to 39.97.60.18:19530 but ping failed: DEADLINE_EXCEEDED: deadline exceeded after 14.957509300s. Name resolution delay 0.001269800 seconds. [closed=[], open=[[wait_for_ready, buffered_nanos=14966643500, waiting_for_connection]]]
+2026-10-09T21:56:46.635+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.agent.backend.AgentBackendManager  : Registered 2 agent backends: [ChatbotAgent, SubAgentBackend]
+2026-10-09T21:56:46.660+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.a.middleware.AgentMiddlewareChain  : [MiddlewareChain] Initialized with 13 middlewares (sorted by order): [ContextMiddleware(0), FilesystemMiddleware(1), AttachmentMiddleware(2), KnowledgeBaseMiddleware(3), SkillsMiddleware(4), SubAgentMiddleware(5), SummarizationMiddleware(6), TodoListMiddleware(7), PatchToolCallsMiddleware(8), ModelRetryMiddleware(9), DatabaseMiddleware(10), McpMiddleware(11), HistoryMiddleware(12)]
+2026-10-09T21:56:47.346+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.t.e.InstallSkillToolDefinition     : [InstallSkillTool] install_skill 工具定义已注册
+2026-10-09T21:56:48.137+08:00  WARN 15264 --- [fastrag-backend] [           main] .s.s.UserDetailsServiceAutoConfiguration : 
+
+Using generated security password: f63bbd8d-54de-457f-8c8d-d2937a61d260
+
+This generated password is for development use only. Your security configuration must be updated before running your application in production.
+
+2026-10-09T21:56:49.426+08:00  INFO 15264 --- [fastrag-backend] [           main] o.s.b.a.e.web.EndpointLinksResolver      : Exposing 1 endpoint(s) beneath base path '/actuator'
+2026-10-09T21:56:49.587+08:00  INFO 15264 --- [fastrag-backend] [           main] o.s.s.web.DefaultSecurityFilterChain     : Will secure any request with [org.springframework.security.web.session.DisableEncodeUrlFilter@c2cc406, org.springframework.security.web.context.request.async.WebAsyncManagerIntegrationFilter@77c77a64, org.springframework.security.web.context.SecurityContextHolderFilter@21c8dd3e, org.springframework.security.web.header.HeaderWriterFilter@3ac60eeb, org.springframework.web.filter.CorsFilter@664c6bbc, org.springframework.security.web.authentication.logout.LogoutFilter@22bf2a0d, com.fastrag.security.filter.ApiTokenAuthFilter@6b6f73d, com.fastrag.security.filter.JwtAuthFilter@662b199, org.springframework.security.web.savedrequest.RequestCacheAwareFilter@43b45e77, org.springframework.security.web.servletapi.SecurityContextHolderAwareRequestFilter@10ba757f, org.springframework.security.web.authentication.AnonymousAuthenticationFilter@442545ab, org.springframework.security.web.session.SessionManagementFilter@291fbdc9, org.springframework.security.web.access.ExceptionTranslationFilter@340d50c8, org.springframework.security.web.access.intercept.AuthorizationFilter@5858054c]
+2026-10-09T21:56:51.213+08:00  INFO 15264 --- [fastrag-backend] [           main] o.s.b.w.embedded.tomcat.TomcatWebServer  : Tomcat started on port 8083 (http) with context path ''
+2026-10-09T21:56:51.218+08:00  INFO 15264 --- [fastrag-backend] [           main] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-09T21:56:51.347+08:00  INFO 15264 --- [fastrag-backend] [           main] o.s.a.r.c.CachingConnectionFactory       : Created new connection: rabbitConnectionFactory#7cd6b76a:0/SimpleConnection@78a4914d [delegate=amqp://fastrag@127.0.0.1:5672/, localPort=63671]
+2026-10-09T21:56:51.466+08:00  INFO 15264 --- [fastrag-backend] [nio-8083-exec-1] o.a.c.c.C.[Tomcat].[localhost].[/]       : Initializing Spring DispatcherServlet 'dispatcherServlet'
+2026-10-09T21:56:51.466+08:00  INFO 15264 --- [fastrag-backend] [nio-8083-exec-1] o.s.web.servlet.DispatcherServlet        : Initializing Servlet 'dispatcherServlet'
+2026-10-09T21:56:51.470+08:00  INFO 15264 --- [fastrag-backend] [nio-8083-exec-1] o.s.web.servlet.DispatcherServlet        : Completed initialization in 3 ms
+2026-10-09T21:56:51.605+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.FastRagApplication           : Started FastRagApplication in 30.066 seconds (process running for 31.042)
+2026-10-09T21:56:51.730+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 开始初始化内置技能...
+2026-10-09T21:56:51.791+08:00  INFO 15264 --- [fastrag-backend] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Starting...
+2026-10-09T21:56:52.113+08:00  INFO 15264 --- [fastrag-backend] [           main] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Added connection com.mysql.cj.jdbc.ConnectionImpl@37c55315
+2026-10-09T21:56:52.118+08:00  INFO 15264 --- [fastrag-backend] [           main] com.zaxxer.hikari.HikariDataSource       : HikariPool-1 - Start completed.
+2026-10-09T21:56:52.143+08:00  WARN 15264 --- [fastrag-backend] [   scheduling-1] c.f.m.a.s.i.SandboxLifecycleServiceImpl  : [SandboxLifecycle] reconcileOrphans: provider cube sweep default failed: cube 适配器按实装次序预留，控制面接线后启用
+2026-10-09T21:56:52.183+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 跳过已有技能（DB 为正文事实源）: code-generate
+2026-10-09T21:56:52.187+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 跳过已有技能（DB 为正文事实源）: kb-qa
+2026-10-09T21:56:52.191+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 跳过已有技能（DB 为正文事实源）: web-search
+2026-10-09T21:56:52.191+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.tools.config.SkillDataInitializer  : [SkillDataInitializer] 内置技能初始化完成。播种 0 个，跳过 3 个，共 3 个
+2026-10-09T21:56:52.192+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.tools.config.McpBuiltinSeeder      : [McpBuiltinSeeder] 开始初始化内置 MCP 服务...
+2026-10-09T21:56:52.237+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.tools.config.McpBuiltinSeeder      : [McpBuiltinSeeder] 内置 MCP 服务初始化完成，共 3 个
+2026-10-09T21:56:52.238+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Checking and creating missing tables...
+2026-10-09T21:56:52.246+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table sensitive_word OK
+2026-10-09T21:56:52.249+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table sys_user_role OK
+2026-10-09T21:56:52.251+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table sys_dictionary OK
+2026-10-09T21:56:52.255+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_publish_history OK
+2026-10-09T21:56:52.303+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_parse_strategy.llm_model already exists
+2026-10-09T21:56:52.306+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb.graph_llm_model already exists
+2026-10-09T21:56:52.308+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_parse_strategy.file_id already exists
+2026-10-09T21:56:52.310+08:00  WARN 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Index kb_parse_strategy.file_id ensure skipped: SQLSyntaxErrorException: StatementCallback; bad SQL grammar [ALTER TABLE kb_parse_strategy ADD INDEX idx_kb_parse_strategy_file (file_id)]
+2026-10-09T21:56:52.312+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_file.processing_config already exists
+2026-10-09T21:56:52.313+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_folder.created_at already exists
+2026-10-09T21:56:52.315+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_folder.updated_at already exists
+2026-10-09T21:56:52.320+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table agent OK
+2026-10-09T21:56:52.323+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table agent_run OK
+2026-10-09T21:56:52.326+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table sandbox_config OK
+2026-10-09T21:56:52.327+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.slug already exists
+2026-10-09T21:56:52.329+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.source_type already exists
+2026-10-09T21:56:52.331+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.dir_path already exists
+2026-10-09T21:56:52.333+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.dependencies already exists
+2026-10-09T21:56:52.335+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.envs already exists
+2026-10-09T21:56:52.337+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.content_hash already exists
+2026-10-09T21:56:52.339+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.is_builtin already exists
+2026-10-09T21:56:52.341+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.metadata already exists
+2026-10-09T21:56:52.343+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.share_config already exists
+2026-10-09T21:56:52.345+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.created_at already exists
+2026-10-09T21:56:52.348+08:00  WARN 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Index skill.uk_slug upgrade skipped: SQLSyntaxErrorException: StatementCallback; bad SQL grammar [ALTER TABLE skill DROP INDEX idx_slug, ADD UNIQUE INDEX uk_slug (slug)]
+2026-10-09T21:56:52.350+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.slug already exists
+2026-10-09T21:56:52.352+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.transport already exists
+2026-10-09T21:56:52.354+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.command already exists
+2026-10-09T21:56:52.356+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.args already exists
+2026-10-09T21:56:52.358+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.env already exists
+2026-10-09T21:56:52.360+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.is_builtin already exists
+2026-10-09T21:56:52.362+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.config_hash already exists
+2026-10-09T21:56:52.364+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.metadata already exists
+2026-10-09T21:56:52.366+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.updated_at already exists
+2026-10-09T21:56:52.368+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_tool.tool_id already exists
+2026-10-09T21:56:52.370+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_tool.enabled already exists
+2026-10-09T21:56:52.373+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : FULLTEXT index idx_content_fulltext: already exists
+2026-10-09T21:56:52.375+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb.org_id already exists
+2026-10-09T21:56:52.377+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Backfilled kb.org_id from creator's org
+2026-10-09T21:56:52.378+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_category.org_id already exists
+2026-10-09T21:56:52.380+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Backfilled kb_category.org_id from creator's org
+2026-10-09T21:56:52.394+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Changed kb_evaluation_result.retrieval_metrics from JSON to TEXT
+2026-10-09T21:56:52.396+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_evaluation_result.recall_at_1 already exists
+2026-10-09T21:56:52.398+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_evaluation_result.recall_at_3 already exists
+2026-10-09T21:56:52.400+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_evaluation_result.recall_at_5 already exists
+2026-10-09T21:56:52.402+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_evaluation_result.recall_at_10 already exists
+2026-10-09T21:56:52.404+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_retrieval_log.graph_entity_count already exists
+2026-10-09T21:56:52.405+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_retrieval_log.enhance_model already exists
+2026-10-09T21:56:52.408+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_retrieval_log.enhance_status already exists
+2026-10-09T21:56:52.410+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column model.context_window already exists
+2026-10-09T21:56:52.411+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column model.enable_thinking already exists
+2026-10-09T21:56:52.416+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table email_verification OK
+2026-10-09T21:56:52.418+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_graph_index.failed_chunks already exists
+2026-10-09T21:56:52.420+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_chunk.title already exists
+2026-10-09T21:56:52.423+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_chunk.heading_path already exists
+2026-10-09T21:56:52.427+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_graph_stitch OK
+2026-10-09T21:56:52.431+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_graph_unit OK
+2026-10-09T21:56:52.435+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_graph_merge_audit OK
+2026-10-09T21:56:52.436+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app.org_id already exists
+2026-10-09T21:56:52.439+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app.sandbox_config_id already exists
+2026-10-09T21:56:52.443+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column tool.creator already exists
+2026-10-09T21:56:52.445+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column tool.org_id already exists
+2026-10-09T21:56:52.447+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column tool.is_builtin already exists
+2026-10-09T21:56:52.450+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.creator already exists
+2026-10-09T21:56:52.451+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column mcp_service.org_id already exists
+2026-10-09T21:56:52.455+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.creator already exists
+2026-10-09T21:56:52.457+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column skill.org_id already exists
+2026-10-09T21:56:52.462+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column db_instance.org_id already exists
+2026-10-09T21:56:52.465+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column user_feedback.org_id already exists
+2026-10-09T21:56:52.468+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column model_call_log.org_id already exists
+2026-10-09T21:56:52.470+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column term_record.status already exists
+2026-10-09T21:56:52.472+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column sys_dictionary.label already exists
+2026-10-09T21:56:52.473+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column sys_dictionary.enabled already exists
+2026-10-09T21:56:52.476+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column sys_dictionary.remark already exists
+2026-10-09T21:56:52.477+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column sys_dictionary.sort_order already exists
+2026-10-09T21:56:52.495+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Modified app_conversation.app_id to nullable
+2026-10-09T21:56:52.498+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app_conversation.request_state already exists
+2026-10-09T21:56:52.501+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app_conversation.is_pinned already exists
+2026-10-09T21:56:52.503+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app_conversation_message.`references` already exists
+2026-10-09T21:56:52.505+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column app_conversation_message.iterations already exists
+2026-10-09T21:56:52.511+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Table kb_qa_generation_task OK
+2026-10-09T21:56:52.513+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_qa_pair.source_chunk_id already exists
+2026-10-09T21:56:52.516+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Column kb_file.qa_generation_config already exists
+2026-10-09T21:56:52.543+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Granted 6 permission(s) to role role_kb_admin
+2026-10-09T21:56:52.552+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Granted 1 permission(s) to role role_super_admin
+2026-10-09T21:56:52.556+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Granted 1 permission(s) to role role_kb_user
+2026-10-09T21:56:52.556+08:00  INFO 15264 --- [fastrag-backend] [           main] com.fastrag.config.SchemaInitializer     : Schema initialization completed.
+2026-10-09T21:56:52.556+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.agent.runner.AgentDataInitializer  : Initializing built-in agents...
+2026-10-09T21:56:52.598+08:00  INFO 15264 --- [fastrag-backend] [           main] c.f.m.agent.runner.AgentDataInitializer  : Built-in agent initialization complete.
+2026-10-09T21:56:52.604+08:00  WARN 15264 --- [fastrag-backend] [   scheduling-1] c.f.m.a.s.i.SandboxLifecycleServiceImpl  : [SandboxLifecycle] reconcileOrphans: provider e2b sweep default failed: e2b 适配器按实装次序预留，控制面接线后启用
+2026-10-10T08:51:00.301+08:00  WARN 15264 --- [fastrag-backend] [l-1 housekeeper] com.zaxxer.hikari.pool.HikariPool        : HikariPool-1 - Thread starvation or clock leap detected (housekeeper delta=10h54m8s120ms322µs600ns).
+2026-10-10T08:51:30.610+08:00  WARN 15264 --- [fastrag-backend] [   scheduling-1] c.f.m.a.s.i.SandboxLifecycleServiceImpl  : [SandboxLifecycle] reconcileOrphans: provider cube sweep default failed: cube 适配器按实装次序预留，控制面接线后启用
+2026-10-10T08:51:30.777+08:00  WARN 15264 --- [fastrag-backend] [   scheduling-1] c.f.m.a.s.i.SandboxLifecycleServiceImpl  : [SandboxLifecycle] reconcileOrphans: provider e2b sweep default failed: e2b 适配器按实装次序预留，控制面接线后启用
+2026-10-10T08:51:46.435+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-4] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@4bd0d62f: tags=[[amq.ctag-RAxmzdA4yo1sfqIjsUXa0g]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,5), conn: Proxy@39fcbb42 Shared Rabbit Connection: SimpleConnection@78a4914d [delegate=amqp://fastrag@127.0.0.1:5672/, localPort=63671], acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:46.435+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-5] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@73c72238: tags=[[amq.ctag-MROjH3_k-_qPHXO6NLK0hg]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,6), conn: Proxy@39fcbb42 Shared Rabbit Connection: SimpleConnection@78a4914d [delegate=amqp://fastrag@127.0.0.1:5672/, localPort=63671], acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:46.435+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-3] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@1f3bd40a: tags=[[amq.ctag-Cp0OfAtXhfgiUKF-RAnLUQ]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,9), conn: Proxy@39fcbb42 Shared Rabbit Connection: SimpleConnection@78a4914d [delegate=amqp://fastrag@127.0.0.1:5672/, localPort=63671], acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:46.435+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-1] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@71ebd1d9: tags=[[amq.ctag-Zt-0AGslYvcz2ethH0UuOQ]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,2), conn: Proxy@39fcbb42 Shared Rabbit Connection: SimpleConnection@78a4914d [delegate=amqp://fastrag@127.0.0.1:5672/, localPort=63671], acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:46.439+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-2] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@5ac88d71: tags=[[amq.ctag-lg3NzCWiPDT3iKhALTmKtw]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,8), conn: Proxy@39fcbb42 Shared Rabbit Connection: SimpleConnection@78a4914d [delegate=amqp://fastrag@127.0.0.1:5672/, localPort=63671], acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:46.466+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-7] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.604+08:00  WARN 15264 --- [fastrag-backend] [ 127.0.0.1:5672] c.r.c.impl.ForgivingExceptionHandler     : An unexpected connection driver error occurred (Exception message: Connection reset)
+2026-10-10T08:51:46.606+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-4] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.606+08:00 ERROR 15264 --- [fastrag-backend] [ntContainer#1-7] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+
+org.springframework.amqp.AmqpIOException: java.io.IOException
+	at org.springframework.amqp.rabbit.support.RabbitExceptionTranslator.convertRabbitAccessException(RabbitExceptionTranslator.java:70) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.createBareConnection(AbstractConnectionFactory.java:622) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.CachingConnectionFactory.createConnection(CachingConnectionFactory.java:727) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.CachingConnectionFactory.createBareChannel(CachingConnectionFactory.java:672) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.CachingConnectionFactory.getCachedChannelProxy(CachingConnectionFactory.java:645) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.CachingConnectionFactory.getChannel(CachingConnectionFactory.java:534) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.CachingConnectionFactory$ChannelCachingConnectionProxy.createChannel(CachingConnectionFactory.java:1503) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.doExecute(RabbitTemplate.java:2255) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.execute(RabbitTemplate.java:2222) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.execute(RabbitTemplate.java:2202) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitAdmin.getQueueInfo(RabbitAdmin.java:467) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitAdmin.getQueueProperties(RabbitAdmin.java:451) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.AbstractMessageListenerContainer.attemptDeclarations(AbstractMessageListenerContainer.java:1960) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.AbstractMessageListenerContainer.redeclareElementsIfNecessary(AbstractMessageListenerContainer.java:1924) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer$AsyncMessageProcessingConsumer.initialize(SimpleMessageListenerContainer.java:1478) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer$AsyncMessageProcessingConsumer.run(SimpleMessageListenerContainer.java:1320) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]
+Caused by: java.io.IOException: null
+	at com.rabbitmq.client.impl.AMQChannel.wrap(AMQChannel.java:140) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.impl.AMQChannel.wrap(AMQChannel.java:136) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.impl.AMQConnection.start(AMQConnection.java:406) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:1251) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:1198) ~[amqp-client-5.19.0.jar:5.19.0]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.connectAddresses(AbstractConnectionFactory.java:668) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.connect(AbstractConnectionFactory.java:637) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.createBareConnection(AbstractConnectionFactory.java:584) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	... 15 common frames omitted
+Caused by: com.rabbitmq.client.ShutdownSignalException: connection error
+	at com.rabbitmq.utility.ValueOrException.getValue(ValueOrException.java:66) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.utility.BlockingValueOrException.uninterruptibleGetValue(BlockingValueOrException.java:36) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.impl.AMQChannel$BlockingRpcContinuation.getReply(AMQChannel.java:552) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.impl.AMQConnection.start(AMQConnection.java:336) ~[amqp-client-5.19.0.jar:5.19.0]
+	... 20 common frames omitted
+Caused by: java.net.SocketException: Connection reset
+	at java.base/sun.nio.ch.NioSocketImpl.implRead(NioSocketImpl.java:318) ~[na:na]
+	at java.base/sun.nio.ch.NioSocketImpl.read(NioSocketImpl.java:346) ~[na:na]
+	at java.base/sun.nio.ch.NioSocketImpl$1.read(NioSocketImpl.java:796) ~[na:na]
+	at java.base/java.net.Socket$SocketInputStream.read(Socket.java:1099) ~[na:na]
+	at java.base/java.io.BufferedInputStream.fill(BufferedInputStream.java:291) ~[na:na]
+	at java.base/java.io.BufferedInputStream.implRead(BufferedInputStream.java:325) ~[na:na]
+	at java.base/java.io.BufferedInputStream.read(BufferedInputStream.java:312) ~[na:na]
+	at java.base/java.io.DataInputStream.readUnsignedByte(DataInputStream.java:295) ~[na:na]
+	at com.rabbitmq.client.impl.Frame.readFrom(Frame.java:91) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.impl.SocketFrameHandler.readFrame(SocketFrameHandler.java:199) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.impl.AMQConnection$MainLoop.run(AMQConnection.java:687) ~[amqp-client-5.19.0.jar:5.19.0]
+	... 1 common frames omitted
+
+2026-10-10T08:51:46.609+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-7] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.609+08:00 ERROR 15264 --- [fastrag-backend] [ntContainer#2-4] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+
+org.springframework.amqp.AmqpConnectException: java.net.ConnectException: Connection refused: getsockopt
+	at org.springframework.amqp.rabbit.support.RabbitExceptionTranslator.convertRabbitAccessException(RabbitExceptionTranslator.java:61) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.createBareConnection(AbstractConnectionFactory.java:622) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.CachingConnectionFactory.createConnection(CachingConnectionFactory.java:727) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.ConnectionFactoryUtils.createConnection(ConnectionFactoryUtils.java:257) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.doExecute(RabbitTemplate.java:2249) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.execute(RabbitTemplate.java:2222) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.execute(RabbitTemplate.java:2202) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitAdmin.getQueueInfo(RabbitAdmin.java:467) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitAdmin.getQueueProperties(RabbitAdmin.java:451) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.AbstractMessageListenerContainer.attemptDeclarations(AbstractMessageListenerContainer.java:1960) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.AbstractMessageListenerContainer.redeclareElementsIfNecessary(AbstractMessageListenerContainer.java:1924) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer$AsyncMessageProcessingConsumer.initialize(SimpleMessageListenerContainer.java:1478) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer$AsyncMessageProcessingConsumer.run(SimpleMessageListenerContainer.java:1320) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]
+Caused by: java.net.ConnectException: Connection refused: getsockopt
+	at java.base/sun.nio.ch.Net.pollConnect(Native Method) ~[na:na]
+	at java.base/sun.nio.ch.Net.pollConnectNow(Net.java:690) ~[na:na]
+	at java.base/sun.nio.ch.NioSocketImpl.timedFinishConnect(NioSocketImpl.java:542) ~[na:na]
+	at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:592) ~[na:na]
+	at java.base/java.net.SocksSocketImpl.connect(SocksSocketImpl.java:327) ~[na:na]
+	at java.base/java.net.Socket.connect(Socket.java:751) ~[na:na]
+	at com.rabbitmq.client.impl.SocketFrameHandlerFactory.create(SocketFrameHandlerFactory.java:61) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:1249) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:1198) ~[amqp-client-5.19.0.jar:5.19.0]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.connectAddresses(AbstractConnectionFactory.java:668) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.connect(AbstractConnectionFactory.java:637) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.createBareConnection(AbstractConnectionFactory.java:584) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	... 12 common frames omitted
+
+2026-10-10T08:51:46.611+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-4] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.612+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-8] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.613+08:00 ERROR 15264 --- [fastrag-backend] [ntContainer#1-8] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+2026-10-10T08:51:46.613+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-5] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.614+08:00 ERROR 15264 --- [fastrag-backend] [ntContainer#2-5] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+2026-10-10T08:51:46.614+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-8] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.615+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-5] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.616+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-6] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.617+08:00 ERROR 15264 --- [fastrag-backend] [ntContainer#1-6] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+2026-10-10T08:51:46.617+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-6] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.761+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-3] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@49f82f95: tags=[[amq.ctag-FhsCYUC22-FmUI3Ac2ZiIg]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,4), conn: Proxy@39fcbb42 Shared Rabbit Connection: null, acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:46.822+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-9] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:46.823+08:00 ERROR 15264 --- [fastrag-backend] [ntContainer#1-9] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+2026-10-10T08:51:46.826+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-9] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:47.000+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#0-1] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@44d51c85: tags=[[amq.ctag-qVvBXLdXvjWVODvLmrxjAA]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,1), conn: Proxy@39fcbb42 Shared Rabbit Connection: null, acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:47.001+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-1] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@457512b: tags=[[amq.ctag-_9E1sSmuMosRz95-E4EPQg]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,7), conn: Proxy@39fcbb42 Shared Rabbit Connection: null, acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:47.001+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#1-2] o.s.a.r.l.SimpleMessageListenerContainer : Restarting Consumer@3e6be3c1: tags=[[amq.ctag-kx7lyfi_S01xrhscQKqt8Q]], channel=Cached Rabbit Channel: AMQChannel(amqp://fastrag@127.0.0.1:5672/,3), conn: Proxy@39fcbb42 Shared Rabbit Connection: null, acknowledgeMode=AUTO local queue size=0
+2026-10-10T08:51:47.031+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-6] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:47.032+08:00 ERROR 15264 --- [fastrag-backend] [ntContainer#2-6] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+2026-10-10T08:51:47.032+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#0-2] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:47.033+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#2-6] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:47.033+08:00 ERROR 15264 --- [fastrag-backend] [ntContainer#0-2] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+
+org.springframework.amqp.AmqpConnectException: java.net.ConnectException: Connection refused: getsockopt
+	at org.springframework.amqp.rabbit.support.RabbitExceptionTranslator.convertRabbitAccessException(RabbitExceptionTranslator.java:61) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.createBareConnection(AbstractConnectionFactory.java:622) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.CachingConnectionFactory.createConnection(CachingConnectionFactory.java:727) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.ConnectionFactoryUtils.createConnection(ConnectionFactoryUtils.java:257) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.doExecute(RabbitTemplate.java:2249) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.execute(RabbitTemplate.java:2222) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitTemplate.execute(RabbitTemplate.java:2202) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitAdmin.getQueueInfo(RabbitAdmin.java:467) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.core.RabbitAdmin.getQueueProperties(RabbitAdmin.java:451) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.AbstractMessageListenerContainer.attemptDeclarations(AbstractMessageListenerContainer.java:1960) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.AbstractMessageListenerContainer.redeclareElementsIfNecessary(AbstractMessageListenerContainer.java:1924) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer$AsyncMessageProcessingConsumer.initialize(SimpleMessageListenerContainer.java:1478) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.listener.SimpleMessageListenerContainer$AsyncMessageProcessingConsumer.run(SimpleMessageListenerContainer.java:1320) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at java.base/java.lang.Thread.run(Thread.java:1583) ~[na:na]
+Caused by: java.net.ConnectException: Connection refused: getsockopt
+	at java.base/sun.nio.ch.Net.pollConnect(Native Method) ~[na:na]
+	at java.base/sun.nio.ch.Net.pollConnectNow(Net.java:690) ~[na:na]
+	at java.base/sun.nio.ch.NioSocketImpl.timedFinishConnect(NioSocketImpl.java:542) ~[na:na]
+	at java.base/sun.nio.ch.NioSocketImpl.connect(NioSocketImpl.java:592) ~[na:na]
+	at java.base/java.net.SocksSocketImpl.connect(SocksSocketImpl.java:327) ~[na:na]
+	at java.base/java.net.Socket.connect(Socket.java:751) ~[na:na]
+	at com.rabbitmq.client.impl.SocketFrameHandlerFactory.create(SocketFrameHandlerFactory.java:61) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:1249) ~[amqp-client-5.19.0.jar:5.19.0]
+	at com.rabbitmq.client.ConnectionFactory.newConnection(ConnectionFactory.java:1198) ~[amqp-client-5.19.0.jar:5.19.0]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.connectAddresses(AbstractConnectionFactory.java:668) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.connect(AbstractConnectionFactory.java:637) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	at org.springframework.amqp.rabbit.connection.AbstractConnectionFactory.createBareConnection(AbstractConnectionFactory.java:584) ~[spring-rabbit-3.1.4.jar:3.1.4]
+	... 12 common frames omitted
+
+2026-10-10T08:51:47.034+08:00  INFO 15264 --- [fastrag-backend] [tContainer#1-10] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:47.035+08:00 ERROR 15264 --- [fastrag-backend] [tContainer#1-10] o.s.a.r.l.SimpleMessageListenerContainer : Failed to check/redeclare auto-delete queue(s).
+2026-10-10T08:51:47.035+08:00  INFO 15264 --- [fastrag-backend] [ntContainer#0-2] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]
+2026-10-10T08:51:47.036+08:00  INFO 15264 --- [fastrag-backend] [tContainer#1-10] o.s.a.r.c.CachingConnectionFactory       : Attempting to connect to: [127.0.0.1:5672]

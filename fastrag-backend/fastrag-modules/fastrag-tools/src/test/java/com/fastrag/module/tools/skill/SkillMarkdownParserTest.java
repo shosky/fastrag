@@ -99,6 +99,44 @@ class SkillMarkdownParserTest {
         assertEquals("test", result.getMetadata().get("author"));
     }
 
+    // ========== F1+（b 描述自动匹配）：frontmatter keywords 随全量 metadata 落库（2026-10-07） ==========
+
+    @Test
+    void testParseKeywordsListFormCarriedInMetadata() {
+        // metadata = 全量 frontmatter（SkillFileServiceImpl/SkillDraftServiceImpl 原样落 skill.metadata JSON），
+        // keywords 无需专列字段，SkillsMiddleware 从 metadata."keywords" 读取
+        String content = "---\nname: 联网搜索\nslug: web-search\ndescription: d\n"
+                + "keywords:\n  - 股价\n  - 行情\n  - QQQ\n---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        Object kw = result.getMetadata().get("keywords");
+        assertInstanceOf(java.util.List.class, kw, "list 形态 keywords 应以 List 进 metadata");
+        assertEquals(java.util.List.of("股价", "行情", "QQQ"), kw);
+    }
+
+    @Test
+    void testParseKeywordsStringFormCarriedInMetadata() {
+        // YAML plain scalar：逗号分隔 string 原样入 metadata（拆分由消费方 SkillsMiddleware 负责）
+        String content = "---\nname: 联网搜索\nslug: web-search\ndescription: d\n"
+                + "keywords: 股价, 行情, 美股\n---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals("股价, 行情, 美股", result.getMetadata().get("keywords"));
+    }
+
+    @Test
+    void testParseEnvListFormCarriedToEnvs() {
+        String content = "---\nname: 联网搜索\nslug: web-search\ndescription: d\n"
+                + "env:\n  - FMP_API_KEY\n---\n\nBody";
+
+        SkillMarkdownParser.SkillParseResult result = parser.parse(content);
+
+        assertEquals(java.util.List.of("FMP_API_KEY"), result.getEnvs(),
+            "env 声明（F4 凭据通道）应解析进 envs");
+    }
+
     // ========== M1-2 slug 白名单接线 ==========
 
     @Test

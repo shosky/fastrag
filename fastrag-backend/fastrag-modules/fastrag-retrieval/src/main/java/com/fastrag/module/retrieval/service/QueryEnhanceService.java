@@ -20,6 +20,13 @@ import java.util.Map;
 
 public interface QueryEnhanceService {
     Map<String, Object> suggest(String query);
+
+    /**
+     * 查询建议（可指定 LLM 模型）。
+     *
+     * @param llmModel LLM 模型 code；空/null = 系统默认网关
+     */
+    Map<String, Object> suggest(String query, String llmModel);
     Map<String, Object> expandSynonyms(String query);
     Map<String, Object> applyQueryRules(String query);
     Map<String, Object> expandGraph(String kbId, String query, int depth, int maxEntities);

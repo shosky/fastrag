@@ -1,0 +1,22 @@
+2026-09-27 00:34:19.090801+00:00 [info] <0.36609.0> accepting AMQP connection <0.36609.0> (172.18.0.1:41582 -> 172.18.0.3:5672)[0m
+2026-09-27 00:34:19.201555+00:00 [info] <0.36609.0> connection <0.36609.0> (172.18.0.1:41582 -> 172.18.0.3:5672) has a client-provided name: rabbitConnectionFactory#7be9582e:0[0m
+2026-09-27 00:34:19.271460+00:00 [info] <0.36609.0> connection <0.36609.0> (172.18.0.1:41582 -> 172.18.0.3:5672 - rabbitConnectionFactory#7be9582e:0): user 'fastrag' authenticated and granted access to vhost '/'[0m
+[38;5;214m2026-09-27 00:38:47.980659+00:00 [warning] <0.36609.0> closing AMQP connection <0.36609.0> (172.18.0.1:41582 -> 172.18.0.3:5672 - rabbitConnectionFactory#7be9582e:0, vhost: '/', user: 'fastrag'):[0m
+[38;5;214m2026-09-27 00:38:47.980659+00:00 [warning] <0.36609.0> client unexpectedly closed TCP connection[0m
+2026-09-27 00:39:20.373754+00:00 [info] <0.36805.0> accepting AMQP connection <0.36805.0> (172.18.0.1:57164 -> 172.18.0.3:5672)[0m
+2026-09-27 00:39:20.411234+00:00 [info] <0.36805.0> connection <0.36805.0> (172.18.0.1:57164 -> 172.18.0.3:5672) has a client-provided name: rabbitConnectionFactory#178f5b5b:0[0m
+2026-09-27 00:39:20.422691+00:00 [info] <0.36805.0> connection <0.36805.0> (172.18.0.1:57164 -> 172.18.0.3:5672 - rabbitConnectionFactory#178f5b5b:0): user 'fastrag' authenticated and granted access to vhost '/'[0m
+[38;5;214m2026-09-27 00:44:54.053528+00:00 [warning] <0.36805.0> closing AMQP connection <0.36805.0> (172.18.0.1:57164 -> 172.18.0.3:5672 - rabbitConnectionFactory#178f5b5b:0, vhost: '/', user: 'fastrag'):[0m
+[38;5;214m2026-09-27 00:44:54.053528+00:00 [warning] <0.36805.0> client unexpectedly closed TCP connection[0m
+2026-09-27 00:45:14.042377+00:00 [info] <0.36979.0> accepting AMQP connection <0.36979.0> (172.18.0.1:41212 -> 172.18.0.3:5672)[0m
+2026-09-27 00:45:14.079833+00:00 [info] <0.36979.0> connection <0.36979.0> (172.18.0.1:41212 -> 172.18.0.3:5672) has a client-provided name: rabbitConnectionFactory#56589f00:0[0m
+2026-09-27 00:45:14.084897+00:00 [info] <0.36979.0> connection <0.36979.0> (172.18.0.1:41212 -> 172.18.0.3:5672 - rabbitConnectionFactory#56589f00:0): user 'fastrag' authenticated and granted access to vhost '/'[0m
+[38;5;214m2026-09-27 00:52:53.939549+00:00 [warning] <0.36979.0> closing AMQP connection <0.36979.0> (172.18.0.1:41212 -> 172.18.0.3:5672 - rabbitConnectionFactory#56589f00:0, vhost: '/', user: 'fastrag'):[0m
+[38;5;214m2026-09-27 00:52:53.939549+00:00 [warning] <0.36979.0> client unexpectedly closed TCP connection[0m
+[38;5;214m2026-09-27 05:44:16.208072+00:00 [warning] <0.42318.0> Deprecated features: `management_metrics_collection`: Feature `management_metrics_collection` is deprecated.[0m
+[38;5;214m2026-09-27 05:44:16.208072+00:00 [warning] <0.42318.0> By default, this feature can still be used for now.[0m
+[38;5;214m2026-09-27 05:44:16.208072+00:00 [warning] <0.42318.0> Its use will not be permitted by default in a future minor RabbitMQ version and the feature will be removed from a future major RabbitMQ version; actual versions to be determined.[0m
+[38;5;214m2026-09-27 05:44:16.208072+00:00 [warning] <0.42318.0> To continue using this feature when it is not permitted by default, set the following parameter in your configuration:[0m
+[38;5;214m2026-09-27 05:44:16.208072+00:00 [warning] <0.42318.0>     "deprecated_features.permit.management_metrics_collection = true"[0m
+[38;5;214m2026-09-27 05:44:16.208072+00:00 [warning] <0.42318.0> To test RabbitMQ as if the feature was removed, set this in your configuration:[0m
+[38;5;214m2026-09-27 05:44:16.208072+00:00 [warning] <0.42318.0>     "deprecated_features.permit.management_metrics_collection = false"[0m

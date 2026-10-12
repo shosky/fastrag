@@ -318,6 +318,9 @@ public class SchemaInitializer {
 
         // 检索日志图谱维度列（兼容已有表；D1 可观测性）
         addColumnIfNotExists("kb_retrieval_log", "graph_entity_count", "INT DEFAULT 0 COMMENT '图谱通道命中结果数'");
+        // 检索日志查询增强维度列（与 schema.sql 双处同步；2026-10-09 检索事故可观测性）
+        addColumnIfNotExists("kb_retrieval_log", "enhance_model", "VARCHAR(128) DEFAULT NULL COMMENT '查询增强使用的 LLM 模型（default=系统默认网关）'");
+        addColumnIfNotExists("kb_retrieval_log", "enhance_status", "VARCHAR(16) DEFAULT NULL COMMENT '查询增强状态：ok=改写被采纳/fallback=LLM失败或无变体/off=未启用'");
 
         // 添加 model 表缺失列（兼容已有表）
         addColumnIfNotExists("model", "context_window", "INT DEFAULT 4096 COMMENT '上下文窗口大小'");

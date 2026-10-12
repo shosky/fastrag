@@ -10,6 +10,7 @@ package com.fastrag.module.retrieval.controller;
  * <ul>
  *   <li>{@code POST /api/retrieval/search} - 知识检索（核心接口，支持向量/全文/混合模式）</li>
  *   <li>{@code GET  /api/retrieval/kb/{kbId}/chunks/count} - 获取知识库 chunk 总数</li>
+ *   <li>{@code GET  /api/retrieval/enhance-status} - 查询增强 LLM 健康状态（网关探活）</li>
  *   <li>{@code POST /api/query/suggest} - 查询建议</li>
  *   <li>{@code POST /api/query/expand-synonyms} - 同义词扩展</li>
  *   <li>{@code POST /api/query-rules/apply} - 查询规则改写</li>
@@ -40,6 +41,11 @@ public class RetrievalController {
     private final RetrievalLogService logService; private final UpdateRemindService remindService;
     @PostMapping("/api/retrieval/search") public ApiResponse<?> search(@RequestBody RetrievalRequest req) { return ApiResponse.success(retrievalService.search(req)); }
     @GetMapping("/api/retrieval/kb/{kbId}/chunks/count") public ApiResponse<?> count(@PathVariable String kbId) { return ApiResponse.success(retrievalService.getChunkCount(kbId)); }
+    /** 查询增强 LLM 健康状态（检索设置页健康提示；kbId/model 均可空，空则按系统级配置/默认网关解析） */
+    @GetMapping("/api/retrieval/enhance-status") public ApiResponse<?> enhanceStatus(@RequestParam(required = false) String kbId,
+                                                                                      @RequestParam(required = false) String model) {
+        return ApiResponse.success(retrievalService.enhanceStatus(kbId, model));
+    }
     @PostMapping("/api/query/suggest") public ApiResponse<?> suggest(@RequestBody Map<String,Object> b) {
         var result = queryService.suggest(String.valueOf(b.get("query")));
         return ApiResponse.success(result.get("suggestedQuery"));

@@ -49,7 +49,11 @@ public class SkillsMiddleware implements AgentMiddleware {
      */
     public static final String PINNED_SKILL_NAMES_KEY = "pinnedSkillNames";
 
-    /** F1：pinned must_use 块单 run 只处理一次的哨兵键（INJECTED_FLAG 模式，工具循环不重复追加/告警） */
+    /**
+     * F1+：展开直注块单 run 只处理一次的哨兵键（INJECTED_FLAG 模式，工具循环不重复注入/告警）。
+     * 沿用 F1 must_use 时代的键名（runtimeState 存量兼容），语义已从"must_use 提示已处理"
+     * 升级为"匹配技能全文直注已处理"（直注守卫，2026-10-07）。
+     */
     public static final String MUST_USE_INJECTED_FLAG = "pinnedSkillsMustUseHandled";
 
     /**
@@ -71,8 +75,8 @@ public class SkillsMiddleware implements AgentMiddleware {
                                       List<ChatMessage> messages,
                                       List<ToolDefinition> tools) {
         if (context.getSkills() == null || context.getSkills().isEmpty()) {
-            // 无绑定技能：点名全为集外，pinned 不新增能力——仅 warn 静默忽略（单 run 一次）
-            applyPinnedSkills(context, messages);
+            // 无绑定技能：点名全为集外，pinned/匹配不新增能力——仅 warn 静默忽略（单 run 一次）
+            expandMatchedSkills(context, messages);
             return context;
         }
 
@@ -91,8 +95,8 @@ public class SkillsMiddleware implements AgentMiddleware {
             injectSystemPrompt(messages, skillsPrompt);
         }
 
-        // Phase 3: F1 @提及技能——pinned 与当轮可用集合求交集，命中追加 must_use 强提示（单 run 一次）
-        applyPinnedSkills(context, messages);
+        // Phase 3: F1+ 匹配技能全文直注——pinned ∪ keywords/name 命中并集，全文直注 system（单 run 一次）
+        expandMatchedSkills(context, messages);
 
         return context;
     }
@@ -313,59 +317,151 @@ public class SkillsMiddleware implements AgentMiddleware {
     }
 
     /**
-     * F1 @提及技能（skill-feature-batch.md F1，2026-10-07 裁决）：用户 @ 点名的技能
-     * （{@link #PINNED_SKILL_NAMES_KEY}，AppServiceImpl 会话执行核写入）与当轮可用技能集合
-     * （promptSkills 传递闭包，slug 或名称均可命中）求交集；交集非空则追加 {@code <must_use>}
-     * 强提示块——pinned 不收窄白名单、不新增能力（对齐 WeKnora），集外点名静默忽略并 warn
-     * （含被忽略的 name）。单 run 只处理一次（{@link #MUST_USE_INJECTED_FLAG}，工具循环多轮
-     * 模型调用不重复追加、不重复告警）。
+     * F1+（skill-feature-batch.md F1 增强，2026-10-07）：匹配技能全文直注——两路并集
+     * （pinned ∪ keyword/name 命中）非空则把命中技能的 SKILL.md 全文以
+     * {@code <skill_instruction>} 块直注 system message，引擎直接展开、不再赌模型自觉
+     * read_file（Qwen3-8B 真实日志：must_use 已注入仍跳过 read_file）。只直注加强、
+     * 不屏蔽其他工具，零 LLM 调用；展开集为空 → 维持现状（仅可用技能列表）。
+ * 每 token 成本：单技能 1-2KB，逐轮随 system 重复可接受（与既有技能列表同机制）。
+     * <ul>
+     *   <li>a 点名直注：{@link #PINNED_SKILL_NAMES_KEY}（AppServiceImpl 会话执行核写入）
+     *       与可用集合（闭包实体，slug/name 均可命中）求交集；集外点名静默忽略并 warn。</li>
+     *   <li>b 描述自动匹配：当轮最后一条用户消息（{@link #extractLastUserQuery}）与技能
+     *       frontmatter {@code keywords}（{@link #keywordsOf}，不区分大小写包含命中）或
+     *       技能 name（被 query 包含）匹配。</li>
+     * </ul>
+     * 单 run 只处理一次（{@link #MUST_USE_INJECTED_FLAG} 直注守卫，工具循环多轮模型调用
+     * 不重复注入、不重复告警）。匹配逻辑纯函数化在 {@link #expandMatched}（参照 resolveSkillEnvs 先例）。
      */
-    private void applyPinnedSkills(BaseContext context, List<ChatMessage> messages) {
+    private void expandMatchedSkills(BaseContext context, List<ChatMessage> messages) {
         Map<String, Object> state = context.getRuntimeState();
         if (state.get(MUST_USE_INJECTED_FLAG) != null) return;
 
         List<String> pinned = normalizedPinnedNames(state.get(PINNED_SKILL_NAMES_KEY));
-        if (pinned.isEmpty()) return;
 
-        // 可用技能索引：闭包内技能的 slug 与 name 均作命中键（两键同指一个实体时先到先得）
+        // 可用技能 = run 级闭包缓存实体（M2-5，零查库）
         Map<String, Skill> entities = context.getRuntimeSkillEntities();
-        Map<String, Skill> available = new LinkedHashMap<>();
-        if (entities != null) {
-            for (Skill s : entities.values()) {
-                if (s.getSlug() != null) available.putIfAbsent(s.getSlug(), s);
-                if (s.getName() != null) available.putIfAbsent(s.getName(), s);
-            }
+        Collection<Skill> available = entities != null ? entities.values() : List.of();
+
+        String query = extractLastUserQuery(messages);
+        SkillExpansion expansion = expandMatched(available, pinned, query);
+
+        if (!expansion.ignoredPinned().isEmpty()) {
+            log.warn("[SkillsMiddleware] Pinned skills outside available set ignored: {}",
+                    expansion.ignoredPinned());
         }
 
+        // 无论是否命中都置哨兵：本轮展开已处理，工具循环不再重复注入/告警
+        state.put(MUST_USE_INJECTED_FLAG, Boolean.TRUE);
+        if (expansion.matched().isEmpty() || messages == null || messages.isEmpty()) return;
+
+        StringBuilder sb = new StringBuilder();
+        for (Skill s : expansion.matched()) {
+            sb.append(skillInstructionBlock(s));
+        }
+        injectSystemPrompt(messages, sb.toString());
+        log.debug("[SkillsMiddleware] Injected expanded skill instructions: {}",
+                expansion.matched().stream().map(Skill::getSlug).toList());
+    }
+
+    /** 匹配展开结果：matched = 直注集（pinned 优先、按 slug 去重），ignoredPinned = 集外点名清单。 */
+    record SkillExpansion(List<Skill> matched, List<String> ignoredPinned) {
+    }
+
+    /**
+     * F1+ 纯函数：pinned ∪ keyword/name 匹配（a+b 并集）。
+     * pinned 按 slug/name 两键命中（先到先得），未命中收集 ignoredPinned；
+     * query 非空白时对未匹配技能做 keywords/name 包含命中（均不区分大小写）。
+     * null 输入安全：available/pinned/query 皆可为 null。
+     */
+    static SkillExpansion expandMatched(Collection<Skill> available, List<String> pinnedNames, String query) {
         List<Skill> matched = new ArrayList<>();
         List<String> ignored = new ArrayList<>();
         Set<String> seenSlugs = new HashSet<>();
-        for (String name : pinned) {
-            Skill s = available.get(name);
-            if (s == null) {
-                ignored.add(name);
-            } else if (seenSlugs.add(s.getSlug())) {
-                matched.add(s); // 同一技能被 slug 与 name 重复点名只注入一次
+
+        // a) 点名：slug 与 name 均作命中键（两键同指一个实体时先到先得）
+        Map<String, Skill> byKey = new LinkedHashMap<>();
+        if (available != null) {
+            for (Skill s : available) {
+                if (s == null) continue;
+                if (s.getSlug() != null) byKey.putIfAbsent(s.getSlug(), s);
+                if (s.getName() != null) byKey.putIfAbsent(s.getName(), s);
             }
         }
-        if (!ignored.isEmpty()) {
-            log.warn("[SkillsMiddleware] Pinned skills outside available set ignored: {}", ignored);
+        if (pinnedNames != null) {
+            for (String name : pinnedNames) {
+                Skill s = byKey.get(name);
+                if (s == null) {
+                    ignored.add(name);
+                } else if (seenSlugs.add(s.getSlug())) {
+                    matched.add(s); // 同一技能被 slug 与 name 重复点名只直注一次
+                }
+            }
         }
 
-        // 无论是否命中都置哨兵：本轮点名已处理，工具循环不再重复告警
-        state.put(MUST_USE_INJECTED_FLAG, Boolean.TRUE);
-        if (matched.isEmpty() || messages == null || messages.isEmpty()) return;
-
-        StringBuilder sb = new StringBuilder();
-        sb.append("\n\n<must_use>\n本轮用户点名了以下技能，必须优先调用 read_file 读取其 SKILL.md 并遵循指引：\n");
-        for (Skill s : matched) {
-            sb.append("- ").append(s.getName() != null ? s.getName() : s.getSlug())
-              .append(" (").append(SandboxWorkspaceLayout.SKILLS_ROOT).append("/")
-              .append(s.getSlug()).append("/SKILL.md)\n");
+        // b) 描述自动匹配：query 包含 keywords 或 name（不区分大小写）
+        if (query != null && !query.isBlank() && available != null) {
+            String lowerQuery = query.toLowerCase();
+            for (Skill s : available) {
+                if (s == null || s.getSlug() == null || !seenSlugs.add(s.getSlug())) continue;
+                if (matchesQuery(s, lowerQuery)) matched.add(s);
+            }
         }
-        sb.append("</must_use>\n");
-        injectSystemPrompt(messages, sb.toString());
-        log.debug("[SkillsMiddleware] Injected pinned-skills must_use block: {}", matched.stream().map(Skill::getSlug).toList());
+        return new SkillExpansion(matched, ignored);
+    }
+
+    /** b 匹配谓词：keywords 任一命中，或技能 name 被（已小写的）query 包含。 */
+    private static boolean matchesQuery(Skill s, String lowerQuery) {
+        for (String kw : keywordsOf(s)) {
+            if (lowerQuery.contains(kw.toLowerCase())) return true;
+        }
+        String name = s.getName();
+        return name != null && !name.isBlank() && lowerQuery.contains(name.toLowerCase());
+    }
+
+    /**
+     * 从 {@code skill.metadata}（SKILL.md frontmatter 全量 JSON，parser 已保证）的
+     * {@code keywords} 键读关键词：list 逐项、逗号分隔 string 拆分（兼容全角逗号），
+     * 逐项 trim、去空白；声明缺省/形态异常返回空列表（不阻断）。
+     */
+    static List<String> keywordsOf(Skill skill) {
+        if (skill == null || skill.getMetadata() == null) return List.of();
+        Object v = skill.getMetadata().get("keywords");
+        if (v == null) return List.of();
+        List<?> items = v instanceof List<?> list ? list : List.of(v);
+        List<String> out = new ArrayList<>();
+        for (Object o : items) {
+            if (o == null) continue;
+            for (String part : o.toString().split("[,，]")) {
+                String p = part.strip();
+                if (!p.isEmpty()) out.add(p);
+            }
+        }
+        return out;
+    }
+
+    /**
+     * query 提取：messages 中最后一条 role=user 的 content（无则 null，含空白由调用方过滤）。
+     */
+    static String extractLastUserQuery(List<ChatMessage> messages) {
+        if (messages == null) return null;
+        for (int i = messages.size() - 1; i >= 0; i--) {
+            ChatMessage m = messages.get(i);
+            if (m != null && "user".equals(m.getRole())) return m.getContent();
+        }
+        return null;
+    }
+
+    /**
+     * 单技能直注块：{@code <skill_instruction skill="{name}">} + 展开说明 + SKILL.md 全文
+     * （取 runtimeSkillEntities 缓存 content，DB 为正文事实源）+ 闭合标签。
+     */
+    static String skillInstructionBlock(Skill s) {
+        String name = s.getName() != null && !s.getName().isBlank() ? s.getName() : s.getSlug();
+        String content = s.getContent() != null ? s.getContent() : "";
+        return "\n\n<skill_instruction skill=\"" + name + "\">\n"
+                + "（用户点名或查询匹配到的技能指引，已展开，直接遵循，无需再 read_file）\n"
+                + content + "\n</skill_instruction>\n";
     }
 
     /** 点名列表规范化：List 投影 + trim + 去空白 + 去重，保持请求顺序。 */

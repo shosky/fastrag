@@ -162,6 +162,8 @@ export interface RetrievalSettingConfig {
   multiQueryCount?: number
   /** 多查询改写所用 LLM 模型 code（空 = 系统默认） */
   multiQueryModel?: string
+  /** 查询增强 LLM 模型 code（自动纠错/多查询改写/图谱实体抽取共用；空 = 跟随系统默认） */
+  llmModel?: string
 
   // ===== 多路召回（可选，默认关闭）=====
   /** 是否启用多路召回（关闭则只走单一 mode 通道） */

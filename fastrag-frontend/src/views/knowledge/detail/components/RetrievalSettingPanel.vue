@@ -14,6 +14,7 @@ const emit = defineEmits<{
 const localConfig = ref<RetrievalSettingConfig>({ ...props.config })
 
 const rerankModels = ref<any[]>([])
+const llmModels = ref<any[]>([])
 
 onMounted(async () => {
   try {
@@ -24,6 +25,12 @@ onMounted(async () => {
       { code: 'bge-reranker-v2-m3', name: 'bge-reranker-v2-m3' },
       { code: 'bge-reranker-base', name: 'bge-reranker-base' },
     ]
+  }
+  try {
+    const res = await api.getModels({ purpose: 'LLM' })
+    llmModels.value = (res as any)?.list || res || []
+  } catch {
+    llmModels.value = []
   }
 })
 
@@ -107,6 +114,20 @@ const keywordWeight = computed(() => (1 - (localConfig.value.semanticWeight ?? 0
     <el-form-item label="自动纠错">
       <el-switch :model-value="localConfig.enableAutoCorrection ?? true" @change="(v: any) => updateBool('enableAutoCorrection', v)" />
       <span class="retrieval-form__suffix">错别字纠正 + 拼音首字母匹配</span>
+    </el-form-item>
+
+    <el-form-item label="查询增强模型">
+      <el-select
+        :model-value="localConfig.llmModel || ''"
+        clearable
+        placeholder="跟随系统默认"
+        style="width: 240px"
+        @change="(v: any) => updateStr('llmModel', v || '')"
+      >
+        <el-option label="跟随系统默认" value="" />
+        <el-option v-for="m in llmModels" :key="m.code" :label="m.name || m.code" :value="m.code" />
+      </el-select>
+      <span class="retrieval-form__suffix">自动纠错 / 多查询改写 / 图谱实体抽取共用</span>
     </el-form-item>
 
     <el-form-item label="查询重写">

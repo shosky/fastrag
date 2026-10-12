@@ -12,4 +12,17 @@ package com.fastrag.module.retrieval.service;
  */
 import com.fastrag.module.retrieval.model.*;
 import java.util.List;
-public interface RetrievalService { List<SearchResultItem> search(RetrievalRequest req); long getChunkCount(String kbId); }
+import java.util.Map;
+public interface RetrievalService {
+    List<SearchResultItem> search(RetrievalRequest req);
+    long getChunkCount(String kbId);
+
+    /**
+     * 查询增强 LLM 健康状态（检索设置页健康提示用）。
+     *
+     * @param kbId  知识库 ID（可空：空则只按系统级配置/默认网关解析）
+     * @param model 指定模型 code（可空：空则按 KB 保存配置 > 系统默认 > 默认网关解析）
+     * @return {model, gateway, reachable}
+     */
+    Map<String, Object> enhanceStatus(String kbId, String model);
+}

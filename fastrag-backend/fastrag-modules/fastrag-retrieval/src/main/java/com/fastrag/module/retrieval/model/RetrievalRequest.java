@@ -46,6 +46,8 @@ public class RetrievalRequest {
         private Boolean enableMultiQuery;         // 多查询改写召回（LLM 生成 N 个变体查询分别召回后 RRF 融合，默认关闭）
         private Integer multiQueryCount;          // 多查询变体数量（含原查询，2~5，默认 3）
         private String multiQueryModel;           // 多查询改写所用 LLM 模型 code（空 = 系统默认网关）
+        private String llmModel;                  // 查询增强 LLM 模型 code（自动纠错/多查询改写/NER 共用；
+                                                  // 优先级 请求 > KB 保存配置 > sys_config general_retrieval_llm_model > 默认网关）
 
         // ===== 多路召回（可选，默认关闭）=====
         private Boolean enableMultiRetrieval;      // 是否启用多路召回

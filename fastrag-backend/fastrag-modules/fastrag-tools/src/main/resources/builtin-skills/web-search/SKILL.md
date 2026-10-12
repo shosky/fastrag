@@ -2,13 +2,16 @@
 name: 联网搜索
 slug: web-search
 description: 当用户询问实时信息、新闻、天气、股价等内容时，自动检索互联网获取最新结果。支持多源交叉验证、时效性排序和结构化摘要输出。
-version: 1.2.0
+version: 1.3.0
 category: retrieval
 icon: "#409eff"
+keywords: [股价, 行情, 美股, 股票, 实时信息, 新闻, 天气, 搜索, 最新, QQQ]
 tool_dependencies:
   - tavily_search
 skill_dependencies: []
 mcp_dependencies: []
+env:
+  - FMP_API_KEY
 ---
 
 # 联网搜索技能
@@ -65,6 +68,26 @@ mcp_dependencies: []
 
 **注意**：[如有不确定性或冲突，在此标注]
 ```
+
+## 股价/行情查询
+
+用户问**个股/指数/ETF 的实时报价、涨跌、估值**（如 QQQ、AAPL、沪深300）时，优先走行情接口而非普通网页搜索（数据更结构化、更即时）。调用 Financial Modeling Prep 行情接口：
+
+```bash
+curl -s "https://financialmodelingprep.com/api/v3/quote/{symbol}?apikey=$FMP_API_KEY"
+```
+
+取关键字段（如最新价）：
+
+```bash
+curl -s "https://financialmodelingprep.com/api/v3/quote/QQQ?apikey=$FMP_API_KEY" | jq '.[0].price'
+```
+
+**凭据约束（必须遵守）**：
+
+- `FMP_API_KEY` 由平台经**环境变量注入**沙箱，直接以 `$FMP_API_KEY` 引用
+- 不可把 key **硬编码**进命令、脚本或回答文本
+- 不可向用户**询问/索要** API key；环境变量缺失时如实告知"行情凭据未配置"，改用普通搜索兜底
 
 ## 可用工具
 

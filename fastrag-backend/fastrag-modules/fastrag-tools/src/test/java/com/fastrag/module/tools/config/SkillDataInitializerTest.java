@@ -66,8 +66,8 @@ class SkillDataInitializerTest {
         assertNotNull(webSearch, "web-search 内置技能应被播种");
         assertEquals(List.of("tool:tavily_search"), webSearch.getDependencies(),
             "frontmatter 依赖应解析进 dependencies JSON（M3-2）");
-        assertNull(webSearch.getEnvs(),
-            "无 env 声明的技能 envs 应为 null（F4：播种走解析结果，空列表不落库）");
+        assertEquals(List.of("FMP_API_KEY"), webSearch.getEnvs(),
+            "frontmatter env 声明应解析进 envs JSON（F4；web-search v1.3.0 起声明 FMP_API_KEY）");
         assertEquals("builtin", webSearch.getSourceType());
         assertEquals(Integer.valueOf(1), webSearch.getIsBuiltin());
         // 播种须复制技能目录到运行时数据目录

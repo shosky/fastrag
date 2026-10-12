@@ -222,6 +222,7 @@ function defaultRetrievalConfig(): RetrievalSettingConfig {
     rerankStrategy: 'weighted',
     semanticWeight: 0.7,
     enableAutoCorrection: true,
+    llmModel: '',
     enableQueryRewrite: true,
     enableGraphExpansion: true,
     graphExpansionDepth: 1,

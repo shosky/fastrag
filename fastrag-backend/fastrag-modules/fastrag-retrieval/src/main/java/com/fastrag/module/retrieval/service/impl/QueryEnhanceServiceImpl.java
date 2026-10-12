@@ -71,19 +71,27 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
     /**
      * 查询建议：R6（P2-6）并入 {@link #expandQueries} 统一实现——复用同一 LLM 变体改写机制
      * （取 1 个变体），首个与原查询不同的变体作为建议查询；LLM 失败/无可用变体时降级为
-     * 原查询且 reason 为空（等价无建议）。原占位实现（直接返回原查询）移除。
+     * 原查询且 reason 为空（等价无建议）。
      */
     @Override
     public Map<String, Object> suggest(String query) {
+        return suggest(query, null);
+    }
+
+    @Override
+    public Map<String, Object> suggest(String query, String llmModel) {
         var r = new HashMap<String, Object>();
         if (query == null || query.isBlank()) {
             r.put("suggestedQuery", query);
             r.put("reason", "");
             return r;
         }
-        List<String> variants = expandQueries(query, 2, null, null);
+        List<String> variants = expandQueries(query, 2, llmModel, null);
         String suggested = variants.stream()
                 .filter(v -> !v.equals(query))
+                // 双保险：expandQueries 已在源头过滤，这里再拦一次 LLM 失败文案，
+                // 避免其被当作建议查询顶替真实 query（2026-10-09 检索事故根因）
+                .filter(v -> !LlmService.isFailureText(v))
                 .findFirst()
                 .orElse(query);
         r.put("suggestedQuery", suggested);
@@ -262,6 +270,14 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
 
         try {
             String response = llmService.chat(llmModel, prompt, apiUrl, apiKey);
+            // LLM 网关失败时 doChatInternal 不抛异常而是返回错误文案（兼容既有调用方），
+            // 必须在此识别并降级为原查询——否则错误文案会被当作改写变体
+            // 顶替真实检索 query（2026-10-09 检索事故根因）
+            if (LlmService.isFailureText(response)) {
+                log.warn("[MultiQuery] LLM gateway failed ({}), fallback to original query: {}",
+                        response, query);
+                return List.of(query);
+            }
             Set<String> variants = new LinkedHashSet<>();
             variants.add(query);
             for (String line : response.split("\\r?\\n")) {

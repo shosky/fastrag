@@ -29,5 +29,9 @@ import com.baomidou.mybatisplus.annotation.*; import lombok.Data; import java.ti
     private Double topScore;
     private Integer graphEntityCount;
     private Boolean hasResult;
+    /** 查询增强使用的 LLM 模型（default=系统默认网关） */
+    private String enhanceModel;
+    /** 查询增强状态：ok=改写被采纳 / fallback=LLM 失败或无变体（用原始查询）/ off=自动纠错未启用 */
+    private String enhanceStatus;
     private LocalDateTime createdAt;
 }

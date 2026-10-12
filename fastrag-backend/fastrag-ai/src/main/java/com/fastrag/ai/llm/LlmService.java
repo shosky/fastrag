@@ -469,13 +469,33 @@ public class LlmService {
 
     // ==================== 内部实现 ====================
 
+    /**
+     * LLM 调用失败的返回文案前缀（网关连接失败/请求异常时 doChatInternal 不抛异常，
+     * 而是返回此文案以兼容既有调用方）。消费方必须用 {@link #isFailureText(String)}
+     * 识别并自行降级，不得将失败文案当作模型输出使用——否则会污染下游数据
+     * （如检索查询改写把错误文案当作改写结果，2026-10-09 检索事故根因）。
+     */
+    public static final String CALL_FAILURE_PREFIX = "模型调用失败: ";
+
+    /** LLM 返回空内容时的占位文案（与失败文案同属"非模型正文"，消费方须同样识别） */
+    public static final String EMPTY_RESPONSE_TEXT = "模型返回空响应";
+
+    /** 判断一段 LLM 返回文本是否为失败/空响应占位（而非真实模型输出） */
+    public static boolean isFailureText(String text) {
+        if (text == null) return true;
+        String t = text.trim();
+        return t.isEmpty()
+                || t.startsWith(CALL_FAILURE_PREFIX)
+                || EMPTY_RESPONSE_TEXT.equals(t);
+    }
+
     /** 核心调用：兼容原有逻辑（无 tools） */
     private String doChat(String model, List<ChatMessage> messages, double temperature,
                           String apiUrl, String apiKey, boolean stream, Boolean enableThinking,
                           List<ChatRequest.ToolDefinition> tools) {
         ChatResponse resp = doChatInternal(model, messages, temperature, apiUrl, apiKey,
                 stream, enableThinking, tools, "auto");
-        return resp.getContent() != null ? resp.getContent() : "模型返回空响应";
+        return resp.getContent() != null ? resp.getContent() : EMPTY_RESPONSE_TEXT;
     }
 
     /** 带 tools 的调用 */
@@ -555,7 +575,7 @@ public class LlmService {
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - t0;
             log.error("[LLM] doChatInternal failed after {}ms: model={}, error={}", elapsed, model, e.getMessage(), e);
-            return ChatResponse.text("模型调用失败: " + e.getMessage());
+            return ChatResponse.text(CALL_FAILURE_PREFIX + e.getMessage());
         }
     }
 
@@ -566,7 +586,7 @@ public class LlmService {
                 .retrieve().bodyToMono(String.class)
                 .block(Duration.ofSeconds(gatewayTimeoutSeconds));
 
-        if (resp == null) return ChatResponse.text("模型返回空响应");
+        if (resp == null) return ChatResponse.text(EMPTY_RESPONSE_TEXT);
 
         JsonNode root = objectMapper.readTree(resp);
         long elapsed = System.currentTimeMillis() - t0;
@@ -609,7 +629,7 @@ public class LlmService {
                 .collectList()
                 .block(Duration.ofSeconds(totalTimeout));
 
-        if (chunks == null || chunks.isEmpty()) return ChatResponse.text("模型返回空响应");
+        if (chunks == null || chunks.isEmpty()) return ChatResponse.text(EMPTY_RESPONSE_TEXT);
 
         log.info("[LLM] stream chunks received: {}", chunks.size());
         // 打印第一个 chunk 用于调试

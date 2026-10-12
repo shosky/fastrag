@@ -799,6 +799,8 @@ CREATE TABLE IF NOT EXISTS kb_retrieval_log (
     latency_ms INT,
     has_result TINYINT DEFAULT 1,
     graph_entity_count INT DEFAULT 0 COMMENT '图谱通道命中结果数',
+    enhance_model VARCHAR(128) DEFAULT NULL COMMENT '查询增强使用的 LLM 模型（default=系统默认网关）',
+    enhance_status VARCHAR(16) DEFAULT NULL COMMENT '查询增强状态：ok=改写被采纳/fallback=LLM失败或无变体/off=未启用',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_kb_time (kb_id, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
