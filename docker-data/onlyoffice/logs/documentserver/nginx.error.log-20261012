@@ -1,0 +1,4 @@
+2026/10/09 01:21:50 [error] 1151#1151: *1 connect() failed (111: Connection refused) while connecting to upstream, client: ::1, server: , request: "GET /healthcheck HTTP/1.1", upstream: "http://127.0.0.1:8000/healthcheck", host: "localhost"
+2026/10/09 01:21:50 [error] 1151#1151: *1 connect() failed (111: Connection refused) while connecting to upstream, client: ::1, server: , request: "GET /healthcheck HTTP/1.1", upstream: "http://127.0.0.1:8000/healthcheck", host: "localhost"
+2026/10/12 00:44:12 [error] 1197#1197: *1 connect() failed (111: Connection refused) while connecting to upstream, client: ::1, server: , request: "GET /healthcheck HTTP/1.1", upstream: "http://127.0.0.1:8000/healthcheck", host: "localhost"
+2026/10/12 00:44:12 [error] 1197#1197: *1 connect() failed (111: Connection refused) while connecting to upstream, client: ::1, server: , request: "GET /healthcheck HTTP/1.1", upstream: "http://127.0.0.1:8000/healthcheck", host: "localhost"

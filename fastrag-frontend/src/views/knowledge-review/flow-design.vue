@@ -361,6 +361,114 @@ async function saveNodeConfig() {
   }
 }
 
+// ===== 节点配置与优化（全宽抽屉版）：行内编辑 名称/角色/超时/监听器 + 优化建议 + 增删复制 + 整体落库 =====
+const showNodeDrawer = ref(false)
+const nodeDrawerRow = ref<any>(null)
+const nodeDrawerSaving = ref(false)
+const nodeDrawerLoading = ref(false)
+const nodeEditList = ref<any[]>([])
+const drawerListeners = ref<any[]>([])
+const drawerSuggestions = ref<any[]>([])
+async function openNodeDrawer(row: any) {
+  if (!row || !row.id) { ElMessage.warning('请先保存模板后再配置节点'); return }
+  nodeDrawerRow.value = row
+  showNodeDrawer.value = true
+  nodeDrawerLoading.value = true
+  try {
+    const [listeners, suggestions] = await Promise.all([
+      api.getListeners(selectedKbId.value).catch(() => []),
+      api.getNodeOptimizationSuggestions(selectedKbId.value, row.id).catch(() => []),
+    ])
+    drawerListeners.value = Array.isArray(listeners) ? listeners : listeners?.list || []
+    drawerSuggestions.value = Array.isArray(suggestions) ? suggestions : []
+    // 兼容两种历史键名：listeners / listenerIds
+    nodeEditList.value = getSteps(row).map((s: any, i: number) => {
+      const ls = Array.isArray(s.listeners) ? s.listeners : (Array.isArray(s.listenerIds) ? s.listenerIds : [])
+      return {
+        id: s.id || `step-${i + 1}`,
+        name: s.name || `节点${i + 1}`,
+        reviewerRole: s.reviewerRole || '知识管理员',
+        timeoutHours: Number(s.timeoutHours) || 24,
+        listenerIds: [...ls],
+      }
+    })
+  } finally { nodeDrawerLoading.value = false }
+}
+function drawerAddNode() {
+  nodeEditList.value.push({ id: `step-new-${Date.now()}`, name: `新节点${nodeEditList.value.length + 1}`, reviewerRole: '知识管理员', timeoutHours: 24, listenerIds: [] })
+}
+function drawerCopyNode(idx: number) {
+  const src = nodeEditList.value[idx]
+  nodeEditList.value.splice(idx + 1, 0, { ...src, id: `step-copy-${Date.now()}`, name: src.name + '（副本）' })
+}
+function drawerRemoveNode(idx: number) { nodeEditList.value.splice(idx, 1) }
+function drawerSuggestFor(n: any) {
+  const hit = drawerSuggestions.value.find((s: any) => s.title && n.name && s.title.includes(n.name))
+  return hit?.description || ((n.timeoutHours || 0) > 24 ? '超时超 24h，建议缩短并增加提醒' : '当前配置效率良好')
+}
+// —— 优化动作：记录每次优化（节点/变更），保存时一并落库 ——
+const optLog = ref<{ node: string; change: string }[]>([])
+function optimizeNode(n: any) {
+  const changes: string[] = []
+  if ((Number(n.timeoutHours) || 0) > 24) {
+    const old = n.timeoutHours
+    n.timeoutHours = 24
+    changes.push(`超时 ${old}h → 24h`)
+  }
+  if (!changes.length) { ElMessage.info(`节点「${n.name}」已处于优化状态，无需调整`); return }
+  changes.forEach(c => optLog.value.push({ node: n.name, change: c }))
+  ElMessage.success(`已优化节点「${n.name}」：${changes.join('、')}（点「保存优化结果」生效）`)
+}
+function optimizeAllNodes() {
+  let count = 0
+  nodeEditList.value.forEach(n => {
+    if ((Number(n.timeoutHours) || 0) > 24) {
+      const old = n.timeoutHours
+      n.timeoutHours = 24
+      optLog.value.push({ node: n.name, change: `超时 ${old}h → 24h` })
+      count++
+    }
+  })
+  if (!count) { ElMessage.info('所有节点均已处于优化状态，无需调整'); return }
+  ElMessage.success(`智能优化完成：共优化 ${count} 个节点（点「保存优化结果」生效）`)
+}
+function applyDrawerSuggestion(sug: any) {
+  const action = sug.action || ''
+  if (action === 'update_timeout') {
+    const target = nodeEditList.value.find(n => (sug.title || '').includes(n.name) || n.id === sug.nodeId)
+    if (target && (Number(target.timeoutHours) || 0) > 24) {
+      const old = target.timeoutHours
+      target.timeoutHours = 24
+      optLog.value.push({ node: target.name, change: `超时 ${old}h → 24h` })
+      ElMessage.success(`已按系统建议优化「${target.name}」`)
+    } else { ElMessage.info('该建议对应的节点无需调整') }
+  } else if (action === 'add_node') {
+    drawerAddNode()
+    optLog.value.push({ node: '新增节点', change: '按系统建议新增审核节点' })
+    ElMessage.success('已按系统建议新增审核节点')
+  } else { ElMessage.info('该建议无需操作或暂不支持一键应用') }
+}
+async function drawerSaveAll() {
+  if (!nodeEditList.value.length) { ElMessage.warning('至少保留一个节点'); return }
+  if (nodeEditList.value.some((n: any) => !n.name.trim())) { ElMessage.warning('节点名称不能为空'); return }
+  nodeDrawerSaving.value = true
+  try {
+    const row = nodeDrawerRow.value
+    const steps = nodeEditList.value.map((n: any, i: number) => ({
+      id: `step-${i + 1}`, order: i + 1, name: n.name.trim(),
+      reviewerRole: n.reviewerRole, timeoutHours: Number(n.timeoutHours) || 24,
+      listeners: n.listenerIds, listenerIds: n.listenerIds,
+    }))
+    await api.updateReviewTemplate(selectedKbId.value, row.id, {
+      name: row.name, description: row.description, flowConfig: { steps }, category: row.category || 'review',
+    })
+    ElMessage.success(optLog.value.length ? `已保存：含 ${optLog.value.length} 项优化` : '节点配置已保存')
+    optLog.value = []
+    showNodeDrawer.value = false
+    await loadData()
+  } catch (e: any) { ElMessage.error('保存失败：' + (e?.message || '')) } finally { nodeDrawerSaving.value = false }
+}
+
 /** 应用优化建议 — 直接修改模板并保存 */
 async function handleApplySuggestion(sug: any) {
   if (!currentEfficiencyRow.value || !currentEfficiencyRow.value.id) {
@@ -454,6 +562,7 @@ async function handleApplySuggestion(sug: any) {
             <el-option v-for="kb in kbList" :key="kb.id" :label="kb.name" :value="kb.id" />
           </el-select>
           <el-button :icon="TrendCharts" @click="handleShowEfficiency(dataList[0])">效率分析</el-button>
+          <el-button type="warning" @click="openNodeDrawer(dataList[0])">优化节点配置</el-button>
           <el-button @click="handleShowTemplateLib">流程模板</el-button>
           <el-button @click="handleImportFlow('template')">导入模板</el-button>
           <el-button @click="handleImportFlow('flow')">导入流程图</el-button>
@@ -478,11 +587,12 @@ async function handleApplySuggestion(sug: any) {
         </el-table-column>
         <el-table-column prop="creator" label="创建人" width="100" />
         <el-table-column prop="createdAt" label="创建时间" width="150" show-overflow-tooltip />
-        <el-table-column label="操作" width="320" fixed="right">
+        <el-table-column label="操作" width="380" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" :icon="ZoomIn" @click="handleViewFlow(row)">查看</el-button>
             <el-button link type="primary" size="small" :icon="Download" @click="handleExportFlow(row)">导出</el-button>
             <el-button link type="primary" size="small" @click="handleEdit(row)">编辑</el-button>
+            <el-button link type="warning" size="small" @click="openNodeDrawer(row)">优化节点配置</el-button>
             <el-button link type="primary" size="small" @click="handleViewNodeEfficiency(row)">节点效率</el-button>
             <el-button link type="danger" size="small" @click="handleDelete(row)">删除</el-button>
           </template>
@@ -650,12 +760,87 @@ async function handleApplySuggestion(sug: any) {
       </el-dialog>
       <template #footer><el-button @click="showEfficiencyDialog=false">关闭</el-button></template>
     </el-dialog>
+
+    <!-- 流程节点优化配置抽屉（一键优化 + 系统建议应用 + 行内编辑 + 优化记录 + 整体落库） -->
+    <el-drawer v-model="showNodeDrawer" :title="`流程节点优化配置 — ${nodeDrawerRow?.name || ''}`" size="62%" :close-on-click-modal="false">
+      <div v-loading="nodeDrawerLoading">
+        <div style="display:flex;gap:12px;margin-bottom:10px;flex-wrap:wrap;align-items:center">
+          <el-tag>节点数 {{ nodeEditList.length }}</el-tag>
+          <el-tag type="warning">总时限 {{ nodeEditList.reduce((s: number, n: any) => s + (Number(n.timeoutHours) || 0), 0) }}h</el-tag>
+          <el-tag v-if="nodeEditList.length" type="danger">瓶颈节点：{{ [...nodeEditList].sort((a: any, b: any) => (b.timeoutHours || 0) - (a.timeoutHours || 0))[0]?.name }}</el-tag>
+          <span style="flex:1"></span>
+          <el-button type="primary" size="small" @click="optimizeAllNodes">一键智能优化</el-button>
+          <el-button size="small" @click="openNodeDrawer(nodeDrawerRow)">重置</el-button>
+        </div>
+
+        <!-- 系统优化建议（后端真实返回，可一键应用） -->
+        <div v-if="drawerSuggestions.length" style="margin-bottom:12px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px">系统优化建议</div>
+          <div v-for="(sug, i) in drawerSuggestions" :key="i" style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;padding:8px 12px;margin-bottom:6px;border:1px solid #faecd8;background:#fdf6ec;border-radius:6px">
+            <div style="flex:1">
+              <div style="display:flex;align-items:center;gap:6px;margin-bottom:2px">
+                <el-tag :type="sug.impact === 'high' ? 'danger' : sug.impact === 'medium' ? 'warning' : 'info'" size="small">{{ sug.impact === 'high' ? '重要' : sug.impact === 'medium' ? '建议' : '参考' }}</el-tag>
+                <strong style="font-size:13px">{{ sug.title }}</strong>
+              </div>
+              <div style="font-size:12px;color:#606266">{{ sug.description }}</div>
+            </div>
+            <el-button v-if="sug.action && sug.action !== 'none'" type="warning" size="small" style="flex-shrink:0" @click="applyDrawerSuggestion(sug)">应用优化</el-button>
+          </div>
+        </div>
+
+        <!-- 节点卡片 -->
+        <div v-for="(n, idx) in nodeEditList" :key="n.id" class="node-cfg-card">
+          <div style="display:flex;gap:8px;align-items:center;margin-bottom:10px;flex-wrap:wrap">
+            <span style="color:#909399;font-size:13px;min-width:44px">节点{{ idx + 1 }}</span>
+            <el-input v-model="n.name" style="width:170px" placeholder="节点名称" />
+            <el-select v-model="n.reviewerRole" style="width:140px" placeholder="审核角色">
+              <el-option v-for="r in nodeCfgRoles" :key="r" :label="r" :value="r" />
+            </el-select>
+            <span style="font-size:13px;color:#606266">超时</span>
+            <el-input-number v-model="n.timeoutHours" :min="1" :max="168" size="small" style="width:110px" />
+            <span style="font-size:13px;color:#606266">h</span>
+            <el-select v-model="n.listenerIds" multiple filterable collapse-tags placeholder="监听器(可多选)" style="min-width:200px;flex:1">
+              <el-option v-for="l in drawerListeners" :key="l.id" :label="l.name" :value="l.id" />
+            </el-select>
+          </div>
+          <div style="display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+            <el-tag size="small" :type="(n.timeoutHours || 0) > 24 ? 'warning' : 'success'">{{ (n.timeoutHours || 0) > 24 ? '待优化：超时超 24h' : '效率良好' }}</el-tag>
+            <span style="font-size:12px;color:#909399;flex:1;min-width:200px">{{ drawerSuggestFor(n) }}</span>
+            <el-tag v-for="(o, oi) in optLog.filter(x => x.node === n.name)" :key="oi" type="success" size="small" effect="plain">已优化：{{ o.change }}</el-tag>
+            <el-button size="small" link type="warning" @click="optimizeNode(n)">一键优化</el-button>
+            <el-button size="small" link type="primary" @click="drawerCopyNode(idx)">复制</el-button>
+            <el-button size="small" link type="danger" :disabled="nodeEditList.length <= 1" @click="drawerRemoveNode(idx)">删除</el-button>
+          </div>
+        </div>
+        <el-button style="width:100%;margin-top:10px" @click="drawerAddNode">+ 新增节点</el-button>
+
+        <!-- 优化记录（本次会话，保存后清零） -->
+        <div v-if="optLog.length" style="margin-top:14px;padding:10px 12px;border:1px solid #e1f3d8;background:#f0f9eb;border-radius:6px">
+          <div style="font-size:13px;font-weight:600;margin-bottom:6px">优化记录（{{ optLog.length }} 项，保存后生效）</div>
+          <div v-for="(o, i) in optLog" :key="i" style="font-size:12px;color:#606266;line-height:1.9">
+            <el-tag size="small" type="success" effect="plain" style="margin-right:6px">{{ o.node }}</el-tag>{{ o.change }}
+          </div>
+        </div>
+      </div>
+      <template #footer>
+        <el-button @click="showNodeDrawer = false">取消</el-button>
+        <el-button type="primary" :loading="nodeDrawerSaving" @click="drawerSaveAll">保存优化结果</el-button>
+      </template>
+    </el-drawer>
   </div>
 </template>
 
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; gap:8px; flex-wrap:wrap; }
+.node-cfg-card {
+  border: 1px solid $border-lighter;
+  border-radius: $radius-base;
+  padding: 12px;
+  margin-bottom: 10px;
+  background: #fafbfc;
+  &:hover { border-color: #c0c4cc; }
+}
 .section-title { font-size: 15px; font-weight: 600; }
 .stat-card { background:$bg-white; border:1px solid $border-lighter; border-radius:$radius-base; padding:16px; text-align:center; }
 .stat-value { font-size:22px; font-weight:700; }

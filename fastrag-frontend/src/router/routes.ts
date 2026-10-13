@@ -558,6 +558,8 @@ const routes: RouteRecordRaw[] = [
           { path: 'compliance', name: 'ReviewCompliance', component: () => import('@/views/knowledge-review/compliance.vue'), meta: { title: '合规性检查' } },
           { path: 'reports', name: 'ReviewReports', component: () => import('@/views/knowledge-review/reports.vue'), meta: { title: '审核报告' } },
           { path: 'quality', name: 'ReviewQuality', component: () => import('@/views/knowledge-review/quality.vue'), meta: { title: '质量评估' } },
+          { path: 'quality-trend', name: 'ReviewQualityTrend', component: () => import('@/views/knowledge-review/quality-trend.vue'), meta: { title: '质量趋势分析' } },
+          { path: 'strategy-effect', name: 'ReviewStrategyEffect', component: () => import('@/views/knowledge-review/strategy-effect.vue'), meta: { title: '策略效果分析' } },
         ],
       },
 

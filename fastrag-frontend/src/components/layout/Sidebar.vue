@@ -74,6 +74,8 @@ const allModules: NavModule[] = [
           { path: '/knowledge-review/compliance', title: '合规性检查' },
           { path: '/knowledge-review/reports', title: '审核报告' },
           { path: '/knowledge-review/quality', title: '质量评估' },
+          { path: '/knowledge-review/quality-trend', title: '质量趋势分析' },
+          { path: '/knowledge-review/strategy-effect', title: '策略效果分析' },
         ],
       },
     ],

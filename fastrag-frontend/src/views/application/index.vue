@@ -25,6 +25,22 @@ const apps = ref<any[]>([])
 // 模板市场
 const templates = ref<any[]>([])
 
+/** 后端 app.tags 存的是 JSON 字符串（如 "[\"客服\",\"助手\"]"）或 NULL，统一归一化为数组 */
+function normalizeAppTags(app: any) {
+  const t = app?.tags
+  if (Array.isArray(t)) return
+  if (typeof t === 'string' && t.trim()) {
+    try {
+      const parsed = JSON.parse(t)
+      app.tags = Array.isArray(parsed) ? parsed.map(String) : t.split(/[,，]/).map((s: string) => s.trim()).filter(Boolean)
+    } catch {
+      app.tags = t.split(/[,，]/).map((s: string) => s.trim()).filter(Boolean)
+    }
+  } else {
+    app.tags = []
+  }
+}
+
 async function loadApps() {
   loading.value = true
   try {
@@ -33,6 +49,7 @@ async function loadApps() {
       api.getAppTemplates().catch(() => []),
     ])
     apps.value = (appRes as any)?.list || (appRes as any) || []
+    apps.value.forEach(normalizeAppTags)
     templates.value = (tplRes as any)?.list || (tplRes as any) || []
   } finally {
     loading.value = false

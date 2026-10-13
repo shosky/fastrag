@@ -374,7 +374,12 @@ CREATE TABLE IF NOT EXISTS app_config (
 CREATE TABLE IF NOT EXISTS app_template (
     id VARCHAR(32) PRIMARY KEY,
     name VARCHAR(128) NOT NULL,
+    content TEXT COMMENT '模板正文',
     description TEXT,
+    category VARCHAR(64) DEFAULT '通用' COMMENT '模板分类',
+    creator VARCHAR(32) DEFAULT 'admin' COMMENT '创建人',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP COMMENT '创建时间',
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP COMMENT '更新时间',
     type VARCHAR(32),
     usage_count INT DEFAULT 0,
     config_snapshot JSON

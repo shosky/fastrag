@@ -233,10 +233,96 @@ async function handleDeleteTicket(row: any) {
   } catch {}
 }
 
+// ===== 多媒体处理（编辑：名称/描述/标签/状态）—— 知识加工与采编-多媒体处理-编辑 =====
+const MEDIA_TYPES = [
+  { value: 'image', label: '图片' },
+  { value: 'audio', label: '音频' },
+  { value: 'video', label: '视频' },
+  { value: 'document', label: '文档' },
+]
+const MEDIA_STATUS: Record<string, string> = { uploaded: '已上传', processing: '处理中', completed: '已完成', failed: '失败' }
+const mediaType = ref('image')
+const mediaKeyword = ref('')
+const mediaList = ref<any[]>([])
+const mediaLoading = ref(false)
+const showMediaEditDialog = ref(false)
+const mediaSaving = ref(false)
+const mediaForm = ref({ id: '', name: '', description: '', tags: '', status: 'uploaded' })
+
+async function loadMedia() {
+  mediaLoading.value = true
+  try {
+    const res: any = await api.getStorageList(kbId, mediaType.value, { keyword: mediaKeyword.value || undefined })
+    mediaList.value = Array.isArray(res) ? res : res?.list || res?.records || []
+  } catch { mediaList.value = [] } finally { mediaLoading.value = false }
+}
+function handleMediaEdit(row: any) {
+  mediaForm.value = { id: row.id, name: row.name || '', description: row.description || '', tags: Array.isArray(row.tags) ? row.tags.join(',') : (row.tags || ''), status: row.status || 'uploaded' }
+  showMediaEditDialog.value = true
+}
+async function handleMediaSave() {
+  if (!mediaForm.value.name) { ElMessage.warning('请输入名称'); return }
+  mediaSaving.value = true
+  try {
+    await api.updateStorage(kbId, mediaType.value, mediaForm.value.id, {
+      name: mediaForm.value.name,
+      description: mediaForm.value.description,
+      tags: mediaForm.value.tags,
+      status: mediaForm.value.status,
+    })
+    showMediaEditDialog.value = false
+    await loadMedia()
+    ElMessage.success('保存成功')
+  } catch { ElMessage.error('保存失败') } finally { mediaSaving.value = false }
+}
+
+// ===== 知识回收（列表/编辑/恢复/彻底删除）—— 知识加工与采编-知识回收-编辑 =====
+const recycleList = ref<any[]>([])
+const recycleLoading = ref(false)
+const showRecycleEditDialog = ref(false)
+const recycleSaving = ref(false)
+const recycleForm = ref({ id: '', title: '', category: '', summary: '' })
+
+async function loadRecycle() {
+  recycleLoading.value = true
+  try { recycleList.value = ((await api.getDeletedKnowledges(kbId)) as any) || [] } catch { recycleList.value = [] } finally { recycleLoading.value = false }
+}
+function handleRecycleEdit(row: any) {
+  recycleForm.value = { id: row.id, title: row.title || '', category: row.category || '', summary: row.summary || '' }
+  showRecycleEditDialog.value = true
+}
+async function handleRecycleSave() {
+  if (!recycleForm.value.title) { ElMessage.warning('请输入标题'); return }
+  recycleSaving.value = true
+  try {
+    await api.updateKnowledge(kbId, recycleForm.value.id, {
+      title: recycleForm.value.title,
+      category: recycleForm.value.category,
+      summary: recycleForm.value.summary,
+    })
+    showRecycleEditDialog.value = false
+    await loadRecycle()
+    ElMessage.success('已保存（条目仍在回收站）')
+  } catch { ElMessage.error('保存失败') } finally { recycleSaving.value = false }
+}
+async function handleRecycleRestore(row: any) {
+  try { await api.restoreKnowledge(kbId, row.id); await loadRecycle(); ElMessage.success('已恢复') } catch { ElMessage.error('恢复失败') }
+}
+async function handleRecyclePermanentDelete(row: any) {
+  try {
+    await ElMessageBox.confirm(`彻底删除「${row.title}」后不可恢复，确认删除？`, '彻底删除', { type: 'warning' })
+    await api.permanentDeleteKnowledge(kbId, row.id)
+    await loadRecycle()
+    ElMessage.success('已彻底删除')
+  } catch {}
+}
+
 onMounted(() => {
   loadEdits()
   loadValidates()
   loadTickets()
+  loadMedia()
+  loadRecycle()
 })
 </script>
 
@@ -358,6 +444,69 @@ onMounted(() => {
             </el-table-column>
           </el-table>
           <el-empty v-if="!validateList.length" description="暂无校验记录" />
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="多媒体处理" name="media">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">多媒体处理</div>
+            <span style="font-size:12px;color:#909399">编辑多媒体的名称/描述/标签/状态（与「知识生产」Tab 同一数据源）</span>
+          </div>
+          <div class="filter-bar">
+            <el-select v-model="mediaType" placeholder="媒体类型" style="width: 130px" @change="loadMedia">
+              <el-option v-for="t in MEDIA_TYPES" :key="t.value" :label="t.label" :value="t.value" />
+            </el-select>
+            <el-input v-model="mediaKeyword" placeholder="按名称查询" clearable style="width: 200px" @keyup.enter="loadMedia" />
+            <el-button type="primary" @click="loadMedia">查询</el-button>
+            <span style="color: #909399; font-size: 12px">共 {{ mediaList.length }} 条</span>
+          </div>
+          <el-table :data="mediaList" stripe v-loading="mediaLoading">
+            <el-table-column prop="name" label="名称" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="description" label="描述" min-width="160" show-overflow-tooltip />
+            <el-table-column label="标签" min-width="140">
+              <template #default="{ row }">
+                <template v-if="Array.isArray(row.tags) ? row.tags.length : row.tags">
+                  <el-tag v-for="t in (Array.isArray(row.tags) ? row.tags : String(row.tags).split(/[,，]/))" :key="t" size="small" type="info" style="margin-right:4px">{{ t }}</el-tag>
+                </template>
+                <span v-else>-</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'completed' ? 'success' : (row.status === 'failed' ? 'danger' : (row.status === 'processing' ? 'warning' : 'info'))" size="small">{{ mediaStatusText(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="80" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleMediaEdit(row)">编辑</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!mediaList.length && !mediaLoading" description="该类型暂无多媒体资源（可到「知识生产」Tab 上传）" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="知识回收" name="recycle">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">知识回收</div>
+            <span style="font-size:12px;color:#909399">已删除知识在此编辑修正（标题/分类/摘要），也可恢复或彻底删除</span>
+          </div>
+          <el-table :data="recycleList" stripe v-loading="recycleLoading">
+            <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="category" label="分类" width="110" />
+            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column prop="deletedAt" label="删除时间" width="160" />
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleRecycleEdit(row)">编辑</el-button>
+                <el-button link type="success" size="small" @click="handleRecycleRestore(row)">恢复</el-button>
+                <el-button link type="danger" size="small" @click="handleRecyclePermanentDelete(row)">彻底删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!recycleList.length && !recycleLoading" description="回收站为空" :image-size="60" />
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -487,6 +636,41 @@ onMounted(() => {
       </template>
       <template #footer>
         <el-button type="primary" @click="showResultDialog = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 编辑多媒体弹窗 -->
+    <el-dialog v-model="showMediaEditDialog" title="编辑多媒体" width="520px">
+      <el-form label-width="80px">
+        <el-form-item label="名称" required><el-input v-model="mediaForm.name" /></el-form-item>
+        <el-form-item label="描述"><el-input v-model="mediaForm.description" type="textarea" :rows="3" /></el-form-item>
+        <el-form-item label="标签"><el-input v-model="mediaForm.tags" placeholder="逗号分隔" /></el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="mediaForm.status" style="width: 160px">
+            <el-option label="已上传" value="uploaded" />
+            <el-option label="处理中" value="processing" />
+            <el-option label="已完成" value="completed" />
+            <el-option label="失败" value="failed" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showMediaEditDialog = false">取消</el-button>
+        <el-button type="primary" :loading="mediaSaving" @click="handleMediaSave">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 知识回收编辑弹窗 -->
+    <el-dialog v-model="showRecycleEditDialog" title="编辑回收站条目" width="520px">
+      <el-alert title="可在恢复前修正条目标题/分类/摘要，保存后条目仍在回收站" type="info" :closable="false" style="margin-bottom: 12px" />
+      <el-form label-width="70px">
+        <el-form-item label="标题" required><el-input v-model="recycleForm.title" /></el-form-item>
+        <el-form-item label="分类"><el-input v-model="recycleForm.category" /></el-form-item>
+        <el-form-item label="摘要"><el-input v-model="recycleForm.summary" type="textarea" :rows="3" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showRecycleEditDialog = false">取消</el-button>
+        <el-button type="primary" :loading="recycleSaving" @click="handleRecycleSave">保存</el-button>
       </template>
     </el-dialog>
   </div>

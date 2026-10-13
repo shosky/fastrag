@@ -279,12 +279,15 @@ async function handleResetDefault(row: any) {
 onMounted(() => { loadPolicies(); loadStrategies(); loadConfigs(); loadKbs(); loadBinding(); loadStatuses() })
 
 // ============================================================================
-// 4. 审核流程绑定 + 发布/审核状态
+// 4. 审核流程绑定（列表式：每个知识库可绑定一条流程）+ 发布/审核状态
 // ============================================================================
 const kbOptions = ref<any[]>([])
 const templateOptions = ref<any[]>([])
-const bindingForm = ref({ kbId: '', templateId: '', enabled: true })
+const bindings = ref<any[]>([])
 const bindingSaving = ref(false)
+const showBindingDialog = ref(false)
+const editingBindingIndex = ref(-1)
+const bindingForm = ref({ kbId: '', templateId: '', enabled: true })
 const publishStatus = ref<any>(null)
 const reviewStatus = ref<any>(null)
 
@@ -300,23 +303,80 @@ async function loadTemplates(kbId: string) {
     templateOptions.value = Array.isArray(res) ? res : res?.list || []
   } catch { templateOptions.value = [] }
 }
-async function handleBindingKbChange(kbId: string) { bindingForm.value.templateId = ''; await loadTemplates(kbId) }
+function handleBindingKbChange(kbId: string) { bindingForm.value.templateId = ''; loadTemplates(kbId) }
+
+/** 兼容历史格式：旧数据是单对象 {kbId, templateId|reviewFlowId, enabled} 或 {bindings:[…]}，统一解析为列表 */
+function parseBindings(raw: any): any[] {
+  let v = raw
+  try { v = typeof raw === 'string' ? JSON.parse(raw) : raw } catch { return [] }
+  if (Array.isArray(v?.bindings)) return v.bindings
+  if (Array.isArray(v)) return v
+  if (v && (v.templateId || v.reviewFlowId)) {
+    return [{
+      kbId: v.kbId || '', kbName: v.kbName || '',
+      templateId: v.templateId || v.reviewFlowId || '', templateName: v.templateName || v.reviewFlowName || '',
+      enabled: v.enabled !== false,
+    }]
+  }
+  return []
+}
 async function loadBinding() {
   try {
     const res: any = await api.getReviewFlowBinding()
-    const b = typeof res === 'string' ? JSON.parse(res) : (res || {})
-    bindingForm.value = { kbId: b.kbId || '', templateId: b.templateId || '', enabled: b.enabled !== false }
-    if (bindingForm.value.kbId) await loadTemplates(bindingForm.value.kbId)
-  } catch { /* 首次无配置 */ }
+    bindings.value = parseBindings(res)
+  } catch { bindings.value = [] }
+}
+function rowKbName(row: any) { return row.kbName || kbOptions.value.find((k: any) => k.id === row.kbId)?.name || row.kbId || '-' }
+function rowTplName(row: any) { return row.templateName || templateOptions.value.find((t: any) => t.id === row.templateId)?.name || row.templateId || '-' }
+
+function handleAddBinding() {
+  editingBindingIndex.value = -1
+  bindingForm.value = { kbId: '', templateId: '', enabled: true }
+  showBindingDialog.value = true
+}
+function handleEditBinding(row: any) {
+  editingBindingIndex.value = bindings.value.indexOf(row)
+  bindingForm.value = { kbId: row.kbId || '', templateId: row.templateId || '', enabled: row.enabled !== false }
+  if (row.kbId) loadTemplates(row.kbId)
+  showBindingDialog.value = true
 }
 async function handleSaveBinding() {
   if (!bindingForm.value.kbId) { ElMessage.warning('请选择知识库'); return }
   if (!bindingForm.value.templateId) { ElMessage.warning('请选择审核流程模板'); return }
+  if (editingBindingIndex.value < 0 && bindings.value.some((b: any) => b.kbId === bindingForm.value.kbId)) {
+    ElMessage.warning('该知识库已绑定流程，每个知识库只能绑定一条，请在列表中直接编辑'); return
+  }
   bindingSaving.value = true
   try {
-    await api.updateReviewFlowBinding({ ...bindingForm.value })
-    ElMessage.success('审核流程绑定已保存')
+    const kb = kbOptions.value.find((k: any) => k.id === bindingForm.value.kbId)
+    const tpl = templateOptions.value.find((t: any) => t.id === bindingForm.value.templateId)
+    const item = {
+      kbId: bindingForm.value.kbId, kbName: kb?.name || bindingForm.value.kbId,
+      templateId: bindingForm.value.templateId, templateName: tpl?.name || tpl?.templateName || bindingForm.value.templateId,
+      enabled: bindingForm.value.enabled,
+    }
+    if (editingBindingIndex.value >= 0) bindings.value.splice(editingBindingIndex.value, 1, item)
+    else bindings.value.push(item)
+    await api.updateReviewFlowBinding({ bindings: bindings.value })
+    showBindingDialog.value = false
+    ElMessage.success('绑定已保存')
   } catch { ElMessage.error('保存失败') } finally { bindingSaving.value = false }
+}
+async function handleDeleteBinding(row: any) {
+  try {
+    await ElMessageBox.confirm(`确定删除「${rowKbName(row)}」的流程绑定？`, '删除确认', { type: 'warning' })
+    bindings.value = bindings.value.filter((b: any) => b !== row)
+    await api.updateReviewFlowBinding({ bindings: bindings.value })
+    ElMessage.success('绑定已删除')
+  } catch {}
+}
+async function handleToggleBinding(row: any, val: boolean) {
+  const prev = row.enabled
+  row.enabled = val
+  try {
+    await api.updateReviewFlowBinding({ bindings: bindings.value })
+    ElMessage.success(val ? '绑定已启用' : '绑定已停用')
+  } catch { row.enabled = prev; ElMessage.error('更新失败') }
 }
 function parseStatus(v: any) { try { return typeof v === 'string' ? JSON.parse(v) : (v || null) } catch { return null } }
 async function loadStatuses() {
@@ -458,28 +518,56 @@ async function handleToggleReview(val: boolean) {
         </div>
         <div class="card-panel">
           <div class="section-title" style="margin-bottom:12px">绑定审核流程</div>
-          <el-form label-width="110px" style="max-width:520px">
-            <el-form-item label="知识库" required>
-              <el-select v-model="bindingForm.kbId" filterable placeholder="选择知识库" style="width:100%" @change="handleBindingKbChange">
-                <el-option v-for="k in kbOptions" :key="k.id" :label="k.name" :value="k.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="流程模板" required>
-              <el-select v-model="bindingForm.templateId" filterable placeholder="选择审核流程模板" style="width:100%" :disabled="!bindingForm.kbId">
-                <el-option v-for="t in templateOptions" :key="t.id" :label="t.name || t.templateName" :value="t.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="启用绑定">
-              <el-switch v-model="bindingForm.enabled" />
-            </el-form-item>
-            <el-form-item>
-              <el-button type="primary" :loading="bindingSaving" @click="handleSaveBinding">保存绑定</el-button>
-            </el-form-item>
-            <p class="desc-text">绑定后，该知识库的版本发布将按所选审核流程执行；流程节点在「知识审核 → 流程设计」中维护。</p>
-          </el-form>
+          <div style="margin-bottom:10px;text-align:right">
+            <el-button type="primary" size="small" @click="handleAddBinding">新增绑定</el-button>
+          </div>
+          <el-table :data="bindings" stripe size="small">
+            <el-table-column label="知识库" min-width="180">
+              <template #default="{ row }">{{ rowKbName(row) }}</template>
+            </el-table-column>
+            <el-table-column label="审核流程模板" min-width="180">
+              <template #default="{ row }">{{ rowTplName(row) }}</template>
+            </el-table-column>
+            <el-table-column label="启用" width="90" align="center">
+              <template #default="{ row }">
+                <el-switch :model-value="row.enabled !== false" size="small" @change="(v: any) => handleToggleBinding(row, !!v)" />
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="140">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleEditBinding(row)">编辑</el-button>
+                <el-button link type="danger" size="small" @click="handleDeleteBinding(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!bindings.length" description="暂无绑定，点击「新增绑定」为知识库配置审核流程" :image-size="60" />
+          <p class="desc-text">每个知识库可绑定一条审核流程；绑定后，该知识库的版本发布将按所选流程执行。流程节点在「知识审核 → 流程设计」中维护。</p>
         </div>
       </el-tab-pane>
     </el-tabs>
+
+    <!-- 审核流程绑定新增/编辑弹窗 -->
+    <el-dialog v-model="showBindingDialog" :title="editingBindingIndex >= 0 ? '编辑流程绑定' : '新增流程绑定'" width="520px">
+      <el-form label-width="110px">
+        <el-form-item label="知识库" required>
+          <el-select v-model="bindingForm.kbId" filterable placeholder="选择知识库" style="width:100%" @change="handleBindingKbChange">
+            <el-option v-for="k in kbOptions" :key="k.id" :label="k.name" :value="k.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="流程模板" required>
+          <el-select v-model="bindingForm.templateId" filterable placeholder="选择审核流程模板" style="width:100%" :disabled="!bindingForm.kbId">
+            <el-option v-for="t in templateOptions" :key="t.id" :label="t.name || t.templateName" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="启用绑定">
+          <el-switch v-model="bindingForm.enabled" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showBindingDialog = false">取消</el-button>
+        <el-button type="primary" :loading="bindingSaving" @click="handleSaveBinding">保存</el-button>
+      </template>
+    </el-dialog>
 
     <!-- 安全策略编辑弹窗 -->
     <el-dialog v-model="showPolicyDialog" :title="editingPolicyId ? '编辑安全策略' : '新增安全策略'" width="560px" :close-on-click-modal="false">

@@ -89,7 +89,6 @@ const menuGroups = reactive([
 	      { key: 'global', label: '全局策略', icon: 'Lock' },
 	      { key: 'db', label: '数据库配置', icon: 'Coin' },
 	      { key: 'kb-update', label: '知识更新', icon: 'Refresh' },
-	      { key: 'dialog-test', label: '对话测试', icon: 'CircleCheck' },
 	      { key: 'dialog-optimize', label: '对话优化', icon: 'TrendCharts' },
 	      { key: 'monitor-publish', label: '发布监控', icon: 'DataBoard' },
     ],
@@ -384,18 +383,25 @@ const debugInput = ref('')
 const debugLoading = ref(false)
 
 async function handleDebugSend() {
-  if (!debugInput.value) return
-  debugMessages.value.push({ role: 'user', content: debugInput.value })
-  const q = debugInput.value
+  const q = debugInput.value?.trim()
+  if (!q || debugLoading.value) return
+  debugMessages.value.push({ role: 'user', content: q })
   debugInput.value = ''
   debugLoading.value = true
-  await new Promise(r => setTimeout(r, 1500))
-  debugMessages.value.push({
-    role: 'assistant',
-    content: `抱歉，AI服务暂时不可用，请稍后再试`,
-    time: '1.5s',
-  })
-  debugLoading.value = false
+  const start = Date.now()
+  try {
+    // 真实调用应用对话接口（关键词规则命中，不依赖 AI 网关）
+    const res: any = await api.runApp(appId_.value, q)
+    debugMessages.value.push({
+      role: 'assistant',
+      content: res?.answer || res?.response || '(应用无返回内容)',
+      time: `${((Date.now() - start) / 1000).toFixed(1)}s`,
+    })
+  } catch (e: any) {
+    debugMessages.value.push({ role: 'assistant', content: '调试调用失败：' + (e?.message || '未知错误') })
+  } finally {
+    debugLoading.value = false
+  }
 }
 
 function handleDebugClear() {
@@ -406,6 +412,7 @@ function handleDebugClear() {
 const appDebugLevel = ref('debug')
 const appDebugLogs = ref<any[]>([])
 const appDebugLoading = ref(false)
+const caseLibVisible = ref(true)
 const appId_ = computed(() => appInfo.value?.id || appId)
 
 async function loadAppDebug() {
@@ -827,7 +834,6 @@ function handlePublish() {
 	      <GlobalConfig v-if="activeMenu === 'global'" :app-info="appInfo" />
 	      <DatabaseConfig v-if="activeMenu === 'db'" :app-info="appInfo" />
 	      <KnowledgeUpdate v-if="activeMenu === 'kb-update'" :app-info="appInfo" />
-	      <DialogTest v-if="activeMenu === 'dialog-test'" :app-info="appInfo" />
 	      <DialogOptimize v-if="activeMenu === 'dialog-optimize'" :app-info="appInfo" />
 	      <MonitorPublishConfig v-if="activeMenu === 'monitor-publish'" :app-info="appInfo" />
 	      <MonitorManage v-if="['monitor-chat','monitor-data','monitor-alert','monitor-perf','monitor-opt'].includes(activeMenu)" :app-info="appInfo" :tab="activeMenu" />
@@ -1237,47 +1243,45 @@ function handlePublish() {
 
       <!-- 对话调试 -->
       <div v-if="activeMenu === 'debug'" class="config-section chat-debug">
-        <!-- 对话调试：设置调试级别 / 导出调试日志 / 清理调试日志 -->
-        <div class="debug-toolbar">
-          <span class="debug-toolbar__label">调试级别</span>
-          <el-select v-model="appDebugLevel" size="small" style="width: 130px">
-            <el-option label="DEBUG" value="debug" />
-            <el-option label="INFO" value="info" />
-            <el-option label="WARN" value="warn" />
-            <el-option label="ERROR" value="error" />
-          </el-select>
-          <el-button size="small" type="primary" @click="saveAppDebugLevel">保存级别</el-button>
-          <el-tag size="small" type="info">当前 {{ appDebugLevel.toUpperCase() }}</el-tag>
-          <span style="flex:1" />
-          <el-tag size="small">{{ appDebugLogs.length }} 条调试日志</el-tag>
-          <el-button size="small" @click="loadAppDebug">刷新</el-button>
-          <el-button size="small" @click="exportAppDebugLogs">导出调试日志</el-button>
-          <el-button size="small" type="danger" @click="clearAppDebugLogs">清理调试日志</el-button>
-        </div>
-        <el-table :data="appDebugLogs.slice(0, 8)" size="small" stripe v-loading="appDebugLoading" style="margin-bottom: 12px">
-          <el-table-column label="级别" width="90">
-            <template #default="{ row }">
-              <el-tag size="small" :type="debugLevelTag(row.level)">{{ (row.level || 'info').toUpperCase() }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="module" label="模块" width="130" />
-          <el-table-column prop="message" label="内容" min-width="260" show-overflow-tooltip />
-          <el-table-column prop="createdAt" label="时间" width="170" />
-        </el-table>
-        <div class="debug-layout">
-          <!-- 左侧提示 -->
-          <div class="debug-sidebar">
-            <div class="debug-tip">
-              <p>当前参数调整后问答对话调试验证效果，满意后点击发布配置生效；若不发布不影响原有应用参数配置，离开当前页面后所做临时调整将丢失。</p>
-              <el-button type="primary" @click="handlePublishConfig">发布配置</el-button>
+        <!-- 调试设置卡片：调试级别 + 调试日志 -->
+        <div class="debug-card">
+          <div class="debug-card__header">
+            <span class="debug-card__title">调试设置</span>
+            <div class="debug-toolbar">
+              <span class="debug-toolbar__label">调试级别</span>
+              <el-select v-model="appDebugLevel" size="small" style="width: 130px">
+                <el-option label="DEBUG" value="debug" />
+                <el-option label="INFO" value="info" />
+                <el-option label="WARN" value="warn" />
+                <el-option label="ERROR" value="error" />
+              </el-select>
+              <el-button size="small" type="primary" @click="saveAppDebugLevel">保存级别</el-button>
+              <el-tag size="small" type="info">当前 {{ appDebugLevel.toUpperCase() }}</el-tag>
+              <span style="flex:1" />
+              <el-tag size="small">{{ appDebugLogs.length }} 条调试日志</el-tag>
+              <el-button size="small" @click="loadAppDebug">刷新</el-button>
+              <el-button size="small" @click="exportAppDebugLogs">导出调试日志</el-button>
+              <el-button size="small" type="danger" @click="clearAppDebugLogs">清理调试日志</el-button>
             </div>
           </div>
+          <el-table :data="appDebugLogs.slice(0, 8)" size="small" stripe v-loading="appDebugLoading">
+            <el-table-column label="级别" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="debugLevelTag(row.level)">{{ (row.level || 'info').toUpperCase() }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="module" label="模块" width="130" />
+            <el-table-column prop="message" label="内容" min-width="260" show-overflow-tooltip />
+            <el-table-column prop="createdAt" label="时间" width="170" />
+          </el-table>
+        </div>
 
-          <!-- 右侧聊天窗口 -->
+        <!-- 调试对话 + 右侧操作列 -->
+        <div class="debug-layout">
           <div class="debug-chat-widget">
             <div class="widget-header">
-              <span>标题</span>
-              <el-icon class="refresh-btn" @click="handleDebugClear"><RefreshRight /></el-icon>
+              <span>调试对话{{ appInfo?.name ? ' · ' + appInfo.name : '' }}</span>
+              <el-button size="small" text bg @click="handleDebugClear">清空会话</el-button>
             </div>
 
             <div class="widget-messages">
@@ -1285,7 +1289,10 @@ function handlePublish() {
                 <div v-if="msg.role === 'assistant'" class="bot-avatar">
                   <el-icon :size="16" color="#fff"><ChatDotRound /></el-icon>
                 </div>
-                <div class="message-content">{{ msg.content }}</div>
+                <div class="message-content">
+                  {{ msg.content }}
+                  <span v-if="msg.time" class="msg-time">{{ msg.time }}</span>
+                </div>
                 <div v-if="msg.role === 'user'" class="message-actions">
                   <el-icon><CopyDocument /></el-icon>
                   <el-icon><RefreshRight /></el-icon>
@@ -1308,6 +1315,31 @@ function handlePublish() {
               <div class="widget-brand">Powered by AIS</div>
             </div>
           </div>
+
+          <!-- 操作列：发布配置 / 优化对话 / 测试案例库 -->
+          <div class="debug-side">
+            <div class="debug-card">
+              <div class="debug-card__title">发布配置</div>
+              <p class="debug-side__tip">调试验证满意后，发布配置使调整生效；不发布不影响线上参数，离开页面临时调整将丢失。</p>
+              <el-button type="primary" style="width:100%" @click="handlePublishConfig">发布配置</el-button>
+            </div>
+            <div class="debug-card">
+              <div class="debug-card__title">优化对话</div>
+              <p class="debug-side__tip">分析对话未匹配率，生成流程/参数/Prompt 优化建议并支持一键应用。</p>
+              <el-button style="width:100%" @click="activeMenu = 'dialog-optimize'">打开优化对话</el-button>
+            </div>
+            <div class="debug-card">
+              <div class="debug-card__title">测试案例库</div>
+              <p class="debug-side__tip">录制/维护测试案例，支持单条运行、批量回归与导出报告。</p>
+              <el-button style="width:100%" @click="caseLibVisible = !caseLibVisible">{{ caseLibVisible ? '收起案例库' : '展开案例库' }}</el-button>
+            </div>
+          </div>
+        </div>
+
+        <!-- 测试案例库（可通过右侧卡片折叠） -->
+        <div v-show="caseLibVisible" style="margin-top:16px">
+          <el-divider content-position="left">测试案例库</el-divider>
+          <DialogTest :app-info="appInfo" />
         </div>
       </div>
 
@@ -2850,8 +2882,49 @@ function handlePublish() {
 
 .debug-layout {
   display: flex;
-  gap: $spacing-xl;
-  height: calc(100% - 180px);
+  gap: 16px;
+  align-items: stretch;
+  margin-top: 16px;
+}
+
+// 右侧操作列：发布配置 / 优化对话 / 测试案例库
+.debug-side {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.debug-card {
+  background: $bg-white;
+  border: 1px solid $border-lighter;
+  border-radius: $radius-base;
+  padding: 14px;
+
+  &__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+
+  &__title {
+    font-size: 14px;
+    font-weight: 600;
+    margin-bottom: 8px;
+  }
+
+  .debug-card__header &__title { margin-bottom: 0; }
+}
+
+.debug-side__tip {
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.6;
+  margin: 0 0 10px;
 }
 
 .debug-sidebar {
@@ -2875,6 +2948,8 @@ function handlePublish() {
 
 .debug-chat-widget {
   flex: 1;
+  min-width: 0;
+  height: 460px;
   display: flex;
   flex-direction: column;
   border: 1px solid $border-lighter;
@@ -2922,6 +2997,13 @@ function handlePublish() {
       background: #fff;
       color: $text-primary;
       border-radius: $radius-base $radius-base 4px $radius-base;
+
+      .msg-time {
+        display: inline-block;
+        margin-left: 8px;
+        font-size: 11px;
+        color: #a8abb2;
+      }
     }
 
     .message-actions {

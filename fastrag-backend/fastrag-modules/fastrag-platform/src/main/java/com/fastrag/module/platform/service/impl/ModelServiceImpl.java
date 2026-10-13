@@ -13,7 +13,7 @@ public class ModelServiceImpl implements ModelService {
     private final LlmService llmService;
     @Override public List<ModelRecord> list(String kw,String purpose) { var w=new LambdaQueryWrapper<ModelRecord>(); if(StrUtil.isNotBlank(kw))w.like(ModelRecord::getName,kw); if(StrUtil.isNotBlank(purpose))w.eq(ModelRecord::getPurpose,purpose); return mapper.selectList(w); }
     @Override public ModelRecord get(String id) { return mapper.selectById(id); }
-    @Override public ModelRecord create(Map<String,Object> f) { var m=new ModelRecord(); m.setName((String)f.get("name")); m.setCode((String)f.get("code")); m.setPurpose((String)f.get("purpose")); m.setBrand((String)f.get("brand")); m.setApiUrl((String)f.get("apiUrl")); m.setApiKeyRef((String)f.get("apiKeyRef")); m.setStatus("offline"); mapper.insert(m); return m; }
+    @Override public ModelRecord create(Map<String,Object> f) { var m=new ModelRecord(); m.setName((String)f.get("name")); m.setCode((String)f.get("code")); m.setPurpose((String)f.get("purpose")); m.setBrand((String)f.get("brand")); m.setApiUrl((String)f.get("apiUrl")); m.setApiKey((String)f.get("apiKey")); m.setApiKeyRef((String)f.get("apiKeyRef")); m.setStatus("offline"); mapper.insert(m); return m; }
     @Override public ModelRecord update(String id,Map<String,Object> f) {
         var m=mapper.selectById(id);
         if(m!=null){
@@ -22,6 +22,8 @@ public class ModelServiceImpl implements ModelService {
             if(f.containsKey("purpose")) m.setPurpose((String)f.get("purpose"));
             if(f.containsKey("brand")) m.setBrand((String)f.get("brand"));
             if(f.containsKey("apiUrl")) m.setApiUrl((String)f.get("apiUrl"));
+            // 密钥留空表示不修改，避免编辑其它字段时把已存密钥覆盖为空
+            if(f.containsKey("apiKey") && f.get("apiKey")!=null && !f.get("apiKey").toString().isBlank()) m.setApiKey(f.get("apiKey").toString());
             if(f.containsKey("apiKeyRef")) m.setApiKeyRef((String)f.get("apiKeyRef"));
             if(f.containsKey("status")) m.setStatus((String)f.get("status"));
             mapper.updateById(m);
@@ -32,8 +34,12 @@ public class ModelServiceImpl implements ModelService {
     @Override public void toggle(String id) { var m=mapper.selectById(id); if(m!=null){ m.setStatus("online".equals(m.getStatus())?"offline":"online"); mapper.updateById(m); } }
     @Override public List<ModelRecord> importModels(List<Map<String,Object>> models) {
         List<ModelRecord> result=new ArrayList<>();
-        for(var f:models){ var m=new ModelRecord(); m.setName((String)f.get("name")); m.setCode((String)f.get("code")); m.setPurpose((String)f.getOrDefault("purpose","chat")); m.setBrand((String)f.get("brand")); m.setApiUrl((String)f.get("apiUrl")); m.setApiKeyRef((String)f.get("apiKeyRef")); m.setStatus((String)f.getOrDefault("status","offline")); mapper.insert(m); result.add(m); }
+        for(var f:models){ var m=new ModelRecord(); m.setName((String)f.get("name")); m.setCode((String)f.get("code")); m.setPurpose((String)f.getOrDefault("purpose","chat")); m.setBrand((String)f.get("brand")); m.setApiUrl((String)f.get("apiUrl")); m.setApiKey((String)f.get("apiKey")); m.setApiKeyRef((String)f.get("apiKeyRef")); m.setStatus((String)f.getOrDefault("status","offline")); mapper.insert(m); result.add(m); }
         return result;
+    }
+    /** 调用上游用的密钥：优先真实 api_key（界面保存），其次 api_key_ref 引用 */
+    private String resolveKey(ModelRecord m) {
+        return (m.getApiKey()!=null && !m.getApiKey().isBlank()) ? m.getApiKey() : m.getApiKeyRef();
     }
     // ===== 模型预置 =====
     @Override public List<Map<String,Object>> listPresets() {
@@ -57,7 +63,7 @@ public class ModelServiceImpl implements ModelService {
         String prompt=params.get("prompt")==null?"你好，请做自我介绍":params.get("prompt").toString();
         double temperature=params.get("temperature") instanceof Number n?n.doubleValue():0.7;
         long start=System.currentTimeMillis();
-        String resp=llmService.chat(m.getCode(),prompt,m.getApiUrl(),m.getApiKeyRef());
+        String resp=llmService.chat(m.getCode(),prompt,m.getApiUrl(),resolveKey(m));
         long dur=System.currentTimeMillis()-start;
         boolean ok=resp!=null&&!resp.startsWith("模型调用失败");
         insertCallLog(id,"manual",ok,dur,resp);

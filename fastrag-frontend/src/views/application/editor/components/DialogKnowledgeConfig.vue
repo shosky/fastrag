@@ -1,10 +1,11 @@
 <script setup lang="ts">
 /**
- * 对话知识（应用管理）：知识新增 / 知识导入 / 智能推荐-判断 / 对话流配置-编辑
+ * 对话知识（应用管理）：知识新增 / 知识导入 / 智能推荐-判断 / 对话流配置-编辑 / 模型导入（导入/编辑）
  * - 知识新增、知识导入落到应用绑定知识库（默认第一个绑定库，可切换）
  * - 智能推荐-判断：关键词判断（/keywords/judge）+ 推荐列表（/keywords/recommend）
  * - 对话流配置：绑定业务流程（/apps/{id}/workflow-config）+ 绑定知识库 + 检索参数/开场白
  *   （检索参数存 app_config.kb_settings，先读后合并，避免覆盖已有设置）
+ * - 模型导入：批量导入模型（/models/import）+ 模型列表行内编辑（PUT /models/{id}），与管理端模型管理同源
  */
 import { ref, computed, onMounted } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -190,16 +191,86 @@ async function reloadFlowConfig() {
   ElMessage.success('已读取当前对话流配置')
 }
 
+// ===== 模型导入（导入 / 编辑，与管理端模型管理同接口）=====
+const MODEL_PURPOSES = ['LLM', 'Embedding', 'Rerank', 'ASR', 'TTS', 'OCR', 'IMAGE_GEN']
+const MODEL_BRANDS = ['OpenAI', '阿里云', '百度', '智谱', '深度求索', '月之暗面', 'BAAI']
+const modelList = ref<any[]>([])
+const modelLoading = ref(false)
+const modelImportVisible = ref(false)
+const modelImportText = ref('')
+const modelImporting = ref(false)
+const modelEditVisible = ref(false)
+const modelSaving = ref(false)
+const editingModelId = ref('')
+const modelForm = ref<any>({ name: '', code: '', purpose: 'LLM', brand: '', apiUrl: '', apiKey: '', contextWindow: 4096, status: 'online' })
+
+async function loadModels() {
+  modelLoading.value = true
+  try {
+    const res: any = await api.getModels()
+    modelList.value = Array.isArray(res) ? res : res?.list || res?.records || []
+  } catch { modelList.value = [] } finally { modelLoading.value = false }
+}
+function openModelImport() { modelImportText.value = ''; modelImportVisible.value = true }
+function fillModelSample() {
+  modelImportText.value = JSON.stringify([
+    { name: 'GLM-4-Flash', code: 'glm-4-flash', purpose: 'LLM', brand: '智谱', apiUrl: 'https://open.bigmodel.cn/api/paas/v4', contextWindow: 128000, status: 'online' },
+    { name: 'Embedding-3', code: 'embedding-3', purpose: 'Embedding', brand: '智谱', apiUrl: 'https://open.bigmodel.cn/api/paas/v4', contextWindow: 8192, status: 'online' },
+  ], null, 2)
+}
+async function submitModelImport() {
+  if (!modelImportText.value.trim()) { ElMessage.warning('请粘贴或填写 JSON 数组'); return }
+  let items: any[] = []
+  try {
+    const parsed = JSON.parse(modelImportText.value)
+    items = Array.isArray(parsed) ? parsed : []
+  } catch { ElMessage.error('内容不是合法 JSON 数组'); return }
+  if (!items.length) { ElMessage.warning('未解析到可导入的模型'); return }
+  modelImporting.value = true
+  try {
+    await api.importModels(items)
+    ElMessage.success(`成功导入 ${items.length} 个模型`)
+    modelImportVisible.value = false
+    modelImportText.value = ''
+    await loadModels()
+  } catch (e: any) {
+    ElMessage.error('导入失败：' + (e?.message || ''))
+  } finally { modelImporting.value = false }
+}
+function openModelEdit(row: any) {
+  editingModelId.value = row.id
+  modelForm.value = {
+    name: row.name || '', code: row.code || '', purpose: row.purpose || 'LLM', brand: row.brand || '',
+    apiUrl: row.apiUrl || '', apiKey: '', contextWindow: row.contextWindow || 4096, status: row.status || 'online',
+  }
+  modelEditVisible.value = true
+}
+async function saveModelEdit() {
+  if (!modelForm.value.name || !modelForm.value.code) { ElMessage.warning('模型名称与编码必填'); return }
+  modelSaving.value = true
+  try {
+    // 密钥留空表示不修改，避免把已存密钥覆盖为空
+    const payload: any = { ...modelForm.value }
+    if (!payload.apiKey) delete payload.apiKey
+    await api.updateModel(editingModelId.value, payload)
+    ElMessage.success('模型已保存')
+    modelEditVisible.value = false
+    await loadModels()
+  } catch (e: any) {
+    ElMessage.error('保存失败：' + (e?.message || ''))
+  } finally { modelSaving.value = false }
+}
+
 onMounted(async () => {
   await Promise.all([loadKbOptions(), loadFlowConfig()])
-  await loadKbKnowledge()
+  await Promise.all([loadKbKnowledge(), loadModels()])
 })
 </script>
 
 <template>
   <div class="config-section dk-config">
     <h3>对话知识</h3>
-    <p class="desc">在应用内维护对话用知识（新增/导入）、判断智能推荐，并配置对话流（业务流程绑定 + 检索参数 + 开场白）。</p>
+    <p class="desc">在应用内维护对话用知识（新增/导入）、判断智能推荐，配置对话流（业务流程绑定 + 检索参数 + 开场白），并批量导入/编辑对话模型。</p>
 
     <div class="dk-toolbar">
       <span>目标知识库：</span>
@@ -297,7 +368,75 @@ onMounted(async () => {
           </el-form-item>
         </el-form>
       </el-tab-pane>
+
+      <!-- 模型导入（导入 / 编辑） -->
+      <el-tab-pane label="模型导入">
+        <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
+          <el-button size="small" type="primary" @click="openModelImport">导入模型</el-button>
+          <el-button size="small" :loading="modelLoading" @click="loadModels">刷新</el-button>
+          <span class="dk-hint">共 {{ modelList.length }} 个模型；导入后可在此直接编辑</span>
+        </div>
+        <el-table :data="modelList" size="small" stripe v-loading="modelLoading">
+          <el-table-column prop="name" label="模型名称" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="code" label="编码" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="purpose" label="用途" width="110" />
+          <el-table-column prop="brand" label="品牌" width="100" />
+          <el-table-column prop="contextWindow" label="上下文" width="90" align="center" />
+          <el-table-column label="状态" width="80" align="center">
+            <template #default="{ row }">
+              <el-tag :type="row.status === 'online' ? 'success' : 'info'" size="small">{{ row.status === 'online' ? '启用' : '停用' }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" size="small" @click="openModelEdit(row)">编辑</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-if="!modelList.length && !modelLoading" description="暂无模型，点击「导入模型」批量导入" :image-size="50" />
+      </el-tab-pane>
     </el-tabs>
+
+    <!-- 模型批量导入弹窗 -->
+    <el-dialog v-model="modelImportVisible" title="批量导入模型" width="620px">
+      <div style="display:flex;gap:8px;margin-bottom:8px;align-items:center">
+        <el-button size="small" @click="fillModelSample">填充示例数据</el-button>
+        <span class="dk-hint">JSON 数组：[{ name, code, purpose, brand, apiUrl, contextWindow, status }]</span>
+      </div>
+      <el-input v-model="modelImportText" type="textarea" :rows="10" placeholder='[{"name":"GLM-4-Flash","code":"glm-4-flash","purpose":"LLM","brand":"智谱","apiUrl":"https://open.bigmodel.cn/api/paas/v4"}]' />
+      <template #footer>
+        <el-button @click="modelImportVisible = false">取消</el-button>
+        <el-button type="primary" :loading="modelImporting" @click="submitModelImport">导入</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 模型编辑弹窗 -->
+    <el-dialog v-model="modelEditVisible" title="编辑模型" width="560px">
+      <el-form label-width="90px" size="small">
+        <el-form-item label="模型名称" required><el-input v-model="modelForm.name" /></el-form-item>
+        <el-form-item label="模型编码" required><el-input v-model="modelForm.code" /></el-form-item>
+        <el-form-item label="用途">
+          <el-select v-model="modelForm.purpose" style="width: 100%">
+            <el-option v-for="p in MODEL_PURPOSES" :key="p" :label="p" :value="p" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="品牌">
+          <el-select v-model="modelForm.brand" style="width: 100%" filterable allow-create placeholder="选择或输入品牌">
+            <el-option v-for="b in MODEL_BRANDS" :key="b" :label="b" :value="b" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="接口地址"><el-input v-model="modelForm.apiUrl" placeholder="https://…" /></el-form-item>
+        <el-form-item label="模型密钥"><el-input v-model="modelForm.apiKey" type="password" show-password placeholder="留空则不修改密钥" /></el-form-item>
+        <el-form-item label="上下文窗口"><el-input-number v-model="modelForm.contextWindow" :min="1" /></el-form-item>
+        <el-form-item label="状态">
+          <el-switch v-model="modelForm.status" active-value="online" inactive-value="offline" active-text="启用" inactive-text="停用" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="modelEditVisible = false">取消</el-button>
+        <el-button type="primary" :loading="modelSaving" @click="saveModelEdit">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 

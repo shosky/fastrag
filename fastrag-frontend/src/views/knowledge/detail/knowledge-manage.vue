@@ -411,6 +411,36 @@ async function handleDeleteDialog(row: any) {
   } catch {}
 }
 
+// ===== 关键词推荐-判断（推荐相关关键词 + 判断检索词是否命中已配置关键词/标准问法） =====
+const kwQuery = ref('')
+const kwLoading = ref(false)
+const kwSearched = ref(false)
+const kwRecommendList = ref<any[]>([])
+const kwJudgeLoading = ref(false)
+const kwJudgeResult = ref<any>(null)
+async function handleKwRecommend() {
+  const q = kwQuery.value.trim()
+  if (!q) { ElMessage.warning('请输入检索词'); return }
+  kwLoading.value = true
+  try {
+    const res: any = await api.getKeywordRecommendations(kbId, q, 10)
+    kwRecommendList.value = (Array.isArray(res) ? res : res?.list || [])
+      .map((item: any) => typeof item === 'string' ? { text: item } : { ...item, text: item.text || item.question || '' })
+      .filter((item: any) => item.text)
+    if (!kwRecommendList.value.length) ElMessage.info('未推荐到相关关键词')
+  } catch { kwRecommendList.value = []; ElMessage.error('推荐请求失败') }
+  finally { kwLoading.value = false; kwSearched.value = true }
+}
+async function handleKwJudge() {
+  const q = kwQuery.value.trim()
+  if (!q) { ElMessage.warning('请输入检索词'); return }
+  kwJudgeLoading.value = true
+  try {
+    kwJudgeResult.value = (await api.judgeKeywords(kbId, q)) || null
+  } catch (e: any) { kwJudgeResult.value = null; ElMessage.error('判断失败：' + (e?.message || '')) }
+  finally { kwJudgeLoading.value = false }
+}
+
 // ===== 事项知识关联管理（新增/查看/编辑/删除） =====
 const RELATION_TYPE: Record<string, string> = { core: '核心依据', reference: '参考资料', supplement: '补充材料' }
 const matterRels = ref<any[]>([])
@@ -706,6 +736,63 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
             </el-table-column>
           </el-table>
           <el-empty v-if="!dialogList.length && !dialogLoading" description="暂无对话记录" />
+        </div>
+      </el-tab-pane>
+      <el-tab-pane label="关键词推荐" name="keyword">
+        <div class="card-panel">
+          <div class="section-header">
+            <div class="section-title">关键词推荐与判断</div>
+            <span style="font-size:12px;color:#909399">基于标准问法/相似问法推荐关键词，并判定检索词是否命中已配置关键词</span>
+          </div>
+          <div class="filter-bar">
+            <el-input v-model="kwQuery" placeholder="输入检索词，如：宽带移机怎么收费" clearable style="width:320px" @keyup.enter="handleKwRecommend" />
+            <el-button type="primary" :loading="kwLoading" @click="handleKwRecommend">获取关键词推荐</el-button>
+            <el-button :loading="kwJudgeLoading" @click="handleKwJudge">判断关键词（是否命中配置）</el-button>
+          </div>
+
+          <!-- 关键词推荐结果 -->
+          <div v-if="kwRecommendList.length" style="margin-top:8px">
+            <div style="font-size:13px;color:#606266;margin-bottom:8px">相关关键词（点击可直接作为检索词）：</div>
+            <el-tag
+              v-for="item in kwRecommendList"
+              :key="item.id + item.text"
+              style="margin:0 8px 8px 0;cursor:pointer"
+              type="info"
+              effect="plain"
+              @click="kwQuery = item.text"
+            >
+              {{ item.text }}
+              <span style="margin-left:4px;color:#909399;font-size:12px">{{ item.type === 'similar' ? '相似问法' : '标准问法' }}</span>
+            </el-tag>
+          </div>
+          <el-empty v-else-if="!kwLoading && kwSearched" description="未推荐到相关关键词" :image-size="60" />
+
+          <!-- 关键词判断结果 -->
+          <template v-if="kwJudgeResult">
+            <el-divider />
+            <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px">
+              <span style="font-size:13px;color:#606266">判断检索词「{{ kwJudgeResult.query || kwQuery }}」：</span>
+              <el-tag :type="kwJudgeResult.matched ? 'success' : 'info'" size="small">
+                {{ kwJudgeResult.matched ? '已命中配置关键词' : '未命中配置关键词' }}
+              </el-tag>
+            </div>
+            <el-table v-if="(kwJudgeResult.keywords || []).length" :data="kwJudgeResult.keywords" stripe size="small" border>
+              <el-table-column label="命中来源" width="140">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.source === 'standard' ? 'primary' : 'warning'" effect="plain">
+                    {{ row.source === 'standard' ? '标准问法' : '问答对关键词' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column prop="text" label="命中内容" min-width="200" show-overflow-tooltip />
+              <el-table-column label="置信度" width="100" align="center">
+                <template #default="{ row }">{{ row.score }}</template>
+              </el-table-column>
+            </el-table>
+            <div v-else style="color:#909399;font-size:12px">
+              该检索词未匹配到已配置的关键词/标准问法（可在「智能搜索」Tab 的问答对关键词或标准问法中添加）
+            </div>
+          </template>
         </div>
       </el-tab-pane>
     </el-tabs>

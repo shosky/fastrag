@@ -12,6 +12,7 @@ const modules = [
     children: [
       { name: '通用设置', path: '/admin/system/general-settings' },
       { name: '知识库配置', path: '/admin/system/kb-config' },
+      { name: '系统配置管理', path: '/admin/system/config-management' },
       { name: '全局设置', path: '/admin/system/global-settings' },
       { name: '敏感词设置', path: '/admin/system/sensitive-words' },
       { name: '字典管理', path: '/admin/system/dictionary' },
@@ -62,6 +63,9 @@ const modules = [
     children: [
       { name: '三方平台', path: '/admin/platform/third-party' },
       { name: '模型管理', path: '/admin/platform/model-management' },
+      { name: '模型测试', path: '/admin/platform/model-management?focus=chat-test' },
+      { name: '模型调用', path: '/admin/platform/model-management?focus=invoke' },
+      { name: '模型调用日志', path: '/admin/platform/model-management?focus=logs' },
       { name: '开放密钥', path: '/admin/platform/api-keys' },
     ],
   },

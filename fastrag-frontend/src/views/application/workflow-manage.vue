@@ -58,6 +58,15 @@ async function handleDeleteWorkflow(row: any) {
 // Tab 2: 工作流画布 — 自由编排
 // ============================================================================
 const wfId = ref('')
+// 页面主页签：流程画布 / 对话测试 / 对话调试 / 知识更新 / 对话优化（切换时懒加载对应数据）
+const mainTab = ref('canvas')
+function handleMainTabChange(name: any) {
+  if (!wfId.value) return
+  if (name === 'test') loadWfTests()
+  else if (name === 'debug') loadWfDebug()
+  else if (name === 'kb-update') loadWfKbs()
+  else if (name === 'optimize') loadWfOpts()
+}
 const wfName = ref('')
 const nodes = ref<any[]>([])
 const edges = ref<Array<{ source: string; target: string }>>([])
@@ -634,12 +643,10 @@ onMounted(async () => {
 // ============================================================================
 const wfTestList = ref<any[]>([])
 const wfTestLoading = ref(false)
-const showWfTestDialog = ref(false)
 const showWfTestCreate = ref(false)
 const wfTestCreateLoading = ref(false)
 const wfTestForm = ref({ name: '', query: '', expectedOutput: '' })
 const wfRunningId = ref('')
-function openWfTest() { showWfTestDialog.value = true; loadWfTests() }
 async function loadWfTests() {
   if (!wfId.value) return
   wfTestLoading.value = true
@@ -687,10 +694,8 @@ function handleViewWfTest(row: any) { viewingWfTest.value = row; showWfTestView.
 // ============================================================================
 // 业务流-对话调试（级别设置/查看/导出/清理）
 // ============================================================================
-const showWfDebugDialog = ref(false)
 const wfDebug = ref<{ level: string; logs: any[] }>({ level: 'info', logs: [] })
 const wfDebugLoading = ref(false)
-function openWfDebug() { showWfDebugDialog.value = true; loadWfDebug() }
 async function loadWfDebug() {
   if (!wfId.value) return
   wfDebugLoading.value = true
@@ -724,10 +729,8 @@ const wfKbList = ref<any[]>([])
 const wfKbId = ref('')
 const wfUpdateLogs = ref<any[]>([])
 const wfUpdateLoading = ref(false)
-const showWfUpdateDialog = ref(false)
 const wfAutoConfig = ref({ enabled: false, schedule: '0 0 2 * * ?', incremental: true })
 const showWfAutoConfig = ref(false)
-function openWfKbUpdate() { showWfUpdateDialog.value = true; loadWfKbs(); }
 async function loadWfKbs() {
   try {
     const res: any = await api.getAppKbBindings(appId)
@@ -763,13 +766,11 @@ async function handleWfCompare(row: any) {
 // ============================================================================
 // 业务流-对话优化（分析/查看建议/应用/测试/导出）
 // ============================================================================
-const showWfOptDialog = ref(false)
 const wfOptList = ref<any[]>([])
 const wfOptLoading = ref(false)
 const wfAnalyze = ref<any>(null)
 const wfOptForm = ref({ name: '', suggestionType: 'flow', description: '' })
 const wfTestingOptId = ref('')
-function openWfOpt() { showWfOptDialog.value = true; loadWfOpts() }
 async function loadWfOpts() {
   if (!wfId.value) return
   wfOptLoading.value = true
@@ -983,10 +984,6 @@ function clearMigLogs() {
         <el-button size="small" :disabled="!nodeClipboard" @click="handlePasteNode">📥 粘贴节点</el-button>
         <el-button size="small" @click="handleExportNodes">📤 导出配置</el-button>
         <el-button size="small" @click="handleImportNodes">🗂 导入配置</el-button>
-        <el-button size="small" type="success" @click="openWfTest">🧪 对话测试</el-button>
-        <el-button size="small" type="success" plain @click="openWfDebug">🐞 对话调试</el-button>
-        <el-button size="small" type="primary" plain @click="openWfKbUpdate">🔄 知识更新</el-button>
-        <el-button size="small" type="warning" plain @click="openWfOpt">📈 对话优化</el-button>
         <el-button size="small" type="info" plain @click="openWfMig">🔁 配置迁移</el-button>
         <el-button size="small" type="warning" @click="saveCanvas">💾 保存画布</el-button>
       </div>
@@ -1000,8 +997,10 @@ function clearMigLogs() {
       </el-empty>
     </div>
 
-    <!-- 画布区域 -->
+    <!-- 画布区域 + 功能页签 -->
     <template v-if="wfId">
+      <el-tabs v-model="mainTab" type="card" @tab-change="handleMainTabChange">
+      <el-tab-pane label="流程画布" name="canvas">
       <div class="canvas-layout">
         <div v-if="showToolbox" class="toolbox-panel">
           <div class="toolbox-header">
@@ -1084,6 +1083,119 @@ function clearMigLogs() {
           </div>
         </div>
       </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="🧪 对话测试" name="test">
+        <div style="background:#fff;border:1px solid #ebeef5;border-radius:8px;padding:16px">
+          <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+            <span style="font-size:15px;font-weight:600">测试案例</span>
+            <el-button size="small" type="primary" @click="wfTestForm = { name: '', query: '', expectedOutput: '' }; showWfTestCreate = true">录制测试案例</el-button>
+          </div>
+          <el-table :data="wfTestList" stripe size="small" v-loading="wfTestLoading">
+            <el-table-column prop="name" label="案例名称" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="query" label="测试输入" show-overflow-tooltip min-width="160" />
+            <el-table-column prop="expectedOutput" label="期望输出" show-overflow-tooltip min-width="150" />
+            <el-table-column prop="actualOutput" label="实际输出" show-overflow-tooltip min-width="150" />
+            <el-table-column label="结果" width="80" align="center">
+              <template #default="{ row }">
+                <el-tag v-if="row.matched !== null && row.matched !== undefined" :type="row.matched === 1 ? 'success' : 'danger'" size="small">{{ row.matched === 1 ? '通过' : '未通过' }}</el-tag>
+                <span v-else style="color:#c0c4cc;font-size:12px">未运行</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="200">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="handleViewWfTest(row)">查看</el-button>
+                <el-button link type="success" size="small" :loading="wfRunningId === row.id" @click="handleRunWfTest(row)">运行</el-button>
+                <el-button link type="danger" size="small" @click="handleDeleteWfTest(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!wfTestList.length && !wfTestLoading" description="暂无测试案例（点击「录制测试案例」开始）" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="🐞 对话调试" name="debug">
+        <div style="background:#fff;border:1px solid #ebeef5;border-radius:8px;padding:16px">
+          <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px;flex-wrap:wrap">
+            <span style="font-size:13px">调试级别：</span>
+            <el-select v-model="wfDebug.level" style="width:140px">
+              <el-option label="DEBUG" value="debug" /><el-option label="INFO" value="info" />
+              <el-option label="WARN" value="warn" /><el-option label="ERROR" value="error" />
+            </el-select>
+            <el-button size="small" type="primary" @click="handleSaveWfLevel">保存级别</el-button>
+            <el-button size="small" @click="loadWfDebug">刷新日志</el-button>
+            <el-button size="small" @click="handleExportWfDebug">导出日志</el-button>
+            <el-button size="small" type="danger" plain @click="handleClearWfDebug">清理日志</el-button>
+          </div>
+          <div style="border:1px solid #ebeef5;border-radius:8px;padding:12px;height:420px;overflow-y:auto;background:#0d1b2a;color:#a7f3d0;font-family:monospace;font-size:12px" v-loading="wfDebugLoading">
+            <div v-if="!wfDebug.logs.length" style="color:#64748b;text-align:center;padding:40px">暂无调试日志（执行业务流或节点测试后生成）</div>
+            <div v-for="(g, i) in wfDebug.logs" :key="g.id ?? i" style="line-height:1.7;white-space:pre-wrap;word-break:break-all">
+              [{{ g.createdAt }}] [{{ (g.level || 'debug').toUpperCase() }}] {{ g.nodeKey ? '[' + g.nodeKey + '] ' : '' }}{{ g.message }}
+            </div>
+          </div>
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="🔄 知识更新" name="kb-update">
+        <div style="background:#fff;border:1px solid #ebeef5;border-radius:8px;padding:16px">
+          <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+            <el-select v-model="wfKbId" placeholder="选择知识库" style="width:240px" @change="loadWfUpdateLogs">
+              <el-option v-for="kb in wfKbList" :key="kb.id" :label="kb.name" :value="kb.id" />
+            </el-select>
+            <el-button size="small" type="primary" @click="handleWfManualUpdate">手动更新</el-button>
+            <el-button size="small" @click="showWfAutoConfig = true">设置自动更新</el-button>
+          </div>
+          <el-table :data="wfUpdateLogs" stripe size="small" v-loading="wfUpdateLoading" max-height="420">
+            <el-table-column prop="updateType" label="类型" width="90"><template #default="{ row }">{{ ({ auto: '自动', manual: '手动', incremental: '增量' } as Record<string, string>)[row.updateType] || row.updateType }}</template></el-table-column>
+            <el-table-column prop="target" label="目标" width="130" show-overflow-tooltip />
+            <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
+            <el-table-column prop="operator" label="操作人" width="90" />
+            <el-table-column prop="timestamp" label="时间" width="160" />
+            <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="primary" size="small" @click="handleWfCompare(row)">比较</el-button></template></el-table-column>
+          </el-table>
+          <el-empty v-if="!wfUpdateLogs.length && !wfUpdateLoading" description="暂无更新记录（手动更新后可见）" :image-size="60" />
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="📈 对话优化" name="optimize">
+        <div style="background:#fff;border:1px solid #ebeef5;border-radius:8px;padding:16px">
+          <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center;flex-wrap:wrap">
+            <el-button size="small" type="primary" @click="handleAnalyzeWf">分析对话数据</el-button>
+            <div v-if="wfAnalyze" style="font-size:12px;color:#606266;display:flex;gap:12px">
+              <span>节点 {{ wfAnalyze.nodeCount }}</span><span>案例 {{ wfAnalyze.testCaseCount }}</span>
+              <span>通过率 {{ wfAnalyze.testCasePassRate }}%</span><span>待应用优化 {{ wfAnalyze.pendingOptimizations }}</span>
+            </div>
+          </div>
+          <div style="display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap">
+            <el-input v-model="wfOptForm.name" placeholder="优化建议名称，如：压缩检索节点提示词" style="width:260px" />
+            <el-select v-model="wfOptForm.suggestionType" style="width:130px">
+              <el-option label="流程优化" value="flow" /><el-option label="提示词优化" value="prompt" />
+              <el-option label="性能优化" value="performance" /><el-option label="准确性优化" value="accuracy" />
+            </el-select>
+            <el-button type="primary" @click="handleCreateWfOpt">新增建议</el-button>
+            <el-button @click="handleExportWfOpts">导出报告</el-button>
+          </div>
+          <el-input v-model="wfOptForm.description" type="textarea" :rows="2" placeholder="建议说明（可选）" style="margin-bottom:12px" />
+          <el-table :data="wfOptList" stripe size="small" v-loading="wfOptLoading">
+            <el-table-column prop="name" label="建议名称" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="suggestionType" label="类型" width="100" />
+            <el-table-column prop="status" label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 'applied' ? 'success' : row.status === 'tested' ? 'primary' : 'warning'" size="small">{{ ({ pending: '待应用', applied: '已应用', tested: '已测试' } as Record<string, string>)[row.status] || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createdAt" label="创建时间" width="160" />
+            <el-table-column label="操作" width="220">
+              <template #default="{ row }">
+                <el-button link type="success" size="small" @click="handleApplyWfOpt(row)">应用</el-button>
+                <el-button link type="primary" size="small" :loading="wfTestingOptId === row.id" @click="handleTestWfOpt(row)">测试效果</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-empty v-if="!wfOptList.length && !wfOptLoading" description="暂无优化建议（先「分析对话数据」再新增）" :image-size="60" />
+        </div>
+      </el-tab-pane>
+      </el-tabs>
     </template>
 
     <!-- 业务流选择弹窗 -->
@@ -1332,32 +1444,6 @@ function clearMigLogs() {
     </el-dialog>
 
     <!-- 业务流对话测试弹窗：录制/查看/运行/删除 -->
-    <el-dialog v-model="showWfTestDialog" title="对话测试 - 测试案例" width="760px">
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <el-button size="small" type="primary" @click="wfTestForm = { name: '', query: '', expectedOutput: '' }; showWfTestCreate = true">录制测试案例</el-button>
-      </div>
-      <el-table :data="wfTestList" stripe size="small" v-loading="wfTestLoading">
-        <el-table-column prop="name" label="案例名称" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="query" label="测试输入" show-overflow-tooltip min-width="160" />
-        <el-table-column prop="expectedOutput" label="期望输出" show-overflow-tooltip min-width="150" />
-        <el-table-column prop="actualOutput" label="实际输出" show-overflow-tooltip min-width="150" />
-        <el-table-column label="结果" width="80" align="center">
-          <template #default="{ row }">
-            <el-tag v-if="row.matched !== null && row.matched !== undefined" :type="row.matched === 1 ? 'success' : 'danger'" size="small">{{ row.matched === 1 ? '通过' : '未通过' }}</el-tag>
-            <span v-else style="color:#c0c4cc;font-size:12px">未运行</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="200">
-          <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="handleViewWfTest(row)">查看</el-button>
-            <el-button link type="success" size="small" :loading="wfRunningId === row.id" @click="handleRunWfTest(row)">运行</el-button>
-            <el-button link type="danger" size="small" @click="handleDeleteWfTest(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="!wfTestList.length && !wfTestLoading" description="暂无测试案例（点击「录制测试案例」开始）" :image-size="60" />
-    </el-dialog>
-
     <!-- 录制测试案例弹窗（真实执行业务流） -->
     <el-dialog v-model="showWfTestCreate" title="录制测试案例" width="520px" :close-on-click-modal="false">
       <el-form label-width="90px">
@@ -1384,47 +1470,6 @@ function clearMigLogs() {
       <template #footer><el-button type="primary" @click="showWfTestView=false">关闭</el-button></template>
     </el-dialog>
 
-    <!-- 业务流对话调试弹窗 -->
-    <el-dialog v-model="showWfDebugDialog" title="对话调试" width="720px">
-      <div style="display:flex;gap:12px;align-items:center;margin-bottom:12px">
-        <span style="font-size:13px">调试级别：</span>
-        <el-select v-model="wfDebug.level" style="width:140px">
-          <el-option label="DEBUG" value="debug" /><el-option label="INFO" value="info" />
-          <el-option label="WARN" value="warn" /><el-option label="ERROR" value="error" />
-        </el-select>
-        <el-button size="small" type="primary" @click="handleSaveWfLevel">保存级别</el-button>
-        <el-button size="small" @click="loadWfDebug">刷新日志</el-button>
-        <el-button size="small" @click="handleExportWfDebug">导出日志</el-button>
-        <el-button size="small" type="danger" plain @click="handleClearWfDebug">清理日志</el-button>
-      </div>
-      <div style="border:1px solid #ebeef5;border-radius:8px;padding:12px;max-height:380px;overflow-y:auto;background:#0d1b2a;color:#a7f3d0;font-family:monospace;font-size:12px" v-loading="wfDebugLoading">
-        <div v-if="!wfDebug.logs.length" style="color:#64748b;text-align:center;padding:40px">暂无调试日志（执行业务流或节点测试后生成）</div>
-        <div v-for="(g, i) in wfDebug.logs" :key="g.id ?? i" style="line-height:1.7;white-space:pre-wrap;word-break:break-all">
-          [{{ g.createdAt }}] [{{ (g.level || 'debug').toUpperCase() }}] {{ g.nodeKey ? '[' + g.nodeKey + '] ' : '' }}{{ g.message }}
-        </div>
-      </div>
-    </el-dialog>
-
-    <!-- 业务流知识更新弹窗 -->
-    <el-dialog v-model="showWfUpdateDialog" title="知识更新" width="720px">
-      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
-        <el-select v-model="wfKbId" placeholder="选择知识库" style="width:240px" @change="loadWfUpdateLogs">
-          <el-option v-for="kb in wfKbList" :key="kb.id" :label="kb.name" :value="kb.id" />
-        </el-select>
-        <el-button size="small" type="primary" @click="handleWfManualUpdate">手动更新</el-button>
-        <el-button size="small" @click="showWfAutoConfig = true">设置自动更新</el-button>
-      </div>
-      <el-table :data="wfUpdateLogs" stripe size="small" v-loading="wfUpdateLoading" max-height="360">
-        <el-table-column prop="updateType" label="类型" width="90"><template #default="{ row }">{{ ({ auto: '自动', manual: '手动', incremental: '增量' } as Record<string, string>)[row.updateType] || row.updateType }}</template></el-table-column>
-        <el-table-column prop="target" label="目标" width="130" show-overflow-tooltip />
-        <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="operator" label="操作人" width="90" />
-        <el-table-column prop="timestamp" label="时间" width="160" />
-        <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="primary" size="small" @click="handleWfCompare(row)">比较</el-button></template></el-table-column>
-      </el-table>
-      <el-empty v-if="!wfUpdateLogs.length && !wfUpdateLoading" description="暂无更新记录（手动更新后可见）" :image-size="60" />
-    </el-dialog>
-
     <!-- 自动更新配置 -->
     <el-dialog v-model="showWfAutoConfig" title="设置自动更新" width="440px">
       <el-form label-width="110px">
@@ -1433,44 +1478,6 @@ function clearMigLogs() {
         <el-form-item label="增量更新"><el-switch v-model="wfAutoConfig.incremental" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showWfAutoConfig=false">取消</el-button><el-button type="primary" @click="handleWfSaveAutoConfig">保存</el-button></template>
-    </el-dialog>
-
-    <!-- 业务流对话优化弹窗 -->
-    <el-dialog v-model="showWfOptDialog" title="对话优化" width="760px">
-      <div style="display:flex;gap:8px;margin-bottom:12px;align-items:center">
-        <el-button size="small" type="primary" @click="handleAnalyzeWf">分析对话数据</el-button>
-        <div v-if="wfAnalyze" style="font-size:12px;color:#606266;display:flex;gap:12px">
-          <span>节点 {{ wfAnalyze.nodeCount }}</span><span>案例 {{ wfAnalyze.testCaseCount }}</span>
-          <span>通过率 {{ wfAnalyze.testCasePassRate }}%</span><span>待应用优化 {{ wfAnalyze.pendingOptimizations }}</span>
-        </div>
-      </div>
-      <div style="display:flex;gap:8px;margin-bottom:12px">
-        <el-input v-model="wfOptForm.name" placeholder="优化建议名称，如：压缩检索节点提示词" style="width:260px" />
-        <el-select v-model="wfOptForm.suggestionType" style="width:130px">
-          <el-option label="流程优化" value="flow" /><el-option label="提示词优化" value="prompt" />
-          <el-option label="性能优化" value="performance" /><el-option label="准确性优化" value="accuracy" />
-        </el-select>
-        <el-button type="primary" @click="handleCreateWfOpt">新增建议</el-button>
-        <el-button @click="handleExportWfOpts">导出报告</el-button>
-      </div>
-      <el-input v-model="wfOptForm.description" type="textarea" :rows="2" placeholder="建议说明（可选）" style="margin-bottom:12px" />
-      <el-table :data="wfOptList" stripe size="small" v-loading="wfOptLoading">
-        <el-table-column prop="name" label="建议名称" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="suggestionType" label="类型" width="100" />
-        <el-table-column prop="status" label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 'applied' ? 'success' : row.status === 'tested' ? 'primary' : 'warning'" size="small">{{ ({ pending: '待应用', applied: '已应用', tested: '已测试' } as Record<string, string>)[row.status] || row.status }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" width="160" />
-        <el-table-column label="操作" width="220">
-          <template #default="{ row }">
-            <el-button link type="success" size="small" @click="handleApplyWfOpt(row)">应用</el-button>
-            <el-button link type="primary" size="small" :loading="wfTestingOptId === row.id" @click="handleTestWfOpt(row)">测试效果</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-      <el-empty v-if="!wfOptList.length && !wfOptLoading" description="暂无优化建议（先「分析对话数据」再新增）" :image-size="60" />
     </el-dialog>
     <!-- 业务流配置迁移弹窗：查看迁移日志/进度/设置迁移策略 -->
     <el-dialog v-model="showWfMigDialog" title="配置迁移" width="780px">

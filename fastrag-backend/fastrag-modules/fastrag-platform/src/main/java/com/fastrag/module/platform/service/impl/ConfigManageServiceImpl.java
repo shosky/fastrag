@@ -24,6 +24,10 @@ public class ConfigManageServiceImpl implements ConfigManageService {
         trainingMapper.insert(t); return t;
     }
     // 模型测试：真实调用 LLM（prompt 可由前端传入），计时并写调用日志
+    /** 调用上游用的密钥：优先真实 api_key（界面保存），其次 api_key_ref 引用 */
+    private String resolveKey(ModelRecord m) {
+        return (m.getApiKey()!=null && !m.getApiKey().isBlank()) ? m.getApiKey() : m.getApiKeyRef();
+    }
     @Override public ModelTestReport test(String modelId,Map<String,Object> params) {
         var model=modelMapper.selectById(modelId);
         var r=new ModelTestReport(); r.setModelId(modelId); r.setModelName(model!=null?model.getName():modelId);
@@ -31,7 +35,7 @@ public class ConfigManageServiceImpl implements ConfigManageService {
         String prompt=params.get("prompt")!=null&&!params.get("prompt").toString().isBlank()
             ?params.get("prompt").toString():"你好，请用一句话做自我介绍";
         long start=System.currentTimeMillis();
-        String resp=model!=null?llmService.chat(model.getCode(),prompt,model.getApiUrl(),model.getApiKeyRef()):"模型不存在";
+        String resp=model!=null?llmService.chat(model.getCode(),prompt,model.getApiUrl(),resolveKey(model)):"模型不存在";
         long latency=System.currentTimeMillis()-start;
         boolean ok=model!=null&&resp!=null&&!resp.startsWith("模型调用失败");
         r.setStatus(ok?"completed":"failed");

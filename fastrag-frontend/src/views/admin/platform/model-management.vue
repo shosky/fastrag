@@ -1,7 +1,10 @@
 <script setup lang="ts">
 import { ref, onMounted } from 'vue'
+import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+
+const route = useRoute()
 
 interface ModelRecord {
   id: string
@@ -121,9 +124,24 @@ function handleUsePreset(row: any) {
   ElMessage.success(`已应用预置「${row.name}」，共 ${row.models?.length || 0} 个模型`)
 }
 
-onMounted(() => {
-  loadModels()
+// 生命周期内层页签（供深链 ?focus=logs 直达调用日志）
+const lifecycleTab = ref('train')
+
+onMounted(async () => {
+  await loadModels()
   loadPresets()
+  // 支持「管理中心概览」快捷入口深链：?focus=chat-test|invoke|logs 直达 对话测试/模型调用/调用日志
+  // 对话类功能优先选在线的 LLM 模型，避免落到图片/语音等不支持对话调用的模型上
+  const focus = route.query.focus as string
+  if (focus && models.value.length) {
+    const m = models.value.find((x) => x.status === 'online' && x.purpose === 'LLM')
+      || models.value.find((x) => x.status === 'online')
+      || models.value[0]
+    selectedModelId.value = m.id
+    if (focus === 'invoke') handleShowInvoke()
+    else if (focus === 'chat-test') handleShowChatTest()
+    else if (focus === 'logs') { lifecycleTab.value = 'logs'; loadLifecycle(m.id) }
+  }
 })
 
 async function loadLifecycle(modelId: string) {
@@ -339,6 +357,8 @@ async function handleSave() {
     ElMessage.warning('请填写必填项')
     return
   }
+  // 密钥仅在填写时提交：留空表示不修改已存密钥（后端同样兜底）
+  const apiKeyPayload = formData.value.apiKey ? { apiKey: formData.value.apiKey } : {}
   if (editingId.value) {
     await api.updateModel(editingId.value, {
       name: formData.value.name,
@@ -346,6 +366,7 @@ async function handleSave() {
       purpose: formData.value.purpose,
       brand: formData.value.brand,
       apiUrl: formData.value.apiUrl,
+      ...apiKeyPayload,
       contextWindow: formData.value.contextWindow,
       status: formData.value.status,
     })
@@ -356,6 +377,7 @@ async function handleSave() {
       purpose: formData.value.purpose,
       brand: formData.value.brand,
       apiUrl: formData.value.apiUrl,
+      ...apiKeyPayload,
       contextWindow: formData.value.contextWindow,
       status: formData.value.status,
     })
@@ -402,7 +424,12 @@ async function handleSave() {
               <el-button size="small" @click="handleEdit(model)">编辑</el-button>
           <el-button size="small" @click="handleThreshold(model)">阈值</el-button>
               <el-button size="small" @click="loadLifecycle(model.id)">生命周期</el-button>
-              <el-button size="small" type="success" @click="selectedModelId = model.id; handleShowInvoke()">调用</el-button>
+              <el-tooltip content="仅 LLM 模型支持对话调用，请先编辑模型用途或选择 LLM 模型" :disabled="model.purpose === 'LLM'" placement="top">
+                <span style="display:inline-flex;gap:8px">
+                  <el-button size="small" type="warning" :disabled="model.purpose !== 'LLM'" @click="selectedModelId = model.id; handleShowChatTest()">对话测试</el-button>
+                  <el-button size="small" type="success" :disabled="model.purpose !== 'LLM'" @click="selectedModelId = model.id; handleShowInvoke()">调用</el-button>
+                </span>
+              </el-tooltip>
               <el-button size="small" type="danger" @click="handleDelete(model)">删除</el-button>
               <el-switch
                 :model-value="model.status === 'online'"
@@ -454,9 +481,9 @@ async function handleSave() {
         <el-button @click="activeTab = 'list'">返回列表</el-button>
       </div>
 
-      <el-tabs>
+      <el-tabs v-model="lifecycleTab">
         <!-- 训练记录 -->
-        <el-tab-pane label="训练记录">
+        <el-tab-pane label="训练记录" name="train">
           <div class="section-header">
             <div class="section-title">训练记录</div>
             <div style="display:flex;gap:8px">
@@ -487,7 +514,7 @@ async function handleSave() {
         </el-tab-pane>
 
         <!-- 测试报告 -->
-        <el-tab-pane label="测试报告">
+        <el-tab-pane label="测试报告" name="report">
           <div class="section-header">
             <div class="section-title">测试报告</div>
             <div style="display:flex;gap:8px">
@@ -515,7 +542,7 @@ async function handleSave() {
         </el-tab-pane>
 
         <!-- 调用日志 -->
-        <el-tab-pane label="调用日志">
+        <el-tab-pane label="调用日志" name="logs">
           <el-table :data="callLogs" stripe size="small">
             <el-table-column prop="caller" label="调用方" min-width="120" />
             <el-table-column prop="tokens" label="Token数" width="90" align="right" />
@@ -763,10 +790,16 @@ async function handleSave() {
 
   .card-footer {
     display: flex;
+    flex-wrap: wrap; // 卡片窄，按钮放不下时换行，避免溢出
     align-items: center;
-    gap: $spacing-sm;
+    gap: 6px $spacing-sm;
     padding-top: $spacing-sm;
     border-top: 1px solid $border-lighter;
+
+    // 间距统一交给 gap，抵消 el-button 相邻默认外边距
+    :deep(.el-button + .el-button) {
+      margin-left: 0;
+    }
   }
 }
 

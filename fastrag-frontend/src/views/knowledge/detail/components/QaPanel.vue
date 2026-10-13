@@ -2,6 +2,8 @@
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+import * as XLSX from 'xlsx'
+import { formatDate } from '@/utils/format'
 
 const props = defineProps<{ kbId: string }>()
 
@@ -302,6 +304,80 @@ async function handleDocDownload(row: any) {
     ElMessage.error('下载失败')
   }
 }
+// ===== 应答文档导入 / 导出 =====
+// 批量导入：多选文件后逐个上传并触发解析
+const docImportInput = ref<HTMLInputElement>()
+const docImporting = ref(false)
+
+function openDocImport() {
+  docImportInput.value?.click()
+}
+async function handleDocImport(e: Event) {
+  const input = e.target as HTMLInputElement
+  const files = Array.from(input.files || [])
+  if (!files.length) return
+  docImporting.value = true
+  const failed: string[] = []
+  try {
+    for (const file of files) {
+      try {
+        const fd = new FormData()
+        fd.append('file', file)
+        const created: any = await api.uploadFile(props.kbId, fd)
+        const newId = created?.id || created?.data?.id
+        if (newId) {
+          try {
+            await api.processFile(props.kbId, newId)
+          } catch {
+            /* 解析失败不阻塞导入 */
+          }
+        }
+      } catch {
+        failed.push(file.name)
+      }
+    }
+    const ok = files.length - failed.length
+    if (failed.length) {
+      ElMessage.warning(`导入完成：成功 ${ok} 个，失败 ${failed.length} 个（${failed.join('、')}）`)
+    } else {
+      ElMessage.success(`导入完成：共导入 ${files.length} 个文档`)
+    }
+    await loadDocs()
+  } finally {
+    docImporting.value = false
+    input.value = ''
+  }
+}
+
+// 导出：把当前筛选后的文档清单导出为 Excel
+const docExporting = ref(false)
+async function handleDocExport() {
+  if (filteredDocs.value.length === 0) { ElMessage.warning('暂无可导出的文档'); return }
+  docExporting.value = true
+  try {
+    const rows = filteredDocs.value.map((d: any, i: number) => ({
+      '序号': i + 1,
+      '文档名称': d.name || '',
+      '类型': d.category || '',
+      '扩展名': d.extension || '',
+      '大小(KB)': d.size ? Number((d.size / 1024).toFixed(1)) : 0,
+      '解析状态': d.status || '',
+      '分块数': d.chunkCount ?? 0,
+      '创建时间': d.createdAt || '',
+    }))
+    const ws = XLSX.utils.json_to_sheet(rows)
+    ws['!cols'] = [{ wch: 6 }, { wch: 40 }, { wch: 14 }, { wch: 10 }, { wch: 10 }, { wch: 12 }, { wch: 8 }, { wch: 22 }]
+    const wb = XLSX.utils.book_new()
+    XLSX.utils.book_append_sheet(wb, ws, '应答文档')
+    XLSX.writeFile(wb, `应答文档清单_${formatDate(new Date(), 'YYYY-MM-DD')}.xlsx`)
+    ElMessage.success(`已导出 ${rows.length} 个文档`)
+  } catch {
+    ElMessage.error('导出失败')
+  } finally {
+    docExporting.value = false
+  }
+}
+
 onMounted(loadDocs)
 </script>
 
@@ -442,7 +518,14 @@ onMounted(loadDocs)
         <el-button size="small" :loading="docUploading" @click="openDocUpload">
           <el-icon><Upload /></el-icon>新增文档
         </el-button>
+        <el-button size="small" :loading="docImporting" @click="openDocImport">
+          <el-icon><UploadFilled /></el-icon>导入
+        </el-button>
+        <el-button size="small" :loading="docExporting" @click="handleDocExport">
+          <el-icon><Download /></el-icon>导出
+        </el-button>
         <input ref="docInput" type="file" style="display: none" @change="handleDocUpload" />
+        <input ref="docImportInput" type="file" multiple style="display: none" @change="handleDocImport" />
       </div>
     </div>
     <el-table :data="filteredDocs" stripe size="small" v-loading="docLoading">
