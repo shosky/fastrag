@@ -241,6 +241,7 @@ const MEDIA_TYPES = [
   { value: 'document', label: '文档' },
 ]
 const MEDIA_STATUS: Record<string, string> = { uploaded: '已上传', processing: '处理中', completed: '已完成', failed: '失败' }
+function mediaStatusText(s: any) { return MEDIA_STATUS[String(s)] || String(s || '-') }
 const mediaType = ref('image')
 const mediaKeyword = ref('')
 const mediaList = ref<any[]>([])

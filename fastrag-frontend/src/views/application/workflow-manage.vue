@@ -806,9 +806,9 @@ async function handleExportWfOpts() {
 
 // ============================================================================
 // 业务流-配置迁移（查看迁移日志/进度/设置迁移策略）
-// 说明：/api/workflows/migrations 在后端是兼容层桩实现（仅返回占位 id、列表恒空），
-// 因此迁移动作改为**前端驱动**：读取源业务流的节点/连线/节点扩展配置，真实写入目标业务流，
-// 迁移日志与进度在前端留存（localStorage），保证演示可见、可复现。
+// 说明：迁移由后端真实执行（POST /api/workflows/migrations：按策略复制节点/连线/节点扩展配置，
+// 进度与结果落 wf_migration 表），前端发起后按阶段推进进度条；迁移日志优先读后端，
+// 后端为空/不可用时回退本地留存（localStorage），保证演示可见、可复现。
 // ============================================================================
 const showWfMigDialog = ref(false)
 const wfMigList = ref<any[]>([])
@@ -834,7 +834,7 @@ function openWfMig() {
 async function loadWfMigs() {
   wfMigLoading.value = true
   try {
-    // 优先读后端（可能已实现），为空时回退前端留存日志
+    // 优先读后端（真实落库记录），为空时回退前端留存日志
     let list: any[] = []
     try { list = ((await api.getWorkflowMigrations()) as any) || [] } catch { list = [] }
     if (!Array.isArray(list) || list.length === 0) list = loadMigLogs()
@@ -842,15 +842,7 @@ async function loadWfMigs() {
   } finally { wfMigLoading.value = false }
 }
 
-/** 取业务流最新草稿版本（优先 draft，其次最新版本） */
-async function latestVersionOf(flowId: string) {
-  const versions: any = await bpm.listVersions(flowId).catch(() => [])
-  const arr: any[] = Array.isArray(versions) ? versions : (versions?.list || versions?.records || [])
-  if (!arr.length) return null
-  return arr.find((v: any) => v.status === 'draft') || arr[arr.length - 1]
-}
-
-/** 前端驱动迁移：节点（含位置）→ 连线 → 节点扩展配置（delays/resources/permissions/log-level/data-policies/backups） */
+/** 后端驱动迁移：按策略复制节点（含位置/扩展配置）→ 连线，进度与结果落库 wf_migration */
 async function handleCreateWfMig() {
   if (!wfMigForm.value.targetWorkflowId) { ElMessage.warning('请选择目标业务流'); return }
   if (wfMigForm.value.targetWorkflowId === wfId.value) { ElMessage.warning('目标业务流不能与源相同'); return }
@@ -858,67 +850,34 @@ async function handleCreateWfMig() {
   const startedAt = Date.now()
   const src = wfId.value
   const tgt = wfMigForm.value.targetWorkflowId
-  const exts = ['delays', 'resources', 'permissions', 'log-level', 'data-policies']
-  let nodeOk = 0, edgeOk = 0, extOk = 0
-  const warnings: string[] = []
   try {
-    // 1) 读取源：节点 / 连线 / 源版本
-    wfMigStage.value = '读取源业务流配置…'; wfMigProgress.value = 10
-    const srcNodes: any[] = ((await api.getWorkflowNodes(src)) as any) || []
-    const srcVer = await latestVersionOf(src)
-    const srcEdges: any[] = srcVer ? (((await bpm.listEdges(src, srcVer.id).catch(() => [])) as any) || []) : []
-
-    // 2) 目标版本（用于写连线）
-    const tgtVer = await latestVersionOf(tgt)
-    if (!tgtVer) warnings.push('目标业务流没有可写版本，连线未迁移')
-
-    // 3) 迁移节点（compat 接口以 type 键传节点类型）
-    wfMigStage.value = `迁移节点（共 ${srcNodes.length} 个）…`
-    for (const n of srcNodes) {
-      if (wfMigForm.value.strategy === 'merge' && srcNodes.length && (await api.getWorkflowNodes(tgt) as any)?.some((x: any) => x.nodeKey === n.nodeKey)) {
-        warnings.push(`节点 ${n.nodeKey} 已存在，按「合并」策略跳过`)
-        continue
+    // 后端单次请求内完成复制，前端按阶段推进进度条（10 → 90 → 100）
+    wfMigStage.value = '后端读取源业务流配置…'; wfMigProgress.value = 10
+    const timer = window.setInterval(() => {
+      if (wfMigProgress.value < 90) {
+        wfMigProgress.value = Math.min(90, wfMigProgress.value + 5)
+        wfMigStage.value = wfMigProgress.value < 40 ? '迁移节点（含扩展配置）…' : wfMigProgress.value < 70 ? '迁移连线…' : '写入迁移结果…'
       }
-      await api.addWorkflowNode(tgt, { nodeKey: n.nodeKey, name: n.name, type: n.nodeType, x: n.positionX || 0, y: n.positionY || 0 })
-      nodeOk++
-      wfMigProgress.value = 10 + Math.round((nodeOk / Math.max(1, srcNodes.length)) * 40) // 10 → 50
-    }
-
-    // 4) 迁移连线
-    if (tgtVer && srcEdges.length) {
-      wfMigStage.value = `迁移连线（共 ${srcEdges.length} 条）…`
-      for (const e of srcEdges) {
-        try {
-          await bpm.createEdge(tgt, tgtVer.id, { sourceNodeKey: e.sourceNodeKey, targetNodeKey: e.targetNodeKey, edgeKind: e.edgeKind, label: e.label })
-          edgeOk++
-        } catch (err: any) {
-          warnings.push(`连线 ${e.sourceNodeKey}→${e.targetNodeKey} 迁移失败`)
-        }
-        wfMigProgress.value = 50 + Math.round((edgeOk / Math.max(1, srcEdges.length)) * 30) // 50 → 80
-      }
-    } else {
-      wfMigProgress.value = 80
-    }
-
-    // 5) 迁移节点扩展配置（源节点的维度配置可能平铺在 config 顶层，也可能在 extensions 下，两种都兼容）
-    wfMigStage.value = '迁移节点扩展配置…'
-    for (const n of srcNodes) {
-      let cfg: any = {}
-      try { cfg = typeof n.config === 'string' ? JSON.parse(n.config || '{}') : (n.config || {}) } catch { cfg = {} }
-      const ex = { ...(cfg.extensions || {}), ...cfg }
-      for (const dim of exts) {
-        if (!ex[dim] || typeof ex[dim] !== 'object') continue
-        try {
-          await api.saveWorkflowNodeConfig(tgt, n.nodeKey, dim, ex[dim])
-          extOk++
-        } catch { warnings.push(`节点 ${n.nodeKey} 的 ${dim} 配置迁移失败`) }
-      }
-    }
+    }, 300)
+    let resp: any
+    try {
+      resp = await api.createWorkflowMigration({
+        sourceWorkflowId: src,
+        targetWorkflowId: tgt,
+        targetEnv: wfMigForm.value.targetEnv,
+        strategy: wfMigForm.value.strategy,
+        remark: wfMigForm.value.remark,
+      })
+    } finally { window.clearInterval(timer) }
     wfMigProgress.value = 100
     wfMigStage.value = '迁移完成'
 
+    const nodeOk = Number(resp?.nodeCount || 0)
+    const edgeOk = Number(resp?.edgeCount || 0)
+    const extOk = Number(resp?.extCount || 0)
+    const warnings: string[] = Array.isArray(resp?.warnings) ? resp.warnings : []
     const entry = {
-      id: `mig_${Date.now()}`,
+      id: resp?.id || `mig_${Date.now()}`,
       sourceWorkflowId: src,
       sourceName: wfNameById(src),
       targetWorkflowId: tgt,
@@ -929,13 +888,13 @@ async function handleCreateWfMig() {
       nodeCount: nodeOk,
       edgeCount: edgeOk,
       extCount: extOk,
-      status: 'completed',
-      progress: 100,
-      durationMs: Date.now() - startedAt,
+      status: resp?.status || 'completed',
+      progress: resp?.progress || 100,
+      durationMs: resp?.durationMs || Date.now() - startedAt,
       warnings,
       validateResult: `节点 ${nodeOk} 个 / 连线 ${edgeOk} 条 / 扩展配置 ${extOk} 项` + (warnings.length ? `；${warnings.length} 项提示` : ''),
       createdAt: new Date().toLocaleString('zh-CN'),
-      operator: 'admin',
+      operator: resp?.operator || 'admin',
     }
     saveMigLogs([entry, ...loadMigLogs()])
     await loadWfMigs()
@@ -945,9 +904,9 @@ async function handleCreateWfMig() {
       id: `mig_${Date.now()}`, sourceWorkflowId: src, sourceName: wfNameById(src),
       targetWorkflowId: tgt, targetName: wfNameById(tgt), targetEnv: wfMigForm.value.targetEnv,
       strategy: wfMigForm.value.strategy, remark: wfMigForm.value.remark,
-      nodeCount: nodeOk, edgeCount: edgeOk, extCount: extOk,
+      nodeCount: 0, edgeCount: 0, extCount: 0,
       status: 'failed', progress: wfMigProgress.value, durationMs: Date.now() - startedAt,
-      warnings: [...warnings, String(e?.message || e)], validateResult: `迁移中断：${e?.message || '未知错误'}`,
+      warnings: [String(e?.message || e)], validateResult: `迁移中断：${e?.message || '未知错误'}`,
       createdAt: new Date().toLocaleString('zh-CN'), operator: 'admin',
     }
     saveMigLogs([failEntry, ...loadMigLogs()])
@@ -960,10 +919,11 @@ async function handleCreateWfMig() {
 function wfMigStatus(s: string) { return ({ running: '执行中', pending: '待执行', completed: '已完成', failed: '失败' } as Record<string, string>)[s] || s }
 function wfMigStatusColor(s: string) { return (({ completed: 'success', failed: 'danger', running: 'warning', pending: 'info' } as Record<string, string>)[s] || 'info') as any }
 function wfNameById(id: string) { return workflowList.value.find((w: any) => w.id === id)?.name || id }
-function clearMigLogs() {
+async function clearMigLogs() {
   saveMigLogs([])
+  try { await api.clearWorkflowMigrations() } catch { /* 后端不可用时仅清本地 */ }
   wfMigList.value = []
-  ElMessage.success('已清空本地迁移日志')
+  ElMessage.success('已清空迁移日志')
 }
 </script>
 
@@ -1516,7 +1476,7 @@ function clearMigLogs() {
       <div class="section-title" style="margin-bottom:8px">
         迁移日志
         <el-button v-if="wfMigList.length" link type="danger" size="small" style="margin-left:8px" @click="clearMigLogs">清空日志</el-button>
-        <span style="font-size:12px;color:var(--el-text-color-secondary);margin-left:8px">（迁移由前端读取源配置并真实写入目标业务流；日志留存于本地）</span>
+        <span style="font-size:12px;color:var(--el-text-color-secondary);margin-left:8px">（迁移由后端真实复制节点/连线/扩展配置并落库；日志优先读后端，为空时回退本地留存）</span>
       </div>
       <el-table :data="wfMigList" stripe size="small" v-loading="wfMigLoading">
         <el-table-column label="源 → 目标" min-width="200" show-overflow-tooltip>

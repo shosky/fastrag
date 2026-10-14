@@ -5,5 +5,5 @@ import com.fastrag.module.bpm.entity.WfOptimization;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-public interface WfOptimizationMapper extends BaseMapper<WfOptimization> {
+public interface BpmWfOptimizationMapper extends BaseMapper<WfOptimization> {
 }

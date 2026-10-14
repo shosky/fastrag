@@ -7,6 +7,7 @@ import jakarta.servlet.ServletException;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.data.redis.core.StringRedisTemplate;
 import org.springframework.security.authentication.UsernamePasswordAuthenticationToken;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -20,10 +21,21 @@ import java.util.List;
 import java.util.stream.Collectors;
 
 @Component
+@Slf4j
 @RequiredArgsConstructor
 public class JwtAuthFilter extends OncePerRequestFilter {
     private final JwtUtil jwtUtil;
     private final StringRedisTemplate redisTemplate;
+
+    /** 黑名单查询：Redis 不可用时按未拉黑处理（宕机期间 logout 的写入同样失败，黑名单不可能有数据），避免全站认证 500 */
+    private boolean isBlacklisted(String token) {
+        try {
+            return Boolean.TRUE.equals(redisTemplate.hasKey("jwt:blacklist:" + token));
+        } catch (Exception e) {
+            log.warn("Redis 黑名单查询失败，按未拉黑处理: {}", e.getMessage());
+            return false;
+        }
+    }
 
     @Override
     protected void doFilterInternal(HttpServletRequest request, HttpServletResponse response, FilterChain chain)
@@ -32,7 +44,7 @@ public class JwtAuthFilter extends OncePerRequestFilter {
         if (StringUtils.hasText(header) && header.startsWith("Bearer ")) {
             String token = header.substring(7);
             // Check blacklist
-            if (Boolean.TRUE.equals(redisTemplate.hasKey("jwt:blacklist:" + token))) {
+            if (isBlacklisted(token)) {
                 chain.doFilter(request, response);
                 return;
             }

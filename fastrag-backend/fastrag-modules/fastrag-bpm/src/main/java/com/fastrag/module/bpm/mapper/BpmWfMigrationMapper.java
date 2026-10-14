@@ -1,9 +1,9 @@
 package com.fastrag.module.bpm.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.fastrag.module.bpm.entity.WfDebugLog;
+import com.fastrag.module.bpm.entity.WfMigration;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-public interface WfDebugLogMapper extends BaseMapper<WfDebugLog> {
+public interface BpmWfMigrationMapper extends BaseMapper<WfMigration> {
 }

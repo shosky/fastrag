@@ -46,7 +46,7 @@ async function loadData() {
     ])
     effect.value = eff || { totalPublish: 0, successCount: 0, revokeCount: 0, avgReviewHours: '-' }
     trend.value = Array.isArray(tr) ? tr : []
-    history.value = Array.isArray(his) ? his : his?.list || []
+    history.value = Array.isArray(his) ? his : (his as any)?.list || []
     renderChart()
   } finally { loading.value = false }
 }

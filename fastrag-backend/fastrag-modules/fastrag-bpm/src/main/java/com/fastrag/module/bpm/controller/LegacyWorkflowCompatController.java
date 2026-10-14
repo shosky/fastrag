@@ -8,10 +8,15 @@ import com.fastrag.module.bpm.entity.WfDebugLog;
 import com.fastrag.module.bpm.entity.WfOptimization;
 import com.fastrag.module.bpm.entity.WfTemplate;
 import com.fastrag.module.bpm.entity.WfTestCase;
+import com.fastrag.module.bpm.entity.BpmFlowEdge;
+import com.fastrag.module.bpm.entity.BpmFlowNode;
 import com.fastrag.module.bpm.entity.BpmFlowTestCase;
 import com.fastrag.module.bpm.entity.WfMigration;
-import com.fastrag.module.bpm.mapper.WfDebugLogMapper;
-import com.fastrag.module.bpm.mapper.WfOptimizationMapper;
+import com.fastrag.module.bpm.mapper.BpmWfDebugLogMapper;
+import com.fastrag.module.bpm.mapper.BpmWfOptimizationMapper;
+import com.fastrag.module.bpm.mapper.BpmWfMigrationMapper;
+import com.fastrag.module.bpm.mapper.BpmFlowEdgeMapper;
+import com.fastrag.module.bpm.mapper.BpmFlowNodeMapper;
 import com.fastrag.module.bpm.mapper.BpmFlowTestCaseMapper;
 import com.fastrag.module.bpm.service.BpmFlowNodeService;
 import com.fastrag.module.bpm.service.BpmFlowVersionService;
@@ -61,8 +66,11 @@ public class LegacyWorkflowCompatController {
     private final ImportExportController importExportController;
     private final BpmFlowVersionService flowVersionService;
     private final BpmFlowNodeService nodeService;
-    private final WfDebugLogMapper wfDebugLogMapper;
-    private final WfOptimizationMapper wfOptimizationMapper;
+    private final BpmWfDebugLogMapper wfDebugLogMapper;
+    private final BpmWfOptimizationMapper wfOptimizationMapper;
+    private final BpmWfMigrationMapper wfMigrationMapper;
+    private final BpmFlowNodeMapper bpmFlowNodeMapper;
+    private final BpmFlowEdgeMapper bpmFlowEdgeMapper;
     private final BpmFlowTestCaseMapper bpmFlowTestCaseMapper;
     private final ObjectMapper objectMapper;
 
@@ -576,16 +584,187 @@ public class LegacyWorkflowCompatController {
         resp.getOutputStream().write(sb.toString().getBytes(StandardCharsets.UTF_8));
     }
 
-    @GetMapping("/migrations")
-    @Deprecated
-    public ApiResponse<?> migrations() {
-        return ApiResponse.success(List.of());
+    // ===== 迁移（真实落库：读源业务流节点/连线/扩展配置，按策略写入目标业务流） =====
+
+    /** 节点扩展维度在 config JSON 中的键（迁移计数用，与 dimKey 的存储键一致） */
+    private static final List<String> MIG_DIMS = List.of("delays", "resources", "permissions", "logLevel", "envVars", "dataPolicies");
+
+    /** 迁移版本解析：优先最新 draft，无 draft 时取 versionNo 最大版本（返回 null 表示没有任何版本） */
+    private String pickMigrationVersionId(String flowDefId) {
+        var versions = flowVersionService.listByFlow(flowDefId);
+        return versions.stream().filter(v -> "draft".equals(v.getStatus()))
+                .max(Comparator.comparing(FlowVersionVO::getVersionNo)).map(FlowVersionVO::getId)
+                .or(() -> versions.stream().max(Comparator.comparing(FlowVersionVO::getVersionNo)).map(FlowVersionVO::getId))
+                .orElse(null);
     }
 
+    private String str(Object v) { return v == null ? null : v.toString(); }
+
+    /** 把 validate_result JSON 拆成前端表格直接可展示的扁平字段 */
+    private Map<String, Object> migrationRow(WfMigration m) {
+        Map<String, Object> r = new LinkedHashMap<>();
+        r.put("id", m.getId());
+        r.put("sourceWorkflowId", m.getSourceWorkflowId());
+        r.put("targetWorkflowId", m.getTargetWorkflowId());
+        r.put("targetEnv", m.getTargetEnv());
+        r.put("strategy", m.getStrategy());
+        r.put("status", m.getStatus());
+        r.put("progress", m.getProgress());
+        r.put("operator", m.getOperator());
+        r.put("createdAt", m.getCreatedAt());
+        Map<String, Object> vr = parseCfg(m.getValidateResult());
+        r.put("nodeCount", vr.get("nodeCount"));
+        r.put("edgeCount", vr.get("edgeCount"));
+        r.put("extCount", vr.get("extCount"));
+        r.put("warnings", vr.get("warnings") instanceof List<?> l ? l : List.of());
+        r.put("durationMs", vr.get("durationMs"));
+        r.put("validateResult", m.getValidateResult());
+        return r;
+    }
+
+    /** 查看迁移日志（真实读取 wf_migration） */
+    @GetMapping("/migrations")
+    public ApiResponse<?> migrations() {
+        var rows = wfMigrationMapper.selectList(new LambdaQueryWrapper<WfMigration>()
+                .orderByDesc(WfMigration::getCreatedAt).orderByDesc(WfMigration::getId));
+        List<Map<String, Object>> list = new ArrayList<>();
+        for (var m : rows) list.add(migrationRow(m));
+        return ApiResponse.success(list);
+    }
+
+    /** 发起配置迁移（真实复制：节点含位置/基础配置/扩展维度 → 连线 → 记录进度与结果） */
     @PostMapping("/migrations")
-    @Deprecated
-    public ApiResponse<?> createMigration(@RequestBody WfMigration m) {
-        return ApiResponse.success(Map.of("id", "compat-mig-" + System.currentTimeMillis()));
+    public ApiResponse<?> createMigration(@RequestBody Map<String, Object> body) {
+        String src = str(body.get("sourceWorkflowId"));
+        String tgt = str(body.get("targetWorkflowId"));
+        if (src == null || src.isBlank() || tgt == null || tgt.isBlank()) {
+            return ApiResponse.error(400, "sourceWorkflowId / targetWorkflowId 不能为空");
+        }
+        if (src.equals(tgt)) return ApiResponse.error(400, "目标业务流不能与源相同");
+        String strategy = "merge".equals(body.get("strategy")) ? "merge" : "overwrite";
+        String targetEnv = body.get("targetEnv") == null ? "test" : body.get("targetEnv").toString();
+        String remark = body.get("remark") == null ? "" : body.get("remark").toString();
+        String operator = body.get("operator") == null ? "admin" : body.get("operator").toString();
+
+        var m = new WfMigration();
+        m.setId("wfmig_" + System.currentTimeMillis());
+        m.setSourceWorkflowId(src);
+        m.setTargetWorkflowId(tgt);
+        m.setTargetEnv(targetEnv);
+        m.setStrategy(strategy);
+        m.setStatus("running");
+        m.setProgress(10);
+        m.setOperator(operator);
+        wfMigrationMapper.insert(m);
+
+        long startedAt = System.currentTimeMillis();
+        int nodeOk = 0, edgeOk = 0, extOk = 0, skipped = 0;
+        List<String> warnings = new ArrayList<>();
+        try {
+            String srcVerId = pickMigrationVersionId(src);
+            String tgtVerId = pickMigrationVersionId(tgt);
+            if (srcVerId == null || tgtVerId == null) {
+                throw new RuntimeException("源或目标业务流没有可用版本（请先在画布保存生成版本）");
+            }
+
+            // 1) 节点：merge 跳过同名 nodeKey；overwrite 先删后插；config 整体复制（扩展维度随行迁移）
+            m.setProgress(20);
+            wfMigrationMapper.updateById(m);
+            var srcNodes = bpmFlowNodeMapper.selectList(new LambdaQueryWrapper<BpmFlowNode>()
+                    .eq(BpmFlowNode::getVersionId, srcVerId));
+            Map<String, String> tgtKeyToId = new LinkedHashMap<>();
+            bpmFlowNodeMapper.selectList(new LambdaQueryWrapper<BpmFlowNode>().eq(BpmFlowNode::getVersionId, tgtVerId))
+                    .forEach(n -> tgtKeyToId.put(n.getNodeKey(), n.getId()));
+            for (var n : srcNodes) {
+                boolean exists = tgtKeyToId.containsKey(n.getNodeKey());
+                if (exists && "merge".equals(strategy)) { skipped++; continue; }
+                if (exists) bpmFlowNodeMapper.deleteById(tgtKeyToId.get(n.getNodeKey()));
+                var copy = new BpmFlowNode();
+                copy.setVersionId(tgtVerId);
+                copy.setNodeKey(n.getNodeKey());
+                copy.setNodeType(n.getNodeType());
+                copy.setName(n.getName());
+                copy.setPositionX(n.getPositionX());
+                copy.setPositionY(n.getPositionY());
+                copy.setConfig(n.getConfig());
+                copy.setTimeoutMs(n.getTimeoutMs());
+                copy.setRetryCount(n.getRetryCount());
+                copy.setRetryIntervalMs(n.getRetryIntervalMs());
+                copy.setOnFailure(n.getOnFailure());
+                copy.setFailureBranchNodeKey(n.getFailureBranchNodeKey());
+                copy.setEnabled(n.getEnabled() == null ? Boolean.TRUE : n.getEnabled());
+                bpmFlowNodeMapper.insert(copy);
+                tgtKeyToId.put(n.getNodeKey(), copy.getId());
+                nodeOk++;
+                Map<String, Object> cfg = parseCfg(n.getConfig());
+                Map<String, Object> ext = new LinkedHashMap<>();
+                if (cfg.get("extensions") instanceof Map<?, ?> em) {
+                    for (var en : em.entrySet()) ext.put(String.valueOf(en.getKey()), en.getValue());
+                } else {
+                    ext.putAll(cfg);
+                }
+                for (String dim : MIG_DIMS) if (ext.get(dim) instanceof Map) extOk++;
+            }
+            m.setProgress(60);
+            wfMigrationMapper.updateById(m);
+
+            // 2) 连线：目标已存在同 source→target 的连线时跳过，避免重复迁移叠加
+            var srcEdges = bpmFlowEdgeMapper.selectList(new LambdaQueryWrapper<BpmFlowEdge>()
+                    .eq(BpmFlowEdge::getVersionId, srcVerId));
+            Set<String> tgtEdgeKeys = new HashSet<>();
+            bpmFlowEdgeMapper.selectList(new LambdaQueryWrapper<BpmFlowEdge>().eq(BpmFlowEdge::getVersionId, tgtVerId))
+                    .forEach(e -> tgtEdgeKeys.add(e.getSourceNodeKey() + "->" + e.getTargetNodeKey()));
+            for (var e : srcEdges) {
+                String key = e.getSourceNodeKey() + "->" + e.getTargetNodeKey();
+                if (tgtEdgeKeys.contains(key)) { skipped++; continue; }
+                var copy = new BpmFlowEdge();
+                copy.setVersionId(tgtVerId);
+                copy.setSourceNodeKey(e.getSourceNodeKey());
+                copy.setTargetNodeKey(e.getTargetNodeKey());
+                copy.setEdgeKind(e.getEdgeKind());
+                copy.setConditionExpr(e.getConditionExpr());
+                copy.setConditionParams(e.getConditionParams());
+                copy.setLabel(e.getLabel());
+                copy.setPriority(e.getPriority());
+                bpmFlowEdgeMapper.insert(copy);
+                tgtEdgeKeys.add(key);
+                edgeOk++;
+            }
+            m.setProgress(90);
+            wfMigrationMapper.updateById(m);
+
+            m.setProgress(100);
+            m.setStatus("completed");
+        } catch (Exception ex) {
+            m.setStatus("failed");
+            warnings.add(ex.getMessage() == null ? "未知错误" : ex.getMessage());
+            Map<String, Object> vr = new LinkedHashMap<>();
+            vr.put("nodeCount", nodeOk); vr.put("edgeCount", edgeOk); vr.put("extCount", extOk);
+            vr.put("skipped", skipped); vr.put("warnings", warnings);
+            vr.put("remark", remark); vr.put("durationMs", System.currentTimeMillis() - startedAt);
+            m.setValidateResult(toJson(vr));
+            wfMigrationMapper.updateById(m);
+            throw new RuntimeException("迁移失败：" + (ex.getMessage() == null ? "未知错误" : ex.getMessage()));
+        }
+
+        Map<String, Object> vr = new LinkedHashMap<>();
+        vr.put("nodeCount", nodeOk); vr.put("edgeCount", edgeOk); vr.put("extCount", extOk);
+        vr.put("skipped", skipped); vr.put("warnings", warnings);
+        vr.put("remark", remark); vr.put("durationMs", System.currentTimeMillis() - startedAt);
+        m.setValidateResult(toJson(vr));
+        wfMigrationMapper.updateById(m);
+
+        Map<String, Object> r = migrationRow(m);
+        r.put("skipped", skipped);
+        r.put("remark", remark);
+        return ApiResponse.success(r);
+    }
+
+    /** 清空迁移日志 */
+    @DeleteMapping("/migrations")
+    public ApiResponse<?> clearMigrations() {
+        wfMigrationMapper.delete(null);
+        return ApiResponse.success(Map.of("cleared", true));
     }
 
     @GetMapping("/{id}/monitor")

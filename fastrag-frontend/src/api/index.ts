@@ -1989,6 +1989,9 @@ export async function getWorkflowMigrations() {
 export async function createWorkflowMigration(data: Record<string, unknown>) {
   return request.post('/workflows/migrations', data)
 }
+export async function clearWorkflowMigrations() {
+  return request.delete('/workflows/migrations')
+}
 export async function getWorkflowMonitor(wfId: string) {
   return request.get(`/workflows/${wfId}/monitor`)
 }

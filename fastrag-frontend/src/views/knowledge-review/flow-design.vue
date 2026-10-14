@@ -379,7 +379,7 @@ async function openNodeDrawer(row: any) {
       api.getListeners(selectedKbId.value).catch(() => []),
       api.getNodeOptimizationSuggestions(selectedKbId.value, row.id).catch(() => []),
     ])
-    drawerListeners.value = Array.isArray(listeners) ? listeners : listeners?.list || []
+    drawerListeners.value = Array.isArray(listeners) ? listeners : (listeners as any)?.list || []
     drawerSuggestions.value = Array.isArray(suggestions) ? suggestions : []
     // 兼容两种历史键名：listeners / listenerIds
     nodeEditList.value = getSteps(row).map((s: any, i: number) => {
