@@ -45,9 +45,12 @@ services:
       - fastrag-net
     restart: unless-stopped
 
-  # ==================== Sandbox image（一次性构建，产物供沙箱后端使用）====================
-  # 构建命令：docker compose --profile sandbox build sandbox-image
-  # 产物：fastrag-sandbox:latest（内容物见 fastrag-backend/docker/sandbox.Dockerfile）
+  # ==================== Sandbox image（默认随 compose 构建的镜像载体）====================
+  # 产物：fastrag-sandbox:latest（内容物见 fastrag-backend/docker/sandbox.Dockerfile），
+  # docker compose build / 首次 up 即产出，无需再带 --profile sandbox。
+  # 运行形态：镜像内零服务端（ADR-0006），真实沙箱由 backend 经挂载的 docker.sock
+  # 按需创建一次性容器（withCmd sleep infinity）；本容器仅闲置驻留以承载镜像存在感，
+  # 不承载任何沙箱运行时。
   sandbox-image:
     image: fastrag-sandbox:latest
     build:
@@ -55,8 +58,8 @@ services:
       dockerfile: docker/sandbox.Dockerfile
       tags:
         - "fastrag-sandbox:latest"
-    profiles:
-      - sandbox
+    command: ["bash", "-c", "sleep infinity"]
+    restart: unless-stopped
 
   # ==================== MySQL ====================
   mysql:

@@ -58,6 +58,12 @@
 
 **消息引用（Message References）** — 随助手消息落库的检索来源记录（知识库/分片/文件名/相似度/定位），重开会话历史可回看；对齐 WeKnora messages.knowledge_references。Avoid: sources 事件（专指流内一次性推送，不落库）。
 
+**对话审计（Conversation Trace）** — 会话视角的内容级对话留痕：每轮对话中引擎每次 LLM 调用（请求增量/返回/思考/用量）与每次工具调用（参数/输出/耗时/成败）逐行落表，供事后审计回看多轮思考步骤。〔2026-10-14 grill 立项 #21〕Avoid: 操作审计（@Loggable 操作级留痕，另一物）、运行事件（RunEventPublisher 进程内易失事件，不落库）、检索日志（kb_retrieval_log 检索域统计）。
+
+**对话步骤（Conversation Step）** — 对话审计的最小记录单元：一轮对话内引擎的一次 LLM 调用或一次工具执行，一 step 一行；按 trace_id + step_seq 排序可重放该轮完整思考步骤。Avoid: 迭代（一次迭代 = 一次 LLM 调用 + 若干工具执行，一迭代可产多 step）、消息（轮级载体 app_conversation_message，另一粒度）。
+
+**追踪标识（Trace ID）** — 引擎每次对话 run 生成的唯一关联键：串起本次 run 的全部 step 行，并回填到当轮助手消息（app_conversation_message.trace_id），是「轮→步」查询的连接键。Avoid: runId（AgentRun 侧运行标识，独立 run 场景无消息回填位）、sessionId（会话标识，跨轮共享）。
+
 **工作流（Workflow）** — 应用内的可视化编排图，由节点（LLM、检索、重排序、模板、代码、条件、开始/结束）和边组成。表 `wf_*`。
 
 **智能体（Agent）** — 具有自主决策能力的 AI 实体，通过 Backend + Graph + Middleware + State 架构运行，支持多后端沙箱（docker/cube/e2b/disabled，2026-09-28 实装）。

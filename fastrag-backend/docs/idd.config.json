@@ -1,0 +1,463 @@
+{
+  "schema_version": 5,
+  "toolVersion": "5.4.0",
+  "layers": {
+    "spec": {
+      "dir": "spec",
+      "type": "spec",
+      "budget": 400
+    },
+    "modules": {
+      "dir": "modules",
+      "type": "module",
+      "budget": 1000
+    },
+    "adr": {
+      "dir": "adr",
+      "type": "adr",
+      "budget": 80
+    },
+    "ui": {
+      "dir": "ui",
+      "type": "ui",
+      "budget": 400
+    },
+    "reviews": {
+      "dir": "reviews",
+      "type": "review",
+      "budget": null,
+      "snapshotTtlDays": 30
+    },
+    "plans": {
+      "dir": "plans",
+      "type": "plan",
+      "budget": null,
+      "snapshotTtlDays": 30
+    },
+    "prose": {
+      "dir": "research",
+      "type": "prose",
+      "budget": null
+    },
+    "history": {
+      "dir": "history",
+      "exempt": true
+    },
+    "legacy": {
+      "dir": "legacy",
+      "exempt": true
+    }
+  },
+  "rootFiles": {
+    "CONTEXT.md": {
+      "type": "context",
+      "budget": 1200
+    },
+    "conventions.md": {
+      "type": "conventions",
+      "budget": 300
+    },
+    "interfaces.md": {
+      "type": "api",
+      "budget": null
+    },
+    "contract.md": {
+      "type": "contract",
+      "budget": null
+    }
+  },
+  "profiles": {
+    "spec": {
+      "frontend": [
+        "scope",
+        "user-tasks",
+        "pages-routes",
+        "elements-interaction",
+        "state-matrix",
+        "data-mapping",
+        "responsive-accessibility",
+        "acceptance",
+        "trace"
+      ]
+    },
+    "module": {
+      "frontend": [
+        "responsibility",
+        "contract",
+        "interface",
+        "page",
+        "layout",
+        "states",
+        "data",
+        "visual",
+        "seam",
+        "trace",
+        "code"
+      ]
+    }
+  },
+  "sectionPlans": {
+    "spec": [
+      "scope",
+      "out-of-scope",
+      "terms",
+      "requirements",
+      "constraints",
+      "acceptance",
+      "testing"
+    ],
+    "module": [
+      "responsibility",
+      "contract",
+      "interface",
+      "entities",
+      "logic",
+      "seam",
+      "trace",
+      "code"
+    ],
+    "adr": [
+      "context",
+      "decision",
+      "consequences"
+    ],
+    "ui": [
+      "ui-contract",
+      "state-contract",
+      "data-mapping",
+      "api-dependency"
+    ]
+  },
+  "sectionBudgets": {
+    "module.responsibility": 15,
+    "module.contract": 400,
+    "module.interface": 120,
+    "module.entities": 100,
+    "module.logic": 120,
+    "module.seam": 80,
+    "module.trace": 40,
+    "module.code": 60,
+    "api.section": 400,
+    "contract.section": 120,
+    "context.terms": 900,
+    "context.termsHard": 1200
+  },
+  "deferralPhrases": [
+    "不虚构",
+    "不重复登记",
+    "不重复",
+    "为唯一权威",
+    "唯一权威",
+    "见下方",
+    "见上文",
+    "见各来源节",
+    "见来源",
+    "迁移保留",
+    "待归一",
+    "待确认",
+    "待补全",
+    "待补充",
+    "待完善",
+    "待定稿",
+    "TODO",
+    "TBD"
+  ],
+  "tableRules": {
+    "contractSectionKeys": [
+      "contract",
+      "entities"
+    ],
+    "exemptSectionKeys": [
+      "state-matrix"
+    ],
+    "warnTypes": [
+      "spec",
+      "module",
+      "ui",
+      "context"
+    ],
+    "cellMaxLen": 40,
+    "rowRatio": 0.5
+  },
+  "surfaceRules": {
+    "interfaceUnits": 3,
+    "ignore": []
+  },
+  "codeRules": {
+    "genericDescriptions": [
+      "module implementation",
+      "module tests",
+      "impl",
+      "implementation",
+      "test",
+      "tests",
+      "misc",
+      "other",
+      "模块实现",
+      "模块测试",
+      "实现",
+      "测试",
+      "其他"
+    ],
+    "repeatThreshold": 3
+  },
+  "retiredLabels": [
+    "Depth:"
+  ],
+  "sectionAliases": {
+    "scope": "scope",
+    "范围": "scope",
+    "背景": "scope",
+    "背景与目标": "scope",
+    "目标": "scope",
+    "out-of-scope": "out-of-scope",
+    "out of scope": "out-of-scope",
+    "排除范围": "out-of-scope",
+    "非目标": "out-of-scope",
+    "terms": "terms",
+    "术语": "terms",
+    "术语表": "terms",
+    "领域术语": "terms",
+    "requirements": "requirements",
+    "功能需求": "requirements",
+    "需求": "requirements",
+    "constraints": "constraints",
+    "非功能需求": "constraints",
+    "约束": "constraints",
+    "限制": "constraints",
+    "acceptance": "acceptance",
+    "验收清单": "acceptance",
+    "验收标准": "acceptance",
+    "验收": "acceptance",
+    "testing": "testing",
+    "测试策略": "testing",
+    "测试": "testing",
+    "user-tasks": "user-tasks",
+    "用户任务": "user-tasks",
+    "tasks": "user-tasks",
+    "pages-routes": "pages-routes",
+    "页面与路由": "pages-routes",
+    "页面": "pages-routes",
+    "pages": "pages-routes",
+    "elements-interaction": "elements-interaction",
+    "元素与交互": "elements-interaction",
+    "元素": "elements-interaction",
+    "state-matrix": "state-matrix",
+    "状态矩阵": "state-matrix",
+    "data-mapping": "data-mapping",
+    "数据映射": "data-mapping",
+    "responsive-accessibility": "responsive-accessibility",
+    "响应式与无障碍": "responsive-accessibility",
+    "响应式": "responsive-accessibility",
+    "responsibility": "responsibility",
+    "职责": "responsibility",
+    "职责与边界": "responsibility",
+    "interface": "interface",
+    "接口": "interface",
+    "接口设计": "interface",
+    "模块接口": "interface",
+    "contract": "contract",
+    "契约": "contract",
+    "模块契约": "contract",
+    "深模块接口": "contract",
+    "entities": "entities",
+    "实体": "entities",
+    "数据实体": "entities",
+    "数据库实体": "entities",
+    "data": "data",
+    "数据": "data",
+    "logic": "logic",
+    "逻辑": "logic",
+    "实现逻辑": "logic",
+    "实现细节": "logic",
+    "page": "page",
+    "页面定义": "page",
+    "layout": "layout",
+    "布局": "layout",
+    "页面原型": "layout",
+    "线框": "layout",
+    "states": "states",
+    "状态": "states",
+    "状态归属": "states",
+    "visual": "visual",
+    "视觉": "visual",
+    "视觉系统": "visual",
+    "seam": "seam",
+    "seam / design": "seam",
+    "seam/design": "seam",
+    "边界设计": "seam",
+    "备选方案": "alternatives-considered",
+    "trace": "trace",
+    "追溯": "trace",
+    "上游追溯": "trace",
+    "parent trace": "trace",
+    "code": "code",
+    "代码映射": "code",
+    "context": "context",
+    "背景与问题": "context",
+    "decision": "decision",
+    "决策": "decision",
+    "consequences": "consequences",
+    "后果": "consequences",
+    "ui-contract": "ui-contract",
+    "ui 契约": "ui-contract",
+    "ui": "ui-contract",
+    "state-contract": "state-contract",
+    "状态契约": "state-contract",
+    "api-dependency": "api-dependency",
+    "api 依赖": "api-dependency",
+    "relationships": "relationships",
+    "关系": "relationships",
+    "关系基数": "relationships",
+    "ambiguities": "ambiguities",
+    "歧义": "ambiguities",
+    "待定问题": "ambiguities",
+    "flagged ambiguities": "ambiguities",
+    "summary": "summary",
+    "摘要": "summary",
+    "总结": "summary",
+    "findings": "findings",
+    "发现": "findings",
+    "actions": "actions",
+    "行动": "actions",
+    "后续行动": "actions"
+  },
+  "requiredLabels": {
+    "contract": [
+      "Purpose:",
+      "Signature:"
+    ],
+    "api": [
+      "Purpose:",
+      "Request:",
+      "Response:",
+      "Errors:",
+      "Invariants:",
+      "Producer constraints:"
+    ],
+    "module.contract": [
+      "Purpose:",
+      "Signature:",
+      "Types:",
+      "Error modes:",
+      "Invariants:"
+    ],
+    "module.contract.frontend": [
+      "Props:",
+      "Events:",
+      "Slots:",
+      "Types:",
+      "Invariants:"
+    ],
+    "module.interface": [
+      "Purpose:",
+      "Signature:"
+    ],
+    "module.interface.frontend": [
+      "Purpose:",
+      "Signature:"
+    ]
+  },
+  "language": "zh",
+  "labelAliases": {
+    "Purpose:": [
+      "用途：",
+      "用途:"
+    ],
+    "Signature:": [
+      "签名：",
+      "签名:"
+    ],
+    "Types:": [
+      "类型：",
+      "类型:"
+    ],
+    "Error modes:": [
+      "错误模式：",
+      "错误模式:"
+    ],
+    "Invariants:": [
+      "不变量：",
+      "不变量:"
+    ],
+    "Request:": [
+      "请求：",
+      "请求:"
+    ],
+    "Response:": [
+      "响应：",
+      "响应:"
+    ],
+    "Errors:": [
+      "错误：",
+      "错误:"
+    ],
+    "Producer constraints:": [
+      "提供方约束：",
+      "提供方约束:"
+    ],
+    "Props:": [
+      "属性：",
+      "属性:"
+    ],
+    "Events:": [
+      "事件：",
+      "事件:"
+    ],
+    "Slots:": [
+      "插槽：",
+      "插槽:"
+    ]
+  },
+  "style": {
+    "maxSentenceLen": 120,
+    "summaryMaxLen": 80,
+    "summaryMinLen": 12,
+    "summaryPlaceholders": [
+      "one-line domain summary",
+      "一行领域摘要",
+      "TODO",
+      "TBD",
+      "待写"
+    ],
+    "bannedPhrases": [
+      "本文档描述",
+      "本文档介绍",
+      "This document describes",
+      "This document provides"
+    ]
+  },
+  "snapshots": {
+    "ttlDays": 30,
+    "archiveDir": "history"
+  },
+  "idPrefixes": [
+    "REQ-",
+    "TASK-",
+    "PAGE-",
+    "STATE-",
+    "ADR-",
+    "API-",
+    "FIELD-",
+    "ERR-",
+    "MOD-",
+    "DOC-",
+    "SPEC-",
+    "IF-",
+    "UI-"
+  ],
+  "externalIds": [],
+  "dupIgnorePatterns": [],
+  "codeGlobs": [
+    "src/**"
+  ],
+  "codeIgnoreDirs": [
+    "node_modules",
+    "target",
+    "dist",
+    "build",
+    "coverage",
+    "vendor",
+    "out"
+  ]
+}

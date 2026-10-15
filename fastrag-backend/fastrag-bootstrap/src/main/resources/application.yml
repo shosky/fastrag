@@ -13,7 +13,7 @@ spring:
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:127.0.0.1}:3306/fastrag?useUnicode=true&characterEncoding=UTF-8&serverTimezone=Asia/Shanghai&createDatabaseIfNotExist=true&connectionCollation=utf8mb4_unicode_ci&useSSL=false&allowPublicKeyRetrieval=true
     username: ${MYSQL_USER:root}
-    password: ${MYSQL_PASSWORD:}
+    password: ${MYSQL_PASSWORD:123456}
     driver-class-name: com.mysql.cj.jdbc.Driver
     hikari:
       maximum-pool-size: 20
@@ -128,7 +128,7 @@ storage:
 neo4j:
   uri: ${NEO4J_URI:bolt://localhost:7687}
   user: ${NEO4J_USER:neo4j}
-  password: ${NEO4J_PASSWORD:}
+  password: ${NEO4J_PASSWORD:fastrag123}
 
 # 图谱构建配置
 graph:

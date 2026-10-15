@@ -32,7 +32,7 @@ fastrag-backend
 
 ---
 
-# 特性清单（20 项 = 2026-09-16 决议 18 项 + 2026-09-25 新增 #19 new-conversation + 2026-09-26 新增 #20 qa-generation）
+# 特性清单（21 项 = 2026-09-16 决议 18 项 + 2026-09-25 新增 #19 new-conversation + 2026-09-26 新增 #20 qa-generation + 2026-10-14 新增 #21 conversation-trace）
 
 ## 1. IAM 认证与账号权限 — iam
 
@@ -234,6 +234,16 @@ fastrag-backend
 - **Depth signal:** 2026-09-26 grill 四批 14 裁决（D1-D14）+ 配置入口 P1-P6 全部已决，落 `fastrag/.tmp/idd-qa-generation-grill-decisions.md`；对比调研 WeKnora——其 Doc2Query 只生成问题不生成答案，本项目做完整问答对
 - **Priority:** 中高
 - **Chain status:** implement ✅（2026-09-26 spec→design→contract→tdd→implement 五阶同日贯通，2026-09-27 前端 P1-P6 补齐：**模块测试 38/38 绿**（QaGenerationServiceImplTest 27 / QaGenerationConsumerTest 5 / IngestionQaHookTest 3 / QaRecallAdmissionTest 3）+ knowledge/retrieval/bootstrap 全量回归 65 测试类零失败；前端 7 文件（api×2 函数 / QaGenerateDialog 新组件 / chunks·FileTable·FileManager·FileUploader·QaPanel 接线），vue-tsc 触碰文件零新增错误；[implement/qa-generation.md](./implement/qa-generation.md) 含代码文件树/逻辑流/7 条 Deviations/前端交付表；DDL 双处同步（kb_qa_generation_task + kb_qa_pair.source_chunk_id + kb_file.qa_generation_config）。遗留：真库行为级验收 5 项（事务回滚/三分支行级/级联/DDL 对账/真实时钟清扫）与前后端联调待执行）
+
+## 21. 对话审计 — conversation-trace
+
+- **代码证据（复用面）**：LLM 调用单点 LlmService（全系统 12 入口收敛；对话主路径 streamChatWithTools，LlmService.java:283；现状仅 SLF4J debug 级打印零落库）、工具执行单点 AgentEngine.executeTool（:929，toolCallRecords :243/:473 已就地收集参数/输出/耗时——agent REQ-E08）、双对话入口汇聚 AppServiceImpl.executeDialog（:471）、app_conversation_message 已有 content/thinking_content/tool_calls JSON 列、RunEventPublisher 事件易失 60s 清理（agent REQ-D01/D02）、审计范式先例 @Loggable→AOP→异步落表→UnifiedLog、model_call_log 半死表（读端 ModelMonitor 活跃零写方）
+- **可能 REQ 区域**：引擎级逐步埋点（每 LLM 调用/工具调用一行落表 agent_step_log）、traceId 关联与助手消息 trace_id 列回填、内容增量存+双截断护栏（工具原始输出 32KB/LLM 增量 64KB）、run 终态批量写+失败吞错（对齐 NFR02）、operation 只读三级查询（审计列表/会话多轮/步骤时间线）、管理端权限+org 过滤、180 天留存+定时清理任务交付
+- **Depends on:** agent（引擎埋点+实体）、new-conversation/app-center（会话账本关联+编排器传会话标识）、iam（管理端鉴权）、operation（只读查询端）
+- **Shared by:** 无（终端可观测性特性；会话属主自看、辅助 LLM 调用留痕为其登记的后置扩展）
+- **Depth signal:** 2026-10-14 grill 四批 17 项代裁（D1-D17），落 `fastrag/.tmp/idd-conversation-trace-grill-decisions.md`；已知边界：query_kb 占位桩断链（KbOperationServiceImpl.java:49）不归本特性修，审计如实记录
+- **Priority:** 中高
+- **Chain status:** design（2026-10-15：design 成稿 [modules/conversation-trace.md](./modules/conversation-trace.md)（新布局 docs/modules/，IF-001 采集器/IF-002 重放组装）+ [adr/0008-trace-engine-capture-batch-persist](./adr/0008-trace-engine-capture-batch-persist.md) + [adr/0009-trace-incremental-step-protocol](./adr/0009-trace-incremental-step-protocol.md)；contract.md Modules 图建立；strict 零新增。待 /idd-contract）
 
 ---
 
