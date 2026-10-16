@@ -356,13 +356,15 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
     }
 
-    /** 问答对（FAQ）召回：多关键词命中取高分，问题/答案分词覆盖率融合打分；仅召回生效期内的问答对 */
+    /** 问答对（FAQ）召回：多关键词命中取高分，问题/答案分词覆盖率融合打分；仅召回已入库(confirmed)且生效期内的问答对 */
     private List<SearchResultItem> searchQaPairs(String kbId, String query, List<String> tokens) {
         List<SearchResultItem> out = new ArrayList<>();
         if (tokens.isEmpty()) return out;
         LocalDateTime now = LocalDateTime.now();
         int i = 0;
         for (KbQaPair qa : qaPairMapper.selectList(new LambdaQueryWrapper<KbQaPair>().eq(KbQaPair::getKbId, kbId))) {
+            // 待确认草稿（含 AI 抽取产出）不参与召回，人工确认后才入库生效
+            if (!"confirmed".equals(qa.getStatus())) continue;
             // 生效时间设置：生效期外的问答对不参与召回
             if (qa.getEffectiveStart() != null && now.isBefore(qa.getEffectiveStart())) continue;
             if (qa.getEffectiveEnd() != null && now.isAfter(qa.getEffectiveEnd())) continue;

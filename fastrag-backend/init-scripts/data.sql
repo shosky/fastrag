@@ -354,7 +354,9 @@ INSERT INTO sys_config (id, config_key, config_value, config_type, description, 
 ('cfg_max_tokens', 'general_max_tokens', '2048', 'general', '默认最大生成Token数', 0),
 ('cfg_publish_batch', 'publish_batch_size', '100', 'publish', '批量发布数量上限', 0),
 ('cfg_review_threshold', 'review_auto_approve_threshold', '0.95', 'review', '自动审核通过阈值', 0),
-('cfg_review_reject_notify', 'review_notify_on_reject', 'true', 'review', '审核驳回时发送通知', 1);
+('cfg_review_reject_notify', 'review_notify_on_reject', 'true', 'review', '审核驳回时发送通知', 1),
+('cfg_matter_window_days', 'matter_hot_window_days', '30', 'matter', '事项热点统计时间窗口（天）', 1),
+('cfg_matter_hot_top_n', 'matter_hot_top_n', '5', 'matter', '事项热点返回知识条数（前 N 个）', 1);
 
 -- ==================== M20 对话测试案例种子数据 ====================
 INSERT INTO app_dialog_test (id, app_id, name, query, expected_answer, tags, created_by, created_at) VALUES

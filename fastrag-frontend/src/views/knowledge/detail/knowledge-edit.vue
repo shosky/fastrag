@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
@@ -159,10 +159,11 @@ async function handleStartCheck() {
   ElMessage.success('校验完成')
 }
 
-// ===== 知识工单（新增/查看/编辑/删除） =====
-const TICKET_STATUS: Record<string, string> = { open: '待处理', processing: '处理中', resolved: '已解决', closed: '已关闭' }
-const TICKET_STATUS_COLOR: Record<string, string> = { open: 'warning', processing: 'primary', resolved: 'success', closed: 'info' }
-const TICKET_TYPE: Record<string, string> = { create: '新建知识', update: '更新知识', review: '内容纠错', offline: '下线知识', other: '其他' }
+// ===== 知识工单（新增/查看/编辑/删除 + 审批 + 流程环节） =====
+// 新增/修改/取消发布发起流程后由后端自动生成（status=pending_approval），需审批
+const TICKET_STATUS: Record<string, string> = { pending_approval: '待审批', approved: '已通过', rejected: '已驳回', open: '待处理', processing: '处理中', resolved: '已解决', closed: '已关闭' }
+const TICKET_STATUS_COLOR: Record<string, string> = { pending_approval: 'warning', approved: 'success', rejected: 'danger', open: 'warning', processing: 'primary', resolved: 'success', closed: 'info' }
+const TICKET_TYPE: Record<string, string> = { create: '新建知识', update: '更新知识', review: '内容纠错', offline: '取消发布', other: '其他' }
 const PRIORITY: Record<string, string> = { high: '高', medium: '中', low: '低' }
 
 const ticketList = ref<any[]>([])
@@ -213,16 +214,41 @@ async function handleSaveTicket() {
     ElMessage.error('保存失败')
   }
 }
-// 查看工单详情
+// 查看工单详情（含流程环节时间轴）
 const showTicketViewDialog = ref(false)
 const viewingTicket = ref<any>(null)
+const ticketLogs = ref<any[]>([])
+const TICKET_ACTION: Record<string, string> = { submit: '提交', approve: '通过', reject: '驳回', status_change: '状态变更' }
+const TICKET_ACTION_COLOR: Record<string, string> = { submit: 'info', approve: 'success', reject: 'danger', status_change: 'warning' }
 async function handleViewTicket(row: any) {
   try {
     viewingTicket.value = (await api.getKnowledgeTicket(kbId, row.id)) || row
   } catch {
     viewingTicket.value = row
   }
+  ticketLogs.value = []
+  try {
+    const logs: any = await api.getKnowledgeTicketLogs(kbId, row.id)
+    ticketLogs.value = logs || []
+  } catch { ticketLogs.value = [] }
   showTicketViewDialog.value = true
+}
+// 审批：通过 / 驳回（驳回需填意见）
+async function handleApproveTicket(row: any) {
+  try {
+    await ElMessageBox.confirm(`通过工单「${row.title}」？` + (row.currentStep ? `（当前环节：${row.currentStep}）` : ''), '审批通过', { type: 'success' })
+    await api.approveKnowledgeTicket(kbId, row.id)
+    await loadTickets()
+    ElMessage.success('已通过')
+  } catch {}
+}
+async function handleRejectTicket(row: any) {
+  try {
+    const { value } = await ElMessageBox.prompt('请填写驳回意见', '审批驳回', { inputPlaceholder: '如：内容与现行政策不符', inputValidator: (v: string) => (v && v.trim() ? true : '驳回意见不能为空') })
+    await api.rejectKnowledgeTicket(kbId, row.id, value)
+    await loadTickets()
+    ElMessage.success('已驳回')
+  } catch {}
 }
 async function handleDeleteTicket(row: any) {
   try {
@@ -277,12 +303,18 @@ async function handleMediaSave() {
   } catch { ElMessage.error('保存失败') } finally { mediaSaving.value = false }
 }
 
-// ===== 知识回收（列表/编辑/恢复/彻底删除）—— 知识加工与采编-知识回收-编辑 =====
+// ===== 知识回收（取消发布/到期失效/手动删除三类来源集中管理 + 编辑/恢复/彻底删除） =====
 const recycleList = ref<any[]>([])
 const recycleLoading = ref(false)
 const showRecycleEditDialog = ref(false)
 const recycleSaving = ref(false)
 const recycleForm = ref({ id: '', title: '', category: '', summary: '' })
+// 来源：deleted=手动删除（软删）、offline=取消发布下架、expired=到期失效
+const RECYCLE_SOURCE: Record<string, string> = { deleted: '手动删除', offline: '取消发布', expired: '到期失效' }
+const RECYCLE_SOURCE_COLOR: Record<string, string> = { deleted: 'info', offline: 'warning', expired: 'danger' }
+const KNOWLEDGE_STATUS: Record<string, string> = { draft: '草稿', reviewing: '待审核', published: '已发布', offline: '已下架', expired: '已失效', archived: '已归档' }
+const recycleSourceFilter = ref('')
+const recycleFiltered = computed(() => recycleSourceFilter.value ? recycleList.value.filter(r => (r.recycleSource || 'deleted') === recycleSourceFilter.value) : recycleList.value)
 
 async function loadRecycle() {
   recycleLoading.value = true
@@ -307,7 +339,19 @@ async function handleRecycleSave() {
   } catch { ElMessage.error('保存失败') } finally { recycleSaving.value = false }
 }
 async function handleRecycleRestore(row: any) {
-  try { await api.restoreKnowledge(kbId, row.id); await loadRecycle(); ElMessage.success('已恢复') } catch { ElMessage.error('恢复失败') }
+  try {
+    await api.restoreKnowledge(kbId, row.id)
+    await loadRecycle()
+    ElMessage.success(row.recycleSource === 'deleted' ? '已恢复' : '已恢复为草稿，可编辑后重新发布')
+  } catch { ElMessage.error('恢复失败') }
+}
+// 手动触发失效扫描：等价每日 01:30 的定时任务，把 valid_until 已到期的知识点置为失效
+async function handleExpireScan() {
+  try {
+    const res: any = await api.expireScanKnowledge(kbId)
+    await loadRecycle()
+    ElMessage.success(`失效扫描完成，本次处理 ${res?.expiredCount ?? 0} 条`)
+  } catch { ElMessage.error('失效扫描失败') }
 }
 async function handleRecyclePermanentDelete(row: any) {
   try {
@@ -378,6 +422,9 @@ onMounted(() => {
         <div class="card-panel">
           <div class="section-header">
             <div class="section-title">知识工单</div>
+            <span style="font-size: 12px; color: #909399; margin-right: auto; padding-left: 12px">
+              发起新增/修改/取消发布流程后自动生成工单，需审批；「流程环节」可查看工单在流程中的步骤
+            </span>
             <el-button type="primary" @click="handleAddTicket">新增工单</el-button>
           </div>
           <div class="filter-bar">
@@ -391,24 +438,26 @@ onMounted(() => {
             <el-button type="primary" @click="loadTickets">查询</el-button>
           </div>
           <el-table :data="ticketList" stripe v-loading="ticketLoading">
-            <el-table-column prop="title" label="工单标题" show-overflow-tooltip />
+            <el-table-column prop="title" label="工单标题" min-width="200" show-overflow-tooltip />
             <el-table-column prop="ticketType" label="类型" width="100">
               <template #default="{ row }">{{ TICKET_TYPE[row.ticketType] || row.ticketType }}</template>
             </el-table-column>
-            <el-table-column prop="priority" label="优先级" width="80">
-              <template #default="{ row }">
-                <el-tag :type="row.priority === 'high' ? 'danger' : (row.priority === 'low' ? 'info' : 'warning')" size="small">{{ PRIORITY[row.priority] || row.priority }}</el-tag>
-              </template>
+            <el-table-column label="关联知识点" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.knowledgeTitle || row.knowledgeId || '-' }}</template>
             </el-table-column>
-            <el-table-column prop="assignee" label="处理人" width="100" />
-            <el-table-column prop="status" label="状态" width="90">
+            <el-table-column label="流程环节" width="110">
+              <template #default="{ row }">{{ row.currentStep || '-' }}</template>
+            </el-table-column>
+            <el-table-column prop="status" label="状态" width="110">
               <template #default="{ row }">
                 <el-tag :type="(TICKET_STATUS_COLOR[row.status] || 'info') as any" size="small">{{ TICKET_STATUS[row.status] || row.status }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column prop="createdAt" label="创建时间" width="160" />
-            <el-table-column label="操作" width="160">
+            <el-table-column label="操作" width="230" fixed="right">
               <template #default="{ row }">
+                <el-button v-if="row.status === 'pending_approval'" link type="success" size="small" @click="handleApproveTicket(row)">通过</el-button>
+                <el-button v-if="row.status === 'pending_approval'" link type="danger" size="small" @click="handleRejectTicket(row)">驳回</el-button>
                 <el-button link type="primary" size="small" @click="handleViewTicket(row)">查看</el-button>
                 <el-button link type="primary" size="small" @click="handleEditTicket(row)">编辑</el-button>
                 <el-button link type="danger" size="small" @click="handleDeleteTicket(row)">删除</el-button>
@@ -492,22 +541,40 @@ onMounted(() => {
         <div class="card-panel">
           <div class="section-header">
             <div class="section-title">知识回收</div>
-            <span style="font-size:12px;color:#909399">已删除知识在此编辑修正（标题/分类/摘要），也可恢复或彻底删除</span>
+            <span style="font-size:12px;color:#909399">取消发布、到期失效与手动删除的知识点在此集中管理；可编辑修正后恢复。</span>
+            <el-button size="small" @click="handleExpireScan">触发失效扫描</el-button>
           </div>
-          <el-table :data="recycleList" stripe v-loading="recycleLoading">
+          <div class="filter-bar">
+            <el-select v-model="recycleSourceFilter" placeholder="来源" clearable style="width: 140px">
+              <el-option label="全部" value="" />
+              <el-option label="手动删除" value="deleted" />
+              <el-option label="取消发布" value="offline" />
+              <el-option label="到期失效" value="expired" />
+            </el-select>
+          </div>
+          <el-table :data="recycleFiltered" stripe v-loading="recycleLoading">
             <el-table-column prop="title" label="标题" min-width="200" show-overflow-tooltip />
             <el-table-column prop="category" label="分类" width="110" />
-            <el-table-column prop="status" label="状态" width="90" />
-            <el-table-column prop="deletedAt" label="删除时间" width="160" />
+            <el-table-column label="来源" width="110">
+              <template #default="{ row }">
+                <el-tag :type="(RECYCLE_SOURCE_COLOR[row.recycleSource] || 'info') as any" size="small">{{ RECYCLE_SOURCE[row.recycleSource] || row.recycleSource || '手动删除' }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">{{ KNOWLEDGE_STATUS[row.status] || row.status }}</template>
+            </el-table-column>
+            <el-table-column label="入站时间" width="160">
+              <template #default="{ row }">{{ row.recycleTime || row.deletedAt }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="220" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" size="small" @click="handleRecycleEdit(row)">编辑</el-button>
-                <el-button link type="success" size="small" @click="handleRecycleRestore(row)">恢复</el-button>
+                <el-button link type="success" size="small" @click="handleRecycleRestore(row)">{{ row.recycleSource === 'deleted' ? '恢复' : '恢复为草稿' }}</el-button>
                 <el-button link type="danger" size="small" @click="handleRecyclePermanentDelete(row)">彻底删除</el-button>
               </template>
             </el-table-column>
           </el-table>
-          <el-empty v-if="!recycleList.length && !recycleLoading" description="回收站为空" :image-size="60" />
+          <el-empty v-if="!recycleFiltered.length && !recycleLoading" description="回收站为空" :image-size="60" />
         </div>
       </el-tab-pane>
     </el-tabs>
@@ -604,22 +671,43 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <!-- 工单查看弹窗 -->
-    <el-dialog v-model="showTicketViewDialog" title="工单详情" width="560px">
+    <!-- 工单查看弹窗（含流程环节时间轴：工单在流程中走过的步骤） -->
+    <el-dialog v-model="showTicketViewDialog" title="工单详情" width="620px">
       <el-descriptions v-if="viewingTicket" :column="1" border>
         <el-descriptions-item label="工单标题">{{ viewingTicket.title }}</el-descriptions-item>
         <el-descriptions-item label="工单类型">{{ TICKET_TYPE[viewingTicket.ticketType] || viewingTicket.ticketType }}</el-descriptions-item>
         <el-descriptions-item label="优先级">{{ PRIORITY[viewingTicket.priority] || viewingTicket.priority }}</el-descriptions-item>
         <el-descriptions-item label="状态">{{ TICKET_STATUS[viewingTicket.status] || viewingTicket.status }}</el-descriptions-item>
-        <el-descriptions-item label="关联知识ID">{{ viewingTicket.knowledgeId || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="处理人">{{ viewingTicket.assignee || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="关联知识点">{{ viewingTicket.knowledgeTitle || viewingTicket.knowledgeId || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="流程 / 当前环节">{{ viewingTicket.flowName || '-' }} / {{ viewingTicket.currentStep || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="审批人">{{ viewingTicket.approver || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="审批意见">{{ viewingTicket.approvalComment || '-' }}</el-descriptions-item>
         <el-descriptions-item label="报告人">{{ viewingTicket.reporter || '-' }}</el-descriptions-item>
         <el-descriptions-item label="问题描述">{{ viewingTicket.description || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="备注">{{ viewingTicket.remark || '-' }}</el-descriptions-item>
         <el-descriptions-item label="创建时间">{{ viewingTicket.createdAt || '-' }}</el-descriptions-item>
-        <el-descriptions-item label="解决时间">{{ viewingTicket.resolvedAt || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="提交时间">{{ viewingTicket.submittedAt || '-' }}</el-descriptions-item>
+        <el-descriptions-item label="审批时间">{{ viewingTicket.approvedAt || viewingTicket.resolvedAt || '-' }}</el-descriptions-item>
       </el-descriptions>
+      <div style="margin-top: 16px">
+        <div style="font-weight: 600; margin-bottom: 8px">流程环节</div>
+        <el-timeline v-if="ticketLogs.length">
+          <el-timeline-item v-for="log in ticketLogs" :key="log.id" :timestamp="log.createdAt"
+            :type="(TICKET_ACTION_COLOR[log.action] || 'primary') as any">
+            <span style="font-weight: 500">{{ log.stepName || '流程' }}</span>
+            <el-tag size="small" style="margin-left: 8px" :type="(TICKET_ACTION_COLOR[log.action] || 'info') as any">
+              {{ TICKET_ACTION[log.action] || log.action }}
+            </el-tag>
+            <span style="margin-left: 8px; color: #606266">{{ log.operator || '-' }}</span>
+            <div v-if="log.comment" style="color: #909399; font-size: 12px; margin-top: 4px">{{ log.comment }}</div>
+          </el-timeline-item>
+        </el-timeline>
+        <el-empty v-else description="暂无流程环节记录" :image-size="50" />
+      </div>
       <template #footer>
+        <el-button v-if="viewingTicket && viewingTicket.status === 'pending_approval'" type="success"
+          @click="showTicketViewDialog = false; handleApproveTicket(viewingTicket)">通过</el-button>
+        <el-button v-if="viewingTicket && viewingTicket.status === 'pending_approval'" type="danger"
+          @click="showTicketViewDialog = false; handleRejectTicket(viewingTicket)">驳回</el-button>
         <el-button type="primary" @click="showTicketViewDialog = false">关闭</el-button>
       </template>
     </el-dialog>

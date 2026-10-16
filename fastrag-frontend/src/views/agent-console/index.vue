@@ -1,15 +1,18 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, watch, onMounted } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { Search, Promotion, Connection } from '@element-plus/icons-vue'
+import { Search, Promotion, Connection, Tickets } from '@element-plus/icons-vue'
 import * as api from '@/api'
 import { listSimpleFlows } from '@/api/bpm'
 
 /**
  * 座席工作台（座席端管理）：
  * - 知识推荐：识别知识推荐（输入问题自动识别并推荐知识/关键词）+ 推荐知识列表（真实检索）
+ * - 工单受理：选定工单事项后，自动展示近 30 天（可配置）该事项热度最高的前 5 个（可配置）知识点，提供链接
  * - 知识流程搜索：按名称检索业务流程（BPM），辅助座席处理流程类咨询
  */
+const router = useRouter()
 const loading = ref(false)
 const kbs = ref<any[]>([])
 const kbId = ref('')
@@ -24,13 +27,24 @@ const flowKeyword = ref('')
 const flows = ref<any[]>([])
 const flowLoading = ref(false)
 
+// 工单受理：事项热点知识
+const matters = ref<any[]>([])
+const matterCode = ref('')
+const demand = ref('')
+const hotList = ref<any[]>([])
+const hotMeta = ref<any>({})
+const hotLoading = ref(false)
+
 onMounted(async () => {
   try {
     const res: any = await api.getKnowledgeBases()
     kbs.value = res?.list || res || []
     if (kbs.value.length) kbId.value = kbs.value[0].id
   } catch { kbs.value = [] }
+  await loadMatters()
 })
+
+watch(kbId, async () => { matterCode.value = ''; hotList.value = []; hotMeta.value = {}; await loadMatters() })
 
 // 识别知识推荐：关键词判断 + 检索推荐一次完成
 async function handleRecommend() {
@@ -61,6 +75,49 @@ async function handleFlowSearch() {
   } catch { flows.value = [] } finally { flowLoading.value = false }
 }
 onMounted(handleFlowSearch)
+
+// ===== 工单受理：选定事项 → 自动展示该事项热度最高的前 N 个知识点（窗口/数量后台可配置）=====
+async function loadMatters() {
+  if (!kbId.value) { matters.value = []; return }
+  try { matters.value = ((await api.getMatters(kbId.value)) as any) || [] } catch { matters.value = [] }
+}
+function matterName(): string {
+  const m = matters.value.find((x: any) => x.matterCode === matterCode.value)
+  return m?.matterName || matterCode.value
+}
+async function handleMatterChange(code: string) {
+  hotList.value = []
+  hotMeta.value = {}
+  if (!code) return
+  hotLoading.value = true
+  try {
+    const res: any = await api.getMatterHotKnowledge(kbId.value, code)
+    hotList.value = res?.items || []
+    hotMeta.value = res || {}
+    if (!hotList.value.length) ElMessage.info('该事项暂无关联/热门知识点')
+  } catch (e: any) {
+    ElMessage.error(e?.message || '事项热点知识获取失败')
+  } finally { hotLoading.value = false }
+}
+// 打开知识：记录一次命中（作为热度数据源），并跳转知识库对应知识点
+async function handleOpenKnowledge(row: any) {
+  try {
+    await api.recordMatterHit(kbId.value, matterCode.value, { knowledgeId: row.knowledgeId, matterName: matterName(), hitType: 'click' })
+  } catch { /* 埋点失败不阻塞打开 */ }
+  router.push(row.deepLink || `/knowledge/${kbId.value}/knowledge-manage`)
+}
+// 创建工单：本次参考的热点知识批量记为工单命中，用于后续热度排序
+async function handleCreateTicket() {
+  if (!matterCode.value) { ElMessage.warning('请先选定工单事项'); return }
+  if (!demand.value.trim()) { ElMessage.warning('请填写司乘人员诉求'); return }
+  try {
+    await Promise.all(hotList.value.map((r: any) =>
+      api.recordMatterHit(kbId.value, matterCode.value, { knowledgeId: r.knowledgeId, matterName: matterName(), hitType: 'ticket' }).catch(() => null)))
+  } catch { /* 埋点失败不影响建单 */ }
+  ElMessage.success(`工单已创建（事项：${matterName()}）；已参考该事项热点知识 ${hotList.value.length} 条`)
+  demand.value = ''
+  await handleMatterChange(matterCode.value)
+}
 </script>
 
 <template>
@@ -115,6 +172,49 @@ onMounted(handleFlowSearch)
       <el-empty v-else-if="!loading" description="输入问题后点击「识别并推荐」获取知识推荐" :image-size="80" />
     </el-card>
 
+    <!-- 工单受理：选定事项 → 自动展示该事项热度最高的前 5 个知识点 -->
+    <el-card shadow="never" class="agent-card">
+      <template #header>
+        <div class="agent-card__header">
+          <el-icon><Tickets /></el-icon>
+          <span>工单受理 · 事项热点知识</span>
+          <span v-if="hotMeta.windowDays" class="agent-card__hint">
+            统计窗口：近 {{ hotMeta.windowDays }} 天 · 取热度前 {{ hotMeta.topN }} 个
+          </span>
+        </div>
+      </template>
+      <div style="display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap">
+        <el-select v-model="matterCode" placeholder="选定工单事项（自动展示热点知识）" filterable clearable
+          style="width: 300px" @change="handleMatterChange">
+          <el-option v-for="m in matters" :key="m.matterCode"
+            :label="`${m.matterName || m.matterCode}（关联 ${m.knowledgeCount} 条知识）`" :value="m.matterCode" />
+        </el-select>
+        <el-input v-model="demand" placeholder="司乘人员诉求（选填，如：宽带移机怎么收费）" clearable style="width: 320px" />
+        <el-button type="primary" :disabled="!matterCode" @click="handleCreateTicket">创建工单</el-button>
+      </div>
+      <el-table v-if="hotList.length" v-loading="hotLoading" :data="hotList" stripe size="small">
+        <el-table-column type="index" width="46" />
+        <el-table-column prop="title" label="推荐知识点" min-width="300" show-overflow-tooltip />
+        <el-table-column label="窗口内热度" width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.hitCount > 0 ? 'success' : 'info'">{{ row.hitCount ?? 0 }} 次</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="关联方式" width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="row.fromRel ? 'success' : 'warning'">{{ row.fromRel ? '事项关联' : '热度推荐' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="110">
+          <template #default="{ row }">
+            <el-link type="primary" @click="handleOpenKnowledge(row)">打开知识</el-link>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-else-if="!hotLoading"
+        :description="matterCode ? '该事项暂无热点知识' : '选定工单事项后，自动展示近 30 天内热度最高的前 5 个知识点'" :image-size="60" />
+    </el-card>
+
     <!-- 知识流程搜索 -->
     <el-card shadow="never" class="agent-card">
       <template #header>
@@ -148,6 +248,7 @@ onMounted(handleFlowSearch)
 .agent-console__sub { font-size: 13px; color: #909399; margin: 4px 0 0; }
 .agent-card { margin-bottom: 16px; }
 .agent-card__header { display: flex; align-items: center; gap: 6px; font-weight: 600; }
+.agent-card__hint { font-size: 12px; color: #909399; font-weight: 400; margin-left: 6px; }
 .result-content {
   font-size: 13px; color: #606266; line-height: 1.6;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;

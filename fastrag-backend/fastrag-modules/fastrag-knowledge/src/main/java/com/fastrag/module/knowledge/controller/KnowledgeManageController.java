@@ -25,7 +25,10 @@ public class KnowledgeManageController {
     private final ImageGenService imageGenService;
 
     // ===== M10 知识管理 =====
-    @GetMapping("/knowledge") public ApiResponse<?> list(@PathVariable String kbId, @RequestParam(required=false) String keyword, @RequestParam(required=false) String category) { return ApiResponse.success(svc.list(kbId,keyword,category)); }
+    @GetMapping("/knowledge") public ApiResponse<?> list(@PathVariable String kbId, @RequestParam(required=false) String keyword, @RequestParam(required=false) String category,
+        @RequestParam(required=false) String attrDefId, @RequestParam(required=false) String attrValue) { return ApiResponse.success(svc.list(kbId,keyword,category,attrDefId,attrValue)); }
+    // 按知识属性分组统计（依据知识属性进行分组：各属性值分组及条目数）
+    @GetMapping("/knowledge/attribute-groups") public ApiResponse<?> attributeGroups(@PathVariable String kbId, @RequestParam String attrDefId) { return ApiResponse.success(svc.attributeGroups(kbId,attrDefId)); }
     @GetMapping("/knowledge/{id}") public ApiResponse<?> get(@PathVariable String id) { return ApiResponse.success(svc.get(id)); }
     @PostMapping("/knowledge") public ApiResponse<?> create(@PathVariable String kbId, @RequestBody KbKnowledge knowledge) { knowledge.setKbId(kbId); return ApiResponse.success(svc.create(knowledge)); }
     @PutMapping("/knowledge/{id}") public ApiResponse<?> update(@PathVariable String id, @RequestBody KbKnowledge knowledge) { return ApiResponse.success(svc.update(id,knowledge)); }
@@ -36,6 +39,12 @@ public class KnowledgeManageController {
     @PostMapping("/knowledge/{id}/restore") public ApiResponse<?> restore(@PathVariable String id) { svc.restore(id); return ApiResponse.success(); }
     @DeleteMapping("/knowledge/{id}/permanent") public ApiResponse<?> permanentDelete(@PathVariable String id) { svc.permanentDelete(id); return ApiResponse.success(); }
     @DeleteMapping("/knowledge/recycle-bin") public ApiResponse<?> emptyRecycleBin(@PathVariable String kbId) { svc.emptyRecycleBin(kbId); return ApiResponse.success(); }
+    // 手动触发失效扫描（等价每日 01:30 定时任务，供演示与运维使用）
+    @PostMapping("/knowledge/expire-scan") public ApiResponse<?> expireScan(@PathVariable String kbId) {
+        Map<String,Object> r = new LinkedHashMap<>();
+        r.put("expiredCount", svc.expireScan(kbId));
+        return ApiResponse.success(r);
+    }
 
     // ===== AI 能力：封面图生成 =====
     @PostMapping("/knowledge/{id}/cover-image/generate")

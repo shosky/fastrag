@@ -4,7 +4,7 @@ import com.fastrag.module.platform.entity.SysPublishStrategy;
 import com.fastrag.module.platform.entity.SysSecurityPolicy;
 import com.fastrag.module.platform.service.ConfigManageService;
 import lombok.RequiredArgsConstructor; import org.springframework.web.bind.annotation.*;
-import java.util.List; import java.util.Map;
+import java.util.LinkedHashMap; import java.util.List; import java.util.Map;
 @RestController @RequestMapping("/api") @RequiredArgsConstructor
 public class ConfigManageController {
     private final ConfigManageService svc;
@@ -40,6 +40,26 @@ public class ConfigManageController {
     @GetMapping("/config/review-status") public ApiResponse<?> reviewStatus() { var c=svc.getConfig("review_switch"); return ApiResponse.success(c!=null?c.getConfigValue():"{}"); }
     @PutMapping("/config/publish-settings") public ApiResponse<?> publishSettings(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("publish_settings",toJson(body),"publish","发布设置","admin")); }
     @PutMapping("/config/review-settings") public ApiResponse<?> reviewSettings(@RequestBody Map<String,Object> body) { return ApiResponse.success(svc.saveConfig("review_settings",toJson(body),"review","审核设置","admin")); }
+    // 事项热点配置：统计时间窗口（天）与事项热点返回条数——座席端事项热点推荐读取，满足"统计时间和事项数量后台可配置"
+    @GetMapping("/config/matter-hotspot") public ApiResponse<?> getMatterHotspot() {
+        Map<String,Object> r=new LinkedHashMap<>();
+        r.put("windowDays",configInt("matter_hot_window_days",30));
+        r.put("topN",configInt("matter_hot_top_n",5));
+        return ApiResponse.success(r);
+    }
+    @PutMapping("/config/matter-hotspot") public ApiResponse<?> saveMatterHotspot(@RequestBody Map<String,Object> body) {
+        if(body.get("windowDays")!=null) svc.saveConfig("matter_hot_window_days",String.valueOf(body.get("windowDays")),"matter","事项热点统计窗口天数","admin");
+        if(body.get("topN")!=null) svc.saveConfig("matter_hot_top_n",String.valueOf(body.get("topN")),"matter","事项热点返回知识条数","admin");
+        return getMatterHotspot();
+    }
+    /** 读取整数型系统配置，缺失/非法时回退缺省值 */
+    private int configInt(String key,int def) {
+        try {
+            var c=svc.getConfig(key);
+            if(c!=null&&c.getConfigValue()!=null&&!c.getConfigValue().isBlank()) return Integer.parseInt(c.getConfigValue().trim().replace("\"",""));
+        } catch (Exception ignore) { }
+        return def;
+    }
     private static String toJson(Object o) {
         // 简易JSON序列化（避免引入额外依赖），复用Jackson
         try { return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(o); } catch(Exception e) { return "{}"; }

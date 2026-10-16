@@ -34,7 +34,9 @@ public class TagServiceImpl implements TagService {
         if(kbId!=null&&!kbId.isEmpty()) w.eq(KbTag::getKbId,kbId);
         if(tagTypeId!=null&&!tagTypeId.isEmpty()) w.eq(KbTag::getTagTypeId,tagTypeId);
         if(keyword!=null&&!keyword.isEmpty()) w.like(KbTag::getName,keyword);
-        return tagMapper.selectList(w.orderByDesc(KbTag::getCreatedAt));
+        var tags=tagMapper.selectList(w.orderByDesc(KbTag::getCreatedAt));
+        fillUsageCount(tags);
+        return tags;
     }
     @Override public KbTag createTag(KbTag tag) {
         if(tag.getUsageCount()==null) tag.setUsageCount(0);
@@ -44,13 +46,31 @@ public class TagServiceImpl implements TagService {
         tag.setId(id); tagMapper.updateById(tag); return tagMapper.selectById(id);
     }
     @Override public void deleteTag(String id) { tagMapper.deleteById(id); relationMapper.delete(new LambdaQueryWrapper<KbTagRelation>().eq(KbTagRelation::getTagId,id)); }
+    /** 使用次数实时统计（关联表行数）：列值历史遗留不维护，读取时按真实关联数覆盖，避免界面展示假数据 */
+    private void fillUsageCount(List<KbTag> tags) {
+        if(tags==null||tags.isEmpty()) return;
+        var ids=tags.stream().map(KbTag::getId).filter(Objects::nonNull).toList();
+        if(ids.isEmpty()) return;
+        var rels=relationMapper.selectList(new LambdaQueryWrapper<KbTagRelation>().in(KbTagRelation::getTagId,ids));
+        Map<String,Integer> counts=new HashMap<>();
+        for(var r:rels) counts.merge(r.getTagId(),1,Integer::sum);
+        for(var t:tags) t.setUsageCount(counts.getOrDefault(t.getId(),0));
+    }
+    /** 关联/取消关联后回写 usage_count 列，保持列值与关联表一致 */
+    private void recountUsage(String tagId) {
+        if(tagId==null) return;
+        long n=relationMapper.selectCount(new LambdaQueryWrapper<KbTagRelation>().eq(KbTagRelation::getTagId,tagId));
+        var t=tagMapper.selectById(tagId);
+        if(t!=null){ t.setUsageCount((int)n); tagMapper.updateById(t); }
+    }
     // ===== 标签关联 =====
     @Override public void linkTag(String tagId,String targetType,String targetId) {
         var w=new LambdaQueryWrapper<KbTagRelation>().eq(KbTagRelation::getTagId,tagId).eq(KbTagRelation::getTargetType,targetType).eq(KbTagRelation::getTargetId,targetId);
-        if(relationMapper.selectCount(w)==0){ var r=new KbTagRelation(); r.setTagId(tagId); r.setTargetType(targetType); r.setTargetId(targetId); relationMapper.insert(r); }
+        if(relationMapper.selectCount(w)==0){ var r=new KbTagRelation(); r.setTagId(tagId); r.setTargetType(targetType); r.setTargetId(targetId); relationMapper.insert(r); recountUsage(tagId); }
     }
     @Override public void unlinkTag(String tagId,String targetType,String targetId) {
         relationMapper.delete(new LambdaQueryWrapper<KbTagRelation>().eq(KbTagRelation::getTagId,tagId).eq(KbTagRelation::getTargetType,targetType).eq(KbTagRelation::getTargetId,targetId));
+        recountUsage(tagId);
     }
     @Override public List<Map<String,Object>> getRelations(String targetType,String targetId) {
         var list=relationMapper.selectList(new LambdaQueryWrapper<KbTagRelation>().eq(KbTagRelation::getTargetType,targetType).eq(KbTagRelation::getTargetId,targetId));

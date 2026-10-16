@@ -153,8 +153,27 @@ const configTypeOptions = [
   { label: '发布', value: 'publish' },
   { label: '审核', value: 'review' },
   { label: '通用', value: 'general' },
+  { label: '事项热点', value: 'matter' },
 ]
-const CONFIG_TYPE_LABEL: Record<string, string> = { doc_guide: '文档导读', publish: '发布', review: '审核', general: '通用' }
+const CONFIG_TYPE_LABEL: Record<string, string> = { doc_guide: '文档导读', publish: '发布', review: '审核', general: '通用', matter: '事项热点' }
+
+// 事项热点：统计时间窗口（天）与返回条数——座席端「工单受理 · 事项热点知识」按此配置推荐
+const matterHotspot = ref({ windowDays: 30, topN: 5 })
+const matterSaving = ref(false)
+async function loadMatterHotspot() {
+  try {
+    const res: any = await api.getMatterHotspotConfig()
+    matterHotspot.value = { windowDays: res?.windowDays ?? 30, topN: res?.topN ?? 5 }
+  } catch { /* 保留缺省值 */ }
+}
+async function handleSaveMatterHotspot() {
+  matterSaving.value = true
+  try {
+    await api.saveMatterHotspotConfig({ windowDays: matterHotspot.value.windowDays, topN: matterHotspot.value.topN })
+    ElMessage.success('已保存，座席端事项热点推荐将按新配置生效')
+    await loadMatterHotspot()
+  } catch { ElMessage.error('保存失败') } finally { matterSaving.value = false }
+}
 
 async function loadConfigs() {
   try {
@@ -276,7 +295,7 @@ async function handleResetDefault(row: any) {
   } catch { /* cancelled */ }
 }
 
-onMounted(() => { loadPolicies(); loadStrategies(); loadConfigs(); loadKbs(); loadBinding(); loadStatuses() })
+onMounted(() => { loadPolicies(); loadStrategies(); loadConfigs(); loadKbs(); loadBinding(); loadStatuses(); loadMatterHotspot() })
 
 // ============================================================================
 // 4. 审核流程绑定（列表式：每个知识库可绑定一条流程）+ 发布/审核状态
@@ -469,6 +488,20 @@ async function handleToggleReview(val: boolean) {
               <el-button type="primary" @click="handleEditDocGuide">文档导读设置</el-button>
             </div>
           </div>
+          <!-- 事项热点配置：统计时间窗口与事项知识数量（座席端「工单受理」按此推荐热点知识） -->
+          <el-card shadow="never" style="margin-bottom: 12px">
+            <template #header>
+              <div class="section-title" style="font-size: 14px">事项热点推荐配置（座席端工单受理）</div>
+            </template>
+            <div style="display:flex;gap:16px;align-items:center;flex-wrap:wrap">
+              <span style="font-size:13px;color:#606266">统计时间窗口（天）</span>
+              <el-input-number v-model="matterHotspot.windowDays" :min="1" :max="365" size="small" />
+              <span style="font-size:13px;color:#606266">返回知识条数（前 N 个）</span>
+              <el-input-number v-model="matterHotspot.topN" :min="1" :max="50" size="small" />
+              <el-button type="primary" size="small" :loading="matterSaving" @click="handleSaveMatterHotspot">保存</el-button>
+              <span style="font-size:12px;color:#909399">座席选定工单事项后，自动展示近 {{ matterHotspot.windowDays }} 天内该事项热度最高的前 {{ matterHotspot.topN }} 个知识点</span>
+            </div>
+          </el-card>
           <div class="filter-bar">
             <el-select v-model="configQuery.configType" placeholder="配置类型" clearable style="width:140px" @change="loadConfigs">
               <el-option v-for="t in configTypeOptions" :key="t.value" :label="t.label" :value="t.value" />

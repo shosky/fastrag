@@ -1216,6 +1216,11 @@ export async function startQaExtract(kbId: string, data: Record<string, unknown>
   return request.post(`/kb/${kbId}/qa-extract/start`, data)
 }
 
+// 单个抽取任务（前端轮询进度用）
+export async function getQaExtractTask(kbId: string, taskId: string) {
+  return request.get(`/kb/${kbId}/qa-extract/${taskId}`)
+}
+
 export async function stopQaExtract(kbId: string, taskId: string) {
   return request.post(`/kb/${kbId}/qa-extract/${taskId}/stop`)
 }
@@ -1296,6 +1301,46 @@ export async function updateKnowledgeTicket(kbId: string, id: string, data: Reco
 
 export async function deleteKnowledgeTicket(kbId: string, id: string) {
   return request.delete(`/kb/${kbId}/knowledge-tickets/${id}`)
+}
+
+// 知识工单审批（通过/驳回）与流程环节日志
+export async function approveKnowledgeTicket(kbId: string, id: string, comment?: string) {
+  return request.post(`/kb/${kbId}/knowledge-tickets/${id}/approve`, { comment })
+}
+
+export async function rejectKnowledgeTicket(kbId: string, id: string, comment?: string) {
+  return request.post(`/kb/${kbId}/knowledge-tickets/${id}/reject`, { comment })
+}
+
+export async function getKnowledgeTicketLogs(kbId: string, id: string) {
+  return request.get(`/kb/${kbId}/knowledge-tickets/${id}/logs`)
+}
+
+// 事项热点：事项下拉、热点知识推荐（30 天/前 5 可配置）、命中埋点
+export async function getMatters(kbId: string) {
+  return request.get(`/kb/${kbId}/matter-knowledge-rels/matters`)
+}
+
+export async function getMatterHotKnowledge(kbId: string, matterCode: string, params?: { days?: number; top?: number }) {
+  return request.get(`/kb/${kbId}/matter-knowledge-rels/matters/${encodeURIComponent(matterCode)}/hot-knowledge`, { params })
+}
+
+export async function recordMatterHit(kbId: string, matterCode: string, data: { knowledgeId: string; matterName?: string; hitType?: string }) {
+  return request.post(`/kb/${kbId}/matter-knowledge-rels/matters/${encodeURIComponent(matterCode)}/hits`, data)
+}
+
+// 事项热点配置（统计时间窗口天数 / 返回条数）
+export async function getMatterHotspotConfig() {
+  return request.get('/config/matter-hotspot')
+}
+
+export async function saveMatterHotspotConfig(data: { windowDays?: number; topN?: number }) {
+  return request.put('/config/matter-hotspot', data)
+}
+
+// 知识失效扫描（手动触发，等价每日 01:30 定时任务）
+export async function expireScanKnowledge(kbId: string) {
+  return request.post(`/kb/${kbId}/knowledge/expire-scan`)
 }
 
 // 事项知识关联管理（新增/查看/编辑/删除）
@@ -1398,16 +1443,26 @@ export async function deleteNote(kbId: string, id: string) {
   return request.delete(`/kb/${kbId}/notes/${id}`)
 }
 
+// 导出笔记：返回 CSV 文件流（blob），支持按 ids 勾选导出
 export async function exportNotes(kbId: string, ids?: string) {
-  return request.get(`/kb/${kbId}/notes/export`, { params: { ids } })
+  return request.get(`/kb/${kbId}/notes/export`, { params: { ids }, responseType: 'blob' })
+}
+
+// 批量导入笔记（JSON 数组）
+export async function importNotes(kbId: string, items: Record<string, unknown>[]) {
+  return request.post(`/kb/${kbId}/notes/import`, items)
 }
 
 // ===========================================================================
 // M10 知识管理 + M11 知识更新
 // ===========================================================================
 
-export async function getKnowledgeList(kbId: string, params?: { keyword?: string; category?: string }) {
+export async function getKnowledgeList(kbId: string, params?: { keyword?: string; category?: string; attrDefId?: string; attrValue?: string }) {
   return request.get(`/kb/${kbId}/knowledge`, { params })
+}
+// 按知识属性分组统计（各属性值分组及条目数，attrValue=__none__ 表示筛"未填该属性"）
+export async function getKnowledgeAttributeGroups(kbId: string, attrDefId: string) {
+  return request.get(`/kb/${kbId}/knowledge/attribute-groups`, { params: { attrDefId } })
 }
 export async function createKnowledge(kbId: string, data: Record<string, unknown>) {
   return request.post(`/kb/${kbId}/knowledge`, data)

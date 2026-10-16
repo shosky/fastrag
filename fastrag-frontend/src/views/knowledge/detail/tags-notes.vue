@@ -115,9 +115,39 @@ async function handleDeleteNote(row: any) {
   try { await ElMessageBox.confirm('确认删除该笔记？', '删除确认', { type: 'warning' })
     await api.deleteNote(kbId, row.id); await loadNotes(); ElMessage.success('删除成功') } catch {}
 }
+// 导出笔记：后端返回 CSV 文件流，前端触发真实下载
 async function handleExportNotes() {
-  const res: any = await api.exportNotes(kbId)
-  ElMessage.success(`导出 ${res?.count || 0} 条笔记`)
+  try {
+    const blob = await api.exportNotes(kbId) as unknown as Blob
+    if (!blob || blob.size === 0) { ElMessage.warning('没有可导出的笔记'); return }
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = `知识笔记_${new Date().toISOString().slice(0, 10)}.csv`
+    document.body.appendChild(a)
+    a.click()
+    document.body.removeChild(a)
+    URL.revokeObjectURL(url)
+    ElMessage.success(`成功导出 ${noteList.value.length} 条笔记`)
+  } catch { ElMessage.error('导出失败') }
+}
+
+// 导入笔记：粘贴 JSON 数组批量导入（字段：title/content/targetType/targetId/tags）
+const showImportNoteDialog = ref(false)
+const importNoteItems = ref('')
+function handleImportNotes() { importNoteItems.value = ''; showImportNoteDialog.value = true }
+async function handleImportNoteSubmit() {
+  let items: any[] = []
+  try {
+    items = JSON.parse(importNoteItems.value)
+    if (!Array.isArray(items)) throw new Error('not array')
+  } catch { ElMessage.warning('请输入有效的 JSON 数组'); return }
+  try {
+    const res: any = await api.importNotes(kbId, items)
+    showImportNoteDialog.value = false
+    await loadNotes()
+    ElMessage.success(`成功导入 ${res?.imported ?? items.length} 条笔记`)
+  } catch { ElMessage.error('导入失败') }
 }
 
 onMounted(() => { loadTagTypes(); loadTags(); loadNotes() })
@@ -206,7 +236,8 @@ onMounted(() => { loadTagTypes(); loadTags(); loadNotes() })
           <div class="section-header">
             <div class="section-title">笔记管理</div>
             <div>
-              <el-button @click="handleExportNotes">导出</el-button>
+              <el-button @click="handleImportNotes">导入笔记</el-button>
+              <el-button @click="handleExportNotes">导出笔记</el-button>
               <el-button type="primary" @click="handleAddNote">新增笔记</el-button>
             </div>
           </div>
@@ -282,6 +313,17 @@ onMounted(() => { loadTagTypes(); loadTags(); loadNotes() })
         <el-form-item label="标签"><el-input v-model="noteForm.tags" placeholder="逗号分隔" /></el-form-item>
       </el-form>
       <template #footer><el-button @click="showNoteDialog = false">取消</el-button><el-button type="primary" @click="handleSaveNote">保存</el-button></template>
+    </el-dialog>
+
+    <!-- 导入笔记弹窗：粘贴 JSON 数组批量导入 -->
+    <el-dialog v-model="showImportNoteDialog" title="导入笔记" width="600px">
+      <el-alert type="info" :closable="false" style="margin-bottom: 12px"
+        title='粘贴 JSON 数组，每项支持 title / content / targetType / targetId / tags 字段，例如：[{"title":"退款要点","content":"...","tags":"退款,流程"}]' />
+      <el-input v-model="importNoteItems" type="textarea" :rows="10" placeholder='[{"title":"笔记标题","content":"笔记内容","targetType":"knowledge","targetId":"","tags":""}]' />
+      <template #footer>
+        <el-button @click="showImportNoteDialog = false">取消</el-button>
+        <el-button type="primary" @click="handleImportNoteSubmit">导入</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>

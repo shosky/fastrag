@@ -15,7 +15,8 @@ public class QaExtractServiceImpl implements QaExtractService {
     }
     @Override public KbQaExtractTask get(String id) { return mapper.selectById(id); }
     @Override public KbQaExtractTask start(KbQaExtractTask task) {
-        if(task.getStatus()==null) task.setStatus("running");
+        // 置为 pending 交给 QaExtractWorker 轮询执行（原实现直接置 running 且无人消费，任务永远停在 0/0）
+        if(task.getStatus()==null) task.setStatus("pending");
         if(task.getTotalCount()==null) task.setTotalCount(0);
         if(task.getCompletedCount()==null) task.setCompletedCount(0);
         mapper.insert(task); return task;

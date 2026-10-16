@@ -941,6 +941,7 @@ CREATE TABLE IF NOT EXISTS kb_knowledge (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     deleted_at DATETIME DEFAULT NULL,
+    valid_until DATETIME DEFAULT NULL,
     INDEX idx_kb_id (kb_id),
     INDEX idx_category (category)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
@@ -961,8 +962,40 @@ CREATE TABLE IF NOT EXISTS kb_knowledge_ticket (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     resolved_at DATETIME,
+    approver VARCHAR(32),
+    submitted_at DATETIME,
+    approved_at DATETIME,
+    approval_comment VARCHAR(512),
+    flow_name VARCHAR(64),
+    current_step VARCHAR(64),
     INDEX idx_kb_id (kb_id),
     INDEX idx_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 知识工单流程环节日志（流程中步骤：提交/审批/驳回，供「流程环节」时间轴）
+CREATE TABLE IF NOT EXISTS kb_knowledge_ticket_log (
+    id VARCHAR(32) PRIMARY KEY,
+    ticket_id VARCHAR(32) NOT NULL,
+    step_name VARCHAR(64),
+    action VARCHAR(32),
+    operator VARCHAR(32),
+    comment VARCHAR(512),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_ticket (ticket_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- 事项知识命中埋点（座席选定事项后的查看/点开行为，按窗口聚合出事项热点知识）
+CREATE TABLE IF NOT EXISTS kb_matter_knowledge_hit (
+    id VARCHAR(32) PRIMARY KEY,
+    kb_id VARCHAR(32) NOT NULL,
+    matter_code VARCHAR(64) NOT NULL,
+    matter_name VARCHAR(128),
+    knowledge_id VARCHAR(32) NOT NULL,
+    hit_type VARCHAR(16),
+    user_id VARCHAR(32),
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_matter_time (matter_code, created_at),
+    INDEX idx_knowledge (knowledge_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- 事项知识关联（业务事项 ↔ 知识条目）

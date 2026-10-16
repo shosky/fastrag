@@ -2,12 +2,15 @@ package com.fastrag.module.knowledge.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.knowledge.entity.KbKnowledgeEdit; import com.fastrag.module.knowledge.mapper.KbKnowledgeEditMapper;
 import com.fastrag.module.knowledge.service.KnowledgeEditService;
+import com.fastrag.module.knowledge.service.KnowledgeTicketService;
+import com.fastrag.security.util.SecurityUtil;
 import jakarta.servlet.http.HttpServletResponse;
-import lombok.RequiredArgsConstructor; import org.springframework.stereotype.Service;
+import lombok.RequiredArgsConstructor; import lombok.extern.slf4j.Slf4j; import org.springframework.stereotype.Service;
 import java.util.*;
-@Service @RequiredArgsConstructor
+@Slf4j @Service @RequiredArgsConstructor
 public class KnowledgeEditServiceImpl implements KnowledgeEditService {
     private final KbKnowledgeEditMapper mapper;
+    private final KnowledgeTicketService ticketService;
     @Override public List<KbKnowledgeEdit> list(String kbId,String status,String editor) {
         var w=new LambdaQueryWrapper<KbKnowledgeEdit>();
         if(kbId!=null&&!kbId.isEmpty()) w.eq(KbKnowledgeEdit::getKbId,kbId);
@@ -31,8 +34,26 @@ public class KnowledgeEditServiceImpl implements KnowledgeEditService {
     @Override public void delete(String id) { mapper.deleteById(id); }
     @Override public KbKnowledgeEdit submit(String id) {
         var e=mapper.selectById(id);
-        if(e!=null){ e.setStatus("submitted"); mapper.updateById(e); }
+        if(e!=null){
+            e.setStatus("submitted"); mapper.updateById(e);
+            // 发起新增/修改流程后自动生成知识工单，需审批（5.4.6.2.4 知识工单）
+            try {
+                String type="create".equals(e.getEditType())?"create":"update";
+                ticketService.autoCreate(e.getKbId(),e.getKnowledgeId(),type,
+                    "知识采编提交："+(e.getTitle()==null?"":e.getTitle()),
+                    "采编记录 "+e.getId()+"（"+(EDIT_TYPE_MAP.getOrDefault(e.getEditType(),"新建"))+"）已提交，等待审批",
+                    currentOperator(e.getEditor()));
+            } catch (Exception ex) { log.warn("生成知识工单失败: {}",ex.getMessage()); }
+        }
         return e;
+    }
+    /** 当前操作人：取登录用户名，无上下文（定时/脚本）时回退 system */
+    private static String currentOperator(String fallback) {
+        try {
+            var u=SecurityUtil.getCurrentUser();
+            if(u!=null&&u.getUsername()!=null&&!u.getUsername().isBlank()) return u.getUsername();
+        } catch (Exception ignore) { }
+        return fallback==null||fallback.isBlank()?"system":fallback;
     }
     @Override public KbKnowledgeEdit approve(String id,String reviewer) {
         var e=mapper.selectById(id);

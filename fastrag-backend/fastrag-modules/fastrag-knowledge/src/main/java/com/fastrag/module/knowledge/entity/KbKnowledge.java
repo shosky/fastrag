@@ -12,6 +12,11 @@ import com.baomidou.mybatisplus.annotation.*; import com.fasterxml.jackson.annot
     private LocalDateTime createdAt,updatedAt;
     // 回收站软删除标记：null=正常，非 null=已删除（可恢复）
     @JsonIgnore private LocalDateTime deletedAt;
+    // 生效截止时间：到期后由每日扫描置为 expired，与取消发布(offline)一并进入回收站集中管理
+    private LocalDateTime validUntil;
+    // 回收站聚合视图字段（非表字段）：来源 deleted/offline/expired 与入站时间（deletedAt 被 JsonIgnore，前端展示用此字段）
+    @TableField(exist = false) private String recycleSource;
+    @TableField(exist = false) private LocalDateTime recycleTime;
 
     // tags 列为 MySQL JSON 类型：空串/空白归一为 null，非法 JSON 文本降级为 JSON 字符串，避免 Invalid JSON text
     @JsonProperty public void setTags(Object tags) {

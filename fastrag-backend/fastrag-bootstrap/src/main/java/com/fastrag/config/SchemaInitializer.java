@@ -282,6 +282,18 @@ public class SchemaInitializer {
         addColumnIfNotExists("kb", "kb_type", "VARCHAR(16) DEFAULT 'general'");
         addColumnIfNotExists("kb_chunk", "embedding", "LONGTEXT");
         addColumnIfNotExists("kb_knowledge", "attributes", "TEXT");
+        // 知识属性定义：select 选项集与排序（按属性分组/录入表单动态渲染依赖）
+        addColumnIfNotExists("kb_attribute_def", "options", "TEXT");
+        addColumnIfNotExists("kb_attribute_def", "sort", "INT DEFAULT 0");
+        // 知识失效时间：到期后由每日扫描置为 expired，纳入回收站「失效」来源
+        addColumnIfNotExists("kb_knowledge", "valid_until", "DATETIME");
+        // 知识工单审批字段：自动生成工单 + 审批 + 流程环节（5.4.6.2.4 知识采编）
+        addColumnIfNotExists("kb_knowledge_ticket", "approver", "VARCHAR(32)");
+        addColumnIfNotExists("kb_knowledge_ticket", "submitted_at", "DATETIME");
+        addColumnIfNotExists("kb_knowledge_ticket", "approved_at", "DATETIME");
+        addColumnIfNotExists("kb_knowledge_ticket", "approval_comment", "VARCHAR(512)");
+        addColumnIfNotExists("kb_knowledge_ticket", "flow_name", "VARCHAR(64)");
+        addColumnIfNotExists("kb_knowledge_ticket", "current_step", "VARCHAR(64)");
         addColumnIfNotExists("model", "threshold", "VARCHAR(512)");
         // 实体 AppSemanticConfig.createdAt 对应列（初期 DDL 遗漏，旧库补列）
         addColumnIfNotExists("app_semantic_config", "created_at", "DATETIME DEFAULT CURRENT_TIMESTAMP");
@@ -299,6 +311,34 @@ public class SchemaInitializer {
                 status VARCHAR(16) DEFAULT 'draft',
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_kb_id (kb_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """);
+        // 知识工单流程环节日志：记录 submit/approve/reject 步骤，供「流程环节」时间轴展示
+        ensureTable("kb_knowledge_ticket_log", """
+            CREATE TABLE IF NOT EXISTS kb_knowledge_ticket_log (
+                id VARCHAR(32) PRIMARY KEY,
+                ticket_id VARCHAR(32) NOT NULL,
+                step_name VARCHAR(64),
+                action VARCHAR(32),
+                operator VARCHAR(32),
+                comment VARCHAR(512),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_ticket (ticket_id)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """);
+        // 事项知识命中：座席选定事项后查看/点开知识的埋点，按 30 天窗口聚合出事项热点知识
+        ensureTable("kb_matter_knowledge_hit", """
+            CREATE TABLE IF NOT EXISTS kb_matter_knowledge_hit (
+                id VARCHAR(32) PRIMARY KEY,
+                kb_id VARCHAR(32) NOT NULL,
+                matter_code VARCHAR(64) NOT NULL,
+                matter_name VARCHAR(128),
+                knowledge_id VARCHAR(32) NOT NULL,
+                hit_type VARCHAR(16),
+                user_id VARCHAR(32),
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                INDEX idx_matter_time (matter_code, created_at),
+                INDEX idx_knowledge (knowledge_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """);
         ensureTable("kb_standard_question", """
@@ -370,6 +410,8 @@ public class SchemaInitializer {
                 attr_type VARCHAR(16) DEFAULT 'text',
                 required TINYINT DEFAULT 0,
                 description VARCHAR(256),
+                options TEXT,
+                sort INT DEFAULT 0,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 INDEX idx_ad_kb (kb_id)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库自定义属性定义'

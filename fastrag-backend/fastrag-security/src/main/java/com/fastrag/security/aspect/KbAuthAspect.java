@@ -33,6 +33,8 @@ public class KbAuthAspect {
     @Around("@annotation(kbAuth)")
     public Object checkKbPermission(ProceedingJoinPoint joinPoint, KbAuth kbAuth) throws Throwable {
         LoginUser user = SecurityUtil.getCurrentUser();
+        // 无登录上下文（未认证/内部调用）直接拒绝，避免 NPE 变成 500
+        if (user == null) throw BusinessException.forbidden("未登录或无知识库访问权限");
         if (user.hasPermission("*")) return joinPoint.proceed();
 
         String kbId = extractKbId();

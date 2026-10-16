@@ -2,8 +2,10 @@ package com.fastrag.module.knowledge.service.impl;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.fastrag.module.knowledge.entity.*; import com.fastrag.module.knowledge.mapper.*;
 import com.fastrag.module.knowledge.service.PublishManageService;
+import com.fastrag.module.knowledge.service.KnowledgeTicketService;
 import com.fastrag.module.publish.entity.KbReviewTask; import com.fastrag.module.publish.entity.KbUpdateLog;
 import com.fastrag.module.publish.mapper.KbReviewTaskMapper; import com.fastrag.module.publish.mapper.KbUpdateLogMapper;
+import com.fastrag.security.util.SecurityUtil;
 import lombok.RequiredArgsConstructor; import lombok.extern.slf4j.Slf4j; import org.springframework.stereotype.Service;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.net.URI; import java.net.http.HttpClient; import java.net.http.HttpRequest; import java.net.http.HttpResponse;
@@ -20,6 +22,7 @@ public class PublishManageServiceImpl implements PublishManageService {
     private final KbReviewTemplateMapper rtMapper; private final KbReviewNodeMapper rnMapper;
     private final KbListenerMapper liMapper; private final KbListenerLogMapper llMapper;
     private final KbResetConfigMapper rcMapper; private final KbKnowledgeMapper kmMapper; private final KbKnowledgeUpdateMapper kmUpdateMapper;
+    private final KnowledgeTicketService ticketService;
     private final KbUpdateLogMapper kbUpdateLogMapper;
     private final KbReviewTaskMapper reviewTaskMapper;
     // ===== 发布管理 =====
@@ -32,11 +35,44 @@ public class PublishManageServiceImpl implements PublishManageService {
     @Override public KbPublishHistory publish(String kbId,String knowledgeId,KbPublishHistory history) {
         history.setKbId(kbId); history.setKnowledgeId(knowledgeId); history.setStatus("published"); history.setPublishedAt(LocalDateTime.now());
         if(history.getPublishType()==null) history.setPublishType("publish");
-        phMapper.insert(history); return history;
+        phMapper.insert(history);
+        transitionKnowledgeStatus(kbId,knowledgeId,"published","publish");
+        return history;
     }
     @Override public KbPublishHistory revoke(String kbId,String knowledgeId) {
         var h=new KbPublishHistory(); h.setKbId(kbId); h.setKnowledgeId(knowledgeId); h.setPublishType("revoke"); h.setStatus("revoked"); h.setPublishedAt(LocalDateTime.now());
-        phMapper.insert(h); return h;
+        phMapper.insert(h);
+        // 取消发布：知识点置为已下架(offline)，由回收站「取消发布」来源集中管理并可恢复/彻底删除
+        transitionKnowledgeStatus(kbId,knowledgeId,"offline","revoke");
+        // 发起取消发布流程后自动生成知识工单，需审批（审批驳回时恢复取消前状态）
+        try {
+            var k=kmMapper.selectById(knowledgeId);
+            ticketService.autoCreate(kbId,knowledgeId,"offline",
+                "知识取消发布待审："+(k!=null&&k.getTitle()!=null?k.getTitle():knowledgeId),
+                "取消发布已生效，等待审批确认（驳回将恢复取消前状态）",
+                SecurityUtil.getCurrentUser()!=null?SecurityUtil.getCurrentUser().getUsername():"system");
+        } catch (Exception e) { log.warn("生成取消发布工单失败: {}",e.getMessage()); }
+        return h;
+    }
+    /** 发布状态流转：同步知识条目状态并写入 kb_knowledge_update 留痕（回收站来源与更新日志共同消费） */
+    private void transitionKnowledgeStatus(String kbId,String knowledgeId,String toStatus,String updateType) {
+        var k=kmMapper.selectById(knowledgeId);
+        if(k==null) return;
+        String from=k.getStatus();
+        if(toStatus.equals(from)) return;
+        k.setStatus(toStatus);
+        kmMapper.updateById(k);
+        try {
+            var up=new KbKnowledgeUpdate();
+            up.setKbId(kbId); up.setKnowledgeId(knowledgeId); up.setUpdateType(updateType);
+            up.setTitle(k.getTitle()); up.setOldValue(from); up.setNewValue(toStatus);
+            up.setChangeSummary("publish".equals(updateType)
+                ? "发布上线：状态 "+(from==null?"-":from)+" → "+toStatus
+                : "取消发布：状态 "+(from==null?"-":from)+" → "+toStatus+"（进入回收站集中管理）");
+            up.setStatus("applied"); up.setOperator(SecurityUtil.getCurrentUserId());
+            up.setAppliedAt(LocalDateTime.now()); up.setCreatedAt(LocalDateTime.now());
+            kmUpdateMapper.insert(up);
+        } catch (Exception e) { log.warn("记录发布状态变更失败: {}",e.getMessage()); }
     }
     @Override public KbPublishHistory getPublishHistory(String id) { return phMapper.selectById(id); }
     @Override public KbPublishPlan createPlan(KbPublishPlan plan) {

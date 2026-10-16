@@ -466,7 +466,10 @@ async function saveTagStore() {
   } catch (e: any) { ElMessage.error('存储失败：' + (e?.message || '')) }
 }
 async function removeTagKnowledge(k: any) {
-  try { await disassociateTag(kbId.value, tagStoreRow.value.id, k.id); ElMessage.success('已解除关联'); await refreshTagKnowledge(tagStoreRow.value) }
+  // 后端 /tags/{id}/knowledge 列表返回的键是 knowledgeId（不是 id），传错会拼成 .../knowledge/undefined 导致解除无效
+  const knowledgeId = k?.knowledgeId || k?.id
+  if (!knowledgeId) { ElMessage.warning('该记录缺少知识点ID，无法解除关联'); return }
+  try { await disassociateTag(kbId.value, tagStoreRow.value.id, knowledgeId); ElMessage.success('已解除关联'); await refreshTagKnowledge(tagStoreRow.value) }
   catch (e: any) { ElMessage.error('解除失败：' + (e?.message || '')) }
 }
 

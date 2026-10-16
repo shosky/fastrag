@@ -43,7 +43,7 @@ const loading = ref(false)
 
 // 知识管理
 const knowledgeList = ref<any[]>([])
-const knowledgeQuery = ref({ keyword: '', category: '' })
+const knowledgeQuery = ref({ keyword: '', category: '', attrDefId: '', attrValue: '' })
 async function loadKnowledge() {
   loading.value = true
   try { knowledgeList.value = ((await api.getKnowledgeList(kbId, knowledgeQuery.value)) as any) || [] } finally { loading.value = false }
@@ -72,36 +72,109 @@ async function handleViewDetail(row: any) {
 // ===== 属性管理（定义 CRUD） =====
 const showAttrDialog = ref(false)
 const attrDefs = ref<any[]>([])
-const attrForm = ref<any>({ id: '', name: '', attrType: 'text', required: 0, description: '' })
-async function handleOpenAttrs() {
-  showAttrDialog.value = true
+const attrForm = ref<any>({ id: '', name: '', attrType: 'text', required: 0, description: '', options: '', sort: 0 })
+async function loadAttrDefs() {
   try { attrDefs.value = ((await api.getAttributeDefs(route.params.id as string)) as any) || [] } catch { attrDefs.value = [] }
 }
+async function handleOpenAttrs() { showAttrDialog.value = true; await loadAttrDefs() }
 async function handleSaveAttr() {
   if (!attrForm.value.name.trim()) { ElMessage.warning('请输入属性名'); return }
+  if (attrForm.value.attrType === 'select' && !String(attrForm.value.options || '').trim() && !(attrForm.value.options?.length)) {
+    ElMessage.warning('选项类型属性需配置至少一个选项'); return
+  }
   try {
     if (attrForm.value.id) await api.updateAttributeDef(route.params.id as string, attrForm.value.id, attrForm.value)
     else await api.createAttributeDef(route.params.id as string, attrForm.value)
     ElMessage.success('已保存')
-    attrForm.value = { id: '', name: '', attrType: 'text', required: 0, description: '' }
-    attrDefs.value = ((await api.getAttributeDefs(route.params.id as string)) as any) || []
-  } catch { ElMessage.error('保存失败') }
+    attrForm.value = { id: '', name: '', attrType: 'text', required: 0, description: '', options: '', sort: 0 }
+    await loadAttrDefs()
+    await loadAttrGroups()
+  } catch (e: any) { ElMessage.error('保存失败：' + (e?.message || '')) }
 }
 async function handleDeleteAttr(row: any) {
   try {
     await ElMessageBox.confirm(`确定删除属性「${row.name}」？`, '提示', { type: 'warning' })
     await api.deleteAttributeDef(route.params.id as string, row.id)
-    attrDefs.value = ((await api.getAttributeDefs(route.params.id as string)) as any) || []
+    await loadAttrDefs()
+    if (groupAttrDefId.value === row.id) { groupAttrDefId.value = ''; await handleGroupAttrChange() }
   } catch { }
 }
 
-function handleAddKnowledge() { knowledgeForm.value = { id: '', title: '', content: '', summary: '', category: '', tags: '', status: 'draft' }; showKnowledgeDialog.value = true }
-function handleEditKnowledge(row: any) { knowledgeForm.value = { ...row }; showKnowledgeDialog.value = true }
+// ===== 知识属性值（按 kb_attribute_def 动态渲染录入字段；值存 kb_knowledge.attributes JSON）=====
+// attrValues：{ attrDefId: value }，录入表单与新增/编辑弹窗共用
+const attrValues = ref<Record<string, any>>({})
+const ATTR_TYPE_LABEL: Record<string, string> = { text: '文本', number: '数字', date: '日期', select: '选项' }
+function emptyAttrValues(): Record<string, any> {
+  const m: Record<string, any> = {}
+  for (const d of attrDefs.value) m[d.id] = d.attrType === 'number' ? undefined : ''
+  return m
+}
+/** 编辑回填：解析条目上的 attributes JSON（{attrDefId: value}） */
+function parseAttrValues(row: any): Record<string, any> {
+  const m = emptyAttrValues()
+  try {
+    const raw = row?.attributes
+    if (raw) {
+      const obj = typeof raw === 'string' ? JSON.parse(raw) : raw
+      for (const k of Object.keys(obj || {})) if (k in m) m[k] = obj[k]
+    }
+  } catch { /* 属性值非法 JSON 时按空处理 */ }
+  return m
+}
+/** 提交：剔除空值后序列化为 JSON 字符串（未填任何属性则传空对象，仍走必填校验） */
+function attrPayload(): string {
+  const obj: Record<string, any> = {}
+  for (const d of attrDefs.value) {
+    const v = attrValues.value[d.id]
+    if (v !== undefined && v !== null && String(v).trim() !== '') obj[d.id] = String(v).trim()
+  }
+  return JSON.stringify(obj)
+}
+/** 详情展示：属性名 → 值（未填显示 -） */
+function attrDisplay(row: any): { name: string; value: string }[] {
+  const values = parseAttrValues(row)
+  return attrDefs.value.map((d: any) => ({
+    name: d.name,
+    value: String(values[d.id] ?? '') || '-',
+  }))
+}
+
+// ===== 按属性分组（依据知识属性进行分组：分组统计 + 点击筛选）=====
+const groupAttrDefId = ref('')
+const groupResult = ref<any>(null)
+const filterAttrValue = ref('')
+async function loadAttrGroups() {
+  groupResult.value = null
+  if (!groupAttrDefId.value) { knowledgeQuery.value.attrDefId = ''; knowledgeQuery.value.attrValue = ''; filterAttrValue.value = ''; return }
+  try { groupResult.value = (await api.getKnowledgeAttributeGroups(kbId, groupAttrDefId.value)) as any } catch { groupResult.value = null }
+}
+async function handleGroupAttrChange() {
+  filterAttrValue.value = ''
+  await loadAttrGroups()
+  await applyAttrFilter()
+}
+async function applyAttrFilter() {
+  knowledgeQuery.value.attrDefId = groupAttrDefId.value || ''
+  knowledgeQuery.value.attrValue = filterAttrValue.value || ''
+  await loadKnowledge()
+}
+async function handleGroupChipClick(value: string) {
+  filterAttrValue.value = filterAttrValue.value === value ? '' : value
+  await applyAttrFilter()
+}
+
+function handleAddKnowledge() { knowledgeForm.value = { id: '', title: '', content: '', summary: '', category: '', tags: '', status: 'draft' }; attrValues.value = emptyAttrValues(); showKnowledgeDialog.value = true }
+function handleEditKnowledge(row: any) { knowledgeForm.value = { ...row }; attrValues.value = parseAttrValues(row); showKnowledgeDialog.value = true }
 async function handleSaveKnowledge() {
   if (!knowledgeForm.value.title) { ElMessage.warning('请输入标题'); return }
-  if (knowledgeForm.value.id) await api.updateKnowledge(kbId, knowledgeForm.value.id, knowledgeForm.value)
-  else await api.createKnowledge(kbId, knowledgeForm.value)
-  showKnowledgeDialog.value = false; await loadKnowledge(); ElMessage.success('保存成功')
+  const payload = { ...knowledgeForm.value, attributes: attrPayload() }
+  try {
+    if (knowledgeForm.value.id) await api.updateKnowledge(kbId, knowledgeForm.value.id, payload)
+    else await api.createKnowledge(kbId, payload)
+    showKnowledgeDialog.value = false; await loadKnowledge(); ElMessage.success('保存成功')
+  } catch (e: any) {
+    ElMessage.error('保存失败：' + (e?.message || ''))
+  }
 }
 async function handleDeleteKnowledge(row: any) {
   try { await ElMessageBox.confirm(`确认删除「${row.title}」？删除后可在回收站恢复。`, '删除确认', { type: 'warning' })
@@ -124,6 +197,7 @@ async function submitEntry() {
       summary: entryForm.value.summary,
       content: entryForm.value.content,
       source: 'manual',
+      attributes: attrPayload(),
     })
     ElMessage.success('知识已录入')
     resetEntry()
@@ -136,16 +210,20 @@ async function submitEntry() {
 }
 function resetEntry() {
   entryForm.value = { title: '', category: '', tags: '', status: 'published', summary: '', content: '' }
+  attrValues.value = emptyAttrValues()
 }
 /** 录入记录中的查看/编辑/删除复用知识管理的同一套逻辑 */
 function entryView(row: any) { handleViewDetail(row) }
 function entryEdit(row: any) { handleEditKnowledge(row) }
 function entryDelete(row: any) { handleDeleteKnowledge(row) }
 
-// ===== 知识回收站（列表/恢复/编辑/彻底删除/清空） =====
+// ===== 知识回收站（三类来源集中管理：手动删除/取消发布/到期失效；列表/恢复/编辑/彻底删除/清空） =====
 const showRecycleDialog = ref(false)
 const recycleList = ref<any[]>([])
 const recycleLoading = ref(false)
+const RECYCLE_SOURCE: Record<string, string> = { deleted: '手动删除', offline: '取消发布', expired: '到期失效' }
+const RECYCLE_SOURCE_COLOR: Record<string, string> = { deleted: 'info', offline: 'warning', expired: 'danger' }
+const KNOWLEDGE_STATUS: Record<string, string> = { draft: '草稿', reviewing: '待审核', published: '已发布', offline: '已下架', expired: '已失效', archived: '已归档' }
 async function loadRecycle() {
   recycleLoading.value = true
   try { recycleList.value = ((await api.getDeletedKnowledges(kbId)) as any) || [] } catch { recycleList.value = [] } finally { recycleLoading.value = false }
@@ -503,7 +581,7 @@ async function loadKnowledgeOptions() {
   try { knowledgeOptions.value = ((await api.getKnowledgeList(kbId, {})) as any) || [] } catch { knowledgeOptions.value = [] }
 }
 
-onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); loadMatterRels(); loadKnowledgeOptions() })
+onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); loadMatterRels(); loadKnowledgeOptions(); loadAttrDefs() })
 </script>
 
 <template>
@@ -522,11 +600,39 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
           <div class="filter-bar">
             <el-input v-model="knowledgeQuery.keyword" placeholder="搜索标题" clearable style="width:200px" @keyup.enter="loadKnowledge" />
             <el-input v-model="knowledgeQuery.category" placeholder="分类" clearable style="width:150px" @keyup.enter="loadKnowledge" />
+            <!-- 按知识属性分组：选属性 → 显示各属性值分组统计（点击分组即筛选） -->
+            <el-select v-model="groupAttrDefId" placeholder="按属性分组" clearable style="width:160px" @change="handleGroupAttrChange">
+              <el-option v-for="d in attrDefs" :key="d.id" :label="`${d.name}（${ATTR_TYPE_LABEL[d.attrType] || d.attrType}）`" :value="d.id" />
+            </el-select>
             <el-button type="primary" @click="loadKnowledge">查询</el-button>
+            <el-button v-if="filterAttrValue" link type="primary" @click="handleGroupChipClick(filterAttrValue)">清除分组筛选</el-button>
+          </div>
+          <!-- 分组统计视图：依据知识属性分组（各属性值条目数；含未分组） -->
+          <div v-if="groupResult" class="attr-group-bar">
+            <span class="attr-group-bar__label">{{ groupResult.attrName || '属性' }} 分组：</span>
+            <el-tag v-for="g in groupResult.groups" :key="g.value" size="small" style="margin-right: 8px; cursor: pointer"
+              :type="filterAttrValue === g.value ? 'primary' : 'info'" :effect="filterAttrValue === g.value ? 'dark' : 'plain'"
+              @click="handleGroupChipClick(g.value)">
+              {{ g.value }}（{{ g.count }}）
+            </el-tag>
+            <el-tag v-if="groupResult.ungrouped" size="small" style="margin-right: 8px; cursor: pointer"
+              :type="filterAttrValue === '__none__' ? 'warning' : 'info'" :effect="filterAttrValue === '__none__' ? 'dark' : 'plain'"
+              @click="handleGroupChipClick('__none__')">
+              未分组（{{ groupResult.ungrouped }}）
+            </el-tag>
+            <span class="attr-group-bar__total">共 {{ groupResult.total }} 条知识</span>
           </div>
           <el-table :data="knowledgeList" stripe>
             <el-table-column prop="title" label="标题" show-overflow-tooltip />
             <el-table-column prop="category" label="分类" width="120" />
+            <el-table-column label="知识属性" min-width="160">
+              <template #default="{ row }">
+                <el-tag v-for="a in attrDisplay(row).filter((x: any) => x.value !== '-')" :key="a.name" size="small" style="margin-right: 4px" type="info">
+                  {{ a.name }}：{{ a.value }}
+                </el-tag>
+                <span v-if="!attrDisplay(row).some((x: any) => x.value !== '-')" style="color:#c0c4cc">-</span>
+              </template>
+            </el-table-column>
             <el-table-column prop="source" label="来源" width="90" />
             <el-table-column prop="version" label="版本" width="70" />
             <el-table-column prop="status" label="状态" width="90">
@@ -583,6 +689,16 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
             </el-form-item>
             <el-form-item label="知识内容" required>
               <el-input v-model="entryForm.content" type="textarea" :rows="8" placeholder="录入知识正文，支持多段文本" />
+            </el-form-item>
+            <!-- 知识属性：按属性管理中的定义动态渲染（依据知识属性进行分组的数据来源） -->
+            <el-form-item v-for="d in attrDefs" :key="d.id" :label="d.name" :required="!!d.required">
+              <el-select v-if="d.attrType === 'select'" v-model="attrValues[d.id]" clearable placeholder="请选择" style="width: 260px">
+                <el-option v-for="o in (Array.isArray(d.options) ? d.options : [])" :key="o" :label="o" :value="o" />
+              </el-select>
+              <el-input-number v-else-if="d.attrType === 'number'" v-model="attrValues[d.id]" style="width: 260px" />
+              <el-date-picker v-else-if="d.attrType === 'date'" v-model="attrValues[d.id]" type="date" value-format="YYYY-MM-DD" style="width: 260px" />
+              <el-input v-else v-model="attrValues[d.id]" :placeholder="d.description || '可空'" style="width: 260px" />
+              <span v-if="d.description" style="margin-left: 8px; font-size: 12px; color: #909399">{{ d.description }}</span>
             </el-form-item>
             <el-form-item>
               <el-button type="primary" :loading="entrySaving" @click="submitEntry">保存并录入</el-button>
@@ -804,6 +920,15 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
         <el-form-item label="摘要"><el-input v-model="knowledgeForm.summary" type="textarea" :rows="2" /></el-form-item>
         <el-form-item label="内容"><el-input v-model="knowledgeForm.content" type="textarea" :rows="6" /></el-form-item>
         <el-form-item label="标签"><el-input v-model="knowledgeForm.tags" placeholder="JSON数组" /></el-form-item>
+        <!-- 知识属性：按属性管理中的定义动态渲染 -->
+        <el-form-item v-for="d in attrDefs" :key="d.id" :label="d.name" :required="!!d.required">
+          <el-select v-if="d.attrType === 'select'" v-model="attrValues[d.id]" clearable placeholder="请选择" style="width: 260px">
+            <el-option v-for="o in (Array.isArray(d.options) ? d.options : [])" :key="o" :label="o" :value="o" />
+          </el-select>
+          <el-input-number v-else-if="d.attrType === 'number'" v-model="attrValues[d.id]" style="width: 260px" />
+          <el-date-picker v-else-if="d.attrType === 'date'" v-model="attrValues[d.id]" type="date" value-format="YYYY-MM-DD" style="width: 260px" />
+          <el-input v-else v-model="attrValues[d.id]" :placeholder="d.description || '可空'" style="width: 260px" />
+        </el-form-item>
       </el-form>
       <template #footer><el-button @click="showKnowledgeDialog=false">取消</el-button><el-button type="primary" @click="handleSaveKnowledge">保存</el-button></template>
     </el-dialog>
@@ -881,11 +1006,20 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
       <el-table :data="recycleList" stripe v-loading="recycleLoading" size="small">
         <el-table-column prop="title" label="标题" show-overflow-tooltip />
         <el-table-column prop="category" label="分类" width="110" />
-        <el-table-column prop="status" label="状态" width="90" />
-        <el-table-column prop="deletedAt" label="删除时间" width="160" />
+        <el-table-column label="来源" width="110">
+          <template #default="{ row }">
+            <el-tag size="small" :type="(RECYCLE_SOURCE_COLOR[row.recycleSource] || 'info') as any">{{ RECYCLE_SOURCE[row.recycleSource] || row.recycleSource || '手动删除' }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ KNOWLEDGE_STATUS[row.status] || row.status }}</template>
+        </el-table-column>
+        <el-table-column label="入站时间" width="160">
+          <template #default="{ row }">{{ row.recycleTime || row.deletedAt }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="170">
           <template #default="{ row }">
-            <el-button link type="success" size="small" @click="handleRestoreKnowledge(row)">恢复</el-button>
+            <el-button link type="success" size="small" @click="handleRestoreKnowledge(row)">{{ row.recycleSource === 'deleted' ? '恢复' : '恢复为草稿' }}</el-button>
             <el-button link type="primary" size="small" @click="handleEditRecycle(row)">编辑</el-button>
             <el-button link type="danger" size="small" @click="handlePermanentDelete(row)">彻底删除</el-button>
           </template>
@@ -955,6 +1089,8 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
           <el-descriptions-item label="状态">{{ detailEntry?.status }}</el-descriptions-item>
           <el-descriptions-item label="版本">{{ detailEntry?.version ?? '-' }}</el-descriptions-item>
           <el-descriptions-item label="摘要">{{ detailEntry?.summary || '-' }}</el-descriptions-item>
+          <!-- 知识属性回显（按属性定义逐项展示，未填显示 -） -->
+          <el-descriptions-item v-for="a in attrDisplay(detailEntry || {})" :key="a.name" :label="a.name">{{ a.value }}</el-descriptions-item>
           <el-descriptions-item label="正文"><div style="white-space: pre-wrap">{{ detailEntry?.content || '-' }}</div></el-descriptions-item>
         </el-descriptions>
         <div style="margin-top: 16px; font-weight: 600; margin-bottom: 8px">关联知识推荐</div>
@@ -974,9 +1110,11 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
     </el-drawer>
 
     <!-- 属性管理（定义 CRUD） -->
-    <el-dialog v-model="showAttrDialog" title="属性管理" width="640px" :close-on-click-modal="false">
+    <el-dialog v-model="showAttrDialog" title="属性管理" width="760px" :close-on-click-modal="false">
+      <el-alert type="info" :closable="false" style="margin-bottom: 10px"
+        title="属性定义用于「知识库录入」动态表单字段与「按属性分组」统计；选项类型需配置候选项（逗号分隔）" />
       <el-form :inline="true" style="margin-bottom: 8px">
-        <el-form-item label="属性名" style="margin-bottom: 0"><el-input v-model="attrForm.name" placeholder="如：产品线" style="width:130px" /></el-form-item>
+        <el-form-item label="属性名" style="margin-bottom: 0"><el-input v-model="attrForm.name" placeholder="如：产品线" style="width:120px" /></el-form-item>
         <el-form-item label="类型" style="margin-bottom: 0">
           <el-select v-model="attrForm.attrType" style="width:90px">
             <el-option label="文本" value="text" /><el-option label="数字" value="number" />
@@ -984,19 +1122,33 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
           </el-select>
         </el-form-item>
         <el-form-item label="必填" style="margin-bottom: 0"><el-switch v-model="attrForm.required" :active-value="1" :inactive-value="0" /></el-form-item>
+        <el-form-item label="排序" style="margin-bottom: 0"><el-input-number v-model="attrForm.sort" :min="0" size="small" style="width:90px" /></el-form-item>
+        <el-form-item label="描述" style="margin-bottom: 0"><el-input v-model="attrForm.description" placeholder="用途说明（可空）" style="width:150px" /></el-form-item>
+        <el-form-item v-if="attrForm.attrType === 'select'" label="选项" style="margin-bottom: 0">
+          <el-input v-model="attrForm.options" placeholder="逗号分隔，如：家庭客户,政企客户" style="width:220px" />
+        </el-form-item>
         <el-button type="primary" @click="handleSaveAttr">{{ attrForm.id ? '更新' : '添加属性' }}</el-button>
-        <el-button v-if="attrForm.id" @click="attrForm = { id: '', name: '', attrType: 'text', required: 0, description: '' }">取消编辑</el-button>
+        <el-button v-if="attrForm.id" @click="attrForm = { id: '', name: '', attrType: 'text', required: 0, description: '', options: '', sort: 0 }">取消编辑</el-button>
       </el-form>
       <el-table :data="attrDefs" size="small" border>
-        <el-table-column prop="name" label="属性名" min-width="120" />
-        <el-table-column prop="attrType" label="类型" width="80" />
-        <el-table-column prop="required" label="必填" width="70">
+        <el-table-column prop="name" label="属性名" min-width="110" />
+        <el-table-column label="类型" width="80">
+          <template #default="{ row }">{{ ATTR_TYPE_LABEL[row.attrType] || row.attrType }}</template>
+        </el-table-column>
+        <el-table-column label="选项" min-width="160">
+          <template #default="{ row }">
+            <span v-if="Array.isArray(row.options) && row.options.length">{{ row.options.join('、') }}</span>
+            <span v-else style="color:#c0c4cc">-</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="required" label="必填" width="60">
           <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
         </el-table-column>
-        <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="sort" label="排序" width="60" />
+        <el-table-column prop="description" label="描述" min-width="120" show-overflow-tooltip />
         <el-table-column label="操作" width="120">
           <template #default="{ row }">
-            <el-button link type="primary" size="small" @click="attrForm = { ...row }">编辑</el-button>
+            <el-button link type="primary" size="small" @click="attrForm = { ...row, options: Array.isArray(row.options) ? row.options.join(',') : (row.options || '') }">编辑</el-button>
             <el-button link type="danger" size="small" @click="handleDeleteAttr(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -1009,5 +1161,9 @@ onMounted(() => { loadKnowledge(); loadUpdates(); loadTests(); loadDialogs(); lo
 @use '@/assets/styles/variables' as *;
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; }
 .section-title { font-size: 15px; font-weight: 600; }
+/* 按知识属性分组：分组统计条 */
+.attr-group-bar { display: flex; align-items: center; flex-wrap: wrap; gap: 4px; padding: 8px 12px; margin-bottom: 8px; background: #f5f7fa; border-radius: 4px; }
+.attr-group-bar__label { font-size: 13px; color: #606266; font-weight: 500; }
+.attr-group-bar__total { font-size: 12px; color: #909399; margin-left: auto; }
 .table-footer { margin-top: $spacing-base; display: flex; justify-content: flex-end; }
 </style>

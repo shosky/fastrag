@@ -32,6 +32,7 @@ const showExtractDialog = ref(false)
 const extractFileIds = ref<string[]>([])
 const fileList = ref<any[]>([])
 const extracting = ref(false)
+const extractProgress = ref('')
 
 // 状态选项与标签
 const statusOptions = [
@@ -176,12 +177,44 @@ async function handleOpenExtract() {
 async function handleExtract() {
   if (extractFileIds.value.length === 0) { ElMessage.warning('请选择文件'); return }
   extracting.value = true
+  extractProgress.value = '正在创建抽取任务…'
   try {
-    await api.qaExtract(props.kbId, extractFileIds.value)
-    ElMessage.success('抽取完成')
+    // 1) 创建抽取任务：后端 QaExtractWorker 轮询执行，把文档分块交给 LLM 拆成一问一答
+    const task: any = await api.startQaExtract(props.kbId, {
+      name: `问答抽取（${extractFileIds.value.length} 个文件）`,
+      sourceType: 'file',
+      sourceIds: JSON.stringify(extractFileIds.value),
+      llmModel: 'qwen3-72b',
+      params: JSON.stringify({ maxQuestions: 50 }),
+    })
+    const taskId = task?.id
+    if (!taskId) throw new Error('任务创建失败')
+    // 2) 轮询任务进度（每 2 秒，最长约 3 分钟）
+    let final: any = null
+    for (let i = 0; i < 90; i++) {
+      await new Promise(r => setTimeout(r, 2000))
+      const t: any = await api.getQaExtractTask(props.kbId, taskId)
+      if (!t) break
+      final = t
+      extractProgress.value = `抽取中 ${t.completedCount ?? 0}/${t.totalCount ?? 0} 分块…`
+      if (['completed', 'failed', 'stopped'].includes(String(t.status))) break
+    }
+    if (final && final.status === 'failed') {
+      let reason = '抽取失败'
+      try { reason = JSON.parse(final.result || '{}').error || reason } catch { /* 解析失败时保留默认提示 */ }
+      ElMessage.error(reason)
+      return
+    }
+    // 3) 拉取本次产出的问答对（source='ai'、草稿状态，需人工确认后参与召回）
+    const created: any = await api.qaExtract(props.kbId, extractFileIds.value)
+    const n = Array.isArray(created) ? created.length : 0
+    ElMessage.success(n > 0 ? `抽取完成，产出 ${n} 条问答对（草稿待确认）` : '抽取完成，未产出新问答对')
     showExtractDialog.value = false
+    filterSource.value = 'ai'
     loadData()
-  } catch { ElMessage.error('抽取失败') } finally { extracting.value = false }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '抽取失败')
+  } finally { extracting.value = false; extractProgress.value = '' }
 }
 
 function handleSearch() { currentPage.value = 1 }
@@ -502,6 +535,7 @@ onMounted(loadDocs)
       <div v-if="fileList.length === 0" style="color: #909399; text-align: center; padding: 20px">
         暂无已解析完成的文件
       </div>
+      <div v-if="extractProgress" style="color: #409eff; font-size: 13px; padding-top: 8px">{{ extractProgress }}</div>
       <template #footer>
         <el-button @click="showExtractDialog = false">取消</el-button>
         <el-button type="primary" :loading="extracting" @click="handleExtract">开始抽取</el-button>
