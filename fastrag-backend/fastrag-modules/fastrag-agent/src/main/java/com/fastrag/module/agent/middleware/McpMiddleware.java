@@ -76,11 +76,35 @@ public class McpMiddleware implements AgentMiddleware {
                 return context;
             }
 
+            // 应用级工具勾选（2026-10-20）：runtimeState.mcpSelectedTools = 服务 id → 工具名白名单
+            // （编排层经 Bindings.mcpToolSelection 传入）；缺服务键 = 全量注册（存量 NULL 语义）。
+            // 白名单按 mcp_tool.name 或 tool_id 任一命中即注册。
+            Map<String, List<String>> toolSelection = null;
+            if (context.getRuntimeState() != null
+                    && context.getRuntimeState().get("mcpSelectedTools") instanceof Map<?, ?> sel) {
+                @SuppressWarnings("unchecked")
+                Map<String, List<String>> cast = (Map<String, List<String>>) sel;
+                toolSelection = cast;
+            }
+
             // 缓存 McpService 避免重复查询
             Map<String, McpService> serviceCache = new HashMap<>();
 
             int registeredCount = 0;
             for (McpTool mcpTool : mcpTools) {
+                // 工具级勾选过滤：白名单存在且 name/tool_id 均不在列 → 跳过（均需空安全——
+                // mcp_tool.tool_id 可空，且白名单可能来自不可变集合，contains(null) 会抛 NPE）
+                if (toolSelection != null) {
+                    List<String> allow = toolSelection.get(mcpTool.getServiceId());
+                    if (allow != null) {
+                        boolean hit = (mcpTool.getName() != null && allow.contains(mcpTool.getName()))
+                                || (mcpTool.getToolId() != null && allow.contains(mcpTool.getToolId()));
+                        if (!hit) {
+                            continue;
+                        }
+                    }
+                }
+
                 // 加载所属 McpService（带缓存）
                 McpService service = serviceCache.get(mcpTool.getServiceId());
                 if (service == null) {

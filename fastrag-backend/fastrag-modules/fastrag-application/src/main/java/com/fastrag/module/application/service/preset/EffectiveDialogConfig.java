@@ -4,6 +4,7 @@ import lombok.Builder;
 import lombok.Data;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * 有效对话配置（new-conversation）：DialogPresetResolver 的唯一产出，
@@ -65,5 +66,8 @@ public class EffectiveDialogConfig {
         private List<String> skills;
         private List<String> mcps;
         private List<String> databases;
+
+        /** MCP 工具级勾选（服务 id → 工具名白名单）；缺服务键 = 该服务全量注册（存量 NULL 语义） */
+        private Map<String, List<String>> mcpToolSelection;
     }
 }

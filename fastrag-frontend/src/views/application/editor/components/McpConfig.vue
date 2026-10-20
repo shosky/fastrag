@@ -8,14 +8,32 @@ const props = defineProps<{ appInfo: { id: string } }>()
 const appId = () => props.appInfo.id
 
 const availableMcpServices = ref<any[]>([])
-const bindings = ref<Array<{ id: string; mcpServiceId: string; mcpServiceName: string; enabled: number }>>([])
+const bindings = ref<Array<{ id: string; mcpServiceId: string; mcpServiceName: string; enabled: number; selectedTools?: string }>>([])
 
 const selectedMcpIds = ref<Set<string>>(new Set())
+// MCP 工具级勾选（2026-10-20）：服务 id → 勾选的工具名；服务 id → 该服务全部工具名
+const toolSelection = ref<Record<string, string[]>>({})
+const serviceTools = ref<Record<string, string[]>>({})
+// 保存基线（服务 id → 装载时的 selectedTools JSON）：判断勾选是否变更
+const initialSelection = ref<Record<string, string>>({})
 
 const loading = ref(false)
 const saving = ref(false)
 
 const selectedCount = computed(() => selectedMcpIds.value.size)
+
+async function loadServiceTools(id: string) {
+  if (serviceTools.value[id]) return
+  try {
+    const toolsRes: any = await api.getMcpServiceTools(id)
+    const raw = Array.isArray(toolsRes) ? toolsRes : (toolsRes?.list || toolsRes?.records || [])
+    const names = raw.map((t: any) => t?.name || t?.toolId || String(t)).filter(Boolean)
+    serviceTools.value[id] = names
+    if (!toolSelection.value[id]) toolSelection.value[id] = [...names]
+  } catch {
+    // 工具清单拉取失败：不显示勾选，按全量注册
+  }
+}
 
 async function loadData() {
   loading.value = true
@@ -31,6 +49,22 @@ async function loadData() {
     }))
     bindings.value = Array.isArray(bindingsRes) ? bindingsRes : (bindingsRes?.list || bindingsRes?.records || [])
     selectedMcpIds.value = new Set(bindings.value.map(b => b.mcpServiceId))
+    // 恢复勾选：绑定行 selectedTools 非空 → 白名单；空 → 全量（NULL 语义）
+    for (const b of bindings.value) {
+      const id = String(b.mcpServiceId)
+      await loadServiceTools(id)
+      const tools = serviceTools.value[id]
+      if (!tools?.length) continue
+      let checked = [...tools]
+      if (b.selectedTools) {
+        try {
+          const parsed = JSON.parse(b.selectedTools)
+          if (Array.isArray(parsed)) checked = parsed.filter((t: string) => tools.includes(t))
+        } catch { /* 坏数据按全量 */ }
+      }
+      toolSelection.value[id] = checked
+      initialSelection.value[id] = b.selectedTools || JSON.stringify(checked)
+    }
   } catch (e) {
     availableMcpServices.value = []
     bindings.value = []
@@ -45,8 +79,13 @@ function toggleMcp(mcpId: string) {
     selectedMcpIds.value.delete(id)
   } else {
     selectedMcpIds.value.add(id)
+    loadServiceTools(id)
   }
   selectedMcpIds.value = new Set(selectedMcpIds.value)
+}
+
+function selectAllTools(id: string) {
+  if (serviceTools.value[id]?.length) toolSelection.value[id] = [...serviceTools.value[id]]
 }
 
 function isSelected(mcpId: string): boolean {
@@ -74,11 +113,26 @@ async function handleSave() {
     }
     for (const mcpId of toAdd) {
       const mcp = availableMcpServices.value.find(s => String(s.id) === mcpId)
+      const sel = toolSelection.value[mcpId]
       await api.bindAppMcp(appId(), {
         mcpServiceId: mcpId,
         mcpServiceName: mcp?.name || '',
         enabled: 1,
+        // 勾选清单已加载才显式落库；未加载保持 NULL=全量
+        ...(sel && serviceTools.value[mcpId]?.length ? { selectedTools: JSON.stringify(sel) } : {}),
       })
+    }
+    // 勾选变更的既有绑定 → 更新
+    for (const b of bindings.value) {
+      if (!b.id || !selectedMcpIds.value.has(b.mcpServiceId)) continue
+      const id = String(b.mcpServiceId)
+      const sel = toolSelection.value[id]
+      if (!sel || !serviceTools.value[id]?.length) continue
+      const json = JSON.stringify(sel)
+      if (json !== initialSelection.value[id]) {
+        await api.updateAppMcpBinding(appId(), b.id, { selectedTools: json })
+        initialSelection.value[id] = json
+      }
     }
 
     bindings.value = bindings.value.filter(b => selectedMcpIds.value.has(b.mcpServiceId))
@@ -127,6 +181,22 @@ onMounted(loadData)
             </span>
             <div v-if="mcp.tools && mcp.tools.length" class="option-tools">
               <el-tag v-for="tool in mcp.tools" :key="tool" size="small" type="info">{{ tool }}</el-tag>
+            </div>
+            <!-- 工具级勾选（已绑定的服务）：勾选清单外不注册 -->
+            <div
+              v-if="isSelected(String(mcp.id)) && serviceTools[String(mcp.id)]?.length"
+              class="tool-picker"
+              @click.stop
+            >
+              <div class="tool-picker-head">
+                <span class="tool-picker-title">
+                  注册工具（{{ (toolSelection[String(mcp.id)] || serviceTools[String(mcp.id)]).length }}/{{ serviceTools[String(mcp.id)].length }}）
+                </span>
+                <el-button link type="primary" size="small" @click="selectAllTools(String(mcp.id))">全选</el-button>
+              </div>
+              <el-checkbox-group v-model="toolSelection[String(mcp.id)]" class="tool-checks">
+                <el-checkbox v-for="t in serviceTools[String(mcp.id)]" :key="t" :label="t">{{ t }}</el-checkbox>
+              </el-checkbox-group>
             </div>
           </div>
           <el-switch :model-value="mcp.enabled" size="small" disabled @click.stop />
@@ -197,6 +267,32 @@ onMounted(loadData)
   gap: $spacing-xs;
   margin-left: 24px;
   margin-top: $spacing-xs;
+}
+
+// ── 工具级勾选 ──
+.tool-picker {
+  margin: $spacing-xs 0 0 24px;
+  padding: 8px 10px;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: $radius-base;
+  background: var(--el-fill-color-light);
+  width: 100%;
+}
+.tool-picker-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+.tool-picker-title { font-size: 12px; font-weight: 500; color: $text-primary; }
+.tool-checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 16px;
+  max-height: 160px;
+  overflow-y: auto;
+  :deep(.el-checkbox) { margin-right: 0; }
+  :deep(.el-checkbox__label) { font-size: 12px; }
 }
 
 .save-bar {

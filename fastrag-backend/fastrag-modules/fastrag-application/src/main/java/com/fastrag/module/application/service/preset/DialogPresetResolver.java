@@ -20,6 +20,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 /**
  * 会话预设解析（new-conversation 深核心，contract new-conversation.DialogPresetResolver）：
@@ -228,6 +229,22 @@ public class DialogPresetResolver {
     }
 
     private EffectiveDialogConfig.Bindings bindings(String appId) {
+        List<AppMcpBinding> mcpBindings = mcpBindingMapper.selectList(new LambdaQueryWrapper<AppMcpBinding>()
+                .eq(AppMcpBinding::getAppId, appId).eq(AppMcpBinding::getEnabled, 1));
+        // MCP 工具级勾选（2026-10-20）：绑定行 selected_tools 非空 → 白名单；空/坏数据 → 缺键=全量注册
+        Map<String, List<String>> mcpToolSelection = new java.util.LinkedHashMap<>();
+        for (AppMcpBinding b : mcpBindings) {
+            if (StrUtil.isBlank(b.getSelectedTools())) continue;
+            try {
+                List<String> tools = JSONUtil.toList(JSONUtil.parseArray(b.getSelectedTools()), String.class);
+                if (tools != null && !tools.isEmpty()) {
+                    mcpToolSelection.put(b.getMcpServiceId(), tools);
+                }
+            } catch (Exception e) {
+                log.warn("[PresetResolver] bad selected_tools for binding {}: {}, treat as full set",
+                        b.getId(), e.getMessage());
+            }
+        }
         return EffectiveDialogConfig.Bindings.builder()
                 .tools(toolBindingMapper.selectList(new LambdaQueryWrapper<AppToolBinding>()
                                 .eq(AppToolBinding::getAppId, appId).eq(AppToolBinding::getEnabled, 1))
@@ -235,9 +252,8 @@ public class DialogPresetResolver {
                 .skills(skillBindingMapper.selectList(new LambdaQueryWrapper<AppSkillBinding>()
                                 .eq(AppSkillBinding::getAppId, appId).eq(AppSkillBinding::getEnabled, 1))
                         .stream().map(AppSkillBinding::getSkillId).toList())
-                .mcps(mcpBindingMapper.selectList(new LambdaQueryWrapper<AppMcpBinding>()
-                                .eq(AppMcpBinding::getAppId, appId).eq(AppMcpBinding::getEnabled, 1))
-                        .stream().map(AppMcpBinding::getMcpServiceId).toList())
+                .mcps(mcpBindings.stream().map(AppMcpBinding::getMcpServiceId).toList())
+                .mcpToolSelection(mcpToolSelection)
                 .databases(dbBindingMapper.selectList(new LambdaQueryWrapper<AppDbBinding>()
                                 .eq(AppDbBinding::getAppId, appId).eq(AppDbBinding::getEnabled, 1))
                         .stream().map(AppDbBinding::getDbId).toList())

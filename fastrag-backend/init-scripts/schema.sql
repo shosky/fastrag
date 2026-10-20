@@ -1234,6 +1234,7 @@ CREATE TABLE IF NOT EXISTS app_mcp_binding (
     mcp_service_id VARCHAR(32) NOT NULL,
     mcp_service_name VARCHAR(128),
     enabled TINYINT DEFAULT 1,
+    selected_tools JSON NULL COMMENT '工具白名单（JSON 字符串数组）；NULL=注册该服务全部启用工具',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     INDEX idx_mcp_app (app_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

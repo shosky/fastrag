@@ -625,6 +625,12 @@ public class AppServiceImpl implements AppService {
                 }
                 if (!cfg.getBindings().getMcps().isEmpty()) {
                     context.setMcps(cfg.getBindings().getMcps());
+                    // MCP 工具级勾选（服务 id → 白名单；缺键=全量）经 runtimeState 传中间件过滤
+                    if (cfg.getBindings().getMcpToolSelection() != null
+                            && !cfg.getBindings().getMcpToolSelection().isEmpty()) {
+                        context.getRuntimeState().put("mcpSelectedTools",
+                                cfg.getBindings().getMcpToolSelection());
+                    }
                 }
                 if (!cfg.getKbScope().isEmpty()) {
                     context.setKnowledges(cfg.getKbScope());

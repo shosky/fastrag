@@ -462,6 +462,9 @@ public class SchemaInitializer {
                 "TEXT COMMENT '消息引用（JSON数组，MessageReference投影）'");
         addColumnIfNotExists("app_conversation_message", "iterations",
                 "INT DEFAULT NULL COMMENT '引擎迭代轮数'");
+        // --- MCP 工具级勾选（2026-10-20，与 schema.sql 双处同步）---
+        addColumnIfNotExists("app_mcp_binding", "selected_tools",
+                "JSON COMMENT '工具白名单（JSON 字符串数组）；NULL=注册该服务全部启用工具'");
         try {
             jdbc.execute("ALTER TABLE app_conversation ADD INDEX idx_conv_user (user_id)");
             log.info("Added index app_conversation.idx_conv_user");
