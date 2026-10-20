@@ -98,6 +98,14 @@ public class BaseContext {
 
     private transient List<String> readableSkills;
 
+    /**
+     * 首轮预检索开关（ADR-PARALLEL-PRE-RETRIEVAL，2026-10-20）：由应用层裁决置位
+     * （绑库且非豁免问句），引擎在首轮模型调用前同步执行绑定知识库预检索，
+     * 结果以 [cN] 句柄注入 system 附加块。取代已废弃的 forceFirstRetrieval 强制检索。
+     * null/false 均不预检索。
+     */
+    private transient Boolean preRetrieveKb;
+
     private transient Map<String, Object> runtimeSkillMetadata;
 
     private transient Map<String, Object> runtimeSkillDependencyMap;

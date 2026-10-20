@@ -182,4 +182,29 @@ class AppServiceImplExtractKbSourcesTest {
 
         assertThat(sources).isEmpty();
     }
+
+    // ========================================================================
+    //  R5（2026-10-20）预检索豁免：问候语、纯算式、能力问句不做首轮预检索
+    //  （检索必空或必然无关）；领域问题一律预检索（ADR-PARALLEL-PRE-RETRIEVAL）
+    // ========================================================================
+
+    private boolean shouldPreRetrieve(String query) {
+        return (Boolean) ReflectionTestUtils.invokeMethod(service, "shouldPreRetrieve", query);
+    }
+
+    @Test
+    void shouldPreRetrieve_exemptsGreetingMathAndCapability_forcesDomainQuestions() {
+        assertThat(shouldPreRetrieve("什么是超限车辆？")).isTrue();
+        assertThat(shouldPreRetrieve("新办etc")).isTrue();
+        assertThat(shouldPreRetrieve("处罚金额是多少？依据哪一条 [c9]")).isTrue();
+        assertThat(shouldPreRetrieve(null)).isFalse();
+        assertThat(shouldPreRetrieve("")).isFalse();
+        assertThat(shouldPreRetrieve("你好")).isFalse();
+        assertThat(shouldPreRetrieve("hello there")).isFalse();
+        assertThat(shouldPreRetrieve("1+1=？")).isFalse();
+        assertThat(shouldPreRetrieve("(3.5×2.1)÷7 = ？")).isFalse();
+        assertThat(shouldPreRetrieve("你能干什么？")).isFalse();
+        assertThat(shouldPreRetrieve("你会什么功能")).isFalse();
+        assertThat(shouldPreRetrieve("介绍一下你自己")).isFalse();
+    }
 }

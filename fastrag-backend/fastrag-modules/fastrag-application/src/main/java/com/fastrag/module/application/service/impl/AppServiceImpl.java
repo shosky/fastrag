@@ -628,6 +628,9 @@ public class AppServiceImpl implements AppService {
                 }
                 if (!cfg.getKbScope().isEmpty()) {
                     context.setKnowledges(cfg.getKbScope());
+                    // 并行预检索（ADR-PARALLEL-PRE-RETRIEVAL）：绑定知识库时首轮模型调用前
+                    // 同步检索注入上下文；问候语/纯算式/能力问句豁免（检索必空或必然无关）。
+                    context.setPreRetrieveKb(shouldPreRetrieve(query));
                 }
                 if (!cfg.getBindings().getDatabases().isEmpty()) {
                     context.setDatabases(cfg.getBindings().getDatabases());
@@ -703,8 +706,18 @@ public class AppServiceImpl implements AppService {
                                 long duration = System.currentTimeMillis() - startTime;
                                 // 全 agentic 化：知识来源改自工具调用通道提取（query_kb 的结构化结果投影）；
                                 // R2：引用投影按请求级句柄注册表（cN→真实 id）解析，未识别句柄 fail-closed 丢弃
-                                List<Map<String, Object>> sources = extractKbSources(finalToolCalls,
-                                        handleMapOf(contextRef.get()));
+                                List<Map<String, Object>> sources = mergePreRetrievalSources(contextRef.get(),
+                                        extractKbSources(finalToolCalls, handleMapOf(contextRef.get())));
+                                // R4 补回流内 sources 事件（2026-10-20 诊断「引用文档没出现」）：
+                                // 全 agentic 化移除预取 sources 事件后未补完成时推送，前端
+                                // useAppChatStream 一直监听 sources 渲染「知识来源」块，就此断供；
+                                // 历史回看走 messages.references（loadSessionMessages 侧映射）
+                                try {
+                                    emitter.send(SseEmitter.event().name("sources")
+                                            .data(Map.of("sources", sources)));
+                                } catch (Exception e) {
+                                    log.warn("[AppChat] Failed to send sources event: {}", e.getMessage());
+                                }
                                 persistAnswer(finalConv, cfg, filtered.orElse(finalAnswer), finalThinking,
                                         finalToolCalls, (int) duration, sources,
                                         readIterations(contextRef.get()), persistState, answerSaved);
@@ -859,6 +872,34 @@ public class AppServiceImpl implements AppService {
                 || lower.contains("hello") || lower.contains("hey") || lower.equals("嗨");
     }
 
+    /** 能力问句（问系统能干什么/自我介绍）：与知识库内容无关，预检索必空 */
+    private static final java.util.regex.Pattern CAPABILITY_QUERY_PATTERN = java.util.regex.Pattern.compile(
+            "你能(干什么|做什么|干嘛|帮什么)|你会(什么|干嘛|做什么)|有什么功能|能做些什么|介绍[一下你]{0,3}自己|你是谁|who are you|what can you do",
+            java.util.regex.Pattern.CASE_INSENSITIVE);
+
+    /**
+     * 预检索豁免判定（ADR-PARALLEL-PRE-RETRIEVAL，2026-10-20）：问候语、纯算式、能力问句
+     * 不做首轮预检索——检索必空或必然无关；豁免轮由强提示门控兜底（模型自行决定是否 query_kb）。
+     * 其余问题一律预检索。
+     */
+    private boolean shouldPreRetrieve(String query) {
+        if (isGreetingQuery(query)) {
+            return false;
+        }
+        if (query != null && CAPABILITY_QUERY_PATTERN.matcher(query).find()) {
+            return false;
+        }
+        String s = query == null ? "" : query.replaceAll("\\s+", "");
+        if (s.isEmpty()) {
+            return false;
+        }
+        boolean hasDigit = s.chars().anyMatch(Character::isDigit);
+        boolean hasOperator = s.chars().anyMatch(c -> "+-*/×÷=".indexOf(c) >= 0);
+        boolean onlyMathChars = s.chars()
+                .allMatch(c -> "0123456789+-*/×÷=().。？?！!，,％%".indexOf(c) >= 0);
+        return !(hasDigit && hasOperator && onlyMathChars);
+    }
+
     /**
      * 保存助手消息到数据库（references = 检索来源投影，两通道统一，REQ-F01）
      */
@@ -919,6 +960,30 @@ public class AppServiceImpl implements AppService {
         if (context == null) return null;
         Object v = context.getRuntimeState().get(KB_HANDLE_MAP_KEY);
         return v instanceof Map ? (Map<String, Object>) v : null;
+    }
+
+    /**
+     * 合并预检索来源（IF-003 runtimeState 通道）与工具通道来源（extractKbSources）。
+     * 预检索句柄（c1..cN）注册在前，故合并序 = 预检索在前、工具检索在后，与编号一致。
+     */
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> mergePreRetrievalSources(BaseContext context,
+                                                               List<Map<String, Object>> toolSources) {
+        List<Map<String, Object>> merged = new ArrayList<>();
+        if (context != null && context.getRuntimeState() != null
+                && context.getRuntimeState().get(
+                        com.fastrag.module.agent.middleware.PreRetrievalMiddleware.PRE_RETRIEVAL_SOURCES_KEY)
+                        instanceof List<?> pre) {
+            for (Object o : pre) {
+                if (o instanceof Map) {
+                    merged.add((Map<String, Object>) o);
+                }
+            }
+        }
+        if (toolSources != null) {
+            merged.addAll(toolSources);
+        }
+        return merged;
     }
 
     /**
