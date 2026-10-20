@@ -204,6 +204,93 @@ class KnowledgeToolExecutorTest {
         assertTrue(result.getError().contains("缺少参数"));
     }
 
+    // ========================================================================
+    //  R3（H2 修复）：schema/执行器参数契约对齐——注册 schema 声明 kb_id/top_k，
+    //  执行器兼容旧别名（knowledgeId/topK/knowledge_base/question）；
+    //  kb_id 缺省回落到应用绑定知识库（KnowledgeBaseMiddleware 烙进 config.kbIds）
+    // ========================================================================
+
+    @Test
+    void queryKb_withoutKbId_fallsBackToKbIdsFromToolConfig() {
+        when(kbOperationService.queryKnowledgeBase(eq("kb-bound-1"), eq("什么是超限车辆"), eq(10)))
+            .thenReturn(List.of(Map.of("content", "超限车辆是指超过限载限宽限高标准的车辆", "score", 0.9,
+                    "source", "治超条例.pdf")));
+
+        ToolDefinition def = new ToolDefinition();
+        def.setName("query_kb");
+        def.setConfig(Map.of("action", "query_kb", "kbIds", List.of("kb-bound-1")));
+
+        ToolResult result = executor.execute(def, Map.of("query", "什么是超限车辆"), ctx);
+
+        assertTrue(result.isSuccess(), "schema 规范调用（仅必填 query）应回落到绑定知识库，而非报「缺少参数」");
+        assertTrue(result.getOutput().contains("超过限载限宽限高标准"));
+        verify(kbOperationService).queryKnowledgeBase("kb-bound-1", "什么是超限车辆", 10);
+    }
+
+    @Test
+    void queryKb_blankKbId_fallsBackToKbIdsFromToolConfig() {
+        // 8B 级模型面对可选参数会「填空」传空串而非省略——执行器必须容忍（blank → 回落绑定库）
+        when(kbOperationService.queryKnowledgeBase(eq("kb-bound-1"), eq("新办etc"), eq(10)))
+            .thenReturn(List.of(Map.of("content", "ETC办理流程", "score", 0.9, "source", "etc.pdf")));
+
+        ToolDefinition def = new ToolDefinition();
+        def.setName("query_kb");
+        def.setConfig(Map.of("action", "query_kb", "kbIds", List.of("kb-bound-1")));
+
+        ToolResult result = executor.execute(def, Map.of("query", "新办etc", "kb_id", ""), ctx);
+
+        assertTrue(result.isSuccess(), "kb_id 空串应视同未传，回落绑定知识库");
+        verify(kbOperationService).queryKnowledgeBase("kb-bound-1", "新办etc", 10);
+    }
+
+    @Test
+    void queryKb_acceptsKnowledgeIdAndTopKAliases() {
+        when(kbOperationService.queryKnowledgeBase(anyString(), anyString(), anyInt()))
+            .thenReturn(List.of(Map.of("content", "片段", "score", 0.8)));
+
+        ToolDefinition def = new ToolDefinition();
+        def.setName("query_kb");
+        ToolResult result = executor.execute(def, Map.of("query", "q", "knowledgeId", "kb-1", "topK", 3), ctx);
+
+        assertTrue(result.isSuccess());
+        verify(kbOperationService).queryKnowledgeBase("kb-1", "q", 3);
+    }
+
+    @Test
+    void queryKb_multiBoundKbs_queriesAllAndMergesByScore() {
+        when(kbOperationService.queryKnowledgeBase("kb-a", "q", 10))
+            .thenReturn(List.of(Map.of("content", "低分片段", "score", 0.6, "source", "a.pdf")));
+        when(kbOperationService.queryKnowledgeBase("kb-b", "q", 10))
+            .thenReturn(List.of(Map.of("content", "高分片段", "score", 0.95, "source", "b.pdf")));
+
+        ToolDefinition def = new ToolDefinition();
+        def.setName("query_kb");
+        def.setConfig(Map.of("action", "query_kb", "kbIds", List.of("kb-a", "kb-b")));
+
+        ToolResult result = executor.execute(def, Map.of("query", "q"), ctx);
+
+        assertTrue(result.isSuccess());
+        assertTrue(result.getOutput().indexOf("高分片段") < result.getOutput().indexOf("低分片段"),
+                "多库合并应按相关性分数降序");
+        Map<String, Object> structured = result.getStructured();
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> chunks = (List<Map<String, Object>>) structured.get("chunks");
+        assertEquals(2, chunks.size());
+        assertEquals("kb-b", chunks.get(0).get("kb_id"), "多库合并时每条 chunk 应带所属库 id");
+        verify(kbOperationService).queryKnowledgeBase("kb-a", "q", 10);
+        verify(kbOperationService).queryKnowledgeBase("kb-b", "q", 10);
+    }
+
+    @Test
+    void queryKb_noKbIdAndNoBinding_errors() {
+        ToolDefinition def = new ToolDefinition();
+        def.setName("query_kb");
+        ToolResult result = executor.execute(def, Map.of("query", "q"), ctx);
+
+        assertFalse(result.isSuccess());
+        assertTrue(result.getError().contains("kb_id"));
+    }
+
     @Test
     void testQueryNullResults() {
         when(kbOperationService.queryKnowledgeBase(anyString(), anyString(), anyInt()))

@@ -41,7 +41,7 @@ public class KnowledgeToolExecutor implements ToolExecutor {
         try {
             return switch (toolName) {
                 case "list_kbs" -> listKnowledgeBases(ctx, t0);
-                case "query_kb" -> queryKnowledgeBase(arguments, ctx, t0);
+                case "query_kb" -> queryKnowledgeBase(tool, arguments, ctx, t0);
                 default -> ToolResult.error("Unknown KB tool: " + toolName, (int)(System.currentTimeMillis() - t0));
             };
         } catch (Exception e) {
@@ -76,36 +76,71 @@ public class KnowledgeToolExecutor implements ToolExecutor {
     /** R2：句柄编号游标键（与 AppServiceImpl.KB_HANDLE_SEQ_KEY 同值） */
     static final String KB_HANDLE_SEQ_KEY = "kbHandleSeq";
 
-    private ToolResult queryKnowledgeBase(Map<String, Object> args, ToolContext ctx, long t0) {
-        String kbId = (String) args.get("kb_id");
-        if (kbId == null) kbId = (String) args.get("knowledge_base");
-        String query = (String) args.get("query");
-        if (query == null) query = (String) args.get("question");
-
-        if (kbId == null || query == null) {
-            return ToolResult.error("缺少参数：需要 kb_id 和 query", (int)(System.currentTimeMillis() - t0));
-        }
+    private ToolResult queryKnowledgeBase(ToolDefinition tool, Map<String, Object> args, ToolContext ctx, long t0) {
+        String query = strOrNull(args.get("query"));
+        if (query == null) query = strOrNull(args.get("question"));
+        String kbId = strOrNull(args.get("kb_id"));
+        if (kbId == null) kbId = strOrNull(args.get("knowledge_base"));
+        if (kbId == null) kbId = strOrNull(args.get("knowledgeId"));
 
         int topK = 10;
-        if (args.containsKey("top_k")) {
-            topK = ((Number) args.get("top_k")).intValue();
+        Object topKVal = args.containsKey("top_k") ? args.get("top_k") : args.get("topK");
+        if (topKVal instanceof Number number) {
+            topK = number.intValue();
         }
 
-        List<Map<String, Object>> chunks = kbOperationService.queryKnowledgeBase(kbId, query, topK);
+        if (query == null || query.isBlank()) {
+            return ToolResult.error("缺少参数：需要 query", (int) (System.currentTimeMillis() - t0));
+        }
+
+        // H2 修复（2026-10-19）：kb_id 缺省回落到应用绑定的知识库——KnowledgeBaseMiddleware 注册时
+        // 把绑定库烙进 config.kbIds，模型（尤其 8B 级）无需预知库 ID 即可检索；多库绑定逐库检索后
+        // 按相关性分数合并。历史缺陷：注册 schema 声明 knowledgeId/topK 而执行器只读 kb_id/top_k，
+        // schema 规范调用必然「缺少参数」失败。
+        List<Map<String, Object>> chunks;
+        String resolvedKbId = kbId;
+        if (kbId == null || kbId.isBlank()) {
+            List<String> boundKbIds = boundKbIds(tool);
+            if (boundKbIds.isEmpty()) {
+                return ToolResult.error("缺少参数：需要 kb_id，且当前应用未绑定知识库",
+                        (int) (System.currentTimeMillis() - t0));
+            }
+            if (boundKbIds.size() == 1) {
+                resolvedKbId = boundKbIds.get(0);
+                chunks = nullToEmpty(kbOperationService.queryKnowledgeBase(resolvedKbId, query, topK));
+            } else {
+                List<Map<String, Object>> merged = new java.util.ArrayList<>();
+                for (String boundId : boundKbIds) {
+                    for (Map<String, Object> chunk : nullToEmpty(
+                            kbOperationService.queryKnowledgeBase(boundId, query, topK))) {
+                        Map<String, Object> copy = chunk == null
+                                ? new java.util.LinkedHashMap<>() : new java.util.LinkedHashMap<>(chunk);
+                        copy.putIfAbsent("kb_id", boundId);
+                        merged.add(copy);
+                    }
+                }
+                merged.sort(java.util.Comparator.comparingDouble(KnowledgeToolExecutor::scoreOf).reversed());
+                resolvedKbId = String.join(",", boundKbIds);
+                chunks = merged.size() > topK ? new java.util.ArrayList<>(merged.subList(0, topK)) : merged;
+            }
+        } else {
+            chunks = nullToEmpty(kbOperationService.queryKnowledgeBase(kbId, query, topK));
+        }
+
         // R2：上游可能返回不可变 Map（如 knowledge 模块桩实现），统一拷贝为可变条目再追加 handle
         List<Map<String, Object>> mutableChunks = new java.util.ArrayList<>();
-        if (chunks != null) {
-            for (Map<String, Object> chunk : chunks) {
-                mutableChunks.add(chunk == null ? new java.util.LinkedHashMap<>()
-                        : new java.util.LinkedHashMap<>(chunk));
-            }
+        for (Map<String, Object> chunk : chunks) {
+            Map<String, Object> copy = chunk == null ? new java.util.LinkedHashMap<>()
+                    : new java.util.LinkedHashMap<>(chunk);
+            copy.putIfAbsent("kb_id", resolvedKbId);
+            mutableChunks.add(copy);
         }
 
         // 结构化通道（app-chat-optimize 二批）：display_type+chunks 直达前端 KnowledgeChunksList。
         // R2（P0-5）：结构化通道保留真实 id（file_id/kb_id/chunk_index，前端用），条目追加 handle 供引用解析
         Map<String, Object> structured = new java.util.LinkedHashMap<>();
         structured.put("display_type", "knowledge_chunks");
-        structured.put("kb_id", kbId);
+        structured.put("kb_id", resolvedKbId);
         structured.put("query", query);
         structured.put("chunks", mutableChunks);
 
@@ -135,7 +170,7 @@ public class KnowledgeToolExecutor implements ToolExecutor {
                 Object fileId = chunk.get("file_id");
                 Object chunkIndex = chunk.get("chunk_index");
                 Map<String, Object> ref = new java.util.LinkedHashMap<>();
-                ref.put("kbId", chunk.getOrDefault("kb_id", kbId));
+                ref.put("kbId", chunk.getOrDefault("kb_id", resolvedKbId));
                 ref.put("fileId", fileId);
                 ref.put("chunkIndex", chunkIndex instanceof Number ? chunkIndex : 0);
                 handleMap.put(handle, ref);
@@ -153,5 +188,46 @@ public class KnowledgeToolExecutor implements ToolExecutor {
         ToolResult result = ToolResult.success(sb.toString(), (int) (System.currentTimeMillis() - t0));
         result.setStructured(structured);
         return result;
+    }
+
+    /** 应用绑定的知识库 ID 列表（KnowledgeBaseMiddleware 注册 query_kb 时烙进 config.kbIds） */
+    private static List<String> boundKbIds(ToolDefinition tool) {
+        if (tool == null || tool.getConfig() == null) {
+            return List.of();
+        }
+        Object value = tool.getConfig().get("kbIds");
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        return list.stream().filter(java.util.Objects::nonNull)
+                .map(String::valueOf).filter(s -> !s.isBlank()).toList();
+    }
+
+    private static String strOrNull(Object value) {
+        if (value == null) {
+            return null;
+        }
+        String s = value.toString();
+        return s.isBlank() ? null : s;
+    }
+
+    private static List<Map<String, Object>> nullToEmpty(List<Map<String, Object>> list) {
+        return list == null ? List.of() : list;
+    }
+
+    /** 相关性分数（Number 直取；字符串尝试解析；缺失/非法按 0，仅用于多库合并排序） */
+    private static double scoreOf(Map<String, Object> chunk) {
+        Object score = chunk.get("score");
+        if (score instanceof Number number) {
+            return number.doubleValue();
+        }
+        if (score instanceof String s) {
+            try {
+                return Double.parseDouble(s);
+            } catch (NumberFormatException ignored) {
+                // fall through
+            }
+        }
+        return 0.0d;
     }
 }
