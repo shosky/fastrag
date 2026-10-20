@@ -22,29 +22,24 @@ export interface SSEParseResult {
  *   event: xxx\n
  *   data: xxx\n
  *   \n（空行分隔事件）
+ *
+ * 严格分帧（R5，2026-10-20）：仅交付「空行收尾」的完整事件；最后一段无论是否已含
+ * data 行，一律留 remainder 等后续 chunk 补全。旧行为会把跨 TCP 包截断的半截 JSON
+ * 事件交付给消费方——JSON.parse 失败被 catch 静默丢弃且残余字节无法找回，
+ * sources / tool_result 这类大事件几乎必然中招（引用卡片不显示、工具卡片卡
+ * 「执行中」即此因）。流结束时的未收尾尾帧由消费方自行兜底解析（见 useAppChatStream）。
  */
 export function parseSSEBuffer(buffer: string): SSEParseResult {
   const result: SSEParseResult = { parsed: [], remainder: '' }
 
-  // 按双换行分割事件
+  // 按双换行分割事件：最后一段是未确认收尾的尾帧，恒留 remainder
   const parts = buffer.split('\n\n')
-  const lastPart = parts.pop() || ''
+  result.remainder = parts.pop() || ''
 
   for (const part of parts) {
     const event = parseSingleSSEEvent(part.trim())
     if (event) {
       result.parsed.push(event)
-    }
-  }
-
-  // 最后一段可能不完整，保留在 remainder 中
-  if (lastPart.trim()) {
-    // 尝试解析最后一个完整事件
-    const event = parseSingleSSEEvent(lastPart.trim())
-    if (event) {
-      result.parsed.push(event)
-    } else {
-      result.remainder = lastPart
     }
   }
 

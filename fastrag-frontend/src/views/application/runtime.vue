@@ -109,13 +109,22 @@ async function loadSessions() {
   } catch {}
 }
 
+/** 落库的消息引用（messages.references，JSON 字符串）映射为「知识来源」数据；空/坏值不显示 */
+function parseReferences(refs: any): SourceItem[] | undefined {
+  if (!refs) return undefined
+  try {
+    const arr = typeof refs === 'string' ? JSON.parse(refs) : refs
+    return Array.isArray(arr) && arr.length > 0 ? arr : undefined
+  } catch { return undefined }
+}
+
 async function loadSessionMessages(sessionId: string) {
   if (!selectedAppId.value) return
   try {
     const res: any = await api.getAppSessionMessages(selectedAppId.value, sessionId)
     if (Array.isArray(res)) {
       const s = sessions.value.find(s => s.sessionId === sessionId)
-      if (s) { s.messages = res.map((m: any) => ({ id: m.id, role: m.role, content: m.content, thinkingContent: m.thinkingContent || undefined, toolCalls: m.toolCalls ? normalizeToolCalls(typeof m.toolCalls === 'string' ? JSON.parse(m.toolCalls) : m.toolCalls) : undefined, time: m.latencyMs ? `${(m.latencyMs/1000).toFixed(1)}s` : undefined, feedback: m.feedback || undefined })); forceScrollToBottom() }
+      if (s) { s.messages = res.map((m: any) => ({ id: m.id, role: m.role, content: m.content, thinkingContent: m.thinkingContent || undefined, toolCalls: m.toolCalls ? normalizeToolCalls(typeof m.toolCalls === 'string' ? JSON.parse(m.toolCalls) : m.toolCalls) : undefined, time: m.latencyMs ? `${(m.latencyMs/1000).toFixed(1)}s` : undefined, feedback: m.feedback || undefined, sources: parseReferences(m.references) })); forceScrollToBottom() }
     }
   } catch {}
 }

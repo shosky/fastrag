@@ -4,7 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { Plus, Delete, ChatLineRound, Promotion, User, Loading } from '@element-plus/icons-vue'
 import { marked } from 'marked'
 import * as api from '@/api'
-import { useAppChatStream } from '@/composables/useAppChatStream'
+import { useAppChatStream, type SourceItem } from '@/composables/useAppChatStream'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import ToolCallRenderer from '@/components/ToolCallRenderer.vue'
 
@@ -35,6 +35,8 @@ interface ChatMessage {
   thinkingContent?: string  // 思考过程内容
   isThinking?: boolean      // 是否正在思考中
   toolCalls?: ToolCallItem[] // 工具调用列表
+  sources?: SourceItem[] // 知识来源（R4：流内 sources 事件 / 落库 references 回显）
+  _sourcesOpen?: boolean // 本地 UI 状态：来源列表是否展开
 }
 
 interface Session {
@@ -149,6 +151,7 @@ async function loadSessionMessages(sessionId: string) {
           role: msg.role,
           content: msg.content,
           time: msg.latencyMs ? `${(msg.latencyMs / 1000).toFixed(1)}s` : undefined,
+          sources: parseReferences(msg.references),
         }))
         nextTick(() => scrollToBottom())
       }
@@ -156,6 +159,15 @@ async function loadSessionMessages(sessionId: string) {
   } catch (e: any) {
     console.error('加载消息失败:', e)
   }
+}
+
+/** 落库的消息引用（messages.references，JSON 字符串）映射为「知识来源」数据；空/坏值不显示 */
+function parseReferences(refs: any): SourceItem[] | undefined {
+  if (!refs) return undefined
+  try {
+    const arr = typeof refs === 'string' ? JSON.parse(refs) : refs
+    return Array.isArray(arr) && arr.length > 0 ? arr : undefined
+  } catch { return undefined }
 }
 
 /** 切换会话 */
@@ -304,6 +316,11 @@ async function handleSend() {
         if (tc) tc.result = result
       }
       nextTick(() => scrollToBottom())
+    },
+    // onSources: 知识来源（R4：后端流内补发的 sources 事件，end 之前到达）
+    (sources: SourceItem[]) => {
+      session.messages[msgIndex].sources = sources
+      nextTick(() => scrollToBottom())
     }
   )
 }
@@ -449,6 +466,22 @@ onMounted(() => {
                 />
                 <div v-if="msg.role === 'assistant'" class="msg-content markdown-body" v-html="renderMarkdown(msg.content)" />
                 <div v-else class="msg-content">{{ msg.content }}</div>
+                <!-- 知识来源（R4：sources 事件 / references 回显） -->
+                <div v-if="msg.role === 'assistant' && msg.sources?.length" class="msg-sources">
+                  <div class="sources-header" @click="msg._sourcesOpen = !msg._sourcesOpen">
+                    <span class="sources-title">📚 知识来源（{{ msg.sources.length }}）</span>
+                    <span class="sources-toggle">{{ msg._sourcesOpen ? '收起' : '展开' }}</span>
+                  </div>
+                  <div v-if="msg._sourcesOpen" class="sources-list">
+                    <div v-for="(src, si) in msg.sources" :key="si" class="source-item">
+                      <div class="source-item-head">
+                        <span class="source-name">{{ src.fileName || '未知文件' }}</span>
+                        <span v-if="src.score !== undefined" class="source-score">{{ Math.round(src.score * 100) }}%</span>
+                      </div>
+                      <div v-if="src.content" class="source-content" :class="{ expanded: src._expanded }">{{ src.content }}</div>
+                    </div>
+                  </div>
+                </div>
                 <!-- 流式光标动画 -->
                 <span v-if="msg.streaming" class="streaming-cursor">▊</span>
                 <div v-if="msg.time" class="msg-time">{{ msg.time }}</div>
@@ -693,6 +726,70 @@ onMounted(() => {
 
 .msg-content {
   white-space: pre-wrap;
+}
+
+// ── 知识来源（R4，与 runtime.vue 同型） ──
+.msg-sources {
+  margin-top: 8px;
+  border: 1px solid $border-lighter;
+  border-radius: 8px;
+  background: $bg-hover;
+  overflow: hidden;
+}
+.sources-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 6px 10px;
+  cursor: pointer;
+  font-size: 12px;
+  &:hover { background: rgba(0,0,0,0.03); }
+}
+.sources-title { font-weight: 600; color: $text-primary; }
+.sources-toggle { color: $text-secondary; font-size: 11px; }
+.sources-list {
+  border-top: 1px solid $border-lighter;
+  padding: 6px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 200px;
+  overflow-y: auto;
+}
+.source-item {
+  background: $bg-white;
+  border: 1px solid $border-lighter;
+  border-radius: 6px;
+  padding: 6px 8px;
+}
+.source-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+.source-name {
+  font-size: 12px;
+  font-weight: 500;
+  color: $text-primary;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.source-score { font-size: 11px; color: $text-secondary; flex-shrink: 0; }
+.source-content {
+  margin-top: 4px;
+  font-size: 12px;
+  color: $text-secondary;
+  line-height: 1.5;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  &.expanded {
+    display: block;
+    -webkit-line-clamp: unset;
+  }
 }
 
 .msg-time {

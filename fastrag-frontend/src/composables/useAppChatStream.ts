@@ -1,6 +1,6 @@
 import { ref } from 'vue'
 import { storage } from '@/utils/storage'
-import { parseSSEBuffer } from '@/utils/sse'
+import { parseSSEBuffer, parseSingleSSEEvent } from '@/utils/sse'
 
 // ==================== 类型定义 ====================
 
@@ -276,6 +276,22 @@ export function useAppChatStream() {
           if (event.event === 'end' && event.data) {
             try {
               const data = JSON.parse(event.data)
+              if (data.content && data.content !== fullContent) {
+                fullContent = data.content
+              }
+              onEnd(fullContent, data)
+            } catch {
+              onEnd(fullContent, {})
+            }
+          }
+        }
+        // R5 兜底：严格分帧下，流结束时仍留在 remainder 的未收尾事件（后端正常以空行
+        // 收尾不会走到；断流等异常场景尽力交付 end，避免前端停在流式中状态）
+        if (events.parsed.length === 0 && events.remainder.trim()) {
+          const last = parseSingleSSEEvent(events.remainder.trim())
+          if (last && last.event === 'end' && last.data) {
+            try {
+              const data = JSON.parse(last.data)
               if (data.content && data.content !== fullContent) {
                 fullContent = data.content
               }

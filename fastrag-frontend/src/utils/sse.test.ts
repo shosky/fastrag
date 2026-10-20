@@ -47,12 +47,28 @@ describe('parseSSEBuffer', () => {
     expect(result.remainder).toContain('event: message')
   })
 
-  it('尾帧已含 data 时按可解析事件交付（固化现状行为）', () => {
-    const result = parseSSEBuffer(
-      'event: message\ndata: {"content":"完整"}\n\nevent: message\ndata: {"content":"尾帧"}'
-    )
-    expect(result.parsed).toHaveLength(2)
-    expect(result.remainder).toBe('')
+  // ======================================================================
+  //  R5（2026-10-20）：严格分帧——未以空行收尾的尾帧一律留 remainder。
+  //  旧行为「尾帧已含 data 行即交付」会把跨 TCP 包截断的半截 JSON 事件
+  //  交付给消费方，JSON.parse 失败被 catch 静默丢弃且残余字节无法找回：
+  //  sources / tool_result 这类大事件几乎必然中招（引用卡片不显示、
+  //  工具卡片卡「执行中」即此因）。
+  // ======================================================================
+
+  it('事件跨 chunk 到达：截断的 data 行留 remainder，补全后完整交付', () => {
+    const first = parseSSEBuffer('event: sources\ndata: {"sources":[{"fileName":"a.pdf"')
+    expect(first.parsed).toHaveLength(0)
+    expect(first.remainder).toBe('event: sources\ndata: {"sources":[{"fileName":"a.pdf"')
+
+    const second = parseSSEBuffer(first.remainder + '}]}\n\nevent: end\ndata: {}\n\n')
+    expect(second.parsed.map((e) => e.event)).toEqual(['sources', 'end'])
+    expect(JSON.parse(second.parsed[0].data).sources[0].fileName).toBe('a.pdf')
+  })
+
+  it('尾帧已含 data 但未以空行收尾：严格分帧下留 remainder（流结束由消费方兜底解析）', () => {
+    const result = parseSSEBuffer('event: message\ndata: {"content":"完整"}\n\nevent: end\ndata: {"content":"答"}')
+    expect(result.parsed.map((e) => e.event)).toEqual(['message'])
+    expect(result.remainder).toContain('event: end')
   })
 
   it('空 buffer 与纯空白返回空结果', () => {
