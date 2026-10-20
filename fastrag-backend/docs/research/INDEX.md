@@ -3,7 +3,7 @@ name: research group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-14
+updated: 2026-10-20
 ---
 # research — group index
 

@@ -3,7 +3,7 @@ name: spec group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-14
+updated: 2026-10-20
 ---
 # spec — group index
 
@@ -34,11 +34,10 @@ updated: 2026-10-14
 - Path: `spec/chunk-management.md`
 - Summary: —
 
-### 对话审计
+### spec/conversation-trace.md
 
 - Path: `spec/conversation-trace.md`
-- Summary: 会话对话的内容级步骤留痕：每次 LLM 调用与工具调用逐行落表，traceId 串轮到步，管理端三级审计查询，180 天留存与清理。
-- Status: draft
+- Summary: —
 
 ### spec/file-ingestion.md
 
