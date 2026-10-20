@@ -15,7 +15,7 @@ package com.fastrag.ai.model;
  *   <li>{@code stream} - 是否启用流式输出（SSE）</li>
  *   <li>{@code enableThinking} - 是否启用思考模式（DeepSeek/Qwen3 推理模型支持）</li>
  *   <li>{@code tools} - OpenAI Function Calling 工具定义列表</li>
- *   <li>{@code toolChoice} - 工具选择策略（auto/none/required）</li>
+     *   <li>{@code toolChoice} - 工具选择策略（auto/none/required 或指名函数 Map）</li>
  * </ul>
  *
  * <p>内部类 {@link ToolDefinition} 表示工具定义，包含类型（固定为 "function"）和函数描述；
@@ -45,9 +45,13 @@ public class ChatRequest {
     /** OpenAI function calling 工具定义列表 */
     private List<ToolDefinition> tools;
 
-    /** 工具选择策略: auto / none / required */
+    /**
+     * 工具选择策略："auto" / "none" / "required" 字符串，或指名函数形式的 Map
+     * （如 {type:function, function:{name:query_kb}}，首轮强制检索场景）。
+     * String 类型无法表达指名形式，故放宽为 Object（2026-10-19）。
+     */
     @JsonProperty("tool_choice")
-    private String toolChoice;
+    private Object toolChoice;
 
     /** OpenAI function calling 工具定义 */
     @Data

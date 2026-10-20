@@ -285,6 +285,20 @@ public class LlmService {
             List<ChatRequest.ToolDefinition> tools,
             double temperature, String apiUrl, String apiKey,
             boolean enableThinking) {
+        return streamChatWithTools(model, messages, tools, temperature,
+                apiUrl, apiKey, enableThinking, "auto");
+    }
+
+    /**
+     * 带工具的流式调用（可指定 tool_choice）：toolChoice 可为 "auto"/"none"/"required" 字符串，
+     * 或指名函数形式的 Map（如 {type:function, function:{name:query_kb}}，首轮强制检索用，2026-10-19）。
+     * 传 null 按 "auto" 处理。
+     */
+    public Flux<StreamEvent> streamChatWithTools(
+            String model, List<ChatMessage> messages,
+            List<ChatRequest.ToolDefinition> tools,
+            double temperature, String apiUrl, String apiKey,
+            boolean enableThinking, Object toolChoice) {
 
         ChatRequest req = new ChatRequest();
         req.setModel(model);
@@ -295,7 +309,7 @@ public class LlmService {
         if (tools != null && !tools.isEmpty()) {
             req.setTools(tools);
         }
-        req.setToolChoice("auto");
+        req.setToolChoice(toolChoice != null ? toolChoice : "auto");
 
         WebClient webClient = aiWebClient;
         String uri = "/v1/chat/completions";
