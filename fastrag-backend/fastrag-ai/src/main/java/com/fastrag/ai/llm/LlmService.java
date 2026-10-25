@@ -74,6 +74,12 @@ public class LlmService {
     private final HttpClient aiHttpClient;
     private final ObjectMapper objectMapper;
 
+    /**
+     * 非流式旁路调用熔断（检索增强/标题/摘要等 doChat 路径）：连续失败 2 次 → 60s 冷却
+     * fail-fast。主对话流式链路（streamChatWithTools）不经 doChatInternal，不受影响。
+     */
+    private final LlmGatewayBreaker nonStreamBreaker = new LlmGatewayBreaker(2, 60_000L);
+
     @Value("${ai.gateway.url:http://localhost:11434}")
     private String defaultGatewayUrl;
 
@@ -526,6 +532,13 @@ public class LlmService {
                                          Boolean enableThinking,
                                          List<ChatRequest.ToolDefinition> tools,
                                          String toolChoice) {
+        // 熔断仅作用于非流式旁路调用：apiUrl 未指定时按默认网关计（与下方 webClient 选择同源）
+        String breakerKey = (apiUrl != null && !apiUrl.isEmpty() ? apiUrl : defaultGatewayUrl) + "|" + model;
+        if (!stream && nonStreamBreaker.isOpen(breakerKey)) {
+            log.debug("[LLM] circuit open, fail-fast: key={}", breakerKey);
+            return ChatResponse.text(CALL_FAILURE_PREFIX + "熔断打开,跳过调用(fail-fast): " + breakerKey);
+        }
+
         ChatRequest req = new ChatRequest();
         req.setModel(model);
         req.setMessages(messages);
@@ -584,10 +597,15 @@ public class LlmService {
             if (stream) {
                 return handleStreamResponse(requestSpec, req, t0);
             } else {
-                return handleNonStreamResponse(requestSpec, req, t0);
+                ChatResponse resp = handleNonStreamResponse(requestSpec, req, t0);
+                nonStreamBreaker.recordSuccess(breakerKey);
+                return resp;
             }
         } catch (Exception e) {
             long elapsed = System.currentTimeMillis() - t0;
+            if (!stream) {
+                nonStreamBreaker.recordFailure(breakerKey);
+            }
             log.error("[LLM] doChatInternal failed after {}ms: model={}, error={}", elapsed, model, e.getMessage(), e);
             return ChatResponse.text(CALL_FAILURE_PREFIX + e.getMessage());
         }

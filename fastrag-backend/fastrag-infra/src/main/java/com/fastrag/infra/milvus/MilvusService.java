@@ -115,6 +115,15 @@ public class MilvusService {
     }
 
     /**
+     * 客户端是否可用（{@link #init} 连通性探测失败时置空）。
+     * 检索主流程据此做向量通道降级显式化（对齐 ADR-0002 图谱通道）：
+     * 区分「存储不可用」与「正常零命中」，避免向量路静默缺失。
+     */
+    public boolean isAvailable() {
+        return milvusClient != null;
+    }
+
+    /**
      * 创建 Collection（如不存在）
      */
     public void createCollection(String name, int dimension) {

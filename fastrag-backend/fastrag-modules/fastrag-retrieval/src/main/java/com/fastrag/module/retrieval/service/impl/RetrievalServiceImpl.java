@@ -185,6 +185,13 @@ public class RetrievalServiceImpl implements RetrievalService {
         // 而是作为独立召回通道（对标 LightRAG kg_query）
         // 降级显式化（ADR-0002）：整路失败（Neo4j 不可达等）由 graphChannelRecall 返回 null 标记，
         // 与「正常返回但零命中」区分，状态写入检索日志可查询
+        // ---- 向量通道降级显式化（对齐 ADR-0002 图谱通道）：Milvus 不可用即标记并写入检索日志，
+        //      避免「向量路静默缺失、检索质量退化无任何上报」（2026-10-21 排查：Milvus 宕机仅 WARN）
+        boolean vectorChannelDegraded = isVectorChannelInPlay(config) && !milvusService.isAvailable();
+        if (vectorChannelDegraded) {
+            log.warn("[Retrieval] Vector channel DEGRADED for kb={}, query='{}' — Milvus 不可用,向量路跳过", kbId, originalQuery);
+        }
+
         boolean graphChannelDegraded = false;
         if (Boolean.TRUE.equals(config.getEnableGraphExpand())) {
             int graphCount = config.getGraphRecallCount() != null ? config.getGraphRecallCount() : 5;
@@ -266,12 +273,14 @@ public class RetrievalServiceImpl implements RetrievalService {
         }
         resolveFileNames(results);
 
-        log.info("[Retrieval] ====== Search done kb={}, query='{}', results={}, elapsed={}ms ======",
-                kbId, originalQuery, results.size(), System.currentTimeMillis() - startMs);
+        log.info("[Retrieval] ====== Search done kb={}, query='{}', results={}, elapsed={}ms{}{} ======",
+                kbId, originalQuery, results.size(), System.currentTimeMillis() - startMs,
+                vectorChannelDegraded ? ", vectorChannel=degraded" : "",
+                graphChannelDegraded ? ", graphChannel=degraded" : "");
 
         // ---- 日志记录 ----
         recordLog(kbId, originalQuery, config, results, startMs, graphChannelDegraded,
-                enhanceModelLabel(config), pre.enhanceStatus());
+                vectorChannelDegraded, enhanceModelLabel(config), pre.enhanceStatus());
 
         return results;
     }
@@ -697,6 +706,13 @@ public class RetrievalServiceImpl implements RetrievalService {
     private List<SearchResultItem> vectorSearch(String kbId, String query,
                                                   RetrievalRequest.RetrievalConfig config,
                                                   List<Float> precomputedVector) {
+        // Milvus 不可用：向量路显式降级——提前返回空并跳过 embedding（省一次外部 API 往返），
+        // 降级状态由 search() 主流程写入检索日志（对齐 ADR-0002 图谱通道）
+        if (!milvusService.isAvailable()) {
+            log.warn("[VectorSearch] Milvus unavailable, vector channel DEGRADED for kbId={}, skip embedding", kbId);
+            return Collections.emptyList();
+        }
+
         int topK = config.getTopK();
         double threshold = config.getSimilarityThreshold();
 
@@ -934,6 +950,15 @@ public class RetrievalServiceImpl implements RetrievalService {
                     }
                     results.add(buildResultItem(chunk, 0.5, 0.5, "graph", "graph"));
                 }
+            }
+            // 实体已匹配但零召回：图谱通道"匹配成功却无贡献"的诊断线索（2026-10-21 排查：
+            // 17 实体匹配 → 0 chunk，原因不明）。打出探测实体名便于下轮定位
+            if (results.isEmpty()) {
+                String preview = nameList.stream().limit(5).collect(Collectors.joining(" / "))
+                        + (nameList.size() > 5 ? " ..." : "");
+                log.info("[GraphChannel] {} entity names matched but LIKE recalled 0 chunks for kb={} "
+                                + "— 实体全名可能仅存在于父分片或被子分片边界切断（可检查分片粒度）; probes=[{}]",
+                        nameList.size(), kbId, preview);
             }
             return results;
         } catch (Exception e) {
@@ -1873,6 +1898,11 @@ public class RetrievalServiceImpl implements RetrievalService {
      */
     private boolean needsQueryEmbedding(RetrievalRequest.RetrievalConfig config) {
         if (Boolean.TRUE.equals(config.getEnableGraphExpand())) return true;
+        return isVectorChannelInPlay(config);
+    }
+
+    /** 本次检索是否包含向量召回通道（multiRetrieval 恒含；单模式按 mode 判断，fulltext 不含） */
+    private boolean isVectorChannelInPlay(RetrievalRequest.RetrievalConfig config) {
         if (Boolean.TRUE.equals(config.getEnableMultiRetrieval())) return true;
         String mode = config.getMode() != null ? config.getMode() : "hybrid";
         return !"fulltext".equals(mode);
@@ -2084,7 +2114,7 @@ public class RetrievalServiceImpl implements RetrievalService {
 
     private void recordLog(String kbId, String originalQuery, RetrievalRequest.RetrievalConfig config,
                             List<SearchResultItem> results, long startMs, boolean graphChannelDegraded,
-                            String enhanceModel, String enhanceStatus) {
+                            boolean vectorChannelDegraded, String enhanceModel, String enhanceStatus) {
         long elapsed = System.currentTimeMillis() - startMs;
         try {
             // 图谱通道命中数（可观测性：日志面板可看图谱贡献）
@@ -2107,16 +2137,18 @@ public class RetrievalServiceImpl implements RetrievalService {
             logEntry.setCreatedAt(LocalDateTime.now());
             logService.log(logEntry);
 
+            boolean degraded = graphChannelDegraded || vectorChannelDegraded;
             KbLog kbLog = new KbLog();
             kbLog.setKbId(kbId);
             kbLog.setCategory("retrieval");
             kbLog.setAction("search");
             kbLog.setTarget(originalQuery);
             kbLog.setDetail("检索完成，命中 " + results.size() + " 条，模式=" + config.getMode()
-                    + (graphChannelDegraded ? "，图谱通道已降级" : ""));
+                    + (graphChannelDegraded ? "，图谱通道已降级" : "")
+                    + (vectorChannelDegraded ? "，向量通道已降级" : ""));
             kbLog.setOperator(SecurityUtil.getCurrentUser() != null
                     ? SecurityUtil.getCurrentUser().getUsername() : "system");
-            kbLog.setStatus(graphChannelDegraded ? "degraded" : "success");
+            kbLog.setStatus(degraded ? "degraded" : "success");
             Map<String, Object> extra = new LinkedHashMap<>();
             extra.put("mode", config.getMode());
             extra.put("topK", config.getTopK());
@@ -2126,6 +2158,8 @@ public class RetrievalServiceImpl implements RetrievalService {
             extra.put("graphHits", graphHits);
             // 图谱通道健康状态：ok / degraded（整路失败，通常为 Neo4j 不可达，见服务端告警日志）
             extra.put("graphChannel", graphChannelDegraded ? "degraded" : "ok");
+            // 向量通道健康状态：ok / degraded（Milvus 不可用，见服务端告警日志；ADR-0002 同款显式化）
+            extra.put("vectorChannel", vectorChannelDegraded ? "degraded" : "ok");
             // 查询增强（LLM 改写）状态：与 kb_retrieval_log.enhance_* 同源
             extra.put("enhanceModel", enhanceModel);
             extra.put("enhanceStatus", enhanceStatus);

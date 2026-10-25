@@ -393,11 +393,18 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
     /**
      * 简单分词降级：英文/数字按词（≥2 字符）；中文连续块保留原始块 + 2~4 字 n-gram 切分，
      * 配合图谱模糊匹配（CONTAINS）可命中 "故障根因分析" -> "故障根因分析（RCA）" 这类实体。
+     *
+     * <p>冗余片段过滤（2026-10-21）：跨词边界的切分片段若已包含更短的保留 token
+     * （如 "今天长沙天气" 切出的 "今天长/天长沙/长沙天" 均包含 "长沙"），对图谱匹配
+     * 只是重复探测（{@code Neo4jGraphStore} UNWIND 匹配按实体去重），徒增匹配噪音，剔除；
+     * 原始块/短中文块/英文词不参与本规则（原始块包含所有片段属预期，供双向 CONTAINS 命中）。</p>
      */
     private static final Pattern FALLBACK_TOKEN_PATTERN = Pattern.compile("[A-Za-z0-9]{2,}|[\\u4e00-\\u9fa5]+");
 
     private List<String> fallbackSplit(String query) {
         Set<String> tokens = new LinkedHashSet<>();
+        // n-gram 切分产物（冗余过滤对象；原始块/整词不在其中）
+        Set<String> fragments = new LinkedHashSet<>();
         Matcher m = FALLBACK_TOKEN_PATTERN.matcher(query == null ? "" : query);
         while (m.find()) {
             String tok = m.group();
@@ -412,7 +419,9 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
                     outer:
                     for (int win = 2; win <= 4; win++) {
                         for (int i = 0; i + win <= len; i++) {
-                            tokens.add(tok.substring(i, i + win));
+                            String gram = tok.substring(i, i + win);
+                            tokens.add(gram);
+                            fragments.add(gram);
                             if (++added >= 8) break outer;
                         }
                     }
@@ -421,8 +430,22 @@ public class QueryEnhanceServiceImpl implements QueryEnhanceService {
                 tokens.add(tok);
             }
         }
+        // 冗余片段过滤：片段包含更短 token 即剔除（对照过滤前的完整 token 集，含原始块/整词）
+        List<String> result = new ArrayList<>();
+        for (String t : tokens) {
+            if (fragments.contains(t)) {
+                boolean redundant = false;
+                for (String g : tokens) {
+                    if (g.length() < t.length() && t.contains(g)) {
+                        redundant = true;
+                        break;
+                    }
+                }
+                if (redundant) continue;
+            }
+            result.add(t);
+        }
         // 限制总 token 数，避免噪音过多
-        List<String> result = new ArrayList<>(tokens);
         return result.size() <= 20 ? result : result.subList(0, 20);
     }
 

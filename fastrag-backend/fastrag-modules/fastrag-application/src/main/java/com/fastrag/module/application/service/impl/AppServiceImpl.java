@@ -763,6 +763,8 @@ public class AppServiceImpl implements AppService {
      *   <li>剔除列表末尾的当前轮 user 消息——streamChat 先落库当前问题再查历史，
      *       该消息会由引擎作为本轮 user 消息构建，历史块不得重复</li>
      *   <li>空内容条目跳过</li>
+     *   <li>assistant 裸工具调用 JSON 片段跳过（2026-10-21 诊断：模型以内联 JSON 文本输出
+     *       工具调用时被当正文落库，混入历史会污染后续所有轮的模型上下文）</li>
      *   <li>字符预算按渲染长度（"role: content\n"）累计，从最新往最旧收，超限裁最旧（保持最近连续段）</li>
      * </ul>
      */
@@ -782,6 +784,7 @@ public class AppServiceImpl implements AppService {
             String content = m.getContent();
             if (content == null || content.isBlank()) continue;
             String role = m.getRole() == null || m.getRole().isBlank() ? "user" : m.getRole();
+            if ("assistant".equals(role) && isRawToolCallFragment(content)) continue;
             int cost = role.length() + 2 + content.length() + 1;
             if (used + cost > budgetChars) break;
             used += cost;
@@ -792,6 +795,22 @@ public class AppServiceImpl implements AppService {
         }
         projected.addAll(kept);
         return projected;
+    }
+
+    /** 裸工具调用 JSON 片段形态：`{"name":...}` / `{"arguments":...}` / `"arguments":{...}}`（截断残片） */
+    private static final java.util.regex.Pattern RAW_TOOL_CALL_JSON = java.util.regex.Pattern.compile(
+            "^\\{\\s*\"(name|arguments)\"\\s*:|^\"(name|arguments)\"\\s*:");
+
+    /**
+     * 裸工具调用 JSON 片段识别（末道防线，与 {@code LlmService.isFailureText} 同型）：
+     * 部分模型（Qwen3-8B@SiliconFlow 实测）偶发把工具调用以内联 JSON 文本输出（未走正式
+     * tool_calls 通道），引擎将其当正文落库。判据保守以防误伤讲解 JSON 的正常回答：
+     * 去首尾空白后以 JSON 对象/键 token 开头且以 } 收尾——散文/代码块回答不会同时满足。
+     */
+    static boolean isRawToolCallFragment(String content) {
+        if (content == null) return false;
+        String t = content.trim();
+        return t.length() >= 2 && t.endsWith("}") && RAW_TOOL_CALL_JSON.matcher(t).find();
     }
 
     /**

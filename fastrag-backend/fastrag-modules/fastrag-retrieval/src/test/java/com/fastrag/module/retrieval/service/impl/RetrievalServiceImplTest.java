@@ -43,6 +43,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -80,6 +81,8 @@ class RetrievalServiceImplTest {
         LoginUser user = LoginUser.builder().userId("tester").username("tester").roles(List.of("admin")).permissions(List.of("*")).build();
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(user, null, List.of()));
+        // 向量通道可用性探测（Milvus 不可用即早退）：本类用例默认走可用路径
+        lenient().when(milvusService.isAvailable()).thenReturn(true);
     }
 
     // ---- helpers ----

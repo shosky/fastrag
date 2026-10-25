@@ -39,6 +39,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.lenient;
 import static org.mockito.Mockito.when;
 
 /**
@@ -70,6 +71,8 @@ class RetrievalServiceImplEmbedCacheTest {
                 .roles(List.of("admin")).permissions(List.of("*")).build();
         SecurityContextHolder.getContext().setAuthentication(
                 new UsernamePasswordAuthenticationToken(user, null, List.of()));
+        // 向量通道可用性探测（Milvus 不可用即早退）：本类用例默认走可用路径
+        lenient().when(milvusService.isAvailable()).thenReturn(true);
 
         // 两个 KB 共用同一嵌入模型 emb-x（模型解析结果一致 → 缓存键一致）
         KnowledgeBase kb1 = new KnowledgeBase();

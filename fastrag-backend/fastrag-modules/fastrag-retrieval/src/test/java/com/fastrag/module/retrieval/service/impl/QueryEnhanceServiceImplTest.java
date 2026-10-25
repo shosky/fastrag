@@ -80,4 +80,25 @@ class QueryEnhanceServiceImplTest {
         assertTrue(captured[0].contains("DeepSeek"), "英文词应按整词保留");
         assertTrue(captured[0].contains("参数说明"), "短中文块原样保留");
     }
+
+    @Test
+    void expandGraph_ngramRedundantFragments_filtered() {
+        // 2026-10-21："今天长沙天气" 切出的 3 字跨词片段（今天长/天长沙/长沙天）对图谱
+        // CONTAINS 匹配只是重复探测（均已包含更短的 保留 token），徒增噪音
+        List<String>[] captured = new List[1];
+        when(graphStore.expandGraph(eq("kb1"), anyList(), eq(2), eq(20))).thenAnswer(inv -> {
+            captured[0] = inv.getArgument(1);
+            return Map.of("entities", List.of(), "relations", List.of());
+        });
+
+        service.expandGraph("kb1", "今天长沙天气", 2, 20, null);
+
+        assertTrue(captured[0].contains("今天长沙天气"), "原始长块应保留（供 CONTAINS 双向匹配）");
+        assertTrue(captured[0].contains("今天"), "2-gram 有效词应保留");
+        assertTrue(captured[0].contains("长沙"), "2-gram 有效词应保留");
+        assertTrue(captured[0].contains("天气"), "2-gram 有效词应保留");
+        assertFalse(captured[0].contains("今天长"), "包含更短保留 token 的跨词片段应剔除");
+        assertFalse(captured[0].contains("天长沙"), "包含更短保留 token 的跨词片段应剔除");
+        assertFalse(captured[0].contains("长沙天"), "包含更短保留 token 的跨词片段应剔除");
+    }
 }
