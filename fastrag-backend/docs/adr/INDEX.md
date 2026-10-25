@@ -3,7 +3,7 @@ name: adr group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-20
+updated: 2026-10-24
 ---
 # adr — group index
 
@@ -23,4 +23,10 @@ updated: 2026-10-20
 
 - Path: `adr/parallel-pre-retrieval.md`
 - Summary: 首轮模型调用前同步预检索注入上下文，取代强制 tool_choice 检索；query_kb 保留供二次检索。
+- Status: active
+
+### 门户独立布局壳与平台壳并存
+
+- Path: `adr/portal-independent-shell.md`
+- Summary: 门户以独立顶层布局壳承载 /portal 路由族，与 AppLayout 平台壳平级并存，平台整体作为门户的一个菜单进入。
 - Status: active

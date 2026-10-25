@@ -4,7 +4,7 @@ summary: 跨模块契约聚合视图——手写 Modules 分解图（design 拥�
 type: contract
 id: CONTRACT-OVERVIEW
 status: active
-updated: 2026-10-20
+updated: 2026-10-24
 ---
 
 # Contract Overview
@@ -14,11 +14,13 @@ updated: 2026-10-20
 
 ## Modules
 
-系统按「能力域」拆分模块：每个模块隐藏一个变化源（存储协议、执行机制、治理规则），调用方只依赖其定义单元。当前新链对话审计与应用对话编排两个模块落 `modules/`，其余特性待后续链推进时迁入。
+系统按「能力域」拆分模块：每个模块隐藏一个变化源（存储协议、执行机制、治理规则），调用方只依赖其定义单元。当前新链对话审计、应用对话编排与首页门户前端三个模块落 `modules/`，其余特性待后续链推进时迁入。
 
 **conversation-trace** — 对话执行的内容级步骤留痕与回看：引擎观察点采集（IF-001，隐藏增量协议/截断/批量写/失败容忍）与查询侧重放组装（IF-002，隐藏增量重放算法），附步骤表实体与内联留存清理 → modules/conversation-trace.md
 
 **app-chat** — 应用对话的运行时编排：绑定能力装配与引擎驱动收尾，首轮检索策略裁决（IF-003，隐藏预检索执行/逐库回落/句柄续号/失败容忍，编排层只置开关） → modules/app-chat.md
+
+**portal-frontend** — 首页门户层：PortalLayout 顶部导航壳承载门户首页/操作手册/产品动态三页，菜单数组驱动、内容全部构建期静态化，与平台壳平级并存（ADR-PORTAL-INDEPENDENT-SHELL；前端 profile，契约不投影 IF-*） → modules/portal-frontend.md
 
 ## IF-001 — ConversationTraceRecorder {#if-001}
 

@@ -3,7 +3,7 @@ name: Docs index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-14
+updated: 2026-10-24
 ---
 # docs index
 
@@ -29,3 +29,5 @@ updated: 2026-10-14
 - [research/INDEX.md](research/INDEX.md) — 待写：<本目录的入口说明>
 
 - [spec/INDEX.md](spec/INDEX.md) — 待写：<本目录的入口说明>
+
+- [ui/INDEX.md](ui/INDEX.md) — 待写：<本目录的入口说明>

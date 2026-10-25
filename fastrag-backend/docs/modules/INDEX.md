@@ -3,7 +3,7 @@ name: modules group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-20
+updated: 2026-10-24
 ---
 # modules — group index
 
@@ -19,3 +19,9 @@ updated: 2026-10-20
 
 - Path: `modules/conversation-trace.md`
 - Summary: —
+
+### Portal Frontend
+
+- Path: `modules/portal-frontend.md`
+- Summary: 首页门户层前端——PortalLayout 顶部导航壳承载门户首页/操作手册/产品动态三页，菜单数组驱动，内容全部构建期静态化，与平台壳平级并存。
+- Status: draft

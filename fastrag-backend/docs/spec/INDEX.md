@@ -3,7 +3,7 @@ name: spec group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-20
+updated: 2026-10-24
 ---
 # spec — group index
 
@@ -83,6 +83,12 @@ updated: 2026-10-20
 
 - Path: `spec/platform-config.md`
 - Summary: —
+
+### Portal Frontend
+
+- Path: `spec/portal-frontend.md`
+- Summary: 首页门户前端规格——独立门户层（/portal 路由族）承载门户首页、操作手册、产品动态三页；现有平台整体降为门户的一个菜单，平台内部零结构改动。
+- Status: draft
 
 ### spec/publish-review.md
 
