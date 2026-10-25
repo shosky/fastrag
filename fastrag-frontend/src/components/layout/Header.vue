@@ -21,7 +21,7 @@ const breadcrumbs = computed(() => {
       <h1 class="page-title">{{ pageTitle }}</h1>
       <span v-if="pageDesc" class="page-desc">{{ pageDesc }}</span>
       <el-breadcrumb v-if="breadcrumbs.length > 1" separator="/">
-        <el-breadcrumb-item :to="{ path: '/home' }">首页</el-breadcrumb-item>
+        <el-breadcrumb-item :to="{ path: '/home' }">主页</el-breadcrumb-item>
         <el-breadcrumb-item v-for="(crumb, idx) in breadcrumbs" :key="idx">
           {{ crumb.title }}
         </el-breadcrumb-item>

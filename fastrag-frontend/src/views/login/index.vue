@@ -145,6 +145,11 @@ const formatCountdown = computed(() => {
       <div class="login-brand__glow login-brand__glow--2" />
       <div class="login-brand__grid" />
 
+      <router-link to="/portal" class="login-brand__back">
+        <el-icon :size="14"><ArrowLeft /></el-icon>
+        回到首页
+      </router-link>
+
       <div class="login-brand__inner">
         <span class="login-brand__tag">✦ 企业级 RAG 平台</span>
         <h2 class="login-brand__title">连接知识，<br>释放 AI 的无限可能</h2>
@@ -361,6 +366,22 @@ $brand-bg-end: #0e3a6e;
     background-image: linear-gradient(rgba(255, 255, 255, 0.03) 1px, transparent 1px), linear-gradient(90deg, rgba(255, 255, 255, 0.03) 1px, transparent 1px);
     background-size: 60px 60px;
     pointer-events: none;
+  }
+
+  &__back {
+    position: absolute; top: 22px; left: 24px; z-index: 2;
+    display: inline-flex; align-items: center; gap: 5px;
+    padding: 5px 10px;
+    border-radius: 8px;
+    font-size: 13px;
+    color: rgba(255, 255, 255, 0.82);
+    text-decoration: none;
+    transition: background 0.2s, color 0.2s;
+
+    &:hover {
+      background: rgba(255, 255, 255, 0.12);
+      color: #fff;
+    }
   }
 
   &__inner {

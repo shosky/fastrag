@@ -210,7 +210,7 @@ function goBack() {
     <!-- Breadcrumb -->
     <div class="office-edit-page__breadcrumb">
       <el-breadcrumb separator="/">
-        <el-breadcrumb-item :to="{ path: '/home' }">首页</el-breadcrumb-item>
+        <el-breadcrumb-item :to="{ path: '/home' }">主页</el-breadcrumb-item>
         <el-breadcrumb-item :to="{ path: '/knowledge' }">知识库</el-breadcrumb-item>
         <el-breadcrumb-item :to="{ path: `/knowledge/${kbId}` }">{{ fileInfo.name }}</el-breadcrumb-item>
         <el-breadcrumb-item>在线编辑</el-breadcrumb-item>

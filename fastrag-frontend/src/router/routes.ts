@@ -1,6 +1,33 @@
 import type { RouteRecordRaw } from 'vue-router'
 
 const routes: RouteRecordRaw[] = [
+  // ===== 首页门户（独立门户布局壳，与平台壳平级：ADR-PORTAL-INDEPENDENT-SHELL） =====
+  // 门户三页公开访问（未登录可浏览，进入平台才要求登录）；不注册进 MENU_PERMISSION_MAP / menu-perm-tree.ts
+  {
+    path: '/portal',
+    component: () => import('@/components/portal/PortalLayout.vue'),
+    meta: { requiresAuth: false },
+    children: [
+      {
+        path: '',
+        name: 'PortalHome',
+        component: () => import('@/views/portal/index.vue'),
+        meta: { title: '首页门户' },
+      },
+      {
+        path: 'manual',
+        name: 'PortalManual',
+        component: () => import('@/views/portal/manual.vue'),
+        meta: { title: '操作手册' },
+      },
+      {
+        path: 'changelog',
+        name: 'PortalChangelog',
+        component: () => import('@/views/portal/changelog.vue'),
+        meta: { title: '产品动态' },
+      },
+    ],
+  },
   {
     path: '/login',
     name: 'Login',
@@ -28,7 +55,7 @@ const routes: RouteRecordRaw[] = [
   {
     path: '/',
     component: () => import('@/components/layout/AppLayout.vue'),
-    redirect: '/home',
+    redirect: '/portal',
     children: [
       // ===== 平台门户 =====
       {
@@ -411,7 +438,7 @@ const routes: RouteRecordRaw[] = [
   },
   {
     path: '/:pathMatch(.*)*',
-    redirect: '/home',
+    redirect: '/portal',
   },
 ]
 

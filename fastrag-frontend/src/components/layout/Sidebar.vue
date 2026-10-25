@@ -81,7 +81,7 @@ interface SubMenuItem {
 
 // 全部模块定义（静态），通过 computed 过滤后渲染
 const allModules: NavModule[] = [
-  { key: 'home', title: '首页', icon: 'HomeFilled', path: '/home' },
+  { key: 'home', title: '主页', icon: 'HomeFilled', path: '/home' },
 
   // ===== 会话中心（new-conversation：对话一等入口，独立顶级菜单）=====
   { key: 'conversation', title: '会话中心', icon: 'ChatLineRound', path: '/conversation' },
@@ -364,7 +364,7 @@ async function handleLogout() {
   <div class="sidebar">
     <!-- 左侧窄条 - 极简导航 -->
     <div class="nav-strip">
-      <div class="strip-logo">
+      <div class="strip-logo" title="返回门户首页" @click="router.push('/portal')">
         <Logo :mini="true" />
       </div>
 
@@ -535,6 +535,7 @@ async function handleLogout() {
   display: flex;
   justify-content: center;
   border-bottom: 1px solid $border-light;
+  cursor: pointer; // 点击返回门户首页（/portal）
 }
 
 .strip-items {
