@@ -6,9 +6,17 @@ import { storage } from '@/utils/storage'
 
 export const useUserStore = defineStore('user', () => {
   const token = ref<string>(storage.get('token') || '')
-  // 页面刷新后从 localStorage 恢复 userInfo（否则侧边栏权限过滤失效）
-  const savedUserInfo = storage.get('userInfo')
-  const userInfo = ref<UserInfo | null>(savedUserInfo ? JSON.parse(savedUserInfo) : null)
+  // 页面刷新后从 localStorage 恢复 userInfo（否则侧边栏权限过滤失效）。
+  // storage.get 已做 JSON.parse；历史上存在被存成对象的形态，这里兼容两者，
+  // 避免 JSON.parse("[object Object]") 在模块求值期抛错导致整站白屏。
+  const savedUserInfo = storage.get<UserInfo>('userInfo')
+  const userInfo = ref<UserInfo | null>(
+    savedUserInfo
+      ? typeof savedUserInfo === 'string'
+        ? (JSON.parse(savedUserInfo) as UserInfo)
+        : savedUserInfo
+      : null
+  )
 
   const isLoggedIn = computed(() => !!token.value)
   const username = computed(() => userInfo.value?.realName || userInfo.value?.username || '')

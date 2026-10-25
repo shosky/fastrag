@@ -41,9 +41,15 @@ function findRoutePerms(path: string, map: MenuPermission[] = MENU_PERMISSION_MA
  */
 function userHasPermission(perm: string): boolean {
   try {
-    const userInfoStr = storage.get('userInfo')
-    if (!userInfoStr) return false
-    const userInfo = JSON.parse(userInfoStr)
+    // storage.get 已做 JSON.parse，兼容历史存成字符串的形态，避免二次解析抛错
+    const userInfoRaw = storage.get<{ roles?: string[]; permissions?: string[] } | string>('userInfo')
+    if (!userInfoRaw) return false
+    let userInfo: { roles?: string[]; permissions?: string[] }
+    if (typeof userInfoRaw === 'string') {
+      userInfo = JSON.parse(userInfoRaw)
+    } else {
+      userInfo = userInfoRaw
+    }
     const userRoles: string[] = userInfo.roles || []
     const userPerms: string[] = userInfo.permissions || []
 
@@ -69,12 +75,12 @@ function userHasPermission(perm: string): boolean {
 router.beforeEach((to, _from, next) => {
   // 设置页面标题
   const title = to.meta.title as string
-  document.title = title ? `${title} - AIS` : 'AIS'
+  document.title = title ? `${title} - FastRAG` : 'FastRAG'
 
   const token = storage.get('token')
 
   if (to.meta.requiresAuth === false) {
-    // 不需要认证的页面
+    // 不需要认证的页面；已登录访问 /login 视为「登录即进入平台」
     if (token && to.path === '/login') {
       next('/home')
     } else {
