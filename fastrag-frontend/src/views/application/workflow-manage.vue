@@ -3,6 +3,7 @@ import { ref, onMounted, computed } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
+import WfMigrationDialog from './editor/components/WfMigrationDialog.vue'
 import * as bpm from '@/api/bpm'
 
 const route = useRoute()
@@ -19,7 +20,8 @@ const createForm = ref({ name: '', description: '', category: '问答' })
 async function loadWorkflows() {
   try {
     const res: any = await api.getWorkflows()
-    workflowList.value = Array.isArray(res) ? res : []
+    // 兼容层 GET /api/workflows 返回 BPM 分页对象 {total,page,size,records}，而非数组
+    workflowList.value = Array.isArray(res) ? res : res?.list || res?.records || []
   } catch { workflowList.value = [] }
 }
 
@@ -371,7 +373,15 @@ async function runNodeTest() {
 // ===== 节点日志（查看 / 清理） =====
 const showLogDialog = ref(false)
 const logTarget = ref<any>(null)
-const nodeLogs = ref<string[]>([])
+const nodeLogs = ref<any[]>([])
+
+// 兼容两种日志形态：旧接口返回字符串数组，新接口返回 {level,message,createdAt} 对象
+function formatNodeLogLine(l: any): string {
+  if (typeof l === 'string') return l
+  const level = String(l.level || 'INFO').toUpperCase()
+  const time = l.createdAt ? '  ' + String(l.createdAt).replace('T', ' ').slice(0, 19) : ''
+  return `[${level}] ${l.message || ''}${time}`
+}
 
 async function openLogDialog(node: any) {
   logTarget.value = node
@@ -596,17 +606,68 @@ function getEdgePath(edge: { source: string; target: string }) {
 const draggingNode = ref<any>(null)
 const dragOffset = ref({ x: 0, y: 0 })
 
+// ===== 画布视图：滚轮缩放（0.4~2.0），坐标换算统一除以缩放比 =====
+const canvasEl = ref<HTMLElement>()
+const canvasScale = ref(1)
+function canvasPoint(e: MouseEvent) {
+  const rect = canvasEl.value?.getBoundingClientRect()
+  if (!rect) return { x: 0, y: 0 }
+  return { x: (e.clientX - rect.left) / canvasScale.value, y: (e.clientY - rect.top) / canvasScale.value }
+}
+function handleWheel(e: WheelEvent) {
+  zoomBy(e.deltaY > 0 ? -0.1 : 0.1)
+}
+function zoomBy(delta: number) {
+  canvasScale.value = Math.min(2, Math.max(0.4, Math.round((canvasScale.value + delta) * 10) / 10))
+}
+
+// ===== 拖拽连线：从节点右侧连接口按下 → 拖动 → 在目标节点上松开 =====
+const connectDragging = ref(false)
+const connectPos = ref({ x: 0, y: 0 })
+function handlePortDown(e: MouseEvent, nodeKey: string) {
+  e.preventDefault()
+  connectingFrom.value = nodeKey
+  connectDragging.value = true
+  connectPos.value = canvasPoint(e)
+  document.addEventListener('mousemove', handleConnectMove)
+  document.addEventListener('mouseup', handleConnectUp)
+}
+function handleConnectMove(e: MouseEvent) {
+  if (!connectDragging.value) return
+  connectPos.value = canvasPoint(e)
+}
+function handleConnectUp(e: MouseEvent) {
+  document.removeEventListener('mousemove', handleConnectMove)
+  document.removeEventListener('mouseup', handleConnectUp)
+  if (!connectDragging.value) return
+  connectDragging.value = false
+  const el = document.elementFromPoint(e.clientX, e.clientY)?.closest('.canvas-node')
+  const targetKey = el?.querySelector('.node-key')?.textContent?.trim()
+  if (!targetKey) { connectingFrom.value = null; return }
+  handleEndConnect(targetKey)
+}
+// 橡皮筋连线：源节点底部中心 → 当前鼠标位置
+function getConnectLinePath() {
+  const src = nodes.value.find(n => n.nodeKey === connectingFrom.value)
+  if (!src) return ''
+  const x1 = src.positionX + 75, y1 = src.positionY + 86
+  return `M ${x1} ${y1} L ${connectPos.value.x} ${connectPos.value.y}`
+}
+
 function handleMouseDown(e: MouseEvent, node: any) {
   if ((e.target as HTMLElement)?.closest('.node-actions')) return
+  selectedNode.value = node
   draggingNode.value = node
-  dragOffset.value = { x: e.clientX - node.positionX, y: e.clientY - node.positionY }
+  const p = canvasPoint(e)
+  dragOffset.value = { x: p.x - node.positionX, y: p.y - node.positionY }
   document.addEventListener('mousemove', handleMouseMove)
   document.addEventListener('mouseup', handleMouseUp)
 }
 function handleMouseMove(e: MouseEvent) {
   if (!draggingNode.value) return
-  draggingNode.value.positionX = Math.max(0, e.clientX - dragOffset.value.x)
-  draggingNode.value.positionY = Math.max(0, e.clientY - dragOffset.value.y)
+  const p = canvasPoint(e)
+  draggingNode.value.positionX = Math.max(0, Math.round(p.x - dragOffset.value.x))
+  draggingNode.value.positionY = Math.max(0, Math.round(p.y - dragOffset.value.y))
 }
 function handleMouseUp() {
   if (draggingNode.value) {
@@ -755,12 +816,26 @@ async function handleWfManualUpdate() {
 async function handleWfSaveAutoConfig() {
   try { await api.setAutoKnowledgeUpdate(appId, wfAutoConfig.value); ElMessage.success('自动更新配置已保存'); showWfAutoConfig.value = false } catch { ElMessage.error('保存失败') }
 }
-async function handleWfCompare(row: any) {
-  if (!row.oldId && !row.newId) { ElMessage.info('该记录无新旧版本信息'); return }
-  try {
-    const r: any = await api.compareKnowledgeContent(wfKbId.value, row.oldId, row.newId)
-    ElMessageBox.alert(`旧版：${r?.oldVersion?.title || '-'}（${r?.oldLength ?? 0} 字）\n新版：${r?.newVersion?.title || '-'}（${r?.newLength ?? 0} 字）`, '内容比较')
-  } catch { ElMessage.error('获取比较内容失败') }
+// 比较更新内容：更新日志行内带新旧内容快照时弹窗对比；否则按更新类型给出准确原因
+const wfCompareVisible = ref(false)
+const wfCompareRow = ref<any>(null)
+function handleWfCompare(row: any) {
+  const ov = (row.oldValue || '').trim()
+  const nv = (row.newValue || '').trim()
+  if (ov || nv) {
+    wfCompareRow.value = row
+    wfCompareVisible.value = true
+    return
+  }
+  const reason =
+    row.updateType === 'manual'
+      ? '该记录为手动触发的知识库刷新，不涉及具体知识内容变更，无新旧版本可比。编辑知识条目后产生的更新记录支持内容比较。'
+      : row.updateType === 'file_added'
+        ? '该记录为新增文件操作，没有旧版本可比。'
+        : row.updateType === 'file_removed'
+          ? '该记录为删除操作，没有新版本可比。'
+          : '该记录未记录新旧版本内容，无法比较。'
+  ElMessage.info(reason)
 }
 
 // ============================================================================
@@ -805,126 +880,10 @@ async function handleExportWfOpts() {
 }
 
 // ============================================================================
-// 业务流-配置迁移（查看迁移日志/进度/设置迁移策略）
-// 说明：迁移由后端真实执行（POST /api/workflows/migrations：按策略复制节点/连线/节点扩展配置，
-// 进度与结果落 wf_migration 表），前端发起后按阶段推进进度条；迁移日志优先读后端，
-// 后端为空/不可用时回退本地留存（localStorage），保证演示可见、可复现。
+// 业务流-配置迁移：弹窗已抽为共用组件 WfMigrationDialog（BPM 画布与应用级画布共用）
 // ============================================================================
 const showWfMigDialog = ref(false)
-const wfMigList = ref<any[]>([])
-const wfMigLoading = ref(false)
-const wfMigForm = ref({ targetWorkflowId: '', targetEnv: 'test', strategy: 'overwrite', remark: '' })
-const wfMigSubmitting = ref(false)
-const wfMigProgress = ref(0)
-const wfMigStage = ref('')
-const MIG_LOG_KEY = 'fastrag_wf_migration_logs'
-
-function loadMigLogs() {
-  try { return JSON.parse(localStorage.getItem(MIG_LOG_KEY) || '[]') || [] } catch { return [] }
-}
-function saveMigLogs(list: any[]) {
-  try { localStorage.setItem(MIG_LOG_KEY, JSON.stringify(list.slice(0, 50))) } catch { /* 本地存储不可用时忽略 */ }
-}
-function openWfMig() {
-  showWfMigDialog.value = true
-  wfMigProgress.value = 0
-  wfMigStage.value = ''
-  loadWfMigs()
-}
-async function loadWfMigs() {
-  wfMigLoading.value = true
-  try {
-    // 优先读后端（真实落库记录），为空时回退前端留存日志
-    let list: any[] = []
-    try { list = ((await api.getWorkflowMigrations()) as any) || [] } catch { list = [] }
-    if (!Array.isArray(list) || list.length === 0) list = loadMigLogs()
-    wfMigList.value = list
-  } finally { wfMigLoading.value = false }
-}
-
-/** 后端驱动迁移：按策略复制节点（含位置/扩展配置）→ 连线，进度与结果落库 wf_migration */
-async function handleCreateWfMig() {
-  if (!wfMigForm.value.targetWorkflowId) { ElMessage.warning('请选择目标业务流'); return }
-  if (wfMigForm.value.targetWorkflowId === wfId.value) { ElMessage.warning('目标业务流不能与源相同'); return }
-  wfMigSubmitting.value = true
-  const startedAt = Date.now()
-  const src = wfId.value
-  const tgt = wfMigForm.value.targetWorkflowId
-  try {
-    // 后端单次请求内完成复制，前端按阶段推进进度条（10 → 90 → 100）
-    wfMigStage.value = '后端读取源业务流配置…'; wfMigProgress.value = 10
-    const timer = window.setInterval(() => {
-      if (wfMigProgress.value < 90) {
-        wfMigProgress.value = Math.min(90, wfMigProgress.value + 5)
-        wfMigStage.value = wfMigProgress.value < 40 ? '迁移节点（含扩展配置）…' : wfMigProgress.value < 70 ? '迁移连线…' : '写入迁移结果…'
-      }
-    }, 300)
-    let resp: any
-    try {
-      resp = await api.createWorkflowMigration({
-        sourceWorkflowId: src,
-        targetWorkflowId: tgt,
-        targetEnv: wfMigForm.value.targetEnv,
-        strategy: wfMigForm.value.strategy,
-        remark: wfMigForm.value.remark,
-      })
-    } finally { window.clearInterval(timer) }
-    wfMigProgress.value = 100
-    wfMigStage.value = '迁移完成'
-
-    const nodeOk = Number(resp?.nodeCount || 0)
-    const edgeOk = Number(resp?.edgeCount || 0)
-    const extOk = Number(resp?.extCount || 0)
-    const warnings: string[] = Array.isArray(resp?.warnings) ? resp.warnings : []
-    const entry = {
-      id: resp?.id || `mig_${Date.now()}`,
-      sourceWorkflowId: src,
-      sourceName: wfNameById(src),
-      targetWorkflowId: tgt,
-      targetName: wfNameById(tgt),
-      targetEnv: wfMigForm.value.targetEnv,
-      strategy: wfMigForm.value.strategy,
-      remark: wfMigForm.value.remark,
-      nodeCount: nodeOk,
-      edgeCount: edgeOk,
-      extCount: extOk,
-      status: resp?.status || 'completed',
-      progress: resp?.progress || 100,
-      durationMs: resp?.durationMs || Date.now() - startedAt,
-      warnings,
-      validateResult: `节点 ${nodeOk} 个 / 连线 ${edgeOk} 条 / 扩展配置 ${extOk} 项` + (warnings.length ? `；${warnings.length} 项提示` : ''),
-      createdAt: new Date().toLocaleString('zh-CN'),
-      operator: resp?.operator || 'admin',
-    }
-    saveMigLogs([entry, ...loadMigLogs()])
-    await loadWfMigs()
-    ElMessage.success(`迁移完成：节点 ${nodeOk} 个 / 连线 ${edgeOk} 条 / 扩展配置 ${extOk} 项`)
-  } catch (e: any) {
-    const failEntry = {
-      id: `mig_${Date.now()}`, sourceWorkflowId: src, sourceName: wfNameById(src),
-      targetWorkflowId: tgt, targetName: wfNameById(tgt), targetEnv: wfMigForm.value.targetEnv,
-      strategy: wfMigForm.value.strategy, remark: wfMigForm.value.remark,
-      nodeCount: 0, edgeCount: 0, extCount: 0,
-      status: 'failed', progress: wfMigProgress.value, durationMs: Date.now() - startedAt,
-      warnings: [String(e?.message || e)], validateResult: `迁移中断：${e?.message || '未知错误'}`,
-      createdAt: new Date().toLocaleString('zh-CN'), operator: 'admin',
-    }
-    saveMigLogs([failEntry, ...loadMigLogs()])
-    await loadWfMigs()
-    ElMessage.error('迁移失败：' + (e?.message || ''))
-  } finally {
-    wfMigSubmitting.value = false
-  }
-}
-function wfMigStatus(s: string) { return ({ running: '执行中', pending: '待执行', completed: '已完成', failed: '失败' } as Record<string, string>)[s] || s }
-function wfMigStatusColor(s: string) { return (({ completed: 'success', failed: 'danger', running: 'warning', pending: 'info' } as Record<string, string>)[s] || 'info') as any }
-function wfNameById(id: string) { return workflowList.value.find((w: any) => w.id === id)?.name || id }
-async function clearMigLogs() {
-  saveMigLogs([])
-  try { await api.clearWorkflowMigrations() } catch { /* 后端不可用时仅清本地 */ }
-  wfMigList.value = []
-  ElMessage.success('已清空迁移日志')
-}
+function openWfMig() { showWfMigDialog.value = true }
 </script>
 
 <template>
@@ -971,12 +930,14 @@ async function clearMigLogs() {
             <span class="toolbox-icon">{{ t.icon }}</span><span>{{ t.label }}</span>
           </div>
         </div>
-        <div class="canvas-area" @click="handleCanvasClick">
+        <div class="canvas-area" ref="canvasEl" @click="handleCanvasClick" @wheel.prevent="handleWheel">
+          <div class="canvas-layer" :style="{ transform: 'scale(' + canvasScale + ')' }">
           <svg class="canvas-svg">
             <g v-for="(edge, i) in edges" :key="'e'+i">
               <path :d="getEdgePath(edge)" fill="none" stroke="#409EFF" stroke-width="2" class="edge-path" />
               <title>{{ edge.source }} → {{ edge.target }}</title>
             </g>
+            <path v-if="connectDragging" :d="getConnectLinePath()" fill="none" stroke="#e6a23c" stroke-width="2" stroke-dasharray="6,4" class="connect-line" />
           </svg>
           <div v-for="node in nodes" :key="node.nodeKey"
             class="canvas-node"
@@ -1013,9 +974,17 @@ async function clearMigLogs() {
                 </template>
               </el-dropdown>
             </div>
+            <div class="node-port" title="按住拖到目标节点连线" @mousedown.stop="handlePortDown($event, node.nodeKey)"></div>
           </div>
           <div v-if="!nodes.length" class="canvas-empty">
             <el-empty description="画布为空，点击上方「添加节点」或从工具箱添加" :image-size="80" />
+          </div>
+          </div>
+          <div class="canvas-zoom" @click.stop>
+            <el-button size="small" @click.stop="zoomBy(-0.1)">−</el-button>
+            <span class="zoom-val">{{ Math.round(canvasScale * 100) }}%</span>
+            <el-button size="small" @click.stop="zoomBy(0.1)">＋</el-button>
+            <el-button size="small" text @click.stop="canvasScale = 1">重置</el-button>
           </div>
         </div>
       </div>
@@ -1106,7 +1075,7 @@ async function clearMigLogs() {
             <el-button size="small" @click="showWfAutoConfig = true">设置自动更新</el-button>
           </div>
           <el-table :data="wfUpdateLogs" stripe size="small" v-loading="wfUpdateLoading" max-height="420">
-            <el-table-column prop="updateType" label="类型" width="90"><template #default="{ row }">{{ ({ auto: '自动', manual: '手动', incremental: '增量' } as Record<string, string>)[row.updateType] || row.updateType }}</template></el-table-column>
+            <el-table-column prop="updateType" label="类型" width="90"><template #default="{ row }">{{ ({ auto: '自动', manual: '手动', incremental: '增量', knowledge_updated: '知识编辑', file_updated: '文件更新', file_added: '文件新增', file_removed: '文件删除' } as Record<string, string>)[row.updateType] || row.updateType }}</template></el-table-column>
             <el-table-column prop="target" label="目标" width="130" show-overflow-tooltip />
             <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
             <el-table-column prop="operator" label="操作人" width="90" />
@@ -1114,6 +1083,32 @@ async function clearMigLogs() {
             <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link type="primary" size="small" @click="handleWfCompare(row)">比较</el-button></template></el-table-column>
           </el-table>
           <el-empty v-if="!wfUpdateLogs.length && !wfUpdateLoading" description="暂无更新记录（手动更新后可见）" :image-size="60" />
+
+          <!-- 更新内容比较弹窗：展示日志行记录的新旧内容快照 -->
+          <el-dialog v-model="wfCompareVisible" title="更新内容比较" width="820px">
+            <div v-if="wfCompareRow" style="font-size:12px;color:#606266;margin-bottom:10px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+              <span>目标：<b>{{ wfCompareRow.target }}</b>（{{ wfCompareRow.detail }}）</span>
+              <el-tag size="small" type="info">旧版 {{ (wfCompareRow.oldValue || '').length }} 字</el-tag>
+              <el-tag size="small" type="success">新版 {{ (wfCompareRow.newValue || '').length }} 字</el-tag>
+              <el-tag size="small" :type="((wfCompareRow.newValue || '').length >= (wfCompareRow.oldValue || '').length) ? 'success' : 'warning'">
+                {{ ((wfCompareRow.newValue || '').length >= (wfCompareRow.oldValue || '').length) ? '增加' : '减少' }} {{ Math.abs((wfCompareRow.newValue || '').length - (wfCompareRow.oldValue || '').length) }} 字
+              </el-tag>
+            </div>
+            <el-row :gutter="12">
+              <el-col :span="12">
+                <div style="border:1px solid #ebeef5;border-radius:6px;overflow:hidden">
+                  <div style="padding:6px 10px;background:#f5f7fa;font-size:12px;font-weight:600;border-bottom:1px solid #ebeef5">旧版内容</div>
+                  <pre style="margin:0;padding:10px;max-height:380px;overflow:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;font-family:inherit">{{ wfCompareRow?.oldValue || '（无）' }}</pre>
+                </div>
+              </el-col>
+              <el-col :span="12">
+                <div style="border:1px solid #ebeef5;border-radius:6px;overflow:hidden">
+                  <div style="padding:6px 10px;background:#f0f9eb;font-size:12px;font-weight:600;border-bottom:1px solid #ebeef5">新版内容</div>
+                  <pre style="margin:0;padding:10px;max-height:380px;overflow:auto;font-size:12px;line-height:1.6;white-space:pre-wrap;word-break:break-word;font-family:inherit">{{ wfCompareRow?.newValue || '（无）' }}</pre>
+                </div>
+              </el-col>
+            </el-row>
+          </el-dialog>
         </div>
       </el-tab-pane>
 
@@ -1280,7 +1275,7 @@ async function clearMigLogs() {
         <el-button size="small" type="danger" @click="handleClearNodeLogs">清理日志</el-button>
       </div>
       <div class="log-panel">
-        <div v-for="(line, i) in nodeLogs" :key="i" class="log-line">{{ line }}</div>
+        <div v-for="(line, i) in nodeLogs" :key="i" class="log-line">{{ formatNodeLogLine(line) }}</div>
       </div>
       <el-empty v-if="!nodeLogs.length" description="暂无日志，可先「测试节点」产生日志" :image-size="60" />
       <template #footer><el-button @click="showLogDialog=false">关闭</el-button></template>
@@ -1439,74 +1434,8 @@ async function clearMigLogs() {
       </el-form>
       <template #footer><el-button @click="showWfAutoConfig=false">取消</el-button><el-button type="primary" @click="handleWfSaveAutoConfig">保存</el-button></template>
     </el-dialog>
-    <!-- 业务流配置迁移弹窗：查看迁移日志/进度/设置迁移策略 -->
-    <el-dialog v-model="showWfMigDialog" title="配置迁移" width="780px">
-      <div class="card-panel" style="margin-bottom:16px">
-        <div class="section-title" style="margin-bottom:10px">设置迁移策略并执行（源：{{ wfName || '当前业务流' }}）</div>
-        <el-form inline>
-          <el-form-item label="目标业务流">
-            <el-select v-model="wfMigForm.targetWorkflowId" filterable placeholder="选择目标业务流" style="width:200px">
-              <el-option v-for="w in workflowList.filter(x => x.id !== wfId)" :key="w.id" :label="w.name" :value="w.id" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="目标环境">
-            <el-select v-model="wfMigForm.targetEnv" style="width:110px">
-              <el-option label="测试环境" value="test" /><el-option label="生产环境" value="production" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="迁移策略">
-            <el-radio-group v-model="wfMigForm.strategy">
-              <el-radio value="overwrite">覆盖</el-radio>
-              <el-radio value="merge">合并（保留已有）</el-radio>
-            </el-radio-group>
-          </el-form-item>
-          <el-form-item>
-            <el-button type="primary" :loading="wfMigSubmitting" @click="handleCreateWfMig">开始迁移</el-button>
-          </el-form-item>
-        </el-form>
-        <el-form-item label="备注" style="margin-bottom:0">
-          <el-input v-model="wfMigForm.remark" placeholder="迁移说明（可选）" style="max-width:420px" />
-        </el-form-item>
-        <!-- 迁移进度（执行中实时展示 10% → 100%） -->
-        <div v-if="wfMigSubmitting || wfMigProgress > 0" style="margin-top:10px">
-          <el-progress :percentage="wfMigProgress" :status="wfMigProgress >= 100 ? 'success' : undefined" :stroke-width="12" />
-          <div style="font-size:12px;color:var(--el-text-color-secondary);margin-top:4px">{{ wfMigStage }}</div>
-        </div>
-      </div>
-      <div class="section-title" style="margin-bottom:8px">
-        迁移日志
-        <el-button v-if="wfMigList.length" link type="danger" size="small" style="margin-left:8px" @click="clearMigLogs">清空日志</el-button>
-        <span style="font-size:12px;color:var(--el-text-color-secondary);margin-left:8px">（迁移由后端真实复制节点/连线/扩展配置并落库；日志优先读后端，为空时回退本地留存）</span>
-      </div>
-      <el-table :data="wfMigList" stripe size="small" v-loading="wfMigLoading">
-        <el-table-column label="源 → 目标" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.sourceName || wfNameById(row.sourceWorkflowId) }} → {{ row.targetName || wfNameById(row.targetWorkflowId) }}</template>
-        </el-table-column>
-        <el-table-column label="目标环境" width="90"><template #default="{ row }">{{ row.targetEnv === 'production' ? '生产' : '测试' }}</template></el-table-column>
-        <el-table-column label="策略" width="80"><template #default="{ row }">{{ row.strategy === 'merge' ? '合并' : '覆盖' }}</template></el-table-column>
-        <el-table-column label="进度" width="140">
-          <template #default="{ row }"><el-progress :percentage="row.progress || 0" :status="row.status === 'failed' ? 'exception' : (row.progress >= 100 ? 'success' : undefined)" :stroke-width="10" /></template>
-        </el-table-column>
-        <el-table-column label="迁移内容" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">
-            <template v-if="row.nodeCount !== undefined">
-              节点 {{ row.nodeCount }} / 连线 {{ row.edgeCount || 0 }} / 扩展配置 {{ row.extCount || 0 }}
-              <el-tag v-if="row.warnings?.length" size="small" type="warning" style="margin-left:6px">{{ row.warnings.length }} 项提示</el-tag>
-            </template>
-            <span v-else>{{ row.validateResult }}</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="耗时" width="90" align="center">
-          <template #default="{ row }">{{ row.durationMs ? (row.durationMs / 1000).toFixed(1) + 's' : '-' }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }"><el-tag :type="wfMigStatusColor(row.status)" size="small">{{ wfMigStatus(row.status) }}</el-tag></template>
-        </el-table-column>
-        <el-table-column prop="operator" label="操作人" width="80" />
-        <el-table-column prop="createdAt" label="时间" width="160" />
-      </el-table>
-      <el-empty v-if="!wfMigList.length && !wfMigLoading" description="暂无迁移记录：选择目标业务流与策略后点「开始迁移」" :image-size="60" />
-    </el-dialog>
+    <!-- 业务流配置迁移弹窗（共用组件：设置迁移策略 / 迁移进度 / 迁移日志） -->
+    <WfMigrationDialog v-model="showWfMigDialog" :current-wf-id="wfId" :current-wf-name="wfName" />
   </div>
 </template>
 
@@ -1542,10 +1471,16 @@ async function clearMigLogs() {
   flex: 1; position: relative; height: 520px; border: 1px solid #ebeef5; border-radius: 8px;
   background: #fafafa; overflow: hidden;
 }
-.canvas-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; }
+.canvas-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; transform-origin: 0 0; }
+.canvas-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
 .edge-path { pointer-events: stroke; cursor: pointer; }
 .edge-path:hover { stroke: #f56c6c; stroke-width: 3; }
 .canvas-empty { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); }
+.canvas-zoom {
+  position: absolute; right: 12px; bottom: 12px; z-index: 10; display: flex; align-items: center; gap: 6px;
+  background: #fff; border: 1px solid #ebeef5; border-radius: 8px; padding: 4px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  .zoom-val { font-size: 12px; color: #606266; min-width: 42px; text-align: center; }
+}
 .welcome-panel { margin-top: 60px; display: flex; justify-content: center; }
 
 // ====== 节点卡片 ======
@@ -1564,6 +1499,13 @@ async function clearMigLogs() {
 .node-key { font-size: 11px; color: #909399; padding: 0 8px 4px; }
 .node-actions { display: flex; gap: 2px; padding: 4px 6px; border-top: 1px solid #f0f0f0; flex-wrap: wrap; }
 .node-actions :deep(.el-button) { font-size: 11px; }
+.node-port {
+  position: absolute; right: -7px; top: 50%; transform: translateY(-50%);
+  width: 12px; height: 12px; border-radius: 50%; background: #409eff; border: 2px solid #fff;
+  box-shadow: 0 1px 4px rgba(0,0,0,0.25); cursor: crosshair; z-index: 5;
+  &:hover { transform: translateY(-50%) scale(1.35); }
+}
+.connect-line { pointer-events: none; }
 
 // ====== 节点属性面板 ======
 .node-props-panel {

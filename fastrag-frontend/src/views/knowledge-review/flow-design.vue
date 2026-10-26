@@ -13,17 +13,28 @@ const formData = ref<any>({})
 const steps = ref<{ name: string; reviewerRole: string; timeoutHours: number; listenerIds?: string[] }[]>([])
 const roleOptions = ['知识编辑', '知识管理员', '部门主管', '质量管理员']
 
-// 流程模板库
+// 流程模板库（默认模板 + 本地留存的导入模板；删除/导入持久化到 localStorage）
 const showTemplateLib = ref(false)
 const templateLib = ref<any[]>([])
 const templateSearch = ref('')
+const tplDeletedCount = ref(0)
+const TPL_SEED: any[] = [
+  { id: 'lib1', name: '标准三阶审核', description: '编辑→主管→管理员', steps: [{ name: '编辑审核', reviewerRole: '知识编辑', timeoutHours: 24 }, { name: '主管审核', reviewerRole: '部门主管', timeoutHours: 48 }, { name: '管理员终审', reviewerRole: '质量管理员', timeoutHours: 24 }], category: '通用' },
+  { id: 'lib2', name: '快速单阶审核', description: '管理员直接审核', steps: [{ name: '直接审核', reviewerRole: '知识管理员', timeoutHours: 24 }], category: '通用' },
+  { id: 'lib3', name: '合规专项审核', description: '合规检查→终审', steps: [{ name: '合规检查', reviewerRole: '质量管理员', timeoutHours: 48 }, { name: '终审', reviewerRole: '部门主管', timeoutHours: 24 }], category: '合规' },
+  { id: 'lib4', name: '内容发布审核', description: '编辑审核→内容审核→发布审批', steps: [{ name: '编辑审核', reviewerRole: '知识编辑', timeoutHours: 12 }, { name: '内容审核', reviewerRole: '知识管理员', timeoutHours: 24 }, { name: '发布审批', reviewerRole: '部门主管', timeoutHours: 24 }], category: '发布' },
+]
+const TPL_DELETED_KEY = 'fastrag_flow_tpl_deleted'
+const TPL_ADDED_KEY = 'fastrag_flow_tpl_added'
+function loadDeletedTpls(): string[] { try { return JSON.parse(localStorage.getItem(TPL_DELETED_KEY) || '[]') || [] } catch { return [] } }
+function saveDeletedTpls(ids: string[]) { try { localStorage.setItem(TPL_DELETED_KEY, JSON.stringify(ids)) } catch { /* 忽略 */ } }
+function loadAddedTpls(): any[] { try { return JSON.parse(localStorage.getItem(TPL_ADDED_KEY) || '[]') || [] } catch { return [] } }
+function saveAddedTpls(list: any[]) { try { localStorage.setItem(TPL_ADDED_KEY, JSON.stringify(list.slice(0, 50))) } catch { /* 忽略 */ } }
+
 function handleShowTemplateLib() {
-  templateLib.value = [
-    { id: 'lib1', name: '标准三阶审核', description: '编辑→主管→管理员', steps: [{ name: '编辑审核', reviewerRole: '知识编辑', timeoutHours: 24 }, { name: '主管审核', reviewerRole: '部门主管', timeoutHours: 48 }, { name: '管理员终审', reviewerRole: '质量管理员', timeoutHours: 24 }], category: '通用' },
-    { id: 'lib2', name: '快速单阶审核', description: '管理员直接审核', steps: [{ name: '直接审核', reviewerRole: '知识管理员', timeoutHours: 24 }], category: '通用' },
-    { id: 'lib3', name: '合规专项审核', description: '合规检查→终审', steps: [{ name: '合规检查', reviewerRole: '质量管理员', timeoutHours: 48 }, { name: '终审', reviewerRole: '部门主管', timeoutHours: 24 }], category: '合规' },
-    { id: 'lib4', name: '内容发布审核', description: '编辑审核→内容审核→发布审批', steps: [{ name: '编辑审核', reviewerRole: '知识编辑', timeoutHours: 12 }, { name: '内容审核', reviewerRole: '知识管理员', timeoutHours: 24 }, { name: '发布审批', reviewerRole: '部门主管', timeoutHours: 24 }], category: '发布' },
-  ]
+  const deleted = loadDeletedTpls()
+  templateLib.value = [...TPL_SEED, ...loadAddedTpls()].filter(t => !deleted.includes(t.id))
+  tplDeletedCount.value = deleted.length
   templateSearch.value = ''
   showTemplateLib.value = true
 }
@@ -35,6 +46,34 @@ function handleApplyTemplate(tpl: any) {
   dialogTitle.value = '从模板创建'
   showDialog.value = true
   ElMessage.success(`已应用模板「${tpl.name}」`)
+}
+// 导出模板为 JSON（与「导入模板」同一格式，可直接回导）
+function handleExportTemplate(tpl: any) {
+  const data = { type: 'review-flow-template', name: tpl.name, description: tpl.description, category: tpl.category, steps: tpl.steps }
+  const url = URL.createObjectURL(new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' }))
+  const a = document.createElement('a'); a.href = url; a.download = `流程模板_${tpl.name}.json`; a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success(`模板「${tpl.name}」已导出`)
+}
+// 删除模板（从模板库移除并本地留存；导入模板与默认模板均可删）
+function handleDeleteTemplate(tpl: any) {
+  ElMessageBox.confirm(`确定从模板库删除「${tpl.name}」？删除后不再显示（重新导入可恢复）。`, '删除确认', { type: 'warning' })
+    .then(() => {
+      templateLib.value = templateLib.value.filter(t => t.id !== tpl.id)
+      saveDeletedTpls([...loadDeletedTpls(), tpl.id])
+      // 若为本地留存的导入模板，同步从 additions 移除
+      saveAddedTpls(loadAddedTpls().filter(t => t.id !== tpl.id))
+      ElMessage.success(`模板「${tpl.name}」已删除`)
+    })
+    .catch(() => {})
+}
+// 恢复默认模板库：清空删除与导入留存
+function handleRestoreTpls() {
+  saveDeletedTpls([])
+  saveAddedTpls([])
+  templateLib.value = [...TPL_SEED]
+  tplDeletedCount.value = 0
+  ElMessage.success('已恢复默认模板库')
 }
 
 // 导入流程图/模板
@@ -49,8 +88,10 @@ function handleImportFlow(type: 'flow' | 'template') {
       const text = await file.text()
       const data = JSON.parse(text)
       if (type === 'template') {
-        dataList.value.unshift({ id: 'imp_' + Date.now(), name: data.name || '导入模板', description: data.description || '', steps: data.steps || [], status: 'draft', creator: '当前用户', createdAt: new Date().toLocaleString('zh-CN') })
-        ElMessage.success('流程模板已导入')
+        // 导入的模板进入「流程模板库」并本地留存（与导出格式互通）
+        const tpl = { id: 'tpl_' + Date.now(), name: data.name || '导入模板', description: data.description || '', steps: Array.isArray(data.steps) ? data.steps : [], category: data.category || '导入' }
+        saveAddedTpls([tpl, ...loadAddedTpls()])
+        ElMessage.success('流程模板已导入，可在「流程模板」库中查看/应用')
       } else {
         ElMessage.success('流程图已导入')
       }
@@ -665,7 +706,10 @@ async function handleApplySuggestion(sug: any) {
 
     <!-- 流程模板库 -->
     <el-dialog v-model="showTemplateLib" title="流程模板库" width="700px">
-      <el-input v-model="templateSearch" placeholder="搜索模板名称..." clearable style="margin-bottom:12px" />
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
+        <el-input v-model="templateSearch" placeholder="搜索模板名称..." clearable style="width:260px" />
+        <el-button v-if="tplDeletedCount > 0" link type="warning" size="small" @click="handleRestoreTpls">恢复默认模板库（已删除 {{ tplDeletedCount }} 条记录）</el-button>
+      </div>
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:12px">
         <div v-for="tpl in templateLib.filter(t => !templateSearch || t.name.includes(templateSearch) || t.category.includes(templateSearch))" :key="tpl.id" style="border:1px solid #ebeef5;border-radius:8px;padding:12px;cursor:pointer" @click="handleApplyTemplate(tpl)">
           <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px">
@@ -677,9 +721,14 @@ async function handleApplySuggestion(sug: any) {
             {{ tpl.steps.length }} 个步骤：
             <template v-for="(s, i) in tpl.steps" :key="i">{{ s.name }}<span v-if="Number(i) < tpl.steps.length - 1"> → </span></template>
           </div>
-          <div style="margin-top:8px"><el-button size="small" type="primary" @click.stop="handleApplyTemplate(tpl)">应用此模板</el-button></div>
+          <div style="margin-top:8px;display:flex;gap:6px">
+            <el-button size="small" type="primary" @click.stop="handleApplyTemplate(tpl)">应用此模板</el-button>
+            <el-button size="small" @click.stop="handleExportTemplate(tpl)">导出</el-button>
+            <el-button size="small" type="danger" @click.stop="handleDeleteTemplate(tpl)">删除</el-button>
+          </div>
         </div>
       </div>
+      <el-empty v-if="!templateLib.filter(t => !templateSearch || t.name.includes(templateSearch) || t.category.includes(templateSearch)).length" description="模板库为空（可「导入模板」或点击下方恢复默认）" :image-size="60" />
       <template #footer><el-button @click="showTemplateLib=false">关闭</el-button></template>
     </el-dialog>
 

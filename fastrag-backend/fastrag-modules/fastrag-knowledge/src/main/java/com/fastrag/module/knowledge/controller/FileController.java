@@ -54,15 +54,24 @@ public class FileController {
         return ApiResponse.success();
     }
 
+    /** 导入「应答文档清单」xlsx（导出格式）：按文档名称从系统内其它知识库复制同名文件并触发解析 */
+    @PostMapping("/import-manifest")
+    public ApiResponse<?> importManifest(@PathVariable String kbId, @RequestParam("file") MultipartFile file) {
+        return ApiResponse.success(svc.importManifest(kbId, file));
+    }
+
     @PutMapping("/{id}")
     public ApiResponse<?> update(@PathVariable String kbId, @PathVariable String id, @RequestBody Map<String, Object> p) {
+        // 更新前取旧名，供更新日志记录重命名前后对比
+        KbFile before = fileMapper.selectById(id);
+        String oldName = before != null ? before.getName() : null;
         FileDto result = svc.update(kbId, id, p);
-        // 记录文件更新日志
+        // 记录文件更新日志（target 为更新后的名称）
         try {
             KbFile kf = fileMapper.selectById(id);
             String username = SecurityUtil.getCurrentUser() != null ? SecurityUtil.getCurrentUser().getUsername() : "system";
             logService.addUpdateLog(kbId, "file_updated",
-                    kf != null ? kf.getName() : id, "更新文件信息", username);
+                    kf != null ? kf.getName() : id, "更新文件信息", username, oldName, kf != null ? kf.getName() : null);
         } catch (Exception e) {
             log.error("Failed to log file update", e);
         }

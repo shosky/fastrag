@@ -21,14 +21,12 @@ import com.fastrag.module.bpm.mapper.BpmFlowTestCaseMapper;
 import com.fastrag.module.bpm.service.BpmFlowNodeService;
 import com.fastrag.module.bpm.service.BpmFlowVersionService;
 import lombok.RequiredArgsConstructor;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.web.bind.annotation.*;
 
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDateTime;
 import java.util.*;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.CopyOnWriteArrayList;
-import java.util.Map;
 
 /**
  * 旧业务流 API 兼容层（M17）。
@@ -51,6 +49,7 @@ import java.util.Map;
 @RestController
 @RequestMapping("/api/workflows")
 @RequiredArgsConstructor
+@Slf4j
 @Deprecated
 public class LegacyWorkflowCompatController {
 
@@ -98,13 +97,21 @@ public class LegacyWorkflowCompatController {
         } catch (Exception e) { return new LinkedHashMap<>(); }
     }
 
-    /** 节点执行日志（简单内存存储，进程重启即清空；测试节点会追加记录） */
-    private final Map<String, List<String>> nodeLogStore = new ConcurrentHashMap<>();
-
-    private List<String> nodeLog(String flowDefId, String nodeKey) {
-        return nodeLogStore.computeIfAbsent(flowDefId + ":" + nodeKey, k -> new CopyOnWriteArrayList<>(List.of(
-                "[INFO] 节点 " + nodeKey + " 初始化完成",
-                "[INFO] 节点 " + nodeKey + " 就绪，等待调度")));
+    /** 节点生命周期日志：落库 wf_debug_log（context 为合法 JSON；nodeKey 维度过滤）。目前仅「测试节点」经此写入，其余由 NodeController 统一记录 */
+    private void nodeLifeLog(String flowDefId, String nodeKey, String level, String message) {
+        try {
+            WfDebugLog l = new WfDebugLog();
+            l.setWorkflowId(flowDefId);
+            l.setNodeKey(nodeKey);
+            l.setLevel(level);
+            l.setMessage(message);
+            // wf_debug_log.context 是 JSON 列，裸词字符串（如 node）会被 MySQL 拒绝，必须写合法 JSON
+            l.setContext("\"node\"");
+            l.setCreatedAt(LocalDateTime.now());
+            wfDebugLogMapper.insert(l);
+        } catch (Exception e) {
+            log.warn("节点日志写入失败 wf={} node={}: {}", flowDefId, nodeKey, e.getMessage());
+        }
     }
 
     // ===== 流程 CRUD =====
@@ -199,6 +206,7 @@ public class LegacyWorkflowCompatController {
         if (y instanceof Number) req.setPositionY(((Number) y).intValue());
         if (b.get("config") != null) req.setConfig(toJson(b.get("config")));
         String versionId = pickLatestDraftId(id);
+        // 节点生命周期日志由 NodeController.update 统一记录（变更检测），此处不再重复
         return nodeController.update(id, versionId, nodeKey, req);
     }
 
@@ -206,6 +214,7 @@ public class LegacyWorkflowCompatController {
     @Deprecated
     public ApiResponse<?> deleteNode(@PathVariable String id, @PathVariable String nodeKey) {
         String versionId = pickLatestDraftId(id);
+        // 删除日志由 NodeController.delete 统一记录
         return nodeController.delete(id, versionId, nodeKey);
     }
 
@@ -281,22 +290,27 @@ public class LegacyWorkflowCompatController {
         r.put("input", b);
         r.put("output", "节点执行完成，收到 " + (b == null ? 0 : b.size()) + " 个输入参数");
         r.put("executedAt", LocalDateTime.now().toString());
-        nodeLog(id, nodeKey).add("[INFO] 测试执行成功 · 输入=" + toJson(b == null ? Map.of() : b));
+        nodeLifeLog(id, nodeKey, "INFO", "测试执行成功 · 输入=" + toJson(b == null ? Map.of() : b));
         return ApiResponse.success(r);
     }
 
-    // ===== 节点日志 =====
+    // ===== 节点日志（真实落库 wf_debug_log；节点创建/更新/删除/测试自动写入） =====
 
     @GetMapping("/{id}/nodes/{nodeKey}/logs")
     @Deprecated
     public ApiResponse<?> nodeLogs(@PathVariable String id, @PathVariable String nodeKey) {
-        return ApiResponse.success(nodeLog(id, nodeKey));
+        // 只返回真实日志（节点生命周期事件/测试执行）。清理后保持为空，不再自动补初始化记录
+        List<WfDebugLog> rows = wfDebugLogMapper.selectList(new LambdaQueryWrapper<WfDebugLog>()
+                .eq(WfDebugLog::getWorkflowId, id).eq(WfDebugLog::getNodeKey, nodeKey)
+                .orderByAsc(WfDebugLog::getId).last("LIMIT 200"));
+        return ApiResponse.success(rows);
     }
 
     @DeleteMapping("/{id}/nodes/{nodeKey}/logs")
     @Deprecated
     public ApiResponse<?> clearNodeLogs(@PathVariable String id, @PathVariable String nodeKey) {
-        nodeLogStore.put(id + ":" + nodeKey, new CopyOnWriteArrayList<>());
+        wfDebugLogMapper.delete(new LambdaQueryWrapper<WfDebugLog>()
+                .eq(WfDebugLog::getWorkflowId, id).eq(WfDebugLog::getNodeKey, nodeKey));
         return ApiResponse.success(Map.of("nodeKey", nodeKey, "cleared", true));
     }
 

@@ -260,6 +260,22 @@ async function saveModelEdit() {
     ElMessage.error('保存失败：' + (e?.message || ''))
   } finally { modelSaving.value = false }
 }
+async function deleteModelRow(row: any) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除模型「${row.name}」？删除后该模型不可再被调用，且不可恢复。`,
+      '删除确认',
+      { type: 'warning' },
+    )
+  } catch { return }
+  try {
+    await api.deleteModel(row.id)
+    ElMessage.success(`模型「${row.name}」已删除`)
+    await loadModels()
+  } catch (e: any) {
+    ElMessage.error('删除失败：' + (e?.message || ''))
+  }
+}
 
 onMounted(async () => {
   await Promise.all([loadKbOptions(), loadFlowConfig()])
@@ -374,7 +390,7 @@ onMounted(async () => {
         <div style="display:flex;gap:8px;margin-bottom:10px;align-items:center">
           <el-button size="small" type="primary" @click="openModelImport">导入模型</el-button>
           <el-button size="small" :loading="modelLoading" @click="loadModels">刷新</el-button>
-          <span class="dk-hint">共 {{ modelList.length }} 个模型；导入后可在此直接编辑</span>
+          <span class="dk-hint">共 {{ modelList.length }} 个模型；导入后可在此直接编辑或删除</span>
         </div>
         <el-table :data="modelList" size="small" stripe v-loading="modelLoading">
           <el-table-column prop="name" label="模型名称" min-width="140" show-overflow-tooltip />
@@ -387,9 +403,10 @@ onMounted(async () => {
               <el-tag :type="row.status === 'online' ? 'success' : 'info'" size="small">{{ row.status === 'online' ? '启用' : '停用' }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="80" fixed="right">
+          <el-table-column label="操作" width="120" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" size="small" @click="openModelEdit(row)">编辑</el-button>
+              <el-button link type="danger" size="small" @click="deleteModelRow(row)">删除</el-button>
             </template>
           </el-table-column>
         </el-table>

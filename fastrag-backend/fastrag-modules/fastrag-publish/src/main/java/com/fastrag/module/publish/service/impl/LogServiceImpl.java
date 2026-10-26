@@ -54,6 +54,11 @@ public class LogServiceImpl implements LogService {
 
     @Override
     public void addUpdateLog(String kbId, String updateType, String target, String detail, String operator) {
+        addUpdateLog(kbId, updateType, target, detail, operator, null, null);
+    }
+
+    @Override
+    public void addUpdateLog(String kbId, String updateType, String target, String detail, String operator, String oldValue, String newValue) {
         try {
             KbUpdateLog updateLog = new KbUpdateLog();
             updateLog.setKbId(kbId);
@@ -61,11 +66,20 @@ public class LogServiceImpl implements LogService {
             updateLog.setTarget(target);
             updateLog.setDetail(detail);
             updateLog.setOperator(operator);
+            // TEXT 列截断保护，避免超长内容写入失败
+            updateLog.setOldValue(truncate(oldValue));
+            updateLog.setNewValue(truncate(newValue));
             updateLog.setTimestamp(LocalDateTime.now());
             updateMapper.insert(updateLog);
         } catch (Exception e) {
             log.error("Failed to add update log", e);
         }
+    }
+
+    private String truncate(String s) {
+        if (s == null) return null;
+        String suffix = "…（已截断，共 " + s.length() + " 字）";
+        return s.length() > 8000 ? s.substring(0, 8000) + suffix : s;
     }
 
     @Override

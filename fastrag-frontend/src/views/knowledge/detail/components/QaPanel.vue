@@ -382,6 +382,42 @@ async function handleDocImport(e: Event) {
   }
 }
 
+// 导入清单：导入「导出」生成的应答文档清单 xlsx，按名称从系统内其它知识库复制同名文档
+const docManifestInput = ref<HTMLInputElement>()
+const docManifestImporting = ref(false)
+
+function openManifestImport() {
+  docManifestInput.value?.click()
+}
+async function handleManifestImport(e: Event) {
+  const input = e.target as HTMLInputElement
+  const file = input.files?.[0]
+  if (!file) return
+  docManifestImporting.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res: any = await api.importFileManifest(props.kbId, fd)
+    const r = res?.data || res || {}
+    const skipped = (r.details || []).filter((d: any) => d.result === 'skipped')
+    if (r.imported > 0 && skipped.length === 0) {
+      ElMessage.success(`清单导入成功：${r.imported} 个文档已入库并触发解析`)
+    } else if (r.imported > 0) {
+      ElMessage.warning(`导入 ${r.imported} 个、跳过 ${skipped.length} 个（${skipped.slice(0, 3).map((d: any) => `${d.name}：${d.reason}`).join('；')}${skipped.length > 3 ? ' 等' : ''}）`)
+    } else if (skipped.length > 0) {
+      ElMessage.info(`没有可导入的文档（${skipped.slice(0, 3).map((d: any) => `${d.name}：${d.reason}`).join('；')}）`)
+    } else {
+      ElMessage.warning('清单中没有可识别的数据行（需含「文档名称」列）')
+    }
+    await loadDocs()
+  } catch (err: any) {
+    ElMessage.error('清单导入失败：' + (err?.message || '请确认文件为导出的 xlsx 清单'))
+  } finally {
+    docManifestImporting.value = false
+    input.value = ''
+  }
+}
+
 // 导出：把当前筛选后的文档清单导出为 Excel
 const docExporting = ref(false)
 async function handleDocExport() {
@@ -555,11 +591,17 @@ onMounted(loadDocs)
         <el-button size="small" :loading="docImporting" @click="openDocImport">
           <el-icon><UploadFilled /></el-icon>导入
         </el-button>
+        <el-tooltip content="导入「导出」生成的应答文档清单 xlsx：按文档名称从系统内其它知识库复制同名文档并触发解析" placement="top">
+          <el-button size="small" :loading="docManifestImporting" @click="openManifestImport">
+            <el-icon><Document /></el-icon>导入清单
+          </el-button>
+        </el-tooltip>
         <el-button size="small" :loading="docExporting" @click="handleDocExport">
           <el-icon><Download /></el-icon>导出
         </el-button>
         <input ref="docInput" type="file" style="display: none" @change="handleDocUpload" />
         <input ref="docImportInput" type="file" multiple style="display: none" @change="handleDocImport" />
+        <input ref="docManifestInput" type="file" accept=".xlsx,.xls" style="display: none" @change="handleManifestImport" />
       </div>
     </div>
     <el-table :data="filteredDocs" stripe size="small" v-loading="docLoading">

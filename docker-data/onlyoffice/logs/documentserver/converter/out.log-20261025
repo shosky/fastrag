@@ -1,0 +1,2 @@
+[2026-10-25T02:15:52.179] [WARN] [localhost] [docId] [userId] nodeJS - num of CPUs: 8; availableParallelism: undefined
+[2026-10-25T02:15:52.274] [WARN] [localhost] [docId] [userId] nodeJS - update cluster with 1 workers

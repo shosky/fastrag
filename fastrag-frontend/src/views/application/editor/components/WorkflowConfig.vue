@@ -26,7 +26,8 @@ async function loadAll() {
       api.getWorkflows(),
       api.getAppWorkflowConfig(props.appInfo.id).catch(() => null),
     ])
-    workflows.value = Array.isArray(list) ? list : []
+    // 兼容层 GET /api/workflows 返回 BPM 分页对象 {total,page,size,records}，而非数组
+    workflows.value = Array.isArray(list) ? list : list?.list || list?.records || []
     boundIds.value = Array.isArray(cfg?.workflowIds) ? cfg.workflowIds.map(String) : []
   } finally { loading.value = false }
 }

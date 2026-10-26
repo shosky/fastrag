@@ -18,5 +18,6 @@ public interface FileService {
     void permanentDelete(String kbId, String fileId);
     void emptyRecycleBin(String kbId);
     FileDto copy(String kbId, String fileId);
+    Map<String, Object> importManifest(String kbId, MultipartFile file);
     Map<String, Object> getProcessingStatus(String kbId, String fileId);
 }

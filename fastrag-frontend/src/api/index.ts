@@ -126,6 +126,13 @@ export async function processFile(kbId: string, fileId: string) {
   return request.post(`/kb/${kbId}/files/${fileId}/process`)
 }
 
+// 导入「应答文档清单」xlsx（导出格式）：按文档名称从系统内其它知识库复制同名文件并触发解析
+export async function importFileManifest(kbId: string, formData: FormData) {
+  return request.post(`/kb/${kbId}/files/import-manifest`, formData, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+  })
+}
+
 export async function updateFile(kbId: string, fileId: string, data: Record<string, unknown>) {
   return request.put(`/kb/${kbId}/files/${fileId}`, data)
 }

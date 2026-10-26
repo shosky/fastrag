@@ -15,6 +15,7 @@ public class KnowledgeManageServiceImpl implements KnowledgeManageService {
     private final KbKnowledgeMapper knowledgeMapper; private final KbKnowledgeTestMapper testMapper; private final KbKnowledgeDialogMapper dialogMapper;
     private final KbAttributeDefMapper attrDefMapper;
     private final KnowledgeTicketService ticketService;
+    private final com.fastrag.module.publish.service.LogService logService;
     @Override public List<KbKnowledge> list(String kbId,String keyword,String category,String attrDefId,String attrValue) {
         var w=new LambdaQueryWrapper<KbKnowledge>();
         if(kbId!=null&&!kbId.isEmpty()) w.eq(KbKnowledge::getKbId,kbId);
@@ -121,6 +122,13 @@ public class KnowledgeManageServiceImpl implements KnowledgeManageService {
         validateAndNormalizeAttributes(knowledge);
         knowledge.setId(id); knowledgeMapper.updateById(knowledge);
         var cur=knowledgeMapper.selectById(id);
+        // 记录知识更新日志（含新旧内容快照，供业务流/知识更新记录的「比较更新内容」展示差异）
+        try {
+            String op=SecurityUtil.getCurrentUser()!=null?SecurityUtil.getCurrentUser().getUsername():"system";
+            logService.addUpdateLog(cur!=null?cur.getKbId():null,"knowledge_updated",
+                cur!=null?cur.getTitle():String.valueOf(id),"编辑知识条目",op,
+                old!=null?old.getContent():null,cur!=null?cur.getContent():null);
+        } catch (Exception ignore) { }
         // 状态流转到「待审核」= 发起修改流程：自动生成知识工单（同一状态不重复生成）
         if(cur!=null&&"reviewing".equals(cur.getStatus())&&(old==null||!"reviewing".equals(old.getStatus()))) autoTicket(cur,"update");
         return cur;

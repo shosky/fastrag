@@ -31,7 +31,23 @@ async function loadData() {
   loading.value = true
   try {
     dataList.value = (await api.getListeners(selectedKbId.value)) as any || []
+    await enrichListenerStats()
   } finally { loading.value = false }
+}
+
+// 补充表格展示字段：触发次数（stats 聚合）与最后执行状态（最近一条日志）
+async function enrichListenerStats() {
+  await Promise.all((dataList.value || []).slice(0, 20).map(async (row: any) => {
+    try {
+      const stats: any = await api.getListenerStats(selectedKbId.value, row.id)
+      row.triggerCount = stats?.totalExecutions ?? 0
+    } catch { row.triggerCount = 0 }
+    try {
+      const logs: any = await api.getListenerLogs(selectedKbId.value, row.id, { page: 1, pageSize: 1 })
+      const latest = Array.isArray(logs) ? logs[0] : logs?.records?.[0] || logs?.list?.[0]
+      row.lastStatus = latest?.status || ''
+    } catch { row.lastStatus = '' }
+  }))
 }
 onMounted(async () => { await loadKbList(); loadData() })
 
@@ -47,17 +63,13 @@ function handleEdit(row: any) {
 }
 async function handleDelete(row: any) { try { await ElMessageBox.confirm(`确定要删除「${row.name}」吗？`, '提示', { type: 'warning' }); await api.deleteListener(selectedKbId.value, row.id); ElMessage.success('删除成功'); loadData() } catch {} }
 async function handleToggle(row: any) {
-  const action = row.enabled ? 'stop' : 'start'
+  // 后端 toggleListener 只认 'start'（启用），其余一律停用
+  const action = row.status === 'enabled' ? 'stop' : 'start'
   try {
     const res = await api.toggleListener(selectedKbId.value, row.id, action)
-    // 根据后端返回更新状态
-    if (res && (res as any).status) {
-      row.status = (res as any).status
-      row.enabled = (res as any).status === 'enabled'
-    } else {
-      row.enabled = !row.enabled
-    }
-    ElMessage.success(row.enabled ? '已启用' : '已停用')
+    const status = (res && (res as any).status) || (action === 'start' ? 'enabled' : 'disabled')
+    row.status = status
+    ElMessage.success(status === 'enabled' ? '已启用' : '已停用')
   } catch { ElMessage.error('操作失败') }
 }
 async function handleSave() {
@@ -155,15 +167,16 @@ function handleSaveAlert() {
 // 暂停/恢复 (#4873)
 async function handlePause(row: any) {
   try {
-    await api.toggleListener(selectedKbId.value, row.id, 'pause')
-    row.enabled = false; row.status = 'paused'
+    await api.toggleListener(selectedKbId.value, row.id, 'stop')
+    row.status = 'disabled'
     ElMessage.success('已暂停')
   } catch { ElMessage.error('操作失败') }
 }
 async function handleResume(row: any) {
+  // 后端只认 'start'；此前发 'resume' 会被当作停用
   try {
-    await api.toggleListener(selectedKbId.value, row.id, 'resume')
-    row.enabled = true; row.status = 'enabled'
+    await api.toggleListener(selectedKbId.value, row.id, 'start')
+    row.status = 'enabled'
     ElMessage.success('已恢复')
   } catch { ElMessage.error('操作失败') }
 }
@@ -239,7 +252,7 @@ function handleBatchResolve() {
       </div>
       <el-table :data="dataList" stripe>
         <el-table-column prop="name" label="监听器名称" min-width="150" />
-        <el-table-column prop="url" label="回调URL" min-width="250" show-overflow-tooltip />
+        <el-table-column prop="target" label="回调URL" min-width="250" show-overflow-tooltip />
         <el-table-column label="监听事件" min-width="220">
           <template #default="{ row }">
             <template v-for="e in (typeof row.config === 'string' ? (() => { try { return JSON.parse(row.config) } catch { return [row.config] } })() : (row.events || []))" :key="e">
@@ -247,7 +260,7 @@ function handleBatchResolve() {
             </template>
           </template>
         </el-table-column>
-        <el-table-column label="启用" width="80"><template #default="{ row }"><el-switch :model-value="row.enabled" @change="handleToggle(row)" size="small" /></template></el-table-column>
+        <el-table-column label="启用" width="80"><template #default="{ row }"><el-switch :model-value="row.status === 'enabled'" @change="handleToggle(row)" size="small" /></template></el-table-column>
         <el-table-column prop="status" label="状态" width="80">
           <template #default="{ row }"><el-tag :type="(STATUS_COLORS[row.status] || 'info') as any" size="small">{{ STATUS_LABELS[row.status] || row.status }}</el-tag></template>
         </el-table-column>
@@ -255,13 +268,13 @@ function handleBatchResolve() {
         <el-table-column prop="lastRunAt" label="最后触发" width="160" show-overflow-tooltip />
         <el-table-column label="最后执行" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.lastStatus==='success'?'success':row.lastStatus==='failed'?'danger':'info'" size="small">{{ ({success:'成功',failed:'失败',pending:'执行中'} as Record<string,string>)[row.lastStatus]||'-' }}</el-tag>
+            <el-tag :type="row.lastStatus==='success'?'success':row.lastStatus==='failed'?'danger':'info'" size="small">{{ ({success:'成功',retry:'重试',failed:'失败',pending:'执行中'} as Record<string,string>)[row.lastStatus]||'-' }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="380" fixed="right">
           <template #default="{ row }">
             <el-button link size="small" @click="handleEdit(row)">编辑</el-button>
-            <el-button v-if="row.enabled" link type="warning" size="small" @click="handlePause(row)">暂停</el-button>
+            <el-button v-if="row.status === 'enabled'" link type="warning" size="small" @click="handlePause(row)">暂停</el-button>
             <el-button v-else link type="success" size="small" @click="handleResume(row)">恢复</el-button>
             <el-button link size="small" @click="handleShowLogs(row)">日志</el-button>
             <el-button link size="small" @click="handleShowPerf(row)">性能</el-button>

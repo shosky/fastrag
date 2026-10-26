@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as bpm from '@/api/bpm'
 import * as api from '@/api'
+import WfMigrationDialog from '@/views/application/editor/components/WfMigrationDialog.vue'
 import {
   BPM_NODE_TYPE_LABELS, BPM_NODE_TYPE_COLORS, BPM_NODE_TYPE_ICONS,
   VERSION_STATUS_LABELS, VERSION_STATUS_TAG_TYPES,
@@ -35,6 +36,8 @@ const EDGE_KIND_LABEL_MAP: Record<string, string> = {
 // 路由参数
 // ============================================================================
 const flowDefId = computed(() => String(route.params.flowDefId || ''))
+// 配置迁移弹窗（共用组件，源=当前画布流程）
+const showMigration = ref(false)
 const initialVersionId = computed(() => String(route.params.versionId || ''))
 
 // ============================================================================
@@ -275,6 +278,41 @@ function onNodeClick(n: NodeVO) {
 // ============================================================================
 const pendingConnectSource = ref<string | null>(null)
 
+// ===== 拖拽连线：从节点右侧绿色出口端口按下 → 拖动（虚线跟随） → 在目标节点上松开 =====
+const portDragging = ref(false)
+const portDragPos = ref({ x: 0, y: 0 })
+
+function onPortMouseDown(e: MouseEvent, n: NodeVO) {
+  e.preventDefault()
+  pendingConnectSource.value = n.nodeKey
+  portDragging.value = true
+  portDragPos.value = clientToSvg(e)
+  document.addEventListener('mousemove', onPortDragMove)
+  document.addEventListener('mouseup', onPortDragUp)
+}
+function onPortDragMove(e: MouseEvent) {
+  if (!portDragging.value) return
+  portDragPos.value = clientToSvg(e)
+}
+function onPortDragUp(e: MouseEvent) {
+  document.removeEventListener('mousemove', onPortDragMove)
+  document.removeEventListener('mouseup', onPortDragUp)
+  if (!portDragging.value) return
+  portDragging.value = false
+  // 松开位置落在哪个节点上（SVG 节点组带 data-key）
+  const el = document.elementFromPoint(e.clientX, e.clientY) as Element | null
+  const key = el?.closest('g.canvas-node')?.getAttribute('data-key')
+  const target = key ? nodes.value.find(n => n.nodeKey === key) : null
+  if (target) completeConnect(target)
+  else pendingConnectSource.value = null
+}
+function portLinePath() {
+  const src = nodes.value.find(n => n.nodeKey === pendingConnectSource.value)
+  if (!src) return ''
+  const x1 = (src.positionX || 0) + NODE_W, y1 = (src.positionY || 0) + NODE_H / 2
+  return `M ${x1} ${y1} L ${portDragPos.value.x} ${portDragPos.value.y}`
+}
+
 function startConnect(n: NodeVO) {
   if (pendingConnectSource.value === n.nodeKey) {
     pendingConnectSource.value = null
@@ -448,7 +486,11 @@ async function openNodeLogs(n?: any) {
   nodeLogVisible.value = true
   nodeLogLoading.value = true
   try {
-    nodeLogs.value = ((await api.getWorkflowNodeLogs(flowDefId.value, target.nodeKey)) as any) || []
+    const raw: any = await api.getWorkflowNodeLogs(flowDefId.value, target.nodeKey)
+    // 兼容两种形态：新接口返回 {level,message,createdAt} 对象；旧接口返回 "[INFO] xxx" 字符串数组
+    nodeLogs.value = (Array.isArray(raw) ? raw : []).map((x: any) => typeof x === 'string'
+      ? { level: (x.match(/^\[(\w+)\]/)?.[1] || 'INFO'), message: x.replace(/^\[\w+\]\s*/, ''), createdAt: '' }
+      : x)
   } catch {
     nodeLogs.value = []
   } finally {
@@ -617,10 +659,23 @@ async function createDraft() {
 // ============================================================================
 // 生命周期
 // ============================================================================
+// ===== 滚轮缩放（0.4~2.0，以画布左上角为原点） =====
+const zoomLevel = ref(1)
+function handleWheel(e: WheelEvent) {
+  e.preventDefault()
+  zoomBy(e.deltaY > 0 ? -0.1 : 0.1)
+}
+function zoomBy(delta: number) {
+  zoomLevel.value = Math.min(2, Math.max(0.4, Math.round((zoomLevel.value + delta) * 10) / 10))
+}
+
 const viewBox = computed(() => {
   const maxX = nodes.value.length ? Math.max(...nodes.value.map(n => (n.positionX || 0) + 200)) + 200 : 1600
   const maxY = nodes.value.length ? Math.max(...nodes.value.map(n => (n.positionY || 0) + 200)) + 200 : 900
-  return `0 0 ${Math.max(1600, maxX)} ${Math.max(900, maxY)}`
+  // 缩放：viewBox 宽高除以缩放比（原点固定左上），clientToSvg 基于 screenCTM 自动适配
+  const w = Math.max(1600, maxX) / zoomLevel.value
+  const h = Math.max(900, maxY) / zoomLevel.value
+  return `0 0 ${w} ${h}`
 })
 
 watch(() => initialVersionId.value, (v) => { if (v) loadCanvas(v) }, { immediate: false })
@@ -634,6 +689,8 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   document.removeEventListener('mousemove', onDocMouseMove)
   document.removeEventListener('mouseup', onDocMouseUp)
+  document.removeEventListener('mousemove', onPortDragMove)
+  document.removeEventListener('mouseup', onPortDragUp)
   window.removeEventListener('beforeunload', beforeUnloadHandler)
 })
 
@@ -817,6 +874,7 @@ function hasExt(key: string) {
         <el-button size="small" @click="runValidate">✓ 校验</el-button>
         <el-button size="small" type="primary" :loading="saving" @click="saveCanvas" :disabled="currentVersionStatus !== 'draft'">💾 保存画布</el-button>
         <el-button size="small" type="success" @click="showTrigger = true">▶ 触发测试</el-button>
+        <el-button size="small" type="info" plain @click="showMigration = true">🔁 配置迁移</el-button>
       </div>
     </div>
 
@@ -840,7 +898,7 @@ function hasExt(key: string) {
       </div>
 
       <!-- 中央画布 -->
-      <div class="canvas-container">
+      <div class="canvas-container" @wheel.prevent="handleWheel">
         <svg ref="svgRef" class="canvas-svg" :viewBox="viewBox" preserveAspectRatio="xMinYMin meet" @click="onCanvasClick">
           <!-- 边 -->
           <g v-for="(edge, idx) in edges" :key="edge.id || `e_${idx}`" class="canvas-edge" :class="{ 'is-selected': selectedEdgeId === edge.id }" @click.stop="onEdgeClick(edge)">
@@ -850,9 +908,11 @@ function hasExt(key: string) {
               {{ edge.label }}
             </text>
           </g>
+          <!-- 拖拽连线的橡皮筋 -->
+          <path v-if="portDragging" :d="portLinePath()" fill="none" stroke="#e6a23c" stroke-width="2" stroke-dasharray="6,4" class="connect-line" />
 
           <!-- 节点 -->
-          <g v-for="n in nodes" :key="n.nodeKey" class="canvas-node" :class="{
+          <g v-for="n in nodes" :key="n.nodeKey" class="canvas-node" :data-key="n.nodeKey" :class="{
             'is-selected': selectedNodeKey === n.nodeKey,
             'is-connecting': pendingConnectSource === n.nodeKey,
             'is-connect-target': pendingConnectSource && pendingConnectSource !== n.nodeKey,
@@ -864,7 +924,7 @@ function hasExt(key: string) {
             <text :x="(n.positionX || 0) + 14" :y="(n.positionY || 0) + 42" font-size="11" fill="#909399">{{ getNodeLabel(n.nodeType) }}</text>
             <text :x="(n.positionX || 0) + 14" :y="(n.positionY || 0) + 56" font-size="10" fill="#bbb">{{ n.nodeKey }}</text>
 
-            <circle class="node-port port-out" :cx="(n.positionX || 0) + NODE_W" :cy="(n.positionY || 0) + NODE_H / 2" r="5" fill="#67C23A" @click.stop="completeConnect(n)" />
+            <circle class="node-port port-out" :cx="(n.positionX || 0) + NODE_W" :cy="(n.positionY || 0) + NODE_H / 2" r="6" fill="#67C23A" title="按住拖到目标节点连线" @mousedown.stop.prevent="onPortMouseDown($event, n)" />
             <circle class="node-port port-in" :cx="(n.positionX || 0)" :cy="(n.positionY || 0) + NODE_H / 2" r="5" fill="#909399" />
 
             <g class="node-actions" v-if="selectedNodeKey === n.nodeKey" :transform="`translate(${(n.positionX || 0) + NODE_W - 90}, ${(n.positionY || 0) - 16})`">
@@ -874,6 +934,12 @@ function hasExt(key: string) {
             </g>
           </g>
         </svg>
+        <div class="canvas-zoom" @click.stop>
+          <el-button size="small" @click.stop="zoomBy(-0.1)">−</el-button>
+          <span class="zoom-val">{{ Math.round(zoomLevel * 100) }}%</span>
+          <el-button size="small" @click.stop="zoomBy(0.1)">＋</el-button>
+          <el-button size="small" text @click.stop="zoomLevel = 1">重置</el-button>
+        </div>
       </div>
 
       <!-- 右侧属性面板 -->
@@ -1127,6 +1193,9 @@ function hasExt(key: string) {
       <el-empty v-if="!nodeLogs.length && !nodeLogLoading" description="该节点暂无日志（执行流程后会写入）" :image-size="60" />
       <template #footer><el-button @click="nodeLogVisible = false">关闭</el-button></template>
     </el-dialog>
+
+    <!-- 配置迁移弹窗（共用组件） -->
+    <WfMigrationDialog v-model="showMigration" :current-wf-id="flowDefId" :current-wf-name="flowDef?.name" />
   </div>
 </template>
 
@@ -1173,8 +1242,14 @@ function hasExt(key: string) {
 
 .canvas-container {
   flex: 1; background: #fafafa; border: 1px solid #ebeef5; border-radius: 8px;
-  overflow: auto; min-width: 0;
+  overflow: auto; min-width: 0; position: relative;
 }
+.canvas-zoom {
+  position: absolute; right: 12px; bottom: 12px; z-index: 10; display: flex; align-items: center; gap: 6px;
+  background: #fff; border: 1px solid #ebeef5; border-radius: 8px; padding: 4px 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.08);
+  .zoom-val { font-size: 12px; color: #606266; min-width: 42px; text-align: center; }
+}
+.connect-line { pointer-events: none; }
 .canvas-svg {
   display: block; width: 100%; min-height: 600px;
   background-image:
@@ -1188,7 +1263,8 @@ function hasExt(key: string) {
 .canvas-node.is-connect-target { cursor: pointer; }
 .canvas-edge { cursor: pointer; }
 .canvas-edge:hover path { stroke-width: 3; }
-.node-port { cursor: pointer; }
+.node-port { cursor: crosshair; }
+.node-port.port-out:hover { filter: drop-shadow(0 0 4px rgba(103,194,58,0.8)); }
 
 .props-panel {
   width: 320px; flex-shrink: 0; background: #fff; border: 1px solid #ebeef5;

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted } from 'vue'
+import { ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
@@ -179,7 +179,21 @@ async function loadTasks() {
     const res: any = await api.getQaExtractTasks(kbId)
     extractTasks.value = res || []
   } catch { extractTasks.value = [] }
+  syncExtractPolling()
 }
+
+// 存在排队/运行中的任务时每 5s 刷新（与后端 QaExtractWorker 认领周期一致），
+// 使 pending→running 的状态流转与进度实时可见；无活动任务即停表
+const STATUS_TEXT: Record<string, string> = {
+  pending: '排队中', running: '运行中', completed: '已完成', failed: '失败', stopped: '已停止',
+}
+let extractTimer: ReturnType<typeof setInterval> | undefined
+function syncExtractPolling() {
+  const active = extractTasks.value.some((t: any) => t.status === 'pending' || t.status === 'running')
+  if (active && extractTimer == null) extractTimer = setInterval(loadTasks, 5000)
+  else if (!active && extractTimer != null) { clearInterval(extractTimer); extractTimer = undefined }
+}
+onUnmounted(() => { if (extractTimer != null) clearInterval(extractTimer) })
 
 // 全部入库：将该知识库下全部待确认(draft)问答对批量置为已入库
 const importingAll = ref(false)
@@ -339,13 +353,16 @@ onMounted(() => {
         </el-table-column>
         <el-table-column prop="status" label="状态" width="90">
           <template #default="{ row }">
-            <el-tag :type="row.status === 'completed' ? 'success' : (row.status === 'running' ? 'warning' : (row.status === 'stopped' ? 'info' : 'danger'))" size="small">{{ row.status }}</el-tag>
+            <el-tooltip v-if="row.status === 'pending'" content="已排队，等待抽取执行器认领（约 5 秒内开始运行）" placement="top">
+              <el-tag type="info" size="small">{{ STATUS_TEXT[row.status] || row.status }}</el-tag>
+            </el-tooltip>
+            <el-tag v-else :type="row.status === 'completed' ? 'success' : (row.status === 'running' ? 'warning' : (row.status === 'stopped' ? 'info' : 'danger'))" size="small">{{ STATUS_TEXT[row.status] || row.status }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="180">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="handleEditTask(row)">编辑</el-button>
-            <el-button v-if="row.status === 'running'" link type="warning" size="small" @click="handleStopTask(row)">停止</el-button>
+            <el-button v-if="row.status === 'running' || row.status === 'pending'" link type="warning" size="small" @click="handleStopTask(row)">{{ row.status === 'pending' ? '取消' : '停止' }}</el-button>
             <el-button link type="danger" size="small" @click="handleDeleteTask(row)">删除</el-button>
           </template>
         </el-table-column>
