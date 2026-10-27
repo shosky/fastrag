@@ -2,8 +2,9 @@
 import { ref, computed, onMounted } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { ChatDotRound, Search, Plus, CopyDocument, Delete, Cpu, User, Setting, MagicStick, Collection, Star, VideoPlay, DataLine, Tools } from '@element-plus/icons-vue'
+import { ChatDotRound, Search, Plus, CopyDocument, Delete, Cpu, User, Setting, MagicStick, Collection, Star, VideoPlay, DataLine, Tools, EditPen } from '@element-plus/icons-vue'
 import * as api from '@/api'
+import { formatDate } from '@/utils/format'
 
 const router = useRouter()
 const activeTab = ref('my')
@@ -37,6 +38,38 @@ function getAppIcon(icon: string) {
     tools: Tools,
   }
   return map[icon] || ChatDotRound
+}
+
+/** 应用类型 → 默认图标/底色/标签色（icon 字段未配置时按类型回退，参考工作台页配色） */
+const typeStyle: Record<string, { icon: any; bg: string; tag: 'primary' | 'success' | 'warning' }> = {
+  ChatBot: { icon: ChatDotRound, bg: '#409eff', tag: 'primary' },
+  Editor: { icon: EditPen, bg: '#67c23a', tag: 'success' },
+  LiteAgent: { icon: MagicStick, bg: '#e6a23c', tag: 'warning' },
+}
+
+function appStyle(app: any) {
+  return typeStyle[app.type] || { icon: ChatDotRound, bg: '#909399', tag: 'info' as const }
+}
+
+/** 图标底色：icon 字段存的是色值则用之，否则按类型回退（新建应用 icon 为空，避免透明底白图标不可见） */
+function iconBg(app: any) {
+  return (typeof app.icon === 'string' && app.icon.startsWith('#')) ? app.icon : appStyle(app).bg
+}
+
+/** 图标组件：icon 字段配置了图标名则用之，否则按应用类型回退 */
+function appIcon(app: any) {
+  return app.icon ? getAppIcon(app.icon) : appStyle(app).icon
+}
+
+/** 应用状态文案：后端目前只有 draft，预留 published/archived */
+function statusText(status: string) {
+  const map: Record<string, string> = { draft: '草稿', published: '已发布', archived: '已归档' }
+  return map[status] || status || '草稿'
+}
+
+/** 创建者展示：system 归一为"系统"，其余为用户 ID */
+function formatOwner(owner: string) {
+  return owner === 'system' ? '系统' : (owner || '—')
 }
 
 async function loadApps() {
@@ -130,28 +163,43 @@ function goToConversation(id: string) {
           </el-button>
         </div>
         <div class="app-grid">
-          <div v-for="app in filteredApps" :key="app.id" class="app-card">
+          <div v-for="app in filteredApps" :key="app.id" class="app-card" @click="goToEditor(app.id)">
             <div class="card-actions">
-              <el-button link size="small" type="primary" @click.stop="goToConversation(app.id)">
-                <el-icon><VideoPlay /></el-icon>
-              </el-button>
-              <el-button link size="small" @click.stop="handleCopyId(app.id)">
-                <el-icon><CopyDocument /></el-icon>
-              </el-button>
-              <el-button link type="danger" size="small" @click.stop="handleDeleteApp(app.id)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
+              <el-tooltip content="运行" placement="top">
+                <el-button link size="small" type="primary" @click.stop="goToConversation(app.id)">
+                  <el-icon><VideoPlay /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="复制 ID" placement="top">
+                <el-button link size="small" @click.stop="handleCopyId(app.id)">
+                  <el-icon><CopyDocument /></el-icon>
+                </el-button>
+              </el-tooltip>
+              <el-tooltip content="删除" placement="top">
+                <el-button link type="danger" size="small" @click.stop="handleDeleteApp(app.id)">
+                  <el-icon><Delete /></el-icon>
+                </el-button>
+              </el-tooltip>
             </div>
-            <div class="app-card-header" @click="goToEditor(app.id)">
-              <div class="app-icon" :style="{ background: app.icon }">
-                <el-icon :size="24" color="#fff" :component="getAppIcon(app.icon)"></el-icon>
+            <div class="app-card-header">
+              <div class="app-icon" :style="{ background: iconBg(app) }">
+                <el-icon :size="24" color="#fff" :component="appIcon(app)"></el-icon>
               </div>
-              <div class="app-type">{{ app.type }}</div>
+              <el-tag size="small" :type="appStyle(app).tag">{{ app.type }}</el-tag>
             </div>
-            <h4 @click="goToEditor(app.id)">{{ app.name }}</h4>
-            <p>{{ app.description }}</p>
-            <div class="app-tags">
-              <el-tag v-for="tag in app.tags" :key="tag" size="small" type="info">{{ tag }}</el-tag>
+            <div class="app-card-body">
+              <h4>{{ app.name }}</h4>
+              <p class="desc">{{ app.description || '暂无简介' }}</p>
+              <div class="meta">
+                <span>状态：{{ statusText(app.status) }}</span>
+              </div>
+              <div class="app-tags">
+                <el-tag v-for="tag in app.tags" :key="tag" size="small" type="info">{{ tag }}</el-tag>
+              </div>
+              <div class="footer">
+                <span>{{ formatOwner(app.owner) }}</span>
+                <span>{{ app.updatedAt ? formatDate(app.updatedAt, 'YYYY-MM-DD') : '' }}</span>
+              </div>
             </div>
           </div>
         </div>
@@ -207,6 +255,8 @@ function goToConversation(id: string) {
   transition: all 0.2s;
   border: 1px solid $border-lighter;
   position: relative;
+  display: flex;
+  flex-direction: column;
 
   &:hover {
     box-shadow: $shadow-base;
@@ -214,7 +264,36 @@ function goToConversation(id: string) {
   }
 
   h4 { margin: $spacing-sm 0 $spacing-xs; font-size: 15px; }
-  p { font-size: 12px; color: $text-secondary; margin-bottom: $spacing-sm; }
+
+  .desc {
+    font-size: 12px;
+    color: $text-secondary;
+    margin-bottom: $spacing-sm;
+    display: -webkit-box;
+    -webkit-box-orient: vertical;
+    -webkit-line-clamp: 2;
+    overflow: hidden;
+  }
+
+  .meta {
+    font-size: 12px;
+    color: $text-secondary;
+    margin-bottom: $spacing-sm;
+  }
+
+  .footer {
+    display: flex;
+    justify-content: space-between;
+    font-size: 12px;
+    color: $text-secondary;
+    margin-top: auto;
+  }
+}
+
+.app-card .app-card-body {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
 }
 
 .card-actions {
@@ -245,15 +324,13 @@ function goToConversation(id: string) {
   display: flex;
   align-items: center;
   justify-content: center;
-}
-
-.app-type {
-  font-size: 12px;
-  color: $text-secondary;
+  flex-shrink: 0;
 }
 
 .app-tags {
   display: flex;
+  flex-wrap: wrap;
   gap: $spacing-xs;
+  margin-bottom: $spacing-sm;
 }
 </style>
