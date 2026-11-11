@@ -42,14 +42,15 @@ public class AppChatController {
     private final AppService appService;
 
     /**
-     * SSE 流式对话
+     * SSE 流式对话（widgetAction 为 Widget 回传负载，可空，API-011）
      */
     @PreAuthorize("@perm.has('app:use')")
     @PostMapping(value = "/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter chatStream(@PathVariable String appId, @RequestBody AppChatRequest request) {
         LoginUser user = SecurityUtil.getCurrentUser();
         return appService.runStream(appId, request.getQuery(),
-                request.getSessionId(), user.getUserId(), user.getUsername());
+                request.getSessionId(), user.getUserId(), user.getUsername(),
+                request.getWidgetAction());
     }
 
     /**

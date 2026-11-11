@@ -1,20 +1,36 @@
 <template>
   <div class="tool-call-list" v-if="toolCalls && toolCalls.length > 0">
-    <el-collapse v-model="outerKey" class="tool-call-collapse">
+    <!-- Widget 卡片（render_widget，ADR-0010 快照通道）：消息流工具位直出，
+         不进折叠面板（PAGE-205 布局）；calling 态轻量占位（STATE-207）；
+         同 widgetKey 后到快照替换旧卡（widget-fade 过渡，过程反馈） -->
+    <template v-if="widgetEntries.length">
+      <div v-for="entry in widgetEntries" :key="entry.id" class="widget-slot">
+        <div v-if="entry.kind === 'calling'" class="widget-calling">正在生成卡片…</div>
+        <Transition v-else name="widget-fade" mode="out-in">
+          <WidgetCardRenderer
+            :key="entry.renderKey"
+            :snapshot="entry.snapshot"
+            :interactive="widgetInteractive"
+            @action="(a) => emit('widget-action', a)"
+          />
+        </Transition>
+      </div>
+    </template>
+    <el-collapse v-if="normalCalls.length > 0" v-model="outerKey" class="tool-call-collapse">
       <el-collapse-item name="tools">
         <template #title>
           <div class="tool-collapse-header">
             <el-icon><Position /></el-icon>
             <span>工具调用</span>
             <el-tag size="small" type="info" effect="plain" class="tool-count-tag">
-              {{ toolCalls.length }}
+              {{ normalCalls.length }}
             </el-tag>
             <span v-if="isAllDone" class="tools-done-hint">已完成</span>
             <span v-else class="tools-running-hint">执行中...</span>
           </div>
         </template>
         <div
-          v-for="tc in toolCalls"
+          v-for="tc in normalCalls"
           :key="tc.id"
           class="tool-call-card"
           :class="cardState(tc)"
@@ -93,13 +109,17 @@ import {
   Collection,
   Connection,
   MagicStick,
+  Postcard,
   SetUp,
 } from '@element-plus/icons-vue'
 import DatabaseQueryTable from '@/views/conversation/components/tool-results/DatabaseQueryTable.vue'
 import KnowledgeChunksList from '@/views/conversation/components/tool-results/KnowledgeChunksList.vue'
+import WidgetCardRenderer from '@/views/conversation/components/widget/WidgetCardRenderer.vue'
 import { resolveToolDisplayType, summarizeToolCall, mcpStructuredRows } from '@/utils/toolDisplay'
+import { toWidgetSnapshot } from '@/utils/widget/snapshot'
 import { renderMarkdown } from '@/utils/markdown'
 import type { ToolCallItem } from '@/types/conversation'
+import type { WidgetActionPayload, WidgetSnapshot } from '@/types/widget'
 
 // ===========================================================================
 // 工具调用卡片列表（共享件，runtime.vue / AppChat.vue / MessageBubble 共用）
@@ -115,14 +135,28 @@ import type { ToolCallItem } from '@/types/conversation'
 // - mcp：「MCP 工具」tag；output 可 JSON.parse 且为对象/数组 → 键值/列表化，否则 pre
 //   （MCP 形状取决于远端，不强解析）
 // - skill_md：「技能」tag；后端技能读取返回 Markdown，结果经 renderMarkdown 单源渲染
+//
+// widget 链接线（ADR-0010 快照通道，PAGE-205）：
+// - render_widget 不进折叠面板：快照到达直出 WidgetCardRenderer（三消费方唯一入口）；
+//   calling 态轻量占位（STATE-207，不显示普通 chip）；success=false 无 data 不渲染
+//   （Error 文本回灌智能体自纠）；快照缺失/坏数据整卡占位（STATE-208 fail-soft）
+// - 交互窗口与回传经 props/emit 透传：widgetInteractive 默认 false（既有调用方零影响），
+//   widget-action 由消息流层组装回传（buildWidgetAction 已在渲染器内完成）
 // ===========================================================================
 
 const props = withDefaults(defineProps<{
   toolCalls: ToolCallItem[]
   autoCollapse?: boolean
+  /** Widget 卡片交互窗口（STATE-209/210 消息序派生由调用方计算，缺省非交互） */
+  widgetInteractive?: boolean
 }>(), {
-  autoCollapse: false
+  autoCollapse: false,
+  widgetInteractive: false,
 })
+
+const emit = defineEmits<{
+  (e: 'widget-action', action: WidgetActionPayload): void
+}>()
 
 const outerKey = ref<string[]>(['tools'])
 const expandedIds = ref(new Set<string>())
@@ -131,6 +165,48 @@ const expandedIds = ref(new Set<string>())
 const isAllDone = computed(() =>
   props.toolCalls.every(tc => tc.result !== undefined)
 )
+
+// ── Widget 卡片面（PAGE-205）：非 widget 工具进折叠面板，render_widget 直出卡片 ──
+
+/** widget 卡片槽（calling 占位或按 widgetKey 聚合后的最新快照） */
+interface WidgetSlotEntry {
+  id: string
+  kind: 'calling' | 'card'
+  snapshot?: WidgetSnapshot
+  renderKey?: string
+}
+
+/** 快照内容签名（同 widgetKey 内容变化才触发 widget-fade 替换动画） */
+function snapshotHash(snap: WidgetSnapshot): string {
+  const raw = snap.template + '|' + JSON.stringify(snap.data)
+  let h = 5381
+  for (let i = 0; i < raw.length; i++) h = ((h << 5) + h + raw.charCodeAt(i)) | 0
+  return (h >>> 0).toString(36)
+}
+
+const widgetEntries = computed<WidgetSlotEntry[]>(() => {
+  const calling: WidgetSlotEntry[] = []
+  const latestByKey = new Map<string, WidgetSlotEntry>()
+  for (const tc of props.toolCalls) {
+    if (displayType(tc) !== 'widget') continue
+    if (!tc.result) {
+      calling.push({ id: `calling-${tc.id}`, kind: 'calling' })
+      continue
+    }
+    const snap = toWidgetSnapshot(tc.result)
+    if (!snap) continue // success=false / 五要素缺失：不渲染（STATE-207 失败路径不产卡）
+    latestByKey.set(snap.widgetKey, {
+      id: `card-${snap.widgetKey}`,
+      kind: 'card',
+      snapshot: snap,
+      renderKey: `${snap.widgetKey}#${snapshotHash(snap)}`,
+    })
+  }
+  return [...calling, ...latestByKey.values()]
+})
+
+/** 非 widget 工具（widget 卡片在折叠面板之外直出） */
+const normalCalls = computed(() => props.toolCalls.filter(tc => displayType(tc) !== 'widget'))
 
 /** 自动折叠：当 autoCollapse 为 true 时收起外层面板 */
 watch(() => props.autoCollapse, (val) => {
@@ -198,8 +274,9 @@ function mcpRows(output: string) {
 /** 数据库工具族名匹配：database 前缀 / {dbId}_query_database|list_tables|describe_table 后缀 */
 const DB_TOOL_RE = /_(query_database|list_tables|describe_table)$/
 
-/** 按工具名取图标：database→Coin / query_kb→Collection / 含 mcp→Connection / 含 skill→MagicStick / 其他→SetUp */
+/** 按工具名取图标：render_widget→Postcard / database→Coin / query_kb→Collection / 含 mcp→Connection / 含 skill→MagicStick / 其他→SetUp */
 function toolIcon(name: string) {
+  if (name === 'render_widget') return Postcard
   if (typeof name === 'string' && (name.startsWith('database') || DB_TOOL_RE.test(name))) return Coin
   if (typeof name === 'string' && name.startsWith('query_kb')) return Collection
   if (typeof name === 'string' && name.includes('mcp')) return Connection
@@ -343,6 +420,32 @@ function toolIcon(name: string) {
 
 /* ── 三批兜底形态：MCP / 技能 ── */
 .tool-kind-tag { flex-shrink: 0; }
+
+/* ── Widget 卡片面（PAGE-205）── */
+.widget-slot { margin: 8px 0; }
+
+/* STATE-207 调用中轻量占位（该工具不显示普通 chip） */
+.widget-calling {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: #909399;
+  background: #f5f7fa;
+  border: 1px dashed #dcdfe6;
+  border-radius: 4px;
+  padding: 4px 10px;
+}
+
+/* 同 widgetKey 快照替换过渡（MOD ## 视觉：opacity 150ms ease） */
+.widget-fade-enter-active,
+.widget-fade-leave-active {
+  transition: opacity 0.15s ease;
+}
+.widget-fade-enter-from,
+.widget-fade-leave-to {
+  opacity: 0;
+}
 
 /* 技能输出：Markdown 渲染容器（排版由 .markdown-body 单源提供） */
 .skill-md {

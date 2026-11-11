@@ -44,12 +44,21 @@ class DialogPresetResolverTest {
     @Mock private AppSkillBindingMapper skillBindingMapper;
     @Mock private AppMcpBindingMapper mcpBindingMapper;
     @Mock private AppDbBindingMapper dbBindingMapper;
+    @Mock private com.fastrag.module.application.widget.mapper.AppWidgetBindingMapper widgetBindingMapper;
     @Mock private ModelRecordMapper modelRecordMapper;
     @Mock private KbAccessChecker kbAccessChecker;
     @Mock private SessionRequestStateStore requestStateStore;
 
     @InjectMocks
     private DialogPresetResolver resolver;
+
+    @org.junit.jupiter.api.BeforeEach
+    void stubWidgetBindings() {
+        // widget 特性：绑定查询空集缺省（本测试不触达 widget 路径）
+        org.mockito.Mockito.lenient()
+                .when(widgetBindingMapper.selectList(org.mockito.ArgumentMatchers.any()))
+                .thenReturn(java.util.List.of());
+    }
 
     private final LoginUser user = LoginUser.builder().userId("u1").username("u1").orgId("org1").build();
 

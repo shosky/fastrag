@@ -1619,3 +1619,29 @@ CREATE TABLE IF NOT EXISTS sandbox_config (
     updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     INDEX idx_user_id (user_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Widget 资产与第六类绑定（widget 特性，2026-10-31；与 SchemaInitializer 双处同步）
+CREATE TABLE IF NOT EXISTS widget (
+    id VARCHAR(32) PRIMARY KEY,
+    name VARCHAR(128) NOT NULL,
+    description VARCHAR(512),
+    icon VARCHAR(255),
+    template TEXT NOT NULL COMMENT '组件树 JSON（{type,props,children[]}，{{var}} 插值）',
+    schema_json TEXT NOT NULL COMMENT '变量声明 JSON（JSON Schema 子集）',
+    default_json TEXT COMMENT '占位数据 JSON',
+    is_builtin TINYINT DEFAULT 0 COMMENT '1=官方模板行（只读，仅复制）',
+    creator VARCHAR(32) NOT NULL COMMENT '属主 userId；system=官方播种',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    updated_at DATETIME DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_widget_creator (creator)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS app_widget_binding (
+    id VARCHAR(32) PRIMARY KEY,
+    app_id VARCHAR(32) NOT NULL,
+    widget_id VARCHAR(32) NOT NULL,
+    enabled TINYINT DEFAULT 1 COMMENT '0=禁用：不注入清单、不渲染卡片',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uk_app_widget (app_id, widget_id),
+    INDEX idx_widget_app (app_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

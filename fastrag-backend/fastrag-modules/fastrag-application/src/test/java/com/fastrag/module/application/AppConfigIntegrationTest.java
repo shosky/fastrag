@@ -61,7 +61,7 @@ class AppConfigIntegrationTest {
                 configMapper, dbMapper, pubMapper,
                 testMapper, optMapper, autoKbMapper,
                 convMapper, convMsgMapper,
-                skillBindMapper, toolBindMapper, mcpBindMapper,
+                skillBindMapper, null, null, toolBindMapper, mcpBindMapper,
                 knowledgeMapper, toolResMapper, skillResMapper, mcpResMapper, dbResMapper,
                 objectMapper
         );

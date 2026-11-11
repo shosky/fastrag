@@ -18,4 +18,7 @@ public class AppChatRequest {
 
     /** 会话ID（可选，不传则创建新会话） */
     private String sessionId;
+
+    /** Widget 回传负载（可选，API-011）：存在时本消息为卡片操作推进 */
+    private java.util.Map<String, Object> widgetAction;
 }

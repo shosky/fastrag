@@ -8,6 +8,8 @@
 //     data = { display_type:'database_query', columns, rows, row_count, elapsed_ms }
 // - 知识库检索（工具名 query_kb）：
 //     data = { display_type:'knowledge_chunks', kb_id, query, chunks:[{content,score,source,...}] }
+// - Widget 卡片（工具名 render_widget，widget 链 ADR-0010）：
+//     data = WidgetSnapshot 五要素（快照自包含），WidgetCardRenderer 消费
 // 三批兜底两类（无 data，按工具名识别）：
 // - MCP 工具（工具名含 mcp）：output 若可 JSON.parse 且为数组/对象 → 键值/列表化
 //   （MCP 形状取决于远端，不强解析，解析失败维持原始输出 pre）
@@ -16,7 +18,7 @@
 // 其余工具 → generic 回退。
 // ===========================================================================
 
-export type ToolDisplayType = 'database_query' | 'knowledge_chunks' | 'mcp' | 'skill_md' | 'generic'
+export type ToolDisplayType = 'database_query' | 'knowledge_chunks' | 'mcp' | 'skill_md' | 'widget' | 'generic'
 
 /** 工具结果形状（ToolCallItem.result / ToolResultEvent 的公共投影，只读消费） */
 export interface ToolDisplayResult {
@@ -43,6 +45,8 @@ export function isSkillToolName(toolName: string): boolean {
 
 /**
  * 渲染路由：优先级（对齐 WeKnora resolveToolDisplayType）——
+ * 0. 工具名 `render_widget` 全等命中（Widget 快照通道，ADR-0010：按工具名路由，
+ *    与 data.display_type 显式标记双保险并列最高优先）
  * 1. result.data.display_type（后端显式标记，最可信；仅认已落地两类，未知值降级继续判定）
  * 2. 工具名后缀 `_query_database`（数据库查询族，旧记录无 data 时仍可路由）
  * 3. 工具名 `query_kb`（知识库检索）
@@ -54,6 +58,7 @@ export function resolveToolDisplayType(
   toolName: string,
   result?: ToolDisplayResult | null
 ): ToolDisplayType {
+  if (toolName === 'render_widget') return 'widget'
   const marked = result?.data?.display_type
   if (marked === 'database_query' || marked === 'knowledge_chunks') return marked
   if (typeof toolName === 'string' && toolName.endsWith('_query_database')) return 'database_query'
@@ -90,6 +95,8 @@ export function summarizeToolCall(toolName: string, result?: ToolDisplayResult |
       const chunks = result.data?.chunks
       return Array.isArray(chunks) ? `命中 ${chunks.length} 条分片` : '执行完成'
     }
+    case 'widget':
+      return '已生成卡片'
     default:
       // mcp / skill_md / generic 无结构化 data，摘要统一「执行完成」
       return '执行完成'

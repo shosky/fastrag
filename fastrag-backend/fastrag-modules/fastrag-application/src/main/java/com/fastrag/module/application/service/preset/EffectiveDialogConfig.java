@@ -69,5 +69,8 @@ public class EffectiveDialogConfig {
 
         /** MCP 工具级勾选（服务 id → 工具名白名单）；缺服务键 = 该服务全量注册（存量 NULL 语义） */
         private Map<String, List<String>> mcpToolSelection;
+
+        /** 第六类绑定（widget）：启用绑定的资产 ID；空/缺省 = 无 Widget（清单不注入、工具不注册） */
+        private List<String> widgets;
     }
 }

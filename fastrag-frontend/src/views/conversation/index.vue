@@ -14,6 +14,7 @@ import ConversationChat from './components/ConversationChat.vue'
 import ChatComposer from './components/ChatComposer.vue'
 import type { ConversationSummary, ConversationChatMessage, ToolCallItem, PresetApp } from '@/types/conversation'
 import type { SourceItem } from '@/composables/useConversationStream'
+import type { WidgetActionPayload } from '@/types/widget'
 
 // ===========================================================================
 // 会话中心（/conversation）——页面骨架三栏 + 页面态编排
@@ -73,6 +74,18 @@ const panelOpen = ref(true)
 
 // ── 来源抽屉（引用角标点击打开；受控开关经 ConversationChat 透传至 SourcesBlock）──
 const sourcesDrawerVisible = ref(false)
+
+// ── Widget 交互窗口（STATE-209/210）：消息数组派生——卡片所在消息 = 最新一条助手消息 ──
+const latestAssistantIdx = computed(() => {
+  for (let i = messages.value.length - 1; i >= 0; i--) {
+    if (messages.value[i].role === 'assistant') return i
+  }
+  return -1
+})
+
+function widgetInteractiveOf(msg: ConversationChatMessage, idx: number): boolean {
+  return idx === latestAssistantIdx.value
+}
 
 const emptyTitle = computed(() => {
   if (activeConversation.value) return '会话已清空，继续提问'
@@ -333,9 +346,81 @@ async function handleSend(text: string) {
   })
 }
 
+// ===========================================================================
+// Widget 卡片回传（API-011：query 空串 + widgetAction 随本轮请求体推进对话）
+// STATE-212：回传失败不推进消息序——乐观消息回滚，交互窗口不关，卡片可重试
+// ===========================================================================
+
+async function handleWidgetAction(action: WidgetActionPayload) {
+  if (isStreaming.value || !action) return
+  const conversationId = activeConversation.value?.id
+  if (!conversationId) { ElMessage.error('会话不存在，无法回传'); return }
+
+  // 请求态快照与文本发送同构（挂应用走应用绑定，直聊透传能力字段）
+  const payload = {
+    appId: composerState.appId || null,
+    kbIds: composerState.appId ? [] : [...composerState.kbIds],
+    modelId: composerState.modelId || null,
+    toolIds: composerState.appId ? [] : [...composerState.toolIds],
+    mcpIds: composerState.appId ? [] : [...composerState.mcpIds],
+    skillIds: composerState.appId ? [] : [...composerState.skillIds],
+    skillNames: [...composerState.skillNames],
+  }
+
+  // 乐观可见消息（服务端合成摘要落库，前端同构展示）+ 助手流式占位
+  messages.value.push({ role: 'user', content: `[Widget 回传] ${action.action} · ${action.widgetKey}` })
+  const am: ConversationChatMessage = { role: 'assistant', content: '', streaming: true, thinkingContent: '', isThinking: false, toolCalls: [] }
+  messages.value.push(am)
+  const mi = messages.value.length - 1
+  const rollbackStart = messages.value.length - 2
+  const st = Date.now()
+  chatRef.value?.forceScrollToBottom()
+
+  await send(conversationId, { query: '', ...payload, widgetAction: action }, {
+    onChunk: (c: string, isReplace?: boolean) => {
+      messages.value[mi].content = isReplace ? c : messages.value[mi].content + c
+      nextTick(() => chatRef.value?.scrollToBottom())
+    },
+    onSources: (s: SourceItem[]) => {
+      if (s.length) messages.value[mi].sources = s
+    },
+    onEnd: (_fullContent: string, data: Record<string, unknown>) => {
+      messages.value[mi].streaming = false
+      messages.value[mi].isThinking = false
+      if (typeof data.iterations === 'number') messages.value[mi].iterations = data.iterations
+      if (!messages.value[mi].time) messages.value[mi].time = `${((Date.now() - st) / 1000).toFixed(1)}s`
+      loadSessions(true)
+      nextTick(() => chatRef.value?.scrollToBottom())
+    },
+    onError: (msg: string) => {
+      // 回传失败：撤回乐观用户消息与助手占位 → 旧卡片回到最新助手位，窗口重开可重试
+      messages.value.splice(rollbackStart)
+      ElMessage.error(`卡片回传失败：${msg}`)
+    },
+    onThinking: (c: string) => {
+      messages.value[mi].thinkingContent = (messages.value[mi].thinkingContent || '') + c
+      messages.value[mi].isThinking = true
+      nextTick(() => chatRef.value?.scrollToBottom())
+    },
+    onToolCall: (tc: any) => {
+      if (!messages.value[mi].toolCalls) messages.value[mi].toolCalls = []
+      const ex = messages.value[mi].toolCalls!.find(t => t.id === tc.id)
+      if (ex) ex.arguments = tc.arguments
+      else messages.value[mi].toolCalls!.push({ id: tc.id, name: tc.name, arguments: tc.arguments })
+      nextTick(() => chatRef.value?.scrollToBottom())
+    },
+    onToolResult: (r: any) => {
+      if (messages.value[mi].toolCalls) {
+        const tc = messages.value[mi].toolCalls!.find(t => t.id === r.id)
+        if (tc) tc.result = r
+      }
+      nextTick(() => chatRef.value?.scrollToBottom())
+    },
+  })
+}
+
 /** 停止 = AbortController.abort() + POST stop（双保险）；已生成部分保留标「（已停止）」 */
-function handleStop() {
-  stopStream()
+function handleStop() {  stopStream()
   const lm = messages.value[messages.value.length - 1]
   if (lm && lm.role === 'assistant' && lm.streaming) {
     lm.streaming = false
@@ -588,11 +673,13 @@ onMounted(() => {
           :loading="historyLoading"
           :empty-title="emptyTitle"
           :empty-subtitle="emptySubtitle"
+          :widget-interactive-of="widgetInteractiveOf"
           v-model:sources-drawer-visible="sourcesDrawerVisible"
           @delete-message="handleDeleteMessage"
           @feedback-message="handleFeedbackMessage"
           @edit-message="handleEditMessage"
           @open-sources="sourcesDrawerVisible = true"
+          @widget-action="handleWidgetAction"
         />
 
         <ChatComposer

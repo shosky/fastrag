@@ -8,6 +8,7 @@ import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import ToolCallRenderer from '@/components/ToolCallRenderer.vue'
 import SourcesBlock from './SourcesBlock.vue'
 import type { ConversationChatMessage } from '@/types/conversation'
+import type { WidgetActionPayload } from '@/types/widget'
 
 // ===========================================================================
 // 单条消息气泡：markdown 渲染 + 思考/工具卡 + 来源块 + 操作条
@@ -20,6 +21,8 @@ const props = defineProps<{
   disabled?: boolean
   /** 来源抽屉受控开关（未传时 SourcesBlock 内部自管） */
   drawerVisible?: boolean
+  /** Widget 卡片交互窗口（消息序派生：本消息=最新一条助手消息为 true；透传 ToolCallRenderer） */
+  widgetInteractive?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -28,6 +31,8 @@ const emit = defineEmits<{
   (e: 'edit', message: ConversationChatMessage): void
   (e: 'open-sources'): void
   (e: 'update:drawerVisible', visible: boolean): void
+  /** Widget 卡片 sys.submit 回传（payload 由 WidgetCardRenderer 组装，页面转发 sendMessage） */
+  (e: 'widget-action', action: WidgetActionPayload): void
 }>()
 
 const isAssistant = computed(() => props.message.role === 'assistant')
@@ -89,6 +94,8 @@ async function downloadMessageDocx() {
         v-if="isAssistant && message.toolCalls?.length"
         :tool-calls="message.toolCalls"
         :auto-collapse="message.content.length > 0 && message.thinkingContent !== undefined"
+        :widget-interactive="widgetInteractive === true"
+        @widget-action="(a) => emit('widget-action', a)"
       />
       <div v-if="isAssistant" class="msg-content markdown-body" v-html="renderedContent" @click="onContentClick" />
       <div v-else class="msg-content">{{ message.content }}</div>

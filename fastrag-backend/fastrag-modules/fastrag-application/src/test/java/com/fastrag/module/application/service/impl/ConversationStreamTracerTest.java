@@ -113,7 +113,7 @@ class ConversationStreamTracerTest {
             return null;
         }).when(agentEngine).executeStream(any(), any(), any(), any(), any());
 
-        service.runStreamByConversation("conv-1", "知识图谱是什么", turn, user);
+        service.runStreamByConversation("conv-1", "知识图谱是什么", turn, user, null);
 
         // 零检索（REQ-C01/C03）
         verify(retrievalService, never()).search(any());
@@ -143,7 +143,7 @@ class ConversationStreamTracerTest {
         when(presetResolver.resolve(eq(conv), eq(turn), eq(user))).thenReturn(directDefaults());
         when(sensitiveWordService.checkInput(any())).thenReturn(Optional.of("该输入包含违禁内容"));
 
-        service.runStreamByConversation("conv-1", "违禁词", turn, user);
+        service.runStreamByConversation("conv-1", "违禁词", turn, user, null);
 
         verify(agentEngine, never()).executeStream(any(), any(), any(), any(), any());
         verify(convMsgMapper, never()).insert(any(AppConversationMessage.class));
@@ -166,7 +166,7 @@ class ConversationStreamTracerTest {
             return null;
         }).when(agentEngine).executeStream(any(), any(), any(), any(), any());
 
-        service.runStreamByConversation("conv-1", "q", turn, user);
+        service.runStreamByConversation("conv-1", "q", turn, user, null);
 
         ArgumentCaptor<com.fastrag.module.agent.context.BaseContext> ctxCaptor =
                 ArgumentCaptor.forClass(com.fastrag.module.agent.context.BaseContext.class);
@@ -193,7 +193,7 @@ class ConversationStreamTracerTest {
             return null;
         }).when(agentEngine).executeStream(any(), any(), any(), any(), any());
 
-        service.runStreamByConversation("conv-1", "q", turn, user);
+        service.runStreamByConversation("conv-1", "q", turn, user, null);
 
         ArgumentCaptor<com.fastrag.module.agent.context.BaseContext> ctxCaptor =
                 ArgumentCaptor.forClass(com.fastrag.module.agent.context.BaseContext.class);
@@ -211,7 +211,7 @@ class ConversationStreamTracerTest {
 
         try {
             service.runStreamByConversation("conv-1", "q", new ConversationRequestState(),
-                    LoginUser.builder().userId("u1").build());
+                    LoginUser.builder().userId("u1").build(), null);
         } catch (BusinessException expected) {
             // 归属拒绝即目标行为
         }

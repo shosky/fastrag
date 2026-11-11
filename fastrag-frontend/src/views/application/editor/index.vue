@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import BasicConfig from './components/BasicConfig.vue'
 import KnowledgeConfig from './components/KnowledgeConfig.vue'
 import SkillConfig from './components/SkillConfig.vue'
+import WidgetConfig from './components/WidgetConfig.vue'
 import ToolConfig from './components/ToolConfig.vue'
 import McpConfig from './components/McpConfig.vue'
 import DatabaseConfig from './components/DatabaseConfig.vue'
@@ -34,6 +35,7 @@ const activeMenu = ref('basic')
 			    { key: 'tool', label: '工具', icon: 'SetUp' },
 			    { key: 'mcp', label: 'MCP', icon: 'Connection' },
 				    { key: 'database', label: '数据库', icon: 'Coin' },
+				    { key: 'widget', label: 'Widget', icon: 'Postcard' },
 				    { key: 'member', label: '成员', icon: 'User' },
 				    { key: 'global', label: '安全策略', icon: 'Lock' },
 			  ],
@@ -145,6 +147,7 @@ function copyToClipboard(text: string) {
 	      <ToolConfig v-if="activeMenu === 'tool'" :app-info="appInfo" />
 	      <McpConfig v-if="activeMenu === 'mcp'" :app-info="appInfo" />
       <DatabaseConfig v-if="activeMenu === 'database'" :app-info="appInfo" />
+      <WidgetConfig v-if="activeMenu === 'widget'" :app-info="appInfo" />
       <MemberConfig v-if="activeMenu === 'member'" :app-info="appInfo" />
       <GlobalConfig v-if="activeMenu === 'global'" :app-info="appInfo" />
 	      <!-- 对话 -->

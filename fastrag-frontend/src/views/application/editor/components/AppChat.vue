@@ -7,6 +7,7 @@ import * as api from '@/api'
 import { useAppChatStream, type SourceItem } from '@/composables/useAppChatStream'
 import ThinkingBlock from '@/components/ThinkingBlock.vue'
 import ToolCallRenderer from '@/components/ToolCallRenderer.vue'
+import type { WidgetActionPayload } from '@/types/widget'
 
 const props = defineProps<{ appInfo: { id: string; name: string } }>()
 const appId = () => props.appInfo.id
@@ -23,6 +24,8 @@ interface ToolCallItem {
     output: string
     durationMs: number
     error?: string
+    /** 结构化数据透传（widget 快照等专用渲染器消费） */
+    data?: Record<string, unknown>
   }
 }
 
@@ -229,19 +232,25 @@ async function sendNotification(title: string, content: string) {
   }
 }
 
-async function handleSend() {
-  const session = activeSession.value
-  if (!inputText.value.trim() || isStreaming.value || !session) return
+/**
+ * 共享流式发送：乐观用户消息 + 助手占位 + sendMessage 全回调接线。
+ * 文本发送与 Widget 卡片回传（query 空串 + widgetAction，API-011）共用同一回调面；
+ * 回传失败走 STATE-212 语义：乐观消息回滚、消息序未推进、交互窗口不关（卡片可重试）。
+ */
+async function runChatStream(
+  session: Session,
+  displayText: string,
+  query: string,
+  widgetAction?: WidgetActionPayload
+) {
+  const isWidgetSubmit = !!widgetAction
 
-  const question = inputText.value.trim()
-  inputText.value = ''
+  // 添加用户消息到界面（回传时展示服务端同构的合成摘要）
+  session.messages.push({ role: 'user', content: displayText })
 
-  // 添加用户消息到界面
-  session.messages.push({ role: 'user', content: question })
-
-  // 更新会话标题（如果是第一条用户消息）
-  if (!session.messages.some(m => m.role === 'user' && m !== session.messages[session.messages.length - 1])) {
-    session.title = question.length > 30 ? question.substring(0, 30) + '...' : question
+  // 更新会话标题（如果是第一条用户消息；回传消息不参与起题）
+  if (!isWidgetSubmit && !session.messages.some(m => m.role === 'user' && m !== session.messages[session.messages.length - 1])) {
+    session.title = displayText.length > 30 ? displayText.substring(0, 30) + '...' : displayText
   }
 
   // 添加一个空的助手消息用于流式填充
@@ -256,11 +265,12 @@ async function handleSend() {
   session.messages.push(assistantMsg)
 
   const msgIndex = session.messages.length - 1
+  const rollbackStart = session.messages.length - 2
   const startTime = Date.now()
 
   await sendMessage(
     appId(),
-    question,
+    query,
     session.sessionId,
     // onChunk: 追加增量文本；isReplace=true 时为敏感词过滤修正，整段替换
     (content: string, isReplace?: boolean) => {
@@ -275,11 +285,18 @@ async function handleSend() {
       session.messages[msgIndex].time = `${elapsed}s`
       session.messageCount = (data.messageCount as number) || session.messages.length
       nextTick(() => scrollToBottom())
-      // 发送通知：助手回复完成
+      // 发送通知：助手回复完成（回传推进同通知）
       sendNotification(session.title || '对话', fullContent)
     },
     // onError: 错误处理
     (message: string) => {
+      if (isWidgetSubmit) {
+        // 回传失败（含 ERR-WG-ACTION-OVERSIZE 400）：撤回乐观消息 → 旧卡片回到
+        // 最新助手位，交互窗口重开、loading 解除，可直接重试（STATE-212）
+        session.messages.splice(rollbackStart)
+        ElMessage.error(`卡片回传失败：${message}`)
+        return
+      }
       session.messages[msgIndex].content = `抱歉，AI 服务暂时不可用：${message}`
       session.messages[msgIndex].streaming = false
       session.messages[msgIndex].isThinking = false
@@ -321,8 +338,40 @@ async function handleSend() {
     (sources: SourceItem[]) => {
       session.messages[msgIndex].sources = sources
       nextTick(() => scrollToBottom())
-    }
+    },
+    // onAgentState: 本页面未消费（占位保持参数位）
+    undefined,
+    // widgetAction: Widget 回传负载（API-011 可选扩展字段）
+    widgetAction
   )
+}
+
+async function handleSend() {
+  const session = activeSession.value
+  if (!inputText.value.trim() || isStreaming.value || !session) return
+
+  const question = inputText.value.trim()
+  inputText.value = ''
+  await runChatStream(session, question, question)
+}
+
+// ===========================================================================
+// Widget 卡片回传（PAGE-205 → API-011）：query 空串 + widgetAction 推进对话
+// ===========================================================================
+
+/** 交互窗口消息序派生：卡片所在消息 = 会话内最新一条助手消息（STATE-209/210） */
+const latestAssistantIdx = computed(() => {
+  const msgs = activeSession.value?.messages || []
+  for (let i = msgs.length - 1; i >= 0; i--) {
+    if (msgs[i].role === 'assistant') return i
+  }
+  return -1
+})
+
+async function handleWidgetAction(action: WidgetActionPayload) {
+  const session = activeSession.value
+  if (!session || isStreaming.value || !action) return
+  await runChatStream(session, `[Widget 回传] ${action.action} · ${action.widgetKey}`, '', action)
 }
 
 /** 停止生成 */
@@ -459,10 +508,12 @@ onMounted(() => {
                   :content="msg.thinkingContent"
                   :is-thinking="msg.isThinking"
                 />
-                <!-- 工具调用渲染（显示在回答之后） -->
+                <!-- 工具调用渲染（显示在回答之后）；Widget 卡片交互窗口按消息序派生 -->
                 <ToolCallRenderer
                   v-if="msg.role === 'assistant' && msg.toolCalls && msg.toolCalls.length > 0"
                   :tool-calls="msg.toolCalls"
+                  :widget-interactive="idx === latestAssistantIdx"
+                  @widget-action="handleWidgetAction"
                 />
                 <div v-if="msg.role === 'assistant'" class="msg-content markdown-body" v-html="renderMarkdown(msg.content)" />
                 <div v-else class="msg-content">{{ msg.content }}</div>

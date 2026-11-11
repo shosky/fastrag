@@ -84,14 +84,16 @@ public class SessionCenterController {
         return ApiResponse.success(sessionCenterService.stop(id));
     }
 
-    /** 新通道流式对话（事件词汇与旧通道一致，REQ-C02） */
+    /** 新通道流式对话（事件词汇与旧通道一致，REQ-C02）；widgetAction 为 Widget 回传负载（可空，API-011） */
     @PostMapping(value = "/{id}/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter stream(@PathVariable String id, @RequestBody Map<String, Object> body) {
         String query = body.get("query") == null ? "" : body.get("query").toString();
         ConversationRequestState turnState =
                 JSONUtil.toBean(JSONUtil.toJsonStr(body), ConversationRequestState.class);
+        @SuppressWarnings("unchecked")
+        Map<String, Object> widgetAction = (Map<String, Object>) body.get("widgetAction");
         return appService.runStreamByConversation(id, query, turnState,
-                com.fastrag.security.util.SecurityUtil.getCurrentUser());
+                com.fastrag.security.util.SecurityUtil.getCurrentUser(), widgetAction);
     }
 
     /** 删除单条消息（软删；直聊消息级补口，债务 #4） */

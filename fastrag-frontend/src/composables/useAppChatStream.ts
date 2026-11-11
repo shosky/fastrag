@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { storage } from '@/utils/storage'
 import { parseSSEBuffer, parseSingleSSEEvent } from '@/utils/sse'
+import type { WidgetActionPayload } from '@/types/widget'
 
 // ==================== 类型定义 ====================
 
@@ -71,7 +72,7 @@ export function useAppChatStream() {
   /**
    * 发送消息并通过 SSE 流式接收回答
    * @param appId 应用ID
-   * @param query 用户消息
+   * @param query 用户消息（Widget 回传时传空串，服务端以 widgetAction 合成可见用户消息）
    * @param sessionId 会话ID
    * @param onChunk 每个文本增量回调；第二参 isReplace=true 表示整段替换（敏感词过滤修正）
    * @param onEnd 流式完成的回调
@@ -81,6 +82,7 @@ export function useAppChatStream() {
    * @param onToolResult 工具执行结果回调（可选）
    * @param onSources 知识来源回调（可选）
    * @param onAgentState 智能体状态变更回调（可选）
+   * @param widgetAction Widget 回传负载（API-011 可选扩展字段；存在时本消息为卡片回传推进）
    */
   async function sendMessage(
     appId: string,
@@ -93,7 +95,8 @@ export function useAppChatStream() {
     onToolCall?: (toolCall: ToolCallEvent) => void,
     onToolResult?: (result: ToolResultEvent) => void,
     onSources?: (sources: SourceItem[]) => void,
-    onAgentState?: (state: AgentStateEvent) => void
+    onAgentState?: (state: AgentStateEvent) => void,
+    widgetAction?: WidgetActionPayload
   ) {
     abortController.value = new AbortController()
     isStreaming.value = true
@@ -114,6 +117,8 @@ export function useAppChatStream() {
         body: JSON.stringify({
           query,
           sessionId: sessionId || undefined,
+          // Widget 回传（API-011）：undefined 时 JSON.stringify 自动裁剪，不占契约字段面
+          widgetAction,
         }),
         signal: abortController.value.signal,
       })

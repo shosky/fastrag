@@ -1,5 +1,6 @@
 package com.fastrag.module.application.controller;
 import com.fastrag.common.response.ApiResponse; import com.fastrag.module.application.entity.*;
+import com.fastrag.module.application.widget.entity.AppWidgetBinding;
 import com.fastrag.module.application.service.AppConfigService;
 import jakarta.servlet.http.HttpServletResponse;
 import lombok.RequiredArgsConstructor; import org.springframework.security.access.prepost.PreAuthorize; import org.springframework.web.bind.annotation.*;
@@ -128,6 +129,17 @@ public class AppConfigController {
     @PutMapping("/{appId}/mcp-services/{id}") public ApiResponse<?> updateMcp(@PathVariable String id,@RequestBody AppMcpBinding b) { return ApiResponse.success(svc.updateMcpBinding(id,b)); }
     @PreAuthorize("@perm.has('app:edit')")
     @DeleteMapping("/{appId}/mcp-services/{id}") public ApiResponse<?> unbindMcp(@PathVariable String id) { svc.unbindMcp(id); return ApiResponse.success(); }
+    // ===== Widget 绑定（第六类，widget 特性；interfaces.md API-007~010）=====
+    @PreAuthorize("@perm.has('app:use')")
+    @GetMapping("/{appId}/widgets") public ApiResponse<?> widgetBindings(@PathVariable String appId) { return ApiResponse.success(svc.listWidgetBindings(appId)); }
+    @PreAuthorize("@perm.has('app:use')")
+    @GetMapping("/{appId}/widgets/candidates") public ApiResponse<?> widgetCandidates() { return ApiResponse.success(svc.listWidgetCandidates()); }
+    @PreAuthorize("@perm.has('app:edit')")
+    @PostMapping("/{appId}/widgets") public ApiResponse<?> bindWidget(@PathVariable String appId,@RequestBody AppWidgetBinding b) { return ApiResponse.success(svc.bindWidget(appId,b)); }
+    @PreAuthorize("@perm.has('app:edit')")
+    @PutMapping("/{appId}/widgets/{id}") public ApiResponse<?> updateWidget(@PathVariable String id,@RequestBody Map<String,Object> b) { return ApiResponse.success(svc.updateWidgetBinding(id, Boolean.TRUE.equals(b.get("enabled")))); }
+    @PreAuthorize("@perm.has('app:edit')")
+    @DeleteMapping("/{appId}/widgets/{id}") public ApiResponse<?> unbindWidget(@PathVariable String id) { svc.unbindWidget(id); return ApiResponse.success(); }
     // ===== 发布管理 =====
     @PreAuthorize("@perm.has('app:use')")
     @GetMapping("/{appId}/publish/records") public ApiResponse<?> pubRecords(@PathVariable String appId) { return ApiResponse.success(svc.listPublishRecords(appId)); }

@@ -51,6 +51,13 @@ public interface AppConfigService {
     AppMcpBinding bindMcp(String appId,AppMcpBinding b);
     AppMcpBinding updateMcpBinding(String id,AppMcpBinding b);
     void unbindMcp(String id);
+    // Widget 绑定（第六类，widget 特性）
+    List<com.fastrag.module.application.widget.entity.AppWidgetBinding> listWidgetBindings(String appId);
+    com.fastrag.module.application.widget.entity.AppWidgetBinding bindWidget(String appId,com.fastrag.module.application.widget.entity.AppWidgetBinding b);
+    com.fastrag.module.application.widget.entity.AppWidgetBinding updateWidgetBinding(String id, Boolean enabled);
+    void unbindWidget(String id);
+    /** Widget 绑定候选（REQ-WG-C02：自建资产，管理员另加全员可见） */
+    List<com.fastrag.module.application.widget.entity.Widget> listWidgetCandidates();
     // 发布
     List<AppPublishRecord> listPublishRecords(String appId);
     AppPublishRecord publish(String appId,AppPublishRecord r);

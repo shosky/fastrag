@@ -27,7 +27,7 @@ import org.springframework.scheduling.annotation.EnableScheduling;
 
 @SpringBootApplication
 @ComponentScan(basePackages = "com.fastrag")
-@MapperScan("com.fastrag.module.*.mapper")
+@MapperScan({"com.fastrag.module.*.mapper", "com.fastrag.module.application.widget.mapper"})
 @EnableRabbit
 @EnableAsync
 @EnableScheduling

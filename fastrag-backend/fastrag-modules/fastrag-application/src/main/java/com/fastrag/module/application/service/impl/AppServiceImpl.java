@@ -82,6 +82,9 @@ public class AppServiceImpl implements AppService {
     private final DialogPresetResolver presetResolver;
     private final StopRegistry stopRegistry;
     private final SessionRequestStateStore requestStateStore;
+
+    private final com.fastrag.module.application.widget.WidgetActionProcessor widgetActionProcessor;
+    private final com.fastrag.module.application.widget.WidgetAssetService widgetAssetService;
     /** 沙箱配置存在性校验与对话链注入（REQ-H03 分支②，2026-09-28 沙箱实装） */
     private final SandboxConfigMapper sandboxConfigMapper;
 
@@ -427,23 +430,25 @@ public class AppServiceImpl implements AppService {
      * 禁止在本方法体内做任何配置读取——配置一律经 DialogPresetResolver（design §2 编排器扩展）。
      */
     @Override
-    public SseEmitter runStream(String appId, String query, String sessionId, String userId, String userName) {
+    public SseEmitter runStream(String appId, String query, String sessionId, String userId, String userName,
+                                Map<String, Object> widgetAction) {
         App app = appMapper.selectById(appId);
         requireVisible(app);
         AppConversation conv = locateSessionForApp(appId, sessionId, userId, userName);
         EffectiveDialogConfig cfg = presetResolver.resolve(
                 conv, ConversationRequestState.PRESET_ONLY, SecurityUtil.getCurrentUser());
-        return executeDialog(conv, cfg, query, userId, null);
+        return executeDialog(conv, cfg, query, userId, null, widgetAction);
     }
 
     /** 新通道对话（new-conversation）：会话一等公民入口；turnState 为本轮请求态覆盖（空时回落持久化形状） */
     @Override
     public SseEmitter runStreamByConversation(String conversationId, String query,
-                                              ConversationRequestState turnState, LoginUser user) {
+                                              ConversationRequestState turnState, LoginUser user,
+                                              Map<String, Object> widgetAction) {
         AppConversation conv = requireOwnConversationById(conversationId, user);
         if (turnState == null) turnState = requestStateStore.load(conversationId);
         EffectiveDialogConfig cfg = presetResolver.resolve(conv, turnState, user);
-        return executeDialog(conv, cfg, query, user.getUserId(), turnState);
+        return executeDialog(conv, cfg, query, user.getUserId(), turnState, widgetAction);
     }
 
     /** 旧通道会话定位/创建（原 runStream 步骤 2 原样提取，行为不变） */
@@ -469,13 +474,26 @@ public class AppServiceImpl implements AppService {
      * @param persistState 新通道=本轮请求态（三落库点固化，REQ-B01）；旧通道=null（不固化）
      */
     private SseEmitter executeDialog(AppConversation conv, EffectiveDialogConfig cfg, String query,
-                                     String userId, ConversationRequestState persistState) {
+                                     String userId, ConversationRequestState persistState,
+                                     Map<String, Object> widgetAction) {
         final String sessionId = StrUtil.isNotBlank(conv.getSessionId()) ? conv.getSessionId() : conv.getId();
 
+        // Widget 回传（API-011/IF-005）：合成可见用户消息并取回 [WIDGET_ACTION] 标注块；
+        // 校验失败（非 sys.submit / 超 16KB）在此抛业务错误——建流前返回普通 JSON，消息序未推进
+        String effectiveQuery = query;
+        String widgetContextBlock = null;
+        if (widgetAction != null && !widgetAction.isEmpty()) {
+            var payload = com.fastrag.module.application.widget.dto.WidgetActionPayload.fromMap(widgetAction);
+            var plan = widgetActionProcessor.prepare(payload);
+            effectiveQuery = plan.visibleMessageText();
+            widgetContextBlock = plan.contextBlock();
+        }
+        final String finalWidgetBlock = widgetContextBlock;
+
         // 敏感词输入拦截（直聊恒开＝安全缺省；挂应用＝应用开关，现行口径）：
-        // 命中 blockInput 词条时直接拒绝，不保存用户消息、不产生模型调用
+        // 命中 blockInput 词条时直接拒绝，不保存用户消息、不产生模型调用（拦截对象=落库消息文本）
         final boolean finalSafetyFilterOn = cfg.isSafetyEnabled();
-        Optional<String> blocked = finalSafetyFilterOn ? sensitiveWordService.checkInput(query) : Optional.empty();
+        Optional<String> blocked = finalSafetyFilterOn ? sensitiveWordService.checkInput(effectiveQuery) : Optional.empty();
         if (blocked.isPresent()) {
             try {
                 SseEmitter emitter = new SseEmitter(60 * 1000L);
@@ -492,20 +510,20 @@ public class AppServiceImpl implements AppService {
             }
         }
 
-        // 3. 保存用户消息
+        // 3. 保存用户消息（Widget 回传时为合成摘要文本，REQ-WG-E02）
         AppConversationMessage userMsg = new AppConversationMessage();
         userMsg.setId(UUID.randomUUID().toString().replace("-", "").substring(0, 32));
         userMsg.setConversationId(conv.getId());
         userMsg.setRole("user");
-        userMsg.setContent(query);
+        userMsg.setContent(effectiveQuery);
         userMsg.setTokens(0);
         userMsg.setCreatedAt(LocalDateTime.now());
         convMsgMapper.insert(userMsg);
 
         // 更新会话的 firstQuestion 和 title（如果是第一条消息）
         if (conv.getMessageCount() == null || conv.getMessageCount() == 0) {
-            conv.setFirstQuestion(query.length() > 200 ? query.substring(0, 200) : query);
-            conv.setTitle(query.length() > 30 ? query.substring(0, 30) + "..." : query);
+            conv.setFirstQuestion(effectiveQuery.length() > 200 ? effectiveQuery.substring(0, 200) : effectiveQuery);
+            conv.setTitle(effectiveQuery.length() > 30 ? effectiveQuery.substring(0, 30) + "..." : effectiveQuery);
         }
 
         // 有效配置已由 DialogPresetResolver 解析（prompt/temperature/maxTokens/memoryRounds/model 路由
@@ -515,7 +533,7 @@ public class AppServiceImpl implements AppService {
         String greeting = cfg.getGreeting();
         if (greeting != null && !greeting.isEmpty()
                 && (conv.getMessageCount() == null || conv.getMessageCount() == 0)
-                && isGreetingQuery(query)) {
+                && isGreetingQuery(effectiveQuery)) {
             try {
                 SseEmitter emitter = new SseEmitter(60 * 1000L);
                 Map<String, Object> data = new LinkedHashMap<>();
@@ -642,6 +660,17 @@ public class AppServiceImpl implements AppService {
                     context.setDatabases(cfg.getBindings().getDatabases());
                 }
 
+                // Widget 清单通道（REQ-WG-D01，快照 #28）：启用绑定非空时组装清单进 runtimeState，
+                // WidgetMiddleware（order=14）消费注入 system 块并注册 render_widget；空则静默跳过
+                if (cfg.getBindings().getWidgets() != null && !cfg.getBindings().getWidgets().isEmpty()) {
+                    var catalog = widgetAssetService.buildCatalog(cfg.getBindings().getWidgets());
+                    if (!catalog.isEmpty()) {
+                        context.getRuntimeState().put(
+                                com.fastrag.module.agent.middleware.WidgetMiddleware.WIDGET_CATALOG_KEY,
+                                catalog.stream().map(com.fastrag.module.application.widget.dto.WidgetCatalogEntry::toMap).toList());
+                    }
+                }
+
                 // 沙箱配置注入（REQ-H03 分支②，2026-09-28）：应用引用 sandbox_config_id 时透传执行链；
                 // 未引用保持 runtimeState 无该键——FilesystemMiddleware/SandboxExecutionService 走「not configured」降级
                 if (StrUtil.isNotBlank(conv.getAppId())) {
@@ -681,12 +710,15 @@ public class AppServiceImpl implements AppService {
                         .build();
                 context.setModelConfig(modelConfig);
 
-                // 构建 fake AgentRun（无需中间件，仅用于提取查询）
+                // 构建 fake AgentRun（无需中间件，仅用于提取查询）；
+                // Widget 回传时结构化标注块仅注入本轮引擎输入（不落消息列，REQ-WG-E02/IF-005）
                 AgentRun fakeRun = new AgentRun();
                 fakeRun.setId(finalSessionId);
                 fakeRun.setUid(finalUserId);
                 Map<String, Object> input = new HashMap<>();
-                input.put("query", query);
+                input.put("query", finalWidgetBlock != null
+                        ? finalWidgetBlock + "\n\n" + query
+                        : query);
                 fakeRun.setInputPayload(input);
 
                 // 使用 AgentEngine 执行（处理所有 SSE 事件）

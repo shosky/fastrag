@@ -3,6 +3,7 @@ import { ref, nextTick } from 'vue'
 import { ChatLineRound } from '@element-plus/icons-vue'
 import MessageBubble from './MessageBubble.vue'
 import type { ConversationChatMessage } from '@/types/conversation'
+import type { WidgetActionPayload } from '@/types/widget'
 
 // ===========================================================================
 // 消息滚动区：消息 v-for + 智能滚动跟随 + 生成中指示 + 空态
@@ -23,6 +24,8 @@ const props = defineProps<{
   emptySubtitle?: string
   /** 来源抽屉受控开关（引用角标点击打开；透传 MessageBubble → SourcesBlock） */
   sourcesDrawerVisible?: boolean
+  /** Widget 卡片交互窗口判定函数（消息序派生，页面计算；缺省全部非交互） */
+  widgetInteractiveOf?: (msg: ConversationChatMessage, idx: number) => boolean
 }>()
 
 const emit = defineEmits<{
@@ -31,6 +34,8 @@ const emit = defineEmits<{
   (e: 'edit-message', message: ConversationChatMessage): void
   (e: 'open-sources'): void
   (e: 'update:sourcesDrawerVisible', visible: boolean): void
+  /** Widget 卡片 sys.submit 回传（页面组装 widgetAction 并经 composable 推进对话） */
+  (e: 'widget-action', action: WidgetActionPayload): void
 }>()
 
 const messagesContainer = ref<HTMLElement | null>(null)
@@ -108,11 +113,13 @@ defineExpose({ scrollToBottom, forceScrollToBottom })
           :message="msg"
           :disabled="isStreaming"
           :drawer-visible="drawerVisibleOf(msg)"
+          :widget-interactive="props.widgetInteractiveOf ? props.widgetInteractiveOf(msg, idx) : false"
           @delete="emit('delete-message', $event)"
           @feedback="(m, t) => emit('feedback-message', m, t)"
           @edit="emit('edit-message', $event)"
           @open-sources="handleOpenSources(msg)"
           @update:drawer-visible="(v: boolean) => handleDrawerVisible(msg, v)"
+          @widget-action="(a) => emit('widget-action', a)"
         />
       </template>
       <div v-if="isStreaming && !searching" class="generating-indicator">

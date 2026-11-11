@@ -1,6 +1,7 @@
 import { ref } from 'vue'
 import { storage } from '@/utils/storage'
 import { parseSSEBuffer } from '@/utils/sse'
+import type { WidgetActionPayload } from '@/types/widget'
 
 // 事件词汇与 useAppChatStream 完全一致（REQ-C02 零新增），类型直接复用
 export type { ToolCallEvent, ToolResultEvent, AgentStateEvent, SourceItem } from '@/composables/useAppChatStream'
@@ -27,6 +28,8 @@ export interface ConversationTurnPayload {
   skillIds?: string[]
   /** F1 @提及技能：本轮施加 must_use 强提示的技能名（后端去重、上限 10，集外静默忽略） */
   skillNames?: string[]
+  /** Widget 回传负载（API-011 可选扩展字段）：存在时本消息为卡片回传推进（query 传空串） */
+  widgetAction?: WidgetActionPayload
 }
 
 /**
@@ -88,6 +91,8 @@ export function useConversationStream() {
           skillIds: payload.skillIds && payload.skillIds.length > 0 ? payload.skillIds : undefined,
           // F1 @提及技能：同款空数组归一（挂应用也透传——pinned 双入口有效，仅是提示）
           skillNames: payload.skillNames && payload.skillNames.length > 0 ? payload.skillNames : undefined,
+          // Widget 回传（API-011）：undefined 时 JSON.stringify 自动裁剪，不占契约字段面
+          widgetAction: payload.widgetAction,
         }),
         signal: abortController.value.signal,
       })

@@ -237,6 +237,25 @@ const routes: RouteRecordRaw[] = [
         component: () => import('@/views/application/skill/SkillCreate.vue'),
         meta: { title: '新建技能', hidden: true },
       },
+      // ===== Widget 工作台（widget 链，PAGE-201~203；资源段菜单进入，无权限键不入权限树）=====
+      {
+        path: 'widget',
+        name: 'WidgetList',
+        component: () => import('@/views/widget/index.vue'),
+        meta: { title: 'Widget', hidden: true },
+      },
+      {
+        path: 'widget/create',
+        name: 'WidgetCreate',
+        component: () => import('@/views/widget/WidgetCreate.vue'),
+        meta: { title: '新建 Widget', hidden: true },
+      },
+      {
+        path: 'widget/:id',
+        name: 'WidgetEdit',
+        component: () => import('@/views/widget/WidgetEdit.vue'),
+        meta: { title: '编辑 Widget', hidden: true },
+      },
       {
         path: 'application/database-management',
         name: 'DatabaseManagement',

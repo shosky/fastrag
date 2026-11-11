@@ -21,6 +21,8 @@ public class AppConfigServiceImpl implements AppConfigService {
     private final AppConversationMapper convMapper;
     private final AppConversationMessageMapper convMsgMapper;
     private final AppSkillBindingMapper skillBindMapper;
+    private final com.fastrag.module.application.widget.mapper.AppWidgetBindingMapper widgetBindMapper;
+    private final com.fastrag.module.application.widget.mapper.WidgetMapper widgetResMapper;
     private final AppToolBindingMapper toolBindMapper;
     private final AppMcpBindingMapper mcpBindMapper;
     // 资源表 Mapper（绑定有效性预览用，app-chat-optimize Step 3a）
@@ -187,6 +189,58 @@ public class AppConfigServiceImpl implements AppConfigService {
     }
     @Override public AppSkillBinding updateSkillBinding(String id,AppSkillBinding b) { b.setId(id); skillBindMapper.updateById(b); return skillBindMapper.selectById(id); }
     @Override public void unbindSkill(String id) { skillBindMapper.deleteById(id); }
+    // ===== Widget 绑定（第六类，widget 特性；上限/候选口径见 interfaces.md API-008）=====
+    public static final int MAX_WIDGET_BINDINGS = com.fastrag.module.application.widget.WidgetComponentWhitelist.MAX_BINDINGS_PER_APP;
+    @Override public List<com.fastrag.module.application.widget.entity.AppWidgetBinding> listWidgetBindings(String appId) {
+        return widgetBindMapper.selectList(new LambdaQueryWrapper<com.fastrag.module.application.widget.entity.AppWidgetBinding>().eq(com.fastrag.module.application.widget.entity.AppWidgetBinding::getAppId, appId));
+    }
+    @Override public com.fastrag.module.application.widget.entity.AppWidgetBinding bindWidget(String appId, com.fastrag.module.application.widget.entity.AppWidgetBinding b) {
+        b.setAppId(appId); if (b.getEnabled() == null) b.setEnabled(1);
+        if (b.getWidgetId() == null || b.getWidgetId().isBlank()) {
+            throw new com.fastrag.common.exception.BusinessException(400, "Widget 绑定缺少 widgetId");
+        }
+        Long total = widgetBindMapper.selectCount(new LambdaQueryWrapper<com.fastrag.module.application.widget.entity.AppWidgetBinding>().eq(com.fastrag.module.application.widget.entity.AppWidgetBinding::getAppId, appId));
+        if (total != null && total >= MAX_WIDGET_BINDINGS) {
+            throw new com.fastrag.common.exception.BusinessException(409,
+                "Widget 绑定数已达上限（10 个），请先解绑部分 Widget");
+        }
+        Long dup = widgetBindMapper.selectCount(new LambdaQueryWrapper<com.fastrag.module.application.widget.entity.AppWidgetBinding>()
+                .eq(com.fastrag.module.application.widget.entity.AppWidgetBinding::getAppId, appId).eq(com.fastrag.module.application.widget.entity.AppWidgetBinding::getWidgetId, b.getWidgetId()));
+        if (dup != null && dup > 0) {
+            throw new com.fastrag.common.exception.BusinessException(409, "该 Widget 已绑定此应用，请直接调整启用开关");
+        }
+        com.fastrag.module.application.widget.entity.Widget w = widgetResMapper.selectById(b.getWidgetId());
+        if (w == null) throw new com.fastrag.common.exception.BusinessException(404, "Widget 不存在: " + b.getWidgetId());
+        if (w.getIsBuiltin() != null && w.getIsBuiltin() == 1) {
+            throw new com.fastrag.common.exception.BusinessException(400, "官方模板行不可直接绑定，请先复制");
+        }
+        if (!visibleToCurrentUser(w)) {
+            throw new com.fastrag.common.exception.BusinessException(400, "无权绑定他人 Widget");
+        }
+        widgetBindMapper.insert(b); return b;
+    }
+    @Override public com.fastrag.module.application.widget.entity.AppWidgetBinding updateWidgetBinding(String id, Boolean enabled) {
+        com.fastrag.module.application.widget.entity.AppWidgetBinding b = widgetBindMapper.selectById(id);
+        if (b == null) throw new com.fastrag.common.exception.BusinessException(404, "绑定不存在: " + id);
+        b.setEnabled(Boolean.FALSE.equals(enabled) ? 0 : 1);
+        widgetBindMapper.updateById(b); return b;
+    }
+    @Override public void unbindWidget(String id) { widgetBindMapper.deleteById(id); }
+    @Override public List<com.fastrag.module.application.widget.entity.Widget> listWidgetCandidates() {
+        var user = com.fastrag.security.util.SecurityUtil.getCurrentUser();
+        boolean admin = user != null && user.getRoles() != null && user.getRoles().stream().anyMatch(r ->
+                "admin".equalsIgnoreCase(r) || "superadmin".equalsIgnoreCase(r));
+        var qw = new LambdaQueryWrapper<com.fastrag.module.application.widget.entity.Widget>().eq(com.fastrag.module.application.widget.entity.Widget::getIsBuiltin, 0);
+        if (!admin && user != null) qw.eq(com.fastrag.module.application.widget.entity.Widget::getCreator, user.getUserId());
+        return widgetResMapper.selectList(qw);
+    }
+    private boolean visibleToCurrentUser(com.fastrag.module.application.widget.entity.Widget w) {
+        var user = com.fastrag.security.util.SecurityUtil.getCurrentUser();
+        if (user == null) return false;
+        if (user.getUserId() != null && user.getUserId().equals(w.getCreator())) return true;
+        return user.getRoles() != null && user.getRoles().stream().anyMatch(r ->
+                "admin".equalsIgnoreCase(r) || "superadmin".equalsIgnoreCase(r));
+    }
     @Override public List<AppToolBinding> listToolBindings(String appId) { try { return toolBindMapper.selectList(new LambdaQueryWrapper<AppToolBinding>().eq(AppToolBinding::getAppId,appId)); } catch(Exception e) { return new ArrayList<>(); } }
     @Override public AppToolBinding bindTool(String appId,AppToolBinding b) { b.setAppId(appId); if(b.getEnabled()==null)b.setEnabled(1); toolBindMapper.insert(b); return b; }
     @Override public AppToolBinding updateToolBinding(String id,AppToolBinding b) { b.setId(id); toolBindMapper.updateById(b); return toolBindMapper.selectById(id); }

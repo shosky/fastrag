@@ -52,6 +52,7 @@ public class DialogPresetResolver {
     private final AppSkillBindingMapper skillBindingMapper;
     private final AppMcpBindingMapper mcpBindingMapper;
     private final AppDbBindingMapper dbBindingMapper;
+    private final com.fastrag.module.application.widget.mapper.AppWidgetBindingMapper widgetBindingMapper;
     private final ModelRecordMapper modelRecordMapper;
     private final KbAccessChecker kbAccessChecker;
     private final SessionRequestStateStore requestStateStore;
@@ -168,6 +169,7 @@ public class DialogPresetResolver {
                 .mcps(effective != null && effective.getMcpIds() != null
                         ? effective.getMcpIds() : List.of())
                 .databases(List.of())
+                .widgets(List.of())
                 .build();
 
         return EffectiveDialogConfig.builder()
@@ -257,6 +259,10 @@ public class DialogPresetResolver {
                 .databases(dbBindingMapper.selectList(new LambdaQueryWrapper<AppDbBinding>()
                                 .eq(AppDbBinding::getAppId, appId).eq(AppDbBinding::getEnabled, 1))
                         .stream().map(AppDbBinding::getDbId).toList())
+                .widgets(widgetBindingMapper.selectList(new LambdaQueryWrapper<com.fastrag.module.application.widget.entity.AppWidgetBinding>()
+                                .eq(com.fastrag.module.application.widget.entity.AppWidgetBinding::getAppId, appId)
+                                .eq(com.fastrag.module.application.widget.entity.AppWidgetBinding::getEnabled, 1))
+                        .stream().map(com.fastrag.module.application.widget.entity.AppWidgetBinding::getWidgetId).toList())
                 .build();
     }
 

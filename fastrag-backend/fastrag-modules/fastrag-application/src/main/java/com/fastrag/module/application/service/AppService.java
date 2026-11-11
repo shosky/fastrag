@@ -42,8 +42,9 @@ public interface AppService {
     void updateMessage(String appId, String messageId, String content);
 
     // ===== 流式对话 =====
-    /** SSE 流式对话 */
-    SseEmitter runStream(String appId, String query, String sessionId, String userId, String userName);
+    /** SSE 流式对话；widgetAction 为 Widget 回传负载（可空，API-011） */
+    SseEmitter runStream(String appId, String query, String sessionId, String userId, String userName,
+                         java.util.Map<String, Object> widgetAction);
 
     /**
      * 新通道 SSE 流式对话（new-conversation）：会话一等公民入口。
@@ -52,7 +53,9 @@ public interface AppService {
      * @param query          用户输入
      * @param turnState      本轮请求态覆盖（空时回落持久化形状）
      * @param user           当前用户
+     * @param widgetAction   Widget 回传负载（可空，API-011）
      */
     SseEmitter runStreamByConversation(String conversationId, String query,
-                                       ConversationRequestState turnState, LoginUser user);
+                                       ConversationRequestState turnState, LoginUser user,
+                                       java.util.Map<String, Object> widgetAction);
 }

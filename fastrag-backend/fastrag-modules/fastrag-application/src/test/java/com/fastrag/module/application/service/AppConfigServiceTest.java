@@ -73,6 +73,8 @@ class AppConfigServiceTest {
                 convMapper,
                 convMsgMapper,
                 skillBindMapper,
+                null, // AppWidgetBindingMapper（widget 特性新增，本测试不触达）
+                null, // WidgetMapper（同上）
                 toolBindMapper,
                 mcpBindMapper,
                 knowledgeMapper,
