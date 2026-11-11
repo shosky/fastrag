@@ -32,7 +32,7 @@ fastrag-backend
 
 ---
 
-# 特性清单（21 项 = 2026-09-16 决议 18 项 + 2026-09-25 新增 #19 new-conversation + 2026-09-26 新增 #20 qa-generation + 2026-10-14 新增 #21 conversation-trace）
+# 特性清单（22 项 = 2026-09-16 决议 18 项 + 2026-09-25 新增 #19 new-conversation + 2026-09-26 新增 #20 qa-generation + 2026-10-14 新增 #21 conversation-trace + 2026-10-30 新增 #22 widget）
 
 ## 1. IAM 认证与账号权限 — iam
 
@@ -63,6 +63,7 @@ fastrag-backend
 - **Depth signal:** 3 控制器 + 2 篇研究文档指出契约不一致
 - **Priority:** 高（摄取前置）
 - **Chain status:** implement（文档链齐，2026-09-21；红绿循环未执行；pending：4 INFERRED + 5 GAP 已代裁闭环（2026-09-24）；已证实「三层必填不一致」「死配置 kb_compliance_rule」两项缺陷信号，另登记 javadoc 四层 vs 实现两层）
+- **excel_row 增量链（2026-11-03~04）**：Excel 按行切片五阶贯通且红绿循环已执行——grill 裁决 14 项落 CONTEXT.md 四词条 → spec §4.8 REQ-H01~H13 → design 新建 [modules/parse-strategy.md](modules/parse-strategy.md)（IF-006~008 + 缝 4 表格切片方式）+ [adr/0012](adr/0012-excel-row-slice-at-parse.md)（解析期装配、豁免原子溢出）→ contract 深化三单元 + [interfaces.md](../interfaces.md) v1.1.0（API-013~015 + ERR-PS-* 四码）→ [tdd §5](tdd/parse-strategy.md) 增量切片 S7~S11 → implement（2026-11-04）：ExcelRowSlicer + parseExcelContent excel_row 分支 + validateExcelRowParams 三入口 + structuralChunk excelRowMode（忽略 tableMode/切片独占/零 overlap/豁免溢出）+ parse() REQ-H09 守卫，新增/扩展测试 7 类 39 例；**knowledge 模块全量回归 217/217 零失败（BUILD SUCCESS）**；实现偏差 7 条记录于模块 Logic 节；前端交付（2026-11-10，fastrag-frontend 3 文件，vue-tsc 全绿零新增错误）：types/knowledge.ts（第六类型 excel_row + ExcelRowConfig + 卡片元信息/默认值）、parse-strategy.vue（第六张「按行切片」卡片 + 表头三参/切分行数表单 + 提交前置校验 + excel_row 下隐藏 tableMode + normalize 空守卫）、StrategyChangeDialog.vue（文件级面板 excel_row 选项按文件扩展名守卫 + 四参面板 + 保存校验 + 漂移回落 rule_fixed）；遗留：QA 回退通道守护与零 DDL 对账未自动化（理由见模块 Logic Deviations）、真实环境联调待执行
 
 ## 4. 文件上传与摄取流水线 — file-ingestion
 
@@ -245,6 +246,16 @@ fastrag-backend
 - **Priority:** 中高
 - **Chain status:** design（2026-10-15：design 成稿 [modules/conversation-trace.md](./modules/conversation-trace.md)（新布局 docs/modules/，IF-001 采集器/IF-002 重放组装）+ [adr/0008-trace-engine-capture-batch-persist](./adr/0008-trace-engine-capture-batch-persist.md) + [adr/0009-trace-incremental-step-protocol](./adr/0009-trace-incremental-step-protocol.md)；contract.md Modules 图建立；strict 零新增。待 /idd-contract）
 
+## 22. 应用对话 Widget — widget
+
+- **代码证据（复用面，绿地特性零存量）**：`tool_result.data` 结构化通道（AgentEngine.java:438-441 structured→SSE data 键、:470-478 toolCallRecords 落库——历史回放零新列）、前端 toolDisplay.ts 工具名→专用渲染器路由先例（DatabaseQueryTable/KnowledgeChunksList）、renderMarkdown 单源消毒渲染（markdown.ts:26 DOMPurify）、五类绑定表惯例（app_*_binding + AppConfigController `/{appId}/<type>` 四动词 :90-130、权限 app:edit）、条件工具注册双先例（query_kb 经 KnowledgeBaseMiddleware:59-92 中间件 add / install_skill 恒注入+条件剔除 AgentEngine:995-1014）、ToolExecutorFactory 四型含 builtin（ToolExecutorFactory.java:32-37）、SkillDataInitializer.java:49 / McpBuiltinSeeder.java:38 启动幂等播种先例、Skill.java:32-104 JSON 列 JacksonTypeHandler 惯例、sandbox_config 属主隔离范式、双通道 SSE 单执行核（AppChatController.java:49 + SessionCenterController.java:89 → AppServiceImpl.executeDialog:471）、AppChatRequest 仅 query+sessionId（AppChatRequest.java:15-21）
+- **可能 REQ 区域**：Widget 资产 CRUD（widget 表三件套 JSON + 三档结构校验 + 属主隔离 + 内置模板播种/复制）、第六类绑定（app_widget_binding + 候选口径 + 上限 10 + enabled 开关）、对话协议（render_widget 内置工具 + WidgetMiddleware 清单注入 + tool_result.data 传输 + widgetAction 回传合成可见消息 + 交互窗口/alwaysEnabled + 快照内嵌历史回显 + widgetId∈绑定集合 fail-closed）、组件子集 19 个 + 模板 DSL（JSON 树 + {{var}} 插值）+ 渲染器架构（toolDisplay 路由 + fail-soft + 消毒三闸）+ 动作三枚举、工作台三页（列表双 tab/新建/编辑三 tab+预览）+ 状态矩阵
+- **Depends on:** app-center（绑定面与编排链复用）、agent（工具执行缝与 middleware）、iam（登录/权限/属主）；前端复用 conversation 渲染链（MessageBubble/ToolCallRenderer/toolDisplay/markdown 单源）
+- **Shared by:** 无（终端交互特性；工作流通道、可视化拖拽编辑器、自然语言生成 Widget、文件导入导出、组件扩展、分享治理为其登记的后续扩展）
+- **Depth signal:** 2026-10-30/31 grill 六批 29 项裁决 + 批次 7 授权代裁 5 项，共 34 项全部锁定，决策快照落根 CONTEXT.md「Widget 特性决策快照」#1-34；对标腾讯云 ADP Widget（用户提供的官方需求文档）；四场景 = 澄清询问/过程反馈/信息确认/结果展示
+- **Priority:** 中高
+- **Chain status:** contract（2026-10-31：design 成稿 [modules/widget.md](./modules/widget.md)（IF-004/IF-005，widget 包落 fastrag-application、WidgetMiddleware 落 fastrag-agent order=14、render_widget 独立 type="widget"）+ [modules/widget-frontend.md](./modules/widget-frontend.md)（WidgetCardRenderer 唯一渲染入口）+ [adr/0010](./adr/0010-widget-tool-channel-snapshot-protocol.md) + [adr/0011](./adr/0011-widget-template-dsl.md)；contract 成稿 [interfaces.md](./interfaces.md)（API-001~012 + ERR-WG-* 六码声明 + 共享类型 TS IDL）+ [ui/ui.md](../ui/ui.md) widget 三节 + IF-004/005 深化（边界/并发/生命周期语义）；widget 范围 check 零 error。tdd 成稿（2026-10-31）：[tdd/widget.md](./tdd/widget.md)（后端 S1~S9 切片 ~45 用例：三档校验逐档/生命周期/播种幂等/绑定上限/协议装配/render_widget 执行链/回传推进/快照守恒/双处双端守护，全 AFK）+ [tdd/widget-frontend.md](./tdd/widget-frontend.md)（前端 S1~S9 切片：转换点/守护与降级/交互窗口/回传链路/工作台/绑定面板/历史同构/浏览器条件/HITL 走查）；红绿循环已执行（2026-10-31 /idd-implement）：后端 widget 包 20 文件 + 集成 9 处 + DDL 双处 + 测试 8 类 50 断言（application+agent 全量回归 BUILD SUCCESS 零回归）；前端 28 文件（19 组件/渲染器/三页/绑定面板/回传链路/导航接线）+ 测试 9 文件（vitest 24 文件 200/200、vue-tsc 零错误）；module 双档 logic/trace/code 落档（Deviations 5 条含 resolveSnapshot 签名修订）。遗留：真实联调（后端 8081+模型+绑定资产，前端 S8 浏览器路径/S9 走查同批）。链状态：implement ✅（联调待启））
+
 ---
 
 # 跨特性共享代码
@@ -275,6 +286,7 @@ fastrag-backend
 第 6 批（能力底座）: 14 platform-config → 13 tools-skills-mcp
 第 7 批（应用层）:   16 workflow → 17 agent → 15 app-center
 第 8 批（消费端）:   18 operation-analytics
+第 9 批（对话交互增强）: 22 widget（依赖 15 app-center / 17 agent 前置）
 ```
 
 规则：特性 X 的链在其依赖特性链完成前不启动（共享依赖先行）；链编排沿用上位决议（核心 8 项完整链 + 其余 shape-only），如需在普通 commit 信息中追溯：本地图证据基准为 HEAD d8f30cd。

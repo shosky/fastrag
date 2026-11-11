@@ -3,7 +3,7 @@ name: adr group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-24
+updated: 2026-11-03
 ---
 # adr — group index
 
@@ -19,11 +19,34 @@ updated: 2026-10-24
 - Path: `adr/0009-trace-incremental-step-protocol.md`
 - Summary: —
 
-### Parallel Pre Retrieval
+### Widget 卡片经工具通道传输与快照内嵌持久化
+
+- Path: `adr/0010-widget-tool-channel-snapshot-protocol.md`
+- Summary: 卡片数据走 render_widget 工具结构化通道并随 toolCalls 落快照，不新增 SSE 事件与消息列。
+- Status: draft
+
+### Widget 模板 DSL 取 JSON 组件树加插值、不做模板语言
+
+- Path: `adr/0011-widget-template-dsl.md`
+- Summary: 模板取 JSON 组件树加 {{var}} 插值，无表达式与条件/循环语法——校验可判定优先于表达力。
+- Status: draft
+
+### Excel 按行切片在解析期装配——分片器分派缝不变
+
+- Path: `adr/0012-excel-row-slice-at-parse.md`
+- Summary: excel_row 切片由解析期 ExcelRowSlicer 装配多 TABLE 节点，分片器分派缝不变，豁免原子溢出二次拆分。
+- Status: draft
+
+### Nav Perm Tree Decoupling
+
+- Path: `adr/nav-perm-tree-decoupling.md`
+- Summary: 平台菜单四段重组时冻结权限体系——导航展示树与权限树解耦，menu:* 键与 sys_permission 存量零迁移，菜单分组与权限分组从此不对齐。
+- Status: draft
+
+### adr/parallel-pre-retrieval.md
 
 - Path: `adr/parallel-pre-retrieval.md`
-- Summary: 首轮模型调用前同步预检索注入上下文，取代强制 tool_choice 检索；query_kb 保留供二次检索。
-- Status: active
+- Summary: —
 
 ### 门户独立布局壳与平台壳并存
 

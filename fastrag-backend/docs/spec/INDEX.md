@@ -3,7 +3,7 @@ name: spec group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-24
+updated: 2026-11-03
 ---
 # spec — group index
 
@@ -59,6 +59,12 @@ updated: 2026-10-24
 - Path: `spec/knowledge-graph.md`
 - Summary: —
 
+### Nav Shell Frontend
+
+- Path: `spec/nav-shell-frontend.md`
+- Summary: 平台导航壳前端规格——侧边栏改单列宽侧栏并重组为对话/构建/资源/管理四段；顶栏接线通知中心；路由与权限键零改动。
+- Status: draft
+
 ### spec/new-conversation.md
 
 - Path: `spec/new-conversation.md`
@@ -74,10 +80,11 @@ updated: 2026-10-24
 - Path: `spec/operation-analytics.md`
 - Summary: —
 
-### spec/parse-strategy.md
+### ParseStrategy
 
 - Path: `spec/parse-strategy.md`
-- Summary: —
+- Summary: 解析策略配置面：策略 CRUD/自动匹配/覆盖重切/冲突检测/advanced 合并，及 Excel 按行切片 excel_row。
+- Status: active
 
 ### spec/platform-config.md
 
@@ -100,10 +107,11 @@ updated: 2026-10-24
 - Path: `spec/qa-generation.md`
 - Summary: —
 
-### spec/qa-pairs.md
+### 问答对管理（qa-pairs）需求规格
 
 - Path: `spec/qa-pairs.md`
-- Summary: —
+- Summary: QA 对 CRUD、单条与批量确认、Excel 导入、召回消费与级联一致性需求（含批量确认 REQ-B04/B05）
+- Status: active
 
 ### spec/retrieval.md
 
@@ -114,6 +122,18 @@ updated: 2026-10-24
 
 - Path: `spec/tools-skills-mcp.md`
 - Summary: —
+
+### Widget Frontend
+
+- Path: `spec/widget-frontend.md`
+- Summary: Widget 前端规格——开发工作台三页（列表双 tab、新建、编辑三件套+预览）、应用编辑器绑定面板、对话窗口卡片渲染/交互/回传/历史回看与降级矩阵。
+- Status: draft
+
+### Widget
+
+- Path: `spec/widget.md`
+- Summary: 应用对话 Widget——卡片资产（模板/数据结构/默认值）管理与校验、官方模板播种复制、应用绑定、对话内卡片协议与操作回传。
+- Status: draft
 
 ### spec/workflow.md
 

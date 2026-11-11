@@ -3,7 +3,7 @@ name: Docs index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-10-24
+updated: 2026-11-03
 ---
 # docs index
 
@@ -19,6 +19,12 @@ updated: 2026-10-24
 
 - Path: `conventions.md`
 - Summary: —
+
+### Interfaces
+
+- Path: `interfaces.md`
+- Summary: FastRAG 外部 HTTP/SSE API 契约——Widget 资产对话域与解析策略 excel_row 保存校验域。
+- Status: draft
 
 ## Sub-directories
 
