@@ -7,7 +7,7 @@
 | 切片 | 用户任务 | 测试层 | 覆盖状态 | 执行性 |
 |---|---|---|---|---|
 | S1 路由与入口流 | TASK-001 | Page/路由守卫 | 公开访问 + 入口流重定向 + title | AFK |
-| S2 顶导航与门户首页 | TASK-002 | Component | 页面元素 + 高亮 + 菜单跳转 + 徽标派生 | AFK |
+| S2 顶导航与门户首页 | TASK-002 | Component | 页面元素 + 分区结构 + 高亮 + 菜单跳转 + 徽标派生（2026-11-03 重构主战场） | AFK |
 | S3 操作手册页 | TASK-003 | VM/adapter + Component | STATE-001 + 目录联动 + 素材规范 | AFK |
 | S4 产品动态页 | TASK-004 | Component | STATE-002 + 时间线 | AFK |
 | S5 平台侧回归 | TASK-005 | Component | logo 回门户 + 文字改名 + 路由不变量 + 权限零注册 | AFK |
@@ -30,7 +30,7 @@
 
 Mock：仅 `@/utils/storage`（node 测试环境无 localStorage，沿用现仓 `vi.mock` 惯例）；路由器用 createWebHistory 换 memory history 的真实实例，不 mock vue-router。
 
-### S2 顶导航与门户首页（契约锚点：docs/ui/ui.md「顶导航」「PAGE-001」）
+### S2 顶导航与门户首页（契约锚点：docs/ui/ui.md「顶导航」「PAGE-001」（2026-11-03 Yuxi 式重构版）；T2.7-T2.18 为重构新增，T2.7/T2.8 兼作既有缺陷防回归专项）
 
 文件：`src/components/portal/PortalTopNav.test.ts`、`src/views/portal/index.test.ts`
 
@@ -40,11 +40,18 @@ Mock：仅 `@/utils/storage`（node 测试环境无 localStorage，沿用现仓 
 - T2.4 已登录显示「进入平台」按钮、用户名（realName 缺失回退 username）与「退出登录」；游客态显示「立即开始」按钮、不显示用户名
 - T2.5 退出：先弹确认框；确认 → 调 userStore.logout 且跳 /login；取消 → 停留原地
 - T2.6 hero 主按钮按登录态：游客显示「立即开始」→ /login；已登录显示「进入平台」→ /home；次按钮 → /portal/manual
-- T2.7 四张能力卡点击行为一致 → /home
-- T2.8 资源卡「操作手册」→ /portal/manual；「产品动态」→ /portal/changelog 且徽标 = `changelog[0].version`；changelog 为空时徽标不渲染（STATE-002 派生）
+- T2.7 分区顺序与唯一性：按 DOM 顺序渲染 知识引擎 → 应用与智能体 → 工作原理 → 为什么选 → 业务场景 → 技术栈 → 资源 → FAQ（分区眉标/标题文本序列断言）；全文不存在第二个「核心能力」分区（重复分区缺陷防回归）
+- T2.8 资源分区正常渲染两张资源卡：「操作手册」→ /portal/manual；「产品动态」→ /portal/changelog 且徽标 = `changelog[0].version`；changelog 为空时徽标不渲染（STATE-002 派生；`resources` 未定义缺陷防回归）
 - T2.9 遍历 portalMenus 数组：每个菜单项渲染出的 router-link 目标 `to` 与模块文档定义的 path 一一对应（/portal、/portal/manual、/portal/changelog）
 - T2.10 游客点击顶导航「立即开始」→ /login（进入平台的登录前置）
-- T3.8 分组目录交互：部分分组可折叠/展开、章箭头展开节列表、滚动联动激活章自动展开、版本头卡显示 changelog 首条版本号
+- T2.11 hero 四层文案：徽章「私有化部署 · 开箱即用」、副标题「企业级检索增强生成（RAG）平台」、大标题含「一问即答」渐变样式类、描述段与按钮组齐备
+- T2.12 知识引擎区渲染 6 条子能力行（行标题集合断言），「知识图谱」行配实拍锚点图（src = scene-graph.png）
+- T2.13 应用与智能体区渲染 5 条子能力行，每行挂 1-2 个静态 pill（逐行断言 pill 数 ∈ [1,2]），「应用与工作流编排」行配实拍锚点图（src = scene-application.png）
+- T2.14 非交互断言：双支柱子能力行、pill、技术栈标签点击后路由不变（无跳转行为），且渲染为非可聚焦元素（不进 Tab 焦点序）
+- T2.15 工作原理四步卡按 01 上传解析 → 02 知识加工 → 03 创建应用 → 04 对话溯源 顺序渲染；CTA 副句含「四步」口径
+- T2.16 技术栈区渲染 6 枚静态标签：MySQL / Redis / RabbitMQ / Neo4j / Milvus / MinIO
+- T2.17 业务场景卡 ×4 整卡点击 → /home（游客由守卫送 /login 属守卫行为不在此断言）
+- T2.18 CTA 深色横幅主按钮与 hero 主按钮同登录态规则：游客「立即开始」→ /login，已登录「进入平台」→ /home
 
 Mock：无新增——真实 pinia store + memory history router。
 
@@ -58,7 +65,8 @@ Mock：无新增——真实 pinia store + memory history router。
 - T3.4 内容区渲染 HTML，`##` 标题带锚点 id（renderMarkdown 走真实路径）
 - T3.5 STATE-001：marked.parse 抛异常 → 内容区回退显示 Markdown 原文，组件不抛错
 - T3.6 ≤1024px 目录折叠为下拉（断言折叠结构的类名/条件渲染存在；视觉正确性归 S7）
-- T3.7 真实素材规范断言（对 `src/content/manual.md` 本体）：`##` 章数 = 15、全文不含「AIS」字样、首行为 `# FastRAG 用户手册`（验收 17）
+- T3.7 真实素材规范断言（对 `src/content/manual.md` 本体）：`##` 章数 = 15、全文不含「AIS」字样、首行为 `# FastRAG 用户手册`（验收 29）
+- T3.8 分组目录交互：部分分组可折叠/展开、章箭头展开节列表、滚动联动激活章自动展开、版本头卡显示 changelog 首条版本号
 
 Mock：T3.5 用 `vi.mock('marked')` 注入失败；其余用例走真实 `utils/markdown.ts`。
 
@@ -85,12 +93,13 @@ Mock：T3.5 用 `vi.mock('marked')` 注入失败；其余用例走真实 `utils/
 ### S6 浏览器关键路径（条件执行，HITL 前置：playwright 浏览器 + 后端 8081 + 种子数据）
 
 - T6.1 登录 → 落地 /portal → 「进入平台」→ /home → 侧边栏 logo → /portal 全链路
-- T6.2 断点档位视口：1024px 与 768px（含 1025/769 边界对照）下页面可用、能力卡列数与时间线内边距符合约定、控制台零报错
+- T6.2 断点档位视口：1024px 与 768px（含 1025/769 边界对照）下页面可用——hero 竖排居中、业务场景卡单列、为什么选 2×2、四步纵向、pill 换行、时间线内边距收紧符合约定，控制台零报错
 
 ### S7 视觉与键盘走查（HITL）
 
-- T7.1 hero 与首页布局对照模块文档 ASCII 线框人工比对
-- T7.2 顶导航 Tab 顺序 = DOM 顺序、Enter 可触发；手册目录键盘可达
+- T7.1 hero（四层文案 + 「一问即答」渐变文字）与首页布局对照模块文档 ASCII 线框人工比对
+- T7.2 顶导航与全部按钮 Tab 顺序 = DOM 顺序、Enter 可触发；手册目录键盘可达；双支柱行 / pill / 技术栈标签不进入 Tab 焦点序
+- T7.3 `prefers-reduced-motion: reduce` 下动效基线四项（rise-in / reveal / hover 位移 / dots-drift）全部禁用，直接呈现最终态
 
 ## 3. Mock 边界（只 mock 真缝位）
 
@@ -106,28 +115,44 @@ Mock：T3.5 用 `vi.mock('marked')` 注入失败；其余用例走真实 `utils/
 | T1.1 | 状态契约「显式不适用」（已登录访问 /login） | 验收 2 |
 | T1.2 | —（公开访问，决策 9 修订） | 验收 3 |
 | T1.3、T1.4 | 状态契约「未知路径兜底 /portal」 | 验收 5 |
-| T1.5 | ui.md「平台侧改动」title 行 | 验收 17 |
-| T2.1-T2.5 | ui.md「顶导航」 | 验收 6、7、15 |
-| T2.6-T2.8 | ui.md「PAGE-001」 | 验收 8、13、14；STATE-002 派生 |
+| T1.5 | ui.md「平台侧改动」title 行 | 验收 25 |
+| T2.1-T2.5 | ui.md「顶导航」 | 验收 6、7、22 |
+| T2.6 | ui.md「PAGE-001」hero 主按钮 | 验收 8 |
+| T2.7 | ui.md「PAGE-001」分区顺序注记 | 验收 10 |
+| T2.8 | ui.md「PAGE-001」资源卡 + STATE-002 | 验收 15、20、21 |
 | T2.9 | ui.md「顶导航」菜单项 | 验收 6 |
 | T2.10 | ui.md「顶导航」登录按钮 | 验收 4 |
-| T3.1-T3.4、T3.6 | ui.md「PAGE-002」 | TASK-003、验收 10、18 |
-| T3.5 | ui.md STATE-001 | 验收 11、STATE-001 |
-| T3.7 | —（素材规范断言） | 验收 20 |
-| T4.1-T4.4 | ui.md「PAGE-003」+ STATE-002 | TASK-004、验收 12、13 |
+| T2.11 | ui.md「PAGE-001」hero 四层文案 | 验收 14 |
+| T2.12 | ui.md「PAGE-001」知识引擎子能力行 | 验收 11 |
+| T2.13 | ui.md「PAGE-001」应用与智能体子能力行 | 验收 11 |
+| T2.14 | ui.md「PAGE-001」非交互注记 + 可达性节 | 验收 11、27 |
+| T2.15 | ui.md「PAGE-001」四步卡 + CTA 副句 | 验收 12 |
+| T2.16 | ui.md「PAGE-001」技术栈标签 | 验收 13 |
+| T2.17 | ui.md「PAGE-001」业务场景卡 | 验收 4 |
+| T2.18 | ui.md「PAGE-001」CTA 主按钮 | 验收 4、8 |
+| T3.1-T3.4、T3.6 | ui.md「PAGE-002」 | TASK-003、验收 17 |
+| T3.5 | ui.md STATE-001 | 验收 18、STATE-001 |
+| T3.7 | —（素材规范断言） | 验收 29 |
+| T3.8 | ui.md「PAGE-002」目录交互 | 验收 17 |
+| T4.1-T4.4 | ui.md「PAGE-003」+ STATE-002 | TASK-004、验收 19、20 |
 | T5.1 | ui.md「平台侧改动」logo 行 | 验收 9、TASK-005 |
-| T5.2 | ui.md「平台侧改动」改名行 | 验收 16 |
-| T5.3 | —（路由表快照） | 验收 22 |
-| T5.4 | —（权限零注册） | 验收 21 |
+| T5.2 | ui.md「平台侧改动」改名行 | 验收 23 |
+| T5.3 | —（路由表快照） | 验收 31 |
+| T5.4 | —（权限零注册） | 验收 30 |
 | T6.1 | 全页（浏览器层） | 验收 1、8、9 |
-| T6.2 | —（断点档位） | 验收 18 |
-| T7.1-T7.2 | —（视觉/键盘走查） | 验收 19 |
+| T6.2 | —（断点档位） | 验收 26 |
+| T7.1 | —（视觉走查） | 验收 10、14 |
+| T7.2 | —（键盘/焦点序走查） | 验收 27 |
+| T7.3 | —（动效降级走查） | 验收 28 |
 
 ## 5. 待实施说明
 
 - 红绿顺序建议：S1（守卫最薄，先通）→ S3.1（VM 纯函数）→ S2 / S4（组件）→ S5（平台回归兜底）→ S6 / S7（环境就绪后补）
+- S2 为 2026-11-03 重构主战场：T2.7 / T2.8 是既有缺陷防回归专项（重复「核心能力」分区 / `resources` 未定义整区不渲染），应随重写一并先红后绿；T2.11-T2.18 按修订版 spec「元素与交互」清单逐项落断言
+- T2.14 焦点序断言：对非交互元素断言非 button/a 语义且无 tabindex，配合 T7.2 人工走查兜底
 - 素材已落地：`src/content/manual.md`（15 章，产品名 FastRAG），T3.7 直接对真实文件断言
 - 组件测试统一 jsdom 环境（文件头 `// @vitest-environment jsdom` 或按现仓既有组件测试先例）
 - S5 的 Sidebar/Header 体量大，用 shallowMount + 图标组件 stub
 - T3.6 仅断言折叠机制存在；视觉正确性归 S7
 - S6/S7 不阻塞其余切片验收；执行者为 /idd-implement
+- 截图清理（spec 数据映射锁定清单）由 /idd-implement 执行并跑「无 404 死链」核验（验收 16），T2.12/T2.13 的锚点图 src 断言即为回归哨兵
