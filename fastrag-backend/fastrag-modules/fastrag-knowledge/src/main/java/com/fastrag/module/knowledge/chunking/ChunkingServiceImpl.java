@@ -793,6 +793,16 @@ public class ChunkingServiceImpl implements ChunkingService {
         int overlap = chunkCfg.getOverlap();
         boolean ignoreTables = "ignore".equals(parseCfg.getTableMode());
 
+        // excel_row 按行切片模式（ADR-0012）：解析期已按「表头 + N 行」装配切片 TABLE 节点，
+        // 一个 TABLE 节点 ≡ 一个分片——忽略 tableMode（REQ-H08）、切片间不回填 overlap（切片自包含）、
+        // 豁免 handleAtomicOverflow 二次拆分（否则默认 chunkLength 会把 4800 字符切片拆碎）
+        boolean excelRowMode = "excel_row".equals(chunkCfg.getStrategy());
+        int effectiveOverlap = excelRowMode ? 0 : overlap;
+        if (excelRowMode && ignoreTables) {
+            log.warn("tableMode=ignore configured under excel_row strategy, keeping slice TABLE nodes (REQ-H08)");
+            ignoreTables = false;
+        }
+
         // C3 修复：纯表格文档（Excel 类，nodes 仅含 HEADING+TABLE）忽略 tableMode=ignore，
         // 否则跳过 TABLE 节点会导致全部数据静默丢失
         if (ignoreTables && isPureTableDocument(nodes)) {
@@ -818,7 +828,7 @@ public class ChunkingServiceImpl implements ChunkingService {
             if (node.getType() == DocNode.NodeType.HEADING) {
                 // 先保存当前 chunk（纯标题 current 不 flush，等待正文合并）
                 if (current.length() > 0 && current.hasBodyContent()) {
-                    result.add(flushWithOverlap(current, currentTitle, headingStack, chunkIndex++, overlap));
+                    result.add(flushWithOverlap(current, currentTitle, headingStack, chunkIndex++, effectiveOverlap));
                 }
                 // 连续标题（如 PPT 空标题页）：前一个 pending 标题先入 chunk，避免被新标题覆盖丢失
                 if (pendingHeading != null) {
@@ -853,10 +863,10 @@ public class ChunkingServiceImpl implements ChunkingService {
                 String serialized = markdownSerializer.serializeNode(node);
                 int plainLen = markdownSerializer.plainTextLength(serialized);
 
-                // 仅当 current 已含正文时才 flush；纯标题 current 与原子单元合并在同一 chunk，
-                // 超长交给 handleAtomicOverflow 按行拆分（标题前缀只附加到首个子 chunk）
-                if (current.hasBodyContent() && current.length() + plainLen > chunkLength) {
-                    result.add(flushWithOverlap(current, currentTitle, headingStack, chunkIndex++, overlap));
+                // 仅当 current 已含正文时才 flush；excel_row 模式下每个切片 TABLE 强制独占分片
+                //（ADR-0012 一节点一分片，小切片不得被 chunkLength 合并）；其余模式超长才 flush
+                if (current.hasBodyContent() && (excelRowMode || current.length() + plainLen > chunkLength)) {
+                    result.add(flushWithOverlap(current, currentTitle, headingStack, chunkIndex++, effectiveOverlap));
                 }
                 current.append(serialized, node.getPageNumber(), node);
             } else {
@@ -868,7 +878,7 @@ public class ChunkingServiceImpl implements ChunkingService {
                 for (String sentence : sentences) {
                     if (sentence.trim().isEmpty()) continue;
                     if (current.hasBodyContent() && current.length() + sentence.length() > chunkLength) {
-                        result.add(flushWithOverlap(current, currentTitle, headingStack, chunkIndex++, overlap));
+                        result.add(flushWithOverlap(current, currentTitle, headingStack, chunkIndex++, effectiveOverlap));
                     }
                     current.appendInline(sentence, node.getPageNumber());
                 }
@@ -884,11 +894,14 @@ public class ChunkingServiceImpl implements ChunkingService {
             pendingHeadingPage = null;
         }
         if (current.length() > 0) {
-            result.add(flushWithOverlap(current, currentTitle, headingStack, chunkIndex++, overlap));
+            result.add(flushWithOverlap(current, currentTitle, headingStack, chunkIndex++, effectiveOverlap));
         }
 
-        // Atomic Unit 超长拆分
-        result = handleAtomicOverflow(result, chunkLength);
+        // Atomic Unit 超长拆分——excel_row 模式豁免：切片尺寸由 4800 硬上限定义，
+        // 按 chunkLength 拆分会把「表头 + N 行」切片拆碎（ADR-0012 后果 2）
+        if (!excelRowMode) {
+            result = handleAtomicOverflow(result, chunkLength);
+        }
 
         log.info("Structural chunking: {} nodes -> {} chunks (chunkLength={})",
                 nodes.size(), result.size(), chunkLength);

@@ -183,6 +183,11 @@ function normalizeAdvanced(advanced: any): ParseStrategyAdvanced {
   if (advanced.chunk) {
     base.chunk = { ...base.chunk, ...advanced.chunk }
     if (!base.chunk.strategy) base.chunk.strategy = 'rule_fixed'
+    // excelRow 组兜底：存量数据缺失/为 null 时回落默认（1/1/2/100），避免模板解引用空对象
+    base.chunk.excelRow = {
+      ...JSON.parse(JSON.stringify(DEFAULT_ADVANCED.chunk.excelRow)),
+      ...(advanced.chunk.excelRow || {}),
+    }
   }
   if (advanced.index) base.index = { ...base.index, ...advanced.index }
   // 旧平铺字段：仅在新分组未提供时兼容映射
@@ -239,6 +244,36 @@ function selectStrategy(type: ChunkStrategyType) {
   adv.value.parentAggLevel = defaults.parentAggLevel
   adv.value.semanticThreshold = defaults.semanticThreshold
   adv.value.embeddingModel = defaults.embeddingModel
+  adv.value.excelRow = defaults.excelRow
+}
+
+/**
+ * excel_row 按行切片前置校验（REQ-H02/H03/H04 口径，与后端 validateExcelRowParams 对齐）。
+ * 返回 null 表示通过；否则返回可直接展示的错误文案。
+ */
+function validateExcelRow(): string | null {
+  if (adv.value.strategy !== 'excel_row') return null
+  const nonExcel = form.value.extensions.filter((e) => !['.xlsx', '.xls'].includes(e.toLowerCase()))
+  if (nonExcel.length > 0) {
+    return `按行切片策略仅支持 Excel 扩展名（.xlsx/.xls），当前包含「${nonExcel.join('、')}」`
+  }
+  const er = adv.value.excelRow
+  if (!er || !er.headerStartRow || !er.headerEndRow || !er.sliceStartRow) {
+    return '请配置表头起始行、表头结束行与切分起始行（按 Excel 行号从 1 起算）'
+  }
+  if (er.headerStartRow < 1 || er.headerStartRow > er.headerEndRow) {
+    return '表头起始行必须不大于表头结束行，且从 1 起算'
+  }
+  if (er.headerEndRow - er.headerStartRow + 1 > 5) {
+    return '表头区间不可超过 5 行'
+  }
+  if (er.sliceStartRow <= er.headerEndRow) {
+    return '切分起始行必须大于表头结束行'
+  }
+  if (er.rowsPerSlice != null && er.rowsPerSlice < 1) {
+    return '切分行数必须不小于 1'
+  }
+  return null
 }
 
 function goBack() {
@@ -332,6 +367,13 @@ async function handleSubmit() {
   if (!formRef.value) return
   await formRef.value.validate(async (valid: boolean) => {
     if (!valid) return
+
+    // excel_row 按行切片前置校验（REQ-H02/H03/H04；后端保存期同口径拒绝，双保险）
+    const excelRowError = validateExcelRow()
+    if (excelRowError) {
+      ElMessage.error(excelRowError)
+      return
+    }
 
     // 冲突警告（提交前实时调后端 /conflicts，允许强制保存但有提示）
     const freshConflicts = await detectConflicts(form.value.extensions, isEdit.value ? editingId.value : undefined)
@@ -588,13 +630,10 @@ onMounted(() => {
 
         <div class="parse-strategy-page__strategy-cards">
           <div
-            v-for="(opt, idx) in CHUNK_STRATEGY_OPTIONS"
+            v-for="opt in CHUNK_STRATEGY_OPTIONS"
             :key="opt.value"
             class="parse-strategy-page__strategy-card"
-            :class="[
-              adv.strategy === opt.value ? 'parse-strategy-page__strategy-card--active' : '',
-              idx === CHUNK_STRATEGY_OPTIONS.length - 1 ? 'parse-strategy-page__strategy-card--wide' : '',
-            ]"
+            :class="adv.strategy === opt.value ? 'parse-strategy-page__strategy-card--active' : ''"
             @click="selectStrategy(opt.value)"
           >
             <div class="parse-strategy-page__strategy-card-header">
@@ -771,6 +810,29 @@ onMounted(() => {
           </el-form-item>
         </template>
 
+        <!-- ====== 按行切片（Excel 专属，REQ-H03/H04/H06） ====== -->
+        <template v-if="adv.strategy === 'excel_row'">
+          <el-form-item label="表头起始行">
+            <el-input-number v-model="adv.excelRow.headerStartRow" :min="1" :max="1000" />
+            <div class="form-tip">按 Excel 行号从 1 起算；表头行将附加到每个切片首部</div>
+          </el-form-item>
+          <el-form-item label="表头结束行">
+            <el-input-number v-model="adv.excelRow.headerEndRow" :min="1" :max="1000" />
+            <div class="form-tip">与表头起始行构成表头范围，区间不可超过 5 行；显式范围完全取代自动表头检测</div>
+          </el-form-item>
+          <el-form-item label="切分起始行">
+            <el-input-number v-model="adv.excelRow.sliceStartRow" :min="2" :max="5000" />
+            <div class="form-tip">数据行起点，必须大于表头结束行；其之前的非表头行将被跳过</div>
+          </el-form-item>
+          <el-form-item label="切分行数">
+            <el-input-number v-model="adv.excelRow.rowsPerSlice" :min="1" :max="10000" :step="10" />
+            <div class="form-tip">每个切片包含的数据行数（缺省 100）；单切片硬上限 4800 字符（含表头），超出自动封片</div>
+          </el-form-item>
+          <el-form-item label="适用提示">
+            <div class="form-tip">仅对 .xlsx/.xls 文件生效；工作簿内所有非隐藏 Sheet 统一按此参数切片，行数不足的 Sheet 自动跳过</div>
+          </el-form-item>
+        </template>
+
         <!-- 高级参数（可折叠：模型/解析细节，普通用户无需关注） -->
         <el-collapse v-model="advancedCollapsed" class="parse-strategy-page__advanced-collapse">
           <el-collapse-item title="高级参数（模型/解析细节）" name="advanced">
@@ -787,8 +849,11 @@ onMounted(() => {
               <div class="form-tip">用于智能分段、内容提取、摘要生成等</div>
             </el-form-item>
 
-            <!-- ========== 解析配置（按文档类型显示专属参数） ========== -->
-            <div v-if="TABLE_METHODS.includes(form.parseMethod)" class="parse-strategy-page__field-group">
+            <!-- ========== 解析配置（按文档类型显示专属参数；excel_row 忽略 tableMode，不展示） ========== -->
+            <div
+              v-if="TABLE_METHODS.includes(form.parseMethod) && adv.strategy !== 'excel_row'"
+              class="parse-strategy-page__field-group"
+            >
               <label class="parse-strategy-page__field-label">表格处理模式</label>
               <el-radio-group v-model="adv.parse.tableMode">
                 <el-radio-button
@@ -1016,10 +1081,6 @@ onMounted(() => {
       .parse-strategy-page__strategy-card-header {
         color: $color-primary;
       }
-    }
-
-    &--wide {
-      grid-column: span 2;
     }
   }
 

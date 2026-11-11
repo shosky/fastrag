@@ -104,6 +104,12 @@ public class DocumentParserImpl implements DocumentParser {
 
         log.debug("Parsing file with extension={}, method={}", extension, method);
 
+        // REQ-H09：excel_row 策略漂移绑定到非 Excel 文件时，告警并降级默认解析路径，不阻断摄取
+        if ("xlsx".equals(method) && isExcelRowStrategy(strategy) && !isExcelExtension(extension)) {
+            log.warn("excel_row strategy bound to non-Excel file (extension={}), falling back to default parsing", extension);
+            method = "default";
+        }
+
         try {
             return switch (method) {
                 case "pdf" -> parsePdf(fileStream, strategy, options);
@@ -1715,8 +1721,9 @@ public class DocumentParserImpl implements DocumentParser {
         LlmConfig llmConfig = resolveLlmConfig(strategy);
 
         try {
-            // 委托共享方法解析（独立文件解析：全部 Sheet，启用 LLM 表头兜底）
-            List<DocNode> nodes = parseExcelContent(stream, null, llmModel, llmConfig);
+            // 委托共享方法解析（独立文件解析：全部 Sheet）。
+            // excel_row 策略：显式表头 + 按行切片装配（REQ-H05~H07，ADR-0012 解析期）；其余策略走自动表头路径
+            List<DocNode> nodes = parseExcelContent(stream, null, llmModel, llmConfig, resolveExcelRow(strategy));
 
             // 序列化为 Markdown 文本
             String text = markdownSerializer.serialize(nodes);
@@ -1759,8 +1766,32 @@ public class DocumentParserImpl implements DocumentParser {
     }
 
     /**
+     * 解析 excel_row 按行切片参数：仅当策略分片类型为 excel_row 时返回非空。
+     * 合并与归一化统一走 {@link StrategyConfigResolver}（excelRow 组保证非空，REQ-H01）。
+     */
+    private ParseStrategyConfig.ExcelRow resolveExcelRow(KbParseStrategy strategy) {
+        if (strategy == null) return null;
+        ParseStrategyConfig config = configResolver.resolve(strategy);
+        return "excel_row".equals(config.getChunk().getStrategy()) ? config.getChunk().getExcelRow() : null;
+    }
+
+    /** excel_row 判定（REQ-H09 守卫）：策略分片类型是否为 excel_row */
+    private boolean isExcelRowStrategy(KbParseStrategy strategy) {
+        if (strategy == null) return false;
+        return "excel_row".equals(configResolver.resolve(strategy).getChunk().getStrategy());
+    }
+
+    /** Excel 扩展名判定（REQ-H09 守卫）：归一化后 ∈ {.xlsx, .xls} */
+    private static boolean isExcelExtension(String extension) {
+        if (extension == null) return false;
+        String e = extension.trim().toLowerCase();
+        if (!e.startsWith(".")) e = "." + e;
+        return e.equals(".xlsx") || e.equals(".xls");
+    }
+
+    /**
      * 从 InputStream 解析 Excel 内容为 DocNode 列表（共享方法）。
-     * 用于独立 Excel 文件解析，也用于嵌入在 PDF/DOCX/PPTX 中的 Excel。
+     * 用于独立 Excel 文件解析，也用于嵌入在 PDF/DOCX/PPTX 中的 Excel（嵌入场景不携带 excel_row，走自动表头路径）。
      *
      * @param stream       Excel 文件流（内部读取并关闭 Workbook）
      * @param sheetFilter  可选 Sheet 名称过滤器（嵌入场景可只提取特定 Sheet），null 表示全部
@@ -1770,6 +1801,16 @@ public class DocumentParserImpl implements DocumentParser {
      */
     public List<DocNode> parseExcelContent(InputStream stream, Predicate<String> sheetFilter,
                                            String llmModel, LlmConfig llmConfig) throws Exception {
+        return parseExcelContent(stream, sheetFilter, llmModel, llmConfig, null);
+    }
+
+    /**
+     * parseExcelContent 的 excel_row 重载：excelRow 非空时按「显式表头 + 按行切片」装配（REQ-H05~H07），
+     * null 时与既有自动表头路径完全一致。
+     */
+    public List<DocNode> parseExcelContent(InputStream stream, Predicate<String> sheetFilter,
+                                           String llmModel, LlmConfig llmConfig,
+                                           ParseStrategyConfig.ExcelRow excelRow) throws Exception {
         try (Workbook workbook = detectAndCreateWorkbook(stream)) {
             DataFormatter formatter = new DataFormatter();
             List<DocNode> nodes = new ArrayList<>();
@@ -1809,6 +1850,14 @@ public class DocumentParserImpl implements DocumentParser {
 
                 // M7: 预构建合并区域索引（行号 → 合并区域列表），O(1) 查找
                 Map<Integer, List<CellRangeAddress>> mergedRegionIndex = buildMergedRegionIndex(sheet);
+
+                // excel_row 按行切片分支（REQ-H05~H07）：显式表头唯一划定表头，不跑自动检测与 LLM（ADR-0012 解析期装配）
+                if (excelRow != null) {
+                    emitExplicitHeaderSlices(sheet, sheetName, sheetIndex, effectiveLastRow,
+                            excelRow, formatter, mergedRegionIndex, nodes);
+                    sheetIndex++;
+                    continue;
+                }
 
                 // Q8: 检测表头区域（标题行 + 列名行，最多扫描 MAX_HEADER_DEPTH 行）
                 HeaderRegion headerRegion = detectHeaderRegion(sheet, firstRow, effectiveLastRow,
@@ -1907,6 +1956,52 @@ public class DocumentParserImpl implements DocumentParser {
                 sheetIndex++;
             }
             return nodes;
+        }
+    }
+
+    /**
+     * excel_row 显式表头 + 按行切片装配（REQ-H05~H07，ADR-0012 解析期装配）。
+     *
+     * <p>显式表头范围是唯一事实源：不执行 detectHeaderRegion 自动检测、不调用 LLM 表头合并（REQ-H05）；
+     * 表头行经 mergeMultiRowHeaders 按既有合并区域语义展开。数据行自切分起始行起，隐藏行/空行跳过
+     * （与自动路径同口径）；字面行模式，不做表尾说明行启发式。行数不足切分起始行的 Sheet 跳过并告警（REQ-H07）。
+     */
+    private void emitExplicitHeaderSlices(Sheet sheet, String sheetName, int sheetIndex, int effectiveLastRow,
+                                          ParseStrategyConfig.ExcelRow er, DataFormatter formatter,
+                                          Map<Integer, List<CellRangeAddress>> mergedRegionIndex,
+                                          List<DocNode> nodes) {
+        int headerStart = Math.max(1, er.getHeaderStartRow()) - 1;   // 1-based → 0-based
+        int headerEnd = Math.max(headerStart, er.getHeaderEndRow() - 1);
+        int dataStart = Math.max(headerEnd + 1, er.getSliceStartRow() - 1);
+
+        if (effectiveLastRow < dataStart) {
+            log.warn("Excel row-slice: sheet '{}' has {} effective rows, less than sliceStartRow {}; data skipped",
+                    sheetName, effectiveLastRow + 1, er.getSliceStartRow());
+            return; // 仅保留 HEADING 节点（REQ-H07 跳过不阻断）
+        }
+
+        List<String> headers = mergeMultiRowHeaders(sheet, headerStart, headerEnd - headerStart + 1,
+                formatter, mergedRegionIndex);
+
+        List<List<String>> dataRows = new ArrayList<>();
+        for (int r = dataStart; r <= effectiveLastRow; r++) {
+            if (isRowHidden(sheet, r)) continue;
+            Row row = sheet.getRow(r);
+            if (row == null) continue;
+            List<String> values = extractRowValues(row, formatter, sheet, mergedRegionIndex);
+            if (isRowEmpty(values)) continue;
+            dataRows.add(values);
+        }
+
+        List<List<List<String>>> slices = ExcelRowSlicer.slice(dataRows, headers,
+                Math.max(1, er.getRowsPerSlice()));
+        for (List<List<String>> sliceRows : slices) {
+            nodes.add(DocNode.builder()
+                    .type(DocNode.NodeType.TABLE)
+                    .headers(headers)
+                    .rows(sliceRows)
+                    .pageNumber(sheetIndex + 1)
+                    .build());
         }
     }
 

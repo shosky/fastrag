@@ -65,6 +65,7 @@ public class ParseStrategyServiceImpl implements ParseStrategyService {
         validate(req, req.getParseMethod());
         validateRequiredFields(req, true);
         validateChunkParams(req.getAdvanced());
+        validateExcelRowParams(req.getAdvanced(), req.getExtensions());
         var e = new KbParseStrategy();
         e.setKbId(kbId);
         e.setName(req.getName());
@@ -85,11 +86,16 @@ public class ParseStrategyServiceImpl implements ParseStrategyService {
         String effectiveMethod = req.getParseMethod() != null ? req.getParseMethod() : e.getParseMethod();
         validate(req, effectiveMethod);
         validateRequiredFields(req, false);
-        // 分片参数校验：更新为部分更新语义，请求带 advanced 时校验请求值，否则校验沿用后的现有值
+        // 分片参数校验：更新为部分更新语义，请求带 advanced 时校验请求值，否则校验沿用后的现有值；
+        // excel_row 校验按生效扩展名（请求优先、否则沿用）执行（REQ-A04）
+        List<String> effectiveExtensions = req.getExtensions() != null ? req.getExtensions() : toExtList(e.getExtensions());
         if (req.getAdvanced() != null) {
             validateChunkParams(req.getAdvanced());
+            validateExcelRowParams(req.getAdvanced(), effectiveExtensions);
         } else if (StrUtil.isNotBlank(e.getAdvanced())) {
-            validateChunkParams(JSONUtil.parseObj(e.getAdvanced()));
+            Map<String, Object> existingAdvanced = JSONUtil.parseObj(e.getAdvanced());
+            validateChunkParams(existingAdvanced);
+            validateExcelRowParams(existingAdvanced, effectiveExtensions);
         }
         if (req.getName() != null) e.setName(req.getName());
         if (req.getDescription() != null) e.setDescription(req.getDescription());
@@ -166,6 +172,7 @@ public class ParseStrategyServiceImpl implements ParseStrategyService {
     public ParseStrategyDto saveFileStrategy(String kbId, String fileId, ParseStrategyRequest req) {
         validate(req, req.getParseMethod());
         validateChunkParams(req.getAdvanced());
+        validateExcelRowParams(req.getAdvanced(), req.getExtensions());
 
         KbParseStrategy existing = mapper.selectOne(new LambdaQueryWrapper<KbParseStrategy>()
                 .eq(KbParseStrategy::getKbId, kbId)
@@ -290,6 +297,66 @@ public class ParseStrategyServiceImpl implements ParseStrategyService {
             throw BusinessException.badRequest("重叠字符数（" + o.intValue()
                     + "）必须小于分片长度（" + n.intValue() + "），建议取分片长度的 10%~20%");
         }
+    }
+
+    /**
+     * excel_row 按行切片参数保存期校验（REQ-H02/H03/H04，拒绝式口径同 validateChunkParams）。
+     *
+     * <p>仅当生效分片类型为 excel_row 时校验：扩展名域（⊆ .xlsx/.xls）、表头三参
+     * （1-based、起始≤结束、区间≤5 行、切分起始行>表头结束行）、切分行数下限 ≥1（缺省 100，无上限硬校验）。
+     * 请求未带 strategy 或非 excel_row 时不校验（该组不被消费，残留无副作用）。
+     */
+    @SuppressWarnings("unchecked")
+    private void validateExcelRowParams(Map<String, Object> advanced, List<String> extensions) {
+        if (advanced == null) return;
+        Map<String, Object> chunk = advanced.get("chunk") instanceof Map<?, ?> m
+                ? (Map<String, Object>) m : advanced;
+        Object strategyVal = chunk.get("strategy");
+        if (strategyVal == null || !"excel_row".equals(String.valueOf(strategyVal))) return;
+
+        if (extensions != null) {
+            for (String ext : extensions) {
+                if (ext == null) continue;
+                String e = ext.trim().toLowerCase();
+                if (!e.startsWith(".")) e = "." + e;
+                if (!e.equals(".xlsx") && !e.equals(".xls")) {
+                    throw BusinessException.badRequest("按行切片策略仅支持 Excel 扩展名（.xlsx/.xls），当前包含「" + ext + "」");
+                }
+            }
+        }
+        Map<String, Object> er = chunk.get("excelRow") instanceof Map<?, ?> m2
+                ? (Map<String, Object>) m2 : null;
+        Integer start = intVal(er, "headerStartRow");
+        Integer end = intVal(er, "headerEndRow");
+        Integer sliceStart = intVal(er, "sliceStartRow");
+        Integer rows = intVal(er, "rowsPerSlice");
+        if (start == null || end == null || sliceStart == null) {
+            throw BusinessException.badRequest("按行切片策略必须配置表头起始行、表头结束行与切分起始行");
+        }
+        if (start < 1 || start > end) {
+            throw BusinessException.badRequest("表头起始行（" + start + "）必须不大于表头结束行（" + end + "），且按 Excel 行号从 1 起算");
+        }
+        if (end - start + 1 > 5) {
+            throw BusinessException.badRequest("表头区间不可超过 5 行（当前 " + (end - start + 1) + " 行）");
+        }
+        if (sliceStart <= end) {
+            throw BusinessException.badRequest("切分起始行（" + sliceStart + "）必须大于表头结束行（" + end + "）");
+        }
+        if (rows != null && rows < 1) {
+            throw BusinessException.badRequest("切分行数必须不小于 1（当前 " + rows + "）");
+        }
+    }
+
+    /** 库内 extensions JSON 列 → 列表（生效扩展名计算用；空返回 null） */
+    private static List<String> toExtList(String extensionsJson) {
+        if (StrUtil.isBlank(extensionsJson)) return null;
+        return JSONUtil.toList(extensionsJson, String.class);
+    }
+
+    private static Integer intVal(Map<String, Object> map, String key) {
+        if (map == null) return null;
+        Object v = map.get(key);
+        return v instanceof Number n ? n.intValue() : null;
     }
 
     private KbParseStrategy getOne(String kbId, String id) {

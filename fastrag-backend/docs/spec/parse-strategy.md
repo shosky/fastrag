@@ -1,10 +1,20 @@
+---
+name: ParseStrategy
+summary: 解析策略配置面：策略 CRUD/自动匹配/覆盖重切/冲突检测/advanced 合并，及 Excel 按行切片 excel_row。
+type: spec
+id: SPEC-PARSE-STRATEGY
+status: active
+updated: 2026-11-03
+hash: "db3d899f2617"
+summaryHash: "db3d899f2617"
+---
 # 解析策略（parse-strategy）— 需求规格
 
-## 1. 特性与范围
+## 1. 特性与范围 {#scope}
 
-解析策略特性定义「文档如何被解析与切分」的全部配置面：知识库级命名解析策略（Parse Strategy）的 CRUD、默认策略唯一性、预定义模板与文档类型元数据、按文件扩展名的自动匹配（Auto Match）、文档级覆盖（文件级专属策略与换绑三态）、绑定-重切一致性守卫（ADR-0001：绑定变更必须触发重新分片）、扩展名冲突检测，以及策略高级配置（advanced）到运行时配置 `ParseStrategyConfig` 的三层合并解析。显式排除：摄取流水线与解析器实现（file-ingestion）、分片算法执行（chunk-management）、合规规则表的功能化（见 §2 死配置）、`kb.parse_mode`/`split_mode` 字段语义（仅存储透传，见 data.md `## kb-core`）。
+解析策略特性定义「文档如何被解析与切分」的全部配置面。知识库级面包括：策略 CRUD、默认策略唯一性、预定义模板与文档类型元数据、按文件扩展名的自动匹配（Auto Match）。文档级覆盖（文件级专属策略与换绑三态）、绑定-重切一致性守卫（ADR-0001）与扩展名冲突检测构成绑定与冲突面。策略高级配置（advanced）经三层合并解析为运行时配置 `ParseStrategyConfig`。Excel 专属的按行切片策略类型 `excel_row` 的配置面、参数校验与切片行为语义见 §4.8，切片执行算法本体仍归 chunk-management（见 §2）。显式排除：摄取流水线与解析器实现（file-ingestion）与分片算法执行（chunk-management）。合规规则表的功能化见 §2 死配置条目。`kb.parse_mode`/`split_mode` 字段仅存储透传（见 data.md `## kb-core`）。
 
-## 2. Out of Scope
+## 2. Out of Scope {#out-of-scope}
 
 - **分片算法本体**：rule_fixed/rule_recursive/structure_aware/semantic/parent_child 五种分片器的执行逻辑归 chunk-management；本特性只决定「用哪个分片器与参数」（IngestionConsumer.java:189-236 消费侧证据）。
 - **文档解析器实现**：PDF/DOCX/OCR/ASR 等 8 格式解析逻辑归 file-ingestion；本特性只提供 parseMethod（文档类型）与 llmModel 配置。
@@ -12,12 +22,16 @@
 - **AI分片 工作流**（预览→OCR→跨页合并→LLM 分片）：独立特性，仅其落库环节消费本特性的文件级策略保存接口。
 - **文件上传/回收站/移动复制**：FileController 的文件生命周期端点归 file-ingestion；本特性只覆盖其中的策略绑定语义（re-chunk/strategy/preview 三端点的绑定面）。
 - **系统级配置项管理**（general_chunk_size 等 SysConfig 键的 CRUD）：归 platform-config；本特性只消费。
+- **`.csv` 按行切片**：`.csv` 经扩展名映射走 default 纯文本解析路径（ParseMethodRegistry.resolveByExtension → default，DocumentParserImpl.java:113-124），不经 Excel 工作簿路径；为其提供按行切片需新增 CSV→行 解析面（引号转义/编码探测），一期不做，excel_row 仅支持 `.xlsx/.xls`（REQ-H02）。
+- **嵌入表格的按行切片**：PDF/DOCX/PPTX 内嵌 Excel 的表格提取复用 parseExcelContent 共享路径，不适用 excel_row；按行切片仅作用于独立 Excel 文件的解析。
+- **逐 Sheet 独立参数**：表头范围/切分起始行/切分行数按工作簿统一生效（REQ-H07），不提供 per-Sheet 覆盖配置。
+- **行区间元数据**：不在 kb_chunk 新增行区间列、不在 title 携带行区间标注（REQ-H10 沿用既有元数据，零 DDL）。
 
-## 3. 领域术语
+## 3. 领域术语 {#terms}
 
-引用 `fastrag-backend/CONTEXT.md`：**解析策略（Parse Strategy）**（表 kb_parse_strategy）、**策略绑定（Strategy Binding）**（知识库级默认绑定 + 文档级覆盖两级；变更绑定必然触发重新分片）、**自动匹配（Auto Match）**、**重新分片（Re-chunk）**。本特性是上述术语的定义主体。
+引用 `fastrag-backend/CONTEXT.md` 的既有词条：**解析策略（Parse Strategy）**（表 kb_parse_strategy）、**策略绑定（Strategy Binding）**；**自动匹配（Auto Match）**、**重新分片（Re-chunk）**。其中策略绑定的变更必然触发重新分片。另有 2026-11-03 grill 新增四词条：**按行切片（excel_row）**、**表头范围（Header Range）**、**切分起始行（Slice Start Row）**、**切分行数（Rows Per Slice）**。四词条的行为语义定义主体在 §4.8。本特性是上述术语的定义主体。
 
-## 4. 功能需求
+## 4. 功能需求 {#requirements}
 
 ### 4.1 策略 CRUD 与引用计数
 
@@ -84,7 +98,25 @@
 - **REQ-G05**：分片参数物理约束：overlap 必须小于 chunkLength（chunkLength>0 时），违反即拒绝，防止相邻分片近乎全量重复稀释召回；兼容分组与平铺两种格式取值。〔证据：ParseStrategyServiceImpl.java:281-293 ‹CERTAIN›〕
 - **REQ-G06**：策略级 llmModel 配置向下游生效：解析阶段用于 LLM 增强，图谱构建阶段优先于 KB 级图谱模型。〔证据：DocumentParserImpl.java:230-232、GraphBuildConsumer.java:1082-1096 ‹CERTAIN›〕
 
-## 5. 非功能约束
+### 4.8 按行切片（excel_row）
+
+叙述：按行切片是 Excel 表格的专属分片方式：用户以「表头范围 + 切分起始行 + 切分行数」三参数完全接管切片行为，取代自动表头检测与 LLM 表头合并，每个切片自带表头行，使行式表格数据的检索命中自带列语义。本节定义其策略类型、校验面与切片行为语义；切片执行算法本体归 chunk-management（§2 第一条），AI分片与手工分片的既有语义（边界替换、manual 保留）不受本节影响。
+
+- **REQ-H01**：系统应提供第六种分片策略类型 `excel_row`（展示名「按行切片」），经 advanced.chunk.strategy 存储并与既有五种类型（rule_fixed/rule_recursive/structure_aware/semantic/parent_child）并存，走同一三层合并与双格式兼容口径（§4.7）。〔证据：ParseStrategyConfig.java:41 现五类型枚举；grill 裁决 2026-11-03〕
+- **REQ-H02**：当保存/更新策略时生效分片策略类型为 excel_row 而扩展名列表含 `.xlsx/.xls` 之外的扩展名，系统应拒绝并返回可定位错误（分组与平铺双格式取值均校验）。〔证据：扩展名兼容与物理约束的拒绝式校验先例见 §4.7（ParseStrategyServiceImpl.java:223-245、281-293）；grill 裁决 2026-11-03〕
+- **REQ-H03**：当分片策略类型为 excel_row 时，系统应校验表头范围与切分起始行：行号一律按 1-based 解释（首行为 1）、表头起始行 ≤ 表头结束行、区间行数 ≤ 5、切分起始行 > 表头结束行，违反即拒绝保存。〔证据：REQ-G05 拒绝式物理约束先例 ParseStrategyServiceImpl.java:281-293；grill 裁决 2026-11-03〕
+- **REQ-H04**：当分片策略类型为 excel_row 时，切分行数缺省应取 100；切分行数 < 1 时系统应拒绝保存；切分行数不设上限硬校验（单片体积由 4800 字符硬上限约束，见 REQ-H06）。〔grill 裁决 2026-11-03：范围建议 1~10000 仅作 UI 约束，后端仅下限强校验〕
+- **REQ-H05**：当分片策略类型为 excel_row 时，Excel 解析应以显式表头范围唯一划定表头——不执行自动表头检测（detectHeaderRegion）也不调用 LLM 表头合并；表头结束行之后、切分起始行之前的行应被跳过。〔证据：现状自动检测+LLM 兜底 DocumentParserImpl.java:1813-1841；grill 裁决 2026-11-03〕
+- **REQ-H06**：当分片策略类型为 excel_row 时，系统应把每个非隐藏 Sheet 的数据行组装为「表头行 + 至多切分行数条数据行」的 Markdown 表格切片，每个切片首部携带表头；切片累计文本（含表头）达到 4800 字符即封片，4800 为产品常量不开放配置；单条数据行自身超过 4800 字符时按 4800 字符硬切为多段，续段仍重复表头。〔证据：现状整表单 TABLE 节点、表头仅落单分片 ChunkingServiceImpl.java:959 原子单元 + handleAtomicOverflow；需求原文定值 4800；grill 裁决 2026-11-03〕
+- **REQ-H07**：当工作簿含多个非隐藏 Sheet 时，表头范围与切分参数应对全部非隐藏 Sheet 统一生效；如果某 Sheet 有效行数不足切分起始行，系统应跳过该 Sheet 的数据切片（仅保留 Sheet 名标题节点）并告警，不阻断整体解析。〔证据：现状逐 Sheet 解析+隐藏 Sheet 跳过 DocumentParserImpl.java:1778-1800；REQ-G03 容错先例；grill 裁决 2026-11-03〕
+- **REQ-H08**：当分片策略类型为 excel_row 时，parse.tableMode 应被忽略（ignore 不跳过表格切片），切片统一以 Markdown 表格序列化。〔证据：tableMode 枚举 ParseStrategyConfig.java:29、ignore 纯表格豁免先例 ChunkingServiceImpl.java:796-800；grill 裁决 2026-11-03〕
+- **REQ-H09**：如果绑定 excel_row 策略的文件在摄取运行时判定为非 Excel 文件，系统应告警并降级为既有规则分片路径（rule_fixed），不阻断摄取。〔证据：回退先例——structure_aware 无 DocNode 回退 IngestionConsumer.java:226-233、semantic 模型缺失回退 ChunkingServiceImpl.java:269-276；grill 裁决 2026-11-03〕
+- **REQ-H10**：当产出 excel_row 切片时，系统应沿用既有分片元数据语义——title=Sheet 名、headingPath=[Sheet 名]、chunkType="table"、pageNumber=Sheet 序号——且不新增任何 DDL 列（kb_chunk 表结构不变）。〔证据：ChunkData.java:38-43、现状 TABLE 原子单元 chunkType="table" ChunkingServiceImpl.java:1322；grill 裁决 2026-11-03：零迁移〕
+- **REQ-H11**：文件预览接口对绑定 excel_row 策略的文件应以与摄取一致的切片逻辑产出预览结果（同路径所见即所得），不新增端点。〔证据：预览走显式策略对象同路径 DocumentParserImpl.java:95-113、FileController preview 端点；grill 裁决 2026-11-03〕
+- **REQ-H12**：预定义策略模板应维持四分类现状，不新增 Excel 模板；excel_row 仅经策略创建表单与文件级自定义策略面板选用。〔证据：ParseStrategyTemplateController.java:35-67 现状四分类；模板增项通道不启用，grill 裁决 2026-11-03〕
+- **REQ-H13**：系统应在不改动下游既有过滤/组装语义的前提下让 excel_row 切片被消费：QA 提炼的提取单位回退通道应照常纳入 chunkType="table" 的 excel_row 切片（过滤条件保持仅排除 image）；图谱抽取单元组装应保持「单个超长分片独占一个单元、不截断」语义（4800 字符切片独占抽取单元属预期行为）。〔证据：QaGenerationServiceImpl.java:327-339 回退通道 ne chunkType 'image'、ExtractionUnitAssembler.java:27-48 超长分片独占；grill 裁决 2026-11-03：下游零适配〕
+
+## 5. 非功能约束 {#constraints}
 
 - **鉴权面**：知识库级策略端点经 @KbAuth（读 viewer、写 editor）；meta 与模板端点为非 KB 作用域，仅需登录（/api/** 认证闸复用 iam.SecurityGate 契约）。〔证据：ParseStrategyController.java:38-58、ParseStrategyMetaController.java:27-45、ParseStrategyTemplateController.java:33-70 ‹CERTAIN›〕
 - **审计面**：策略创建/更新/删除/设默认/冲突检测五个写操作经 @Loggable 记录操作审计。〔证据：ParseStrategyController.java:43-57 ‹CERTAIN›〕
@@ -99,7 +131,7 @@
 - **双自动匹配实现语义不一致（CERTAIN）**：resolveByExtension（扩展名命中不限默认优先、依赖 DB 返回序，ParseStrategyServiceImpl.java:128-131）与 resolveStrategy（默认+扩展名优先的四级回退，FileServiceImpl.java:920-947）并存，同一 (kbId, ext) 可能返回不同策略。
 - **扩展名大小写归一不贯穿（CERTAIN）**：ParseMethodRegistry.normalize 统一转小写（:94-97），但自动匹配两实现均直接拼接/包含比较不转小写（FileServiceImpl.java:918、ParseStrategyServiceImpl.java:129）——大写扩展名文件会失配回退。‹CERTAIN（2026-09-24 深证：FileServiceImpl.java:130、134——Hutool FileUtil.extName 保留原文件名大小写、原样入库无归一）›影响面确定：原文件名带大写扩展名（如 Report.PDF → 库存 "PDF"）在自动匹配中 equals(".PDF") vs 注册表小写 ".pdf" 失配，回退默认/首个策略；显式绑定文件不受影响。
 
-## 6. 验收清单
+## 6. 验收清单 {#acceptance}
 
 - [ ] 知识库级策略列表不含任何文件级专属策略，且每条带正确 fileCount（REQ-A01）
 - [ ] 创建缺名称/空扩展名列表/未知 parseMethod/不兼容扩展名的请求全部被拒绝且错误信息可定位（REQ-A03、REQ-G04）
@@ -128,7 +160,25 @@
 - [ ] 存在扩展名冲突的策略保存/更新不被阻断（软约束现状断言）（REQ-F02）
 - [ ] 配置合并优先级为内置默认→SysConfig→策略 advanced 三层（REQ-G01）
 - [ ] 策略级 llmModel 对解析阶段 LLM 增强与图谱构建模型选择生效（REQ-G06）
+- [ ] chunk.strategy 支持 excel_row 第六类型，三层合并与双格式兼容不回退（REQ-H01）
+- [ ] excel_row 策略携带 `.xlsx/.xls` 之外扩展名被拒绝保存且错误可定位（REQ-H02）
+- [ ] 表头范围/起始行校验生效：起始>结束、区间>5 行、切分起始行≤表头结束行均被拒绝；行号按 1-based 解释（REQ-H03）
+- [ ] 切分行数缺省取 100、<1 被拒绝、超大值不被后端硬拒绝（REQ-H04）
+- [ ] excel_row 解析不触发自动表头检测与 LLM 表头合并；表头结束行与切分起始行之间的行被跳过（REQ-H05）
+- [ ] 切片=表头+N 数据行 Markdown 表格，软目标封片与 4800 字符硬上限（含表头）双双生效；单行超 4800 硬切且续段重复表头（REQ-H06）
+- [ ] 多 Sheet 统一生效；行数不足切分起始行的 Sheet 被跳过并告警，整体解析不阻断（REQ-H07）
+- [ ] excel_row 下 tableMode=ignore 不丢切片、统一 Markdown 序列化（REQ-H08）
+- [ ] 非 Excel 文件命中 excel_row 时告警并按 rule_fixed 降级，摄取不中断（REQ-H09）
+- [ ] excel_row 切片元数据为 title=Sheet 名/headingPath=[Sheet 名]/chunkType=table/pageNumber=Sheet 序号，kb_chunk 无 DDL 变更（REQ-H10）
+- [ ] 文件预览与摄取对同一 excel_row 策略产出一致的切片（REQ-H11）
+- [ ] 预定义模板维持四分类，不含 Excel 模板（REQ-H12）
+- [ ] QA 提炼回退通道纳入 excel_row 切片；图谱抽取单元对超长切片独占不截断（REQ-H13）
 
-## 7. 测试策略
+## 7. 测试策略 {#testing}
 
-经公共接口重点测：①策略 CRUD 校验面（方法/扩展名兼容/必填/长度/overlap<chunkLength）——纯逻辑， mock mapper 层即可高密度覆盖；②默认策略唯一性与删除守卫——状态机断言；③自动匹配四级回退与两实现语义差异（回归锁定现状 + 差异用例显式标注意图）；④绑定-重切一致性守卫（ADR-0001）——元数据改绑拒绝、三态换绑、真源覆盖、文件级保存即重切，mock MinIO/Milvus/GraphStore/MQ 系统边界；⑤配置合并三层优先级与双格式兼容（已有 StrategyConfigResolverTest 基础上补齐 parse/index 组与旧平铺回退）；⑥文件级策略 upsert 与级联清理。禁忌：不 mock 内部模块（ChunkingService/DocumentParser 逻辑层），系统边界仅限 MinIO/Milvus/Neo4j/RabbitMQ/SysConfig 外部面。
+经公共接口重点测：①策略 CRUD 校验面（方法/扩展名兼容/必填/长度/overlap<chunkLength）——纯逻辑， mock mapper 层即可高密度覆盖；
+②默认策略唯一性与删除守卫——状态机断言；③自动匹配四级回退与两实现语义差异（回归锁定现状 + 差异用例显式标注意图）；
+④绑定-重切一致性守卫（ADR-0001）——元数据改绑拒绝、三态换绑、真源覆盖、文件级保存即重切，mock MinIO/Milvus/GraphStore/MQ 系统边界；
+⑤配置合并三层优先级与双格式兼容（已有 StrategyConfigResolverTest 基础上补齐 parse/index 组与旧平铺回退）；⑥文件级策略 upsert 与级联清理；
+⑦按行切片（excel_row）——保存校验三参（1-based/区间≤5/切分起始行约束）与切分行数默认及下限。切片组装断言：表头逐片重复、4800 含表头硬上限、单行超长硬切续段带表头、软目标行数封片。多 Sheet 统一与不足跳过告警；非 Excel 运行时降级 rule_fixed。元数据沿用与零 DDL 断言（kb_chunk 列集不变）；预览与摄取同路径一致性。表格用例以 POI 内存构簿构造，不落盘 fixture。
+禁忌：不 mock 内部模块（ChunkingService/DocumentParser 逻辑层），系统边界仅限 MinIO/Milvus/Neo4j/RabbitMQ/SysConfig 外部面。

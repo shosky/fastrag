@@ -33,7 +33,7 @@ const visible = computed({
   set: (v: boolean) => emit('update:modelValue', v),
 })
 
-type StrategyType = 'rule_fixed' | 'rule_recursive' | 'structure_aware' | 'semantic' | 'parent_child'
+type StrategyType = 'rule_fixed' | 'rule_recursive' | 'structure_aware' | 'semantic' | 'parent_child' | 'excel_row'
 
 // ---- 表单 ----
 const strategy = ref<StrategyType>('rule_fixed')
@@ -46,6 +46,7 @@ const embeddingModel = ref('')
 const semanticThreshold = ref(30)
 const parentMaxChunkLength = ref(2000)
 const parentAggLevel = ref('auto')
+const excelRow = ref({ headerStartRow: 1, headerEndRow: 1, sliceStartRow: 2, rowsPerSlice: 100 })
 
 const submitting = ref(false)
 const embedModels = ref<any[]>([])
@@ -54,17 +55,27 @@ const fileLocked = computed(() => props.file?.status === 'processing')
 /** QA 模式文件不受分片策略影响，不开放设置（与后端守卫一致） */
 const qaMode = computed(() => props.file?.processingMode === 'qa')
 
-/** 分片方式选项：label 为名称，lengthLabel 为长度字段文案（与策略管理页一致） */
+/** 分片方式选项：label 为名称，lengthLabel 为长度字段文案（与策略管理页一致）；excel_row 仅 Excel 文件可选 */
 const STRATEGY_OPTIONS: Array<{ value: StrategyType; label: string; lengthLabel: string }> = [
   { value: 'rule_fixed', label: '固定长度', lengthLabel: '分片长度（字符数）' },
   { value: 'rule_recursive', label: '递归分隔符', lengthLabel: '最大块长度（字符数）' },
   { value: 'structure_aware', label: '结构感知', lengthLabel: '单块最大长度（字符数）' },
   { value: 'semantic', label: '语义切分', lengthLabel: '单块最大长度（字符数）' },
   { value: 'parent_child', label: '父子切片', lengthLabel: '子分片长度（字符数）' },
+  { value: 'excel_row', label: '按行切片', lengthLabel: '切分行数' },
 ]
 
 const lengthLabel = computed(
   () => STRATEGY_OPTIONS.find((o) => o.value === strategy.value)?.lengthLabel || '分片长度（字符数）',
+)
+
+/** Excel 文件判定：按行切片选项仅对 .xlsx/.xls 开放（REQ-H02 前置守卫） */
+const isExcelFile = computed(() => {
+  const ext = (props.file?.extension || '').toLowerCase().replace(/^\./, '')
+  return ext === 'xlsx' || ext === 'xls'
+})
+const selectableStrategies = computed(() =>
+  STRATEGY_OPTIONS.filter((o) => o.value !== 'excel_row' || isExcelFile.value),
 )
 
 /** 按分片方式联动显示的参数（与策略管理页各面板字段一致） */
@@ -75,6 +86,8 @@ const showDelimiters = computed(() =>
 const showTitleSwitches = computed(() => strategy.value === 'structure_aware')
 const showSemanticParams = computed(() => strategy.value === 'semantic')
 const showParentParams = computed(() => strategy.value === 'parent_child')
+const showExcelRowParams = computed(() => strategy.value === 'excel_row')
+const showLength = computed(() => strategy.value !== 'excel_row')
 const isParentChild = computed(() => strategy.value === 'parent_child')
 
 /** 当前生效的 chunk 配置（回填与保存合并的基线，含文件级专属策略） */
@@ -103,6 +116,9 @@ function buildAdvanced() {
     chunk.parentMaxChunkLength = parentMaxChunkLength.value
     chunk.parentAggLevel = parentAggLevel.value
   }
+  if (showExcelRowParams.value) {
+    chunk.excelRow = { ...excelRow.value }
+  }
   return { ...base, chunk }
 }
 
@@ -110,7 +126,10 @@ watch(() => props.modelValue, (v) => {
   if (v && props.file) {
     // 打开时回填当前生效的分片参数（含文件级专属策略）
     const c = currentChunk.value
-    strategy.value = (c?.strategy as StrategyType) || 'rule_fixed'
+    // excel_row 仅 Excel 文件可选；漂移到非 Excel 文件时回落固定长度（REQ-H02）
+    strategy.value = (c?.strategy as StrategyType) === 'excel_row' && !isExcelFile.value
+      ? 'rule_fixed'
+      : (c?.strategy as StrategyType) || 'rule_fixed'
     chunkLength.value = c?.chunkLength || 1000
     overlap.value = c?.overlap ?? 100
     delimiters.value = c?.delimiters?.length ? [...c.delimiters] : ['\n\n']
@@ -120,6 +139,13 @@ watch(() => props.modelValue, (v) => {
     semanticThreshold.value = c?.semanticThreshold ?? 30
     parentMaxChunkLength.value = c?.parentMaxChunkLength ?? 2000
     parentAggLevel.value = c?.parentAggLevel || 'auto'
+    const er = c?.excelRow
+    excelRow.value = {
+      headerStartRow: er?.headerStartRow || 1,
+      headerEndRow: er?.headerEndRow || 1,
+      sliceStartRow: er?.sliceStartRow || 2,
+      rowsPerSlice: er?.rowsPerSlice ?? 100,
+    }
   }
 })
 
@@ -140,6 +166,30 @@ watch(visible, (v) => {
 
 async function handleSubmit() {
   if (!props.file) return
+  // excel_row 前置校验（REQ-H02/H03/H04 口径，与后端 validateExcelRowParams 对齐）
+  if (strategy.value === 'excel_row') {
+    const er = excelRow.value
+    if (!er.headerStartRow || !er.headerEndRow || !er.sliceStartRow) {
+      ElMessage.error('请配置表头起始行、表头结束行与切分起始行（按 Excel 行号从 1 起算）')
+      return
+    }
+    if (er.headerStartRow > er.headerEndRow) {
+      ElMessage.error('表头起始行必须不大于表头结束行')
+      return
+    }
+    if (er.headerEndRow - er.headerStartRow + 1 > 5) {
+      ElMessage.error('表头区间不可超过 5 行')
+      return
+    }
+    if (er.sliceStartRow <= er.headerEndRow) {
+      ElMessage.error('切分起始行必须大于表头结束行')
+      return
+    }
+    if (er.rowsPerSlice != null && er.rowsPerSlice < 1) {
+      ElMessage.error('切分行数必须不小于 1')
+      return
+    }
+  }
   submitting.value = true
   try {
     // 保存为该文件的专属策略（持久化）并立即重新分片（后端原子完成）；
@@ -190,19 +240,46 @@ async function handleSubmit() {
           <label class="strategy-change__label">分片策略</label>
           <el-select v-model="strategy" style="width: 100%">
             <el-option
-              v-for="o in STRATEGY_OPTIONS"
+              v-for="o in selectableStrategies"
               :key="o.value"
               :label="o.label + '（' + o.value + '）'"
               :value="o.value"
             />
           </el-select>
 
-          <!-- 长度：预设快捷选择（父子切片用专用预设），与管理页一致 -->
-          <label class="strategy-change__label strategy-change__label-mt">{{ lengthLabel }}</label>
-          <ChunkLengthSelect
-            v-model="chunkLength"
-            :options="isParentChild ? CHUNK_LENGTH_OPTIONS_PARENT_CHILD : undefined"
-          />
+          <!-- 长度：预设快捷选择（父子切片用专用预设），与管理页一致；excel_row 用专属参数面板 -->
+          <template v-if="showLength">
+            <label class="strategy-change__label strategy-change__label-mt">{{ lengthLabel }}</label>
+            <ChunkLengthSelect
+              v-model="chunkLength"
+              :options="isParentChild ? CHUNK_LENGTH_OPTIONS_PARENT_CHILD : undefined"
+            />
+          </template>
+
+          <template v-if="showExcelRowParams">
+            <div class="strategy-change__grid strategy-change__grid-mt">
+              <div>
+                <label class="strategy-change__label">表头起始行</label>
+                <el-input-number v-model="excelRow.headerStartRow" :min="1" :max="1000" style="width: 100%" />
+              </div>
+              <div>
+                <label class="strategy-change__label">表头结束行</label>
+                <el-input-number v-model="excelRow.headerEndRow" :min="1" :max="1000" style="width: 100%" />
+              </div>
+              <div>
+                <label class="strategy-change__label">切分起始行</label>
+                <el-input-number v-model="excelRow.sliceStartRow" :min="2" :max="5000" style="width: 100%" />
+              </div>
+              <div>
+                <label class="strategy-change__label">切分行数</label>
+                <el-input-number v-model="excelRow.rowsPerSlice" :min="1" :max="10000" :step="10" style="width: 100%" />
+              </div>
+            </div>
+            <div class="strategy-change__hint">
+              按 Excel 行号从 1 起算；表头区间不可超过 5 行，切分起始行必须大于表头结束行。
+              每个切片自带表头，单切片硬上限 4800 字符。仅对 .xlsx/.xls 文件生效，工作簿内所有非隐藏 Sheet 统一生效。
+            </div>
+          </template>
 
           <div class="strategy-change__grid">
             <div v-if="showOverlap">
@@ -317,6 +394,10 @@ async function handleSubmit() {
     display: grid;
     grid-template-columns: 1fr 1fr;
     gap: 12px 16px;
+    margin-top: 14px;
+  }
+
+  &__grid-mt {
     margin-top: 14px;
   }
 

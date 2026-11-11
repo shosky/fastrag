@@ -185,4 +185,202 @@ class ParseStrategyServiceImplTest {
 
         assertThrows(BusinessException.class, () -> svc.update("kb_1", "strategy_001", req));
     }
+
+    // ==================== excel_row 按行切片保存校验（REQ-H02/H03/H04，interfaces.md API-013~015） ====================
+
+    /** 构造 excel_row 保存请求：默认合法三参（表头 1~2 行、切分起始 3、行数 4） */
+    private static ParseStrategyRequest excelReq(List<String> extensions, Map<String, Object> excelRow) {
+        ParseStrategyRequest req = new ParseStrategyRequest();
+        req.setName("Excel 按行切片");
+        req.setParseMethod("xlsx");
+        req.setExtensions(extensions);
+        Map<String, Object> chunk = new java.util.HashMap<>();
+        chunk.put("strategy", "excel_row");
+        if (excelRow != null) chunk.put("excelRow", excelRow);
+        req.setAdvanced(Map.of("chunk", chunk));
+        return req;
+    }
+
+    private static Map<String, Object> excelRow(int start, int end, int sliceStart, Integer rows) {
+        Map<String, Object> m = new java.util.HashMap<>();
+        m.put("headerStartRow", start);
+        m.put("headerEndRow", end);
+        m.put("sliceStartRow", sliceStart);
+        if (rows != null) m.put("rowsPerSlice", rows);
+        return m;
+    }
+
+    @Test
+    void create拒绝excel_row携带非Excel扩展名() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        // parseMethod=default（兼容全部扩展名，绕过 REQ-G04 兼容校验）→ 命中 excel_row 域校验（ERR-PS-EXT-DOMAIN）
+        ParseStrategyRequest req = excelReq(List.of(".xlsx", ".pdf"), excelRow(1, 2, 3, 4));
+        req.setParseMethod("default");
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> svc.create("kb_1", req));
+        assertTrue(ex.getMessage().contains("按行切片策略仅支持 Excel 扩展名"));
+    }
+
+    @Test
+    void create拒绝excel_row表头起始大于结束() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> svc.create("kb_1", excelReq(List.of(".xlsx"), excelRow(3, 2, 4, 4))));
+        assertTrue(ex.getMessage().contains("表头起始行"));
+    }
+
+    @Test
+    void create拒绝excel_row表头区间超过5行() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> svc.create("kb_1", excelReq(List.of(".xlsx"), excelRow(1, 6, 7, 4))));
+        assertTrue(ex.getMessage().contains("表头区间不可超过 5 行"));
+    }
+
+    @Test
+    void create通过表头区间恰5行() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+        when(mapper.insert(org.mockito.ArgumentMatchers.any(KbParseStrategy.class))).thenReturn(1);
+
+        assertDoesNotThrow(() -> svc.create("kb_1", excelReq(List.of(".xlsx"), excelRow(1, 5, 6, 4))));
+    }
+
+    @Test
+    void create拒绝切分起始行不大于表头结束行() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> svc.create("kb_1", excelReq(List.of(".xlsx"), excelRow(1, 2, 2, 4))));
+        assertTrue(ex.getMessage().contains("切分起始行"));
+    }
+
+    @Test
+    void create通过切分起始行为表头结束加一() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+        when(mapper.insert(org.mockito.ArgumentMatchers.any(KbParseStrategy.class))).thenReturn(1);
+
+        assertDoesNotThrow(() -> svc.create("kb_1", excelReq(List.of(".xlsx"), excelRow(1, 2, 3, 4))));
+    }
+
+    @Test
+    void create拒绝rowsPerSlice小于1() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> svc.create("kb_1", excelReq(List.of(".xlsx"), excelRow(1, 2, 3, 0))));
+        assertTrue(ex.getMessage().contains("切分行数必须不小于 1"));
+    }
+
+    @Test
+    void create通过超大rowsPerSlice由字符硬限兜底() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+        when(mapper.insert(org.mockito.ArgumentMatchers.any(KbParseStrategy.class))).thenReturn(1);
+
+        assertDoesNotThrow(() -> svc.create("kb_1", excelReq(List.of(".xlsx"), excelRow(1, 2, 3, 10000))));
+    }
+
+    @Test
+    void create非excel_row策略携带残缺excelRow时放行() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+        when(mapper.insert(org.mockito.ArgumentMatchers.any(KbParseStrategy.class))).thenReturn(1);
+
+        // strategy=rule_fixed：excelRow 组不被消费，残留无副作用、不校验（REQ-H01）
+        ParseStrategyRequest req = new ParseStrategyRequest();
+        req.setName("规则分片");
+        req.setParseMethod("default");
+        req.setExtensions(List.of(".md"));
+        req.setAdvanced(Map.of("chunk", Map.of(
+                "strategy", "rule_fixed",
+                "excelRow", excelRow(9, 1, 0, 0))));
+
+        assertDoesNotThrow(() -> svc.create("kb_1", req));
+    }
+
+    @Test
+    void create拒绝excel_row缺失三参() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> svc.create("kb_1", excelReq(List.of(".xlsx"), null)));
+        assertTrue(ex.getMessage().contains("必须配置表头起始行"));
+    }
+
+    @Test
+    void update按生效扩展名校验excel_row() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        // 库内策略 extensions=[".pdf"]；请求仅带 advanced（strategy=excel_row）不带 extensions →
+        // 生效扩展名沿用库内 ".pdf" → 拒绝（REQ-A04 生效值口径）
+        KbParseStrategy existing = new KbParseStrategy();
+        existing.setId("strategy_001");
+        existing.setKbId("kb_1");
+        existing.setName("旧策略");
+        existing.setParseMethod("xlsx");
+        existing.setExtensions("[\".pdf\"]");
+        existing.setIsDefault(0);
+        when(mapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(existing);
+
+        ParseStrategyRequest req = new ParseStrategyRequest();
+        req.setAdvanced(Map.of("chunk", Map.of("strategy", "excel_row",
+                "excelRow", excelRow(1, 2, 3, 4))));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> svc.update("kb_1", "strategy_001", req));
+        assertTrue(ex.getMessage().contains("按行切片策略仅支持 Excel 扩展名"));
+    }
+
+    @Test
+    void update仅改name时excel_row生效值放行() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        KbParseStrategy existing = new KbParseStrategy();
+        existing.setId("strategy_001");
+        existing.setKbId("kb_1");
+        existing.setName("旧策略");
+        existing.setParseMethod("xlsx");
+        existing.setExtensions("[\".xlsx\"]");
+        existing.setIsDefault(0);
+        existing.setAdvanced("{\"chunk\":{\"strategy\":\"excel_row\",\"excelRow\":{\"headerStartRow\":1,\"headerEndRow\":2,\"sliceStartRow\":3,\"rowsPerSlice\":4}}}");
+        when(mapper.selectOne(org.mockito.ArgumentMatchers.any())).thenReturn(existing);
+
+        ParseStrategyRequest req = new ParseStrategyRequest();
+        req.setName("改名");
+
+        assertDoesNotThrow(() -> svc.update("kb_1", "strategy_001", req));
+        verify(mapper).updateById(org.mockito.ArgumentMatchers.any(KbParseStrategy.class));
+    }
+
+    @Test
+    void 文件级保存excel_row同族校验() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        // parseMethod=default（兼容 .csv）→ 命中 excel_row 域校验
+        ParseStrategyRequest req = excelReq(List.of(".csv"), excelRow(1, 2, 3, 4));
+        req.setParseMethod("default");
+
+        BusinessException ex = assertThrows(BusinessException.class,
+                () -> svc.saveFileStrategy("kb_1", "file_1", req));
+        assertTrue(ex.getMessage().contains("按行切片策略仅支持 Excel 扩展名"));
+    }
+
+    @Test
+    void excelRow参数仅新分组承载() {
+        ParseStrategyServiceImpl svc = new ParseStrategyServiceImpl(mapper, fileMapper);
+
+        // 旧平铺格式（无 chunk 分组）出现 strategy=excel_row → 三参缺失即拒绝（excelRow 组仅新分组承载，无平铺形态）
+        ParseStrategyRequest req = new ParseStrategyRequest();
+        req.setName("平铺 excel_row");
+        req.setParseMethod("xlsx");
+        req.setExtensions(List.of(".xlsx"));
+        req.setAdvanced(Map.of(
+                "strategy", "excel_row",
+                "headerStartRow", 1,
+                "headerEndRow", 2,
+                "sliceStartRow", 3));
+
+        BusinessException ex = assertThrows(BusinessException.class, () -> svc.create("kb_1", req));
+        assertTrue(ex.getMessage().contains("必须配置表头起始行"));
+    }
 }

@@ -70,6 +70,12 @@ public class StrategyConfigResolver {
             applyAdvanced(config, strategy.getAdvanced());
         }
 
+        // 3. excel_row 归一化：切到按行切片时 excelRow 组保证非空（rowsPerSlice 缺省 100），
+        //    运行时信任库内配置（合法性由保存期校验把守，REQ-H02/H03/H04）
+        if ("excel_row".equals(config.getChunk().getStrategy()) && config.getChunk().getExcelRow() == null) {
+            config.getChunk().setExcelRow(new ParseStrategyConfig.ExcelRow());
+        }
+
         return config;
     }
 
@@ -114,9 +120,25 @@ public class StrategyConfigResolver {
             setIfPresent(group, "parentAggLevel", v -> chunk.setParentAggLevel(String.valueOf(v)));
             setIfPresent(group, "semanticThreshold", v -> chunk.setSemanticThreshold(((Number) v).intValue()));
             setIfPresent(group, "embeddingModel", v -> chunk.setEmbeddingModel(String.valueOf(v)));
+            applyExcelRow(chunk, group.get("excelRow"));
         } else if (target instanceof ParseStrategyConfig.IndexConfig index) {
             setIfPresent(group, "embedFields", v -> index.setEmbedFields(toStringList(v)));
         }
+    }
+
+    /**
+     * 合并 chunk.excelRow 嵌套组（Excel 按行切片三参，REQ-H03/H04）。
+     * 仅新分组格式承载（旧平铺格式无对应存量字段）；逐项容错，非法值告警后沿用默认。
+     */
+    private void applyExcelRow(ParseStrategyConfig.ChunkConfig chunk, Object groupValue) {
+        if (!(groupValue instanceof Map<?, ?> raw)) return;
+        ParseStrategyConfig.ExcelRow er = new ParseStrategyConfig.ExcelRow();
+        Map<String, Object> group = (Map<String, Object>) raw;
+        setIfPresent(group, "headerStartRow", v -> er.setHeaderStartRow(((Number) v).intValue()));
+        setIfPresent(group, "headerEndRow", v -> er.setHeaderEndRow(((Number) v).intValue()));
+        setIfPresent(group, "sliceStartRow", v -> er.setSliceStartRow(((Number) v).intValue()));
+        setIfPresent(group, "rowsPerSlice", v -> er.setRowsPerSlice(((Number) v).intValue()));
+        chunk.setExcelRow(er);
     }
 
     /** 兼容旧平铺字段（旧版本策略的 advanced 为一级 Map，如 chunkLength / delimiter / tableMode） */

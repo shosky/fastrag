@@ -60,6 +60,25 @@ public class ParseStrategyConfig {
         private int semanticThreshold = 30;
         /** 语义切片 Embedding 模型 code（仅 semantic 策略生效，空 = 系统默认） */
         private String embeddingModel = "";
+        /** Excel 按行切片参数（仅 strategy=excel_row 消费，其余策略忽略；REQ-H01） */
+        private ExcelRow excelRow;
+    }
+
+    /**
+     * Excel 按行切片参数组（REQ-H03/H04）。行号一律 1-based（首行为 1）。
+     * 保存期校验（ParseStrategyServiceImpl#validateExcelRowParams）保证合法性，运行时信任库内配置。
+     */
+    @Data
+    @NoArgsConstructor
+    public static class ExcelRow {
+        /** 表头起始行，1-based ≥1 */
+        private int headerStartRow;
+        /** 表头结束行，≥headerStartRow 且区间 ≤5 行 */
+        private int headerEndRow;
+        /** 切分起始行，必须大于 headerEndRow */
+        private int sliceStartRow;
+        /** 切分行数软目标，缺省 100，仅下限 ≥1 强校验；上限由 {@link com.fastrag.module.knowledge.parser.ExcelRowSlicer} 4800 字符硬限兜底 */
+        private int rowsPerSlice = 100;
     }
 
     /** 索引配置组 */

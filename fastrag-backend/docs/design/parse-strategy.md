@@ -2,6 +2,8 @@
 
 > ADR-0001（解析策略绑定变更必须触发重新分片，原 legacy 归档已丢失，仅引要点）是本特性的核心架构约束；§2 的 ParseStrategyBindingGuard 与 §5 的深化方向均以其为符合性基准——当前实现四处落点全部符合（FileServiceImpl.java:642-649、405-419、226-247、555-560 ‹CERTAIN›），无冲突。
 
+> **2026-11-04 增量指针**：excel_row（Excel 按行切片，spec §4.8 REQ-H 系列）的设计落在本仓 idd 受管模块文档 [modules/parse-strategy.md](../modules/parse-strategy.md)（IF-006~008 + 表格切片方式缝）与 [adr/0012-excel-row-slice-at-parse.md](adr/0012-excel-row-slice-at-parse.md)（解析期装配裁决）；本文其余内容为 A~G 世代架构的记录，不受该增量影响。
+
 ## 1. Module Map
 
 | 模块 | Responsibility（一行） | Files | Depth Rationale |

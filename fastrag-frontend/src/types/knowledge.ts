@@ -340,7 +340,7 @@ export interface ProcessingConfig {
 export type ParseMethodType = 'default' | 'pdf' | 'doc' | 'docx' | 'pptx' | 'xlsx' | 'video' | 'audio' | 'image'
 
 /** 分片策略类型 */
-export type ChunkStrategyType = 'rule_fixed' | 'rule_recursive' | 'structure_aware' | 'semantic' | 'parent_child'
+export type ChunkStrategyType = 'rule_fixed' | 'rule_recursive' | 'structure_aware' | 'semantic' | 'parent_child' | 'excel_row'
 
 /** 分片策略元信息 */
 export interface ChunkStrategyOption {
@@ -388,6 +388,13 @@ export const CHUNK_STRATEGY_OPTIONS: ChunkStrategyOption[] = [
     description: '子分片用于精确召回，父分片按标题自动聚合用于上下文生成。',
     tag: '父子切片',
   },
+  {
+    value: 'excel_row',
+    label: '按行切片',
+    icon: 'SetUp',
+    description: 'Excel 表格专属：显式表头范围 + 切分起始行 + 切分行数，每个切片自带表头。仅支持 .xlsx/.xls。',
+    tag: 'Excel·按行',
+  },
 ]
 
 /** 策略标签颜色映射 */
@@ -397,6 +404,7 @@ export const STRATEGY_TAG_TYPE_MAP: Record<ChunkStrategyType, string> = {
   structure_aware: 'primary',
   semantic: 'success',
   parent_child: 'warning',
+  excel_row: 'danger',
 }
 
 /** 策略值 → 元信息快速查找表 */
@@ -450,6 +458,20 @@ export interface ParseStrategyChunkConfig {
   semanticThreshold?: number
   /** 语义切片 Embedding 模型 code（仅 semantic 策略生效，空 = 系统默认） */
   embeddingModel?: string
+  /** Excel 按行切片参数（仅 excel_row 策略生效，REQ-H03/H04；行号 1-based） */
+  excelRow?: ExcelRowConfig
+}
+
+/** Excel 按行切片参数（保存期后端校验：区间 ≤5 行、切分起始行 > 表头结束行、行数 ≥1；4800 字符为切片硬上限） */
+export interface ExcelRowConfig {
+  /** 表头起始行，1-based ≥1 */
+  headerStartRow: number
+  /** 表头结束行，≥headerStartRow 且区间 ≤5 行 */
+  headerEndRow: number
+  /** 切分起始行，必须大于 headerEndRow */
+  sliceStartRow: number
+  /** 切分行数软目标，缺省 100；上限由 4800 字符硬限兜底 */
+  rowsPerSlice?: number
 }
 
 /** 索引配置组 */
@@ -486,6 +508,7 @@ export const DEFAULT_ADVANCED: ParseStrategyAdvanced = {
     parentAggLevel: 'auto' as const,
     semanticThreshold: 30,
     embeddingModel: '',
+    excelRow: { headerStartRow: 1, headerEndRow: 1, sliceStartRow: 2, rowsPerSlice: 100 },
   },
   index: {
     embedFields: ['content', 'headingPath', 'fileName'],
