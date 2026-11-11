@@ -85,6 +85,14 @@ const routes: RouteRecordRaw[] = [
         meta: { title: '会话中心', icon: 'ChatLineRound' },
       },
 
+      // ===== 通知中心（nav-shell：顶栏铃铛接线，顶栏铃铛全员可见，不注册权限树）=====
+      {
+        path: 'notification',
+        name: 'Notification',
+        component: () => import('@/views/notification/index.vue'),
+        meta: { title: '通知中心', icon: 'Bell' },
+      },
+
       // ===== 知识管理 =====
       {
         path: 'knowledge',

@@ -17,6 +17,10 @@
  * api:data-mining:*（消费页面 /knowledge-review/*、/robot-operation/* 未接入侧边栏导航，
  * 为孤儿路由，故不纳入菜单树；已有角色的存量授权保存时原样保留）。
  * 新增页面 / 权限后需同步维护此表。
+ *
+ * 2026-10-26 nav-shell：分组节点标题随导航四段（构建/资源/管理，见 nav-segments.ts）重排，
+ * 页面节点 title/keys/actions/apis 冻结不变（ADR-NAV-PERM-TREE-DECOUPLING）；
+ * 「对话」段（会话中心）无权限门禁页面，故不设分组节点；沙箱配置/提示词模板无权限键，不入树。
  */
 export interface MenuPermNode {
   /** 勾选此节点时授予/回收的门禁权限键（目录节点或页面自身） */
@@ -161,17 +165,71 @@ export const ACTION_API_LINKS: Record<string, string[]> = {
 // 注意：tool:test、kb:view、kb:search 等无独立 API 权限（列表/详情类接口跟随菜单勾选），不设联动。
 
 export const MENU_PERM_TREE: MenuPermNode[] = [
-  // ===== 首页 =====
+  // ===== 主页（顶置） =====
   {
-    title: '首页',
+    title: '主页',
     keys: ['menu:home'],
     actions: ['home:workspace:manage'],
     apis: ['api:home:data', 'api:auth:userinfo'],
   },
 
-  // ===== 知识库 =====
+  // ===== 构建（会话中心无权限键，不设分组节点） =====
   {
-    title: '知识库',
+    title: '构建',
+    keys: ['menu:application'],
+    children: [
+      {
+        title: '应用中心',
+        keys: ['menu:application:center', 'app:use'],
+        actions: [
+          'app:create', 'app:edit', 'app:delete', 'app:use', 'app:publish',
+          'app:export', 'app:import', 'app:knowledge-update', 'app:member',
+          'app:config:basic', 'app:config:prompt', 'app:config:policy',
+        ],
+        apis: [
+          'api:app:list', 'api:app:detail', 'api:app:create', 'api:app:update', 'api:app:delete',
+          'api:app:config:basic', 'api:app:config:dialog', 'api:app:config:prompt', 'api:app:config:policy',
+          'api:app:config:export', 'api:app:config:import', 'api:app:config:advanced',
+          'api:app:trigger:list', 'api:app:trigger:create', 'api:app:trigger:update', 'api:app:trigger:delete',
+          'api:app:trigger:test',
+          'api:app:kb:bind', 'api:app:skill:bind', 'api:app:tool:bind', 'api:app:mcp:bind', 'api:app:database:bind',
+          'api:app:dialog-test:list', 'api:app:dialog-test:create', 'api:app:dialog-test:update',
+          'api:app:dialog-test:delete',
+          'api:app:optimization:list', 'api:app:optimization:create', 'api:app:optimization:update',
+          'api:app:optimization:delete', 'api:app:optimization:apply',
+          'api:app:publish',
+        ],
+      },
+      {
+        title: '应用运行',
+        keys: ['menu:application:runtime', 'app:use'],
+        actions: ['app:use'],
+        apis: [
+          'api:app:run', 'api:app:chat:session', 'api:app:chat:message', 'api:app:chat:feedback',
+          'api:app:conversation:list', 'api:app:conversation:detail', 'api:app:conversation:delete',
+        ],
+      },
+      {
+        title: '业务流',
+        keys: ['menu:application:workflow', 'workflow:edit'],
+        actions: ['workflow:create', 'workflow:edit', 'workflow:delete', 'workflow:publish', 'workflow:run'],
+        apis: [
+          'api:workflow:list', 'api:workflow:detail', 'api:workflow:create', 'api:workflow:update',
+          'api:workflow:delete', 'api:workflow:publish', 'api:workflow:execute', 'api:workflow:node:manage',
+        ],
+      },
+      {
+        title: '测试案例',
+        keys: ['testcase:manage'],
+        actions: ['testcase:manage'],
+        apis: ['api:workflow:testcase:manage'],
+      },
+    ],
+  },
+
+  // ===== 资源 =====
+  {
+    title: '资源',
     keys: ['menu:knowledge'],
     children: [
       {
@@ -211,7 +269,130 @@ export const MENU_PERM_TREE: MenuPermNode[] = [
         apis: ['api:kb:category:list', 'api:kb:category:create', 'api:kb:category:update', 'api:kb:category:delete'],
       },
       {
-        title: '运营中心',
+        title: '我的工具',
+        keys: ['menu:application:my-tools'],
+        actions: ['tool:create', 'tool:edit', 'tool:delete', 'tool:test'],
+        apis: ['api:tool:list', 'api:tool:create', 'api:tool:update', 'api:tool:delete'],
+      },
+      {
+        title: 'MCP管理',
+        keys: ['menu:application:mcp'],
+        actions: ['mcp:create', 'mcp:edit', 'mcp:delete', 'mcp:test'],
+        apis: ['api:mcp:list', 'api:mcp:create', 'api:mcp:update', 'api:mcp:delete', 'api:mcp:toggle', 'api:mcp:test'],
+      },
+      {
+        title: '技能管理',
+        keys: ['menu:application:skill'],
+        actions: ['skill:create', 'skill:edit', 'skill:delete', 'skill:export', 'skill:share'],
+        apis: [
+          'api:skill:list', 'api:skill:detail', 'api:skill:create', 'api:skill:update', 'api:skill:delete',
+          'api:skill:file:manage', 'api:skill:export',
+        ],
+      },
+      {
+        title: '数据库管理',
+        keys: ['menu:application:database'],
+        apis: ['api:database:list', 'api:database:detail', 'api:database:create', 'api:database:update', 'api:database:delete'],
+      },
+      {
+        title: '模型管理',
+        keys: ['menu:admin:platform:model', 'admin:system'],
+        actions: ['model:create', 'model:edit', 'model:delete', 'model:test', 'model:import', 'model:export', 'model:toggle'],
+        apis: [
+          'api:model:list', 'api:model:detail', 'api:model:create', 'api:model:update', 'api:model:delete',
+          'api:model:toggle', 'api:model:test:chat', 'api:model:test:embedding', 'api:model:test:rerank',
+          'api:model:import', 'api:model:export',
+        ],
+      },
+    ],
+  },
+
+  // ===== 管理 =====
+  // keys 保留旧「系统管理/账号权限/安全审计/开放平台」四个中间分组键的可授予性（键集冻结，ADR-NAV-PERM-TREE-DECOUPLING）
+  {
+    title: '管理',
+    keys: ['menu:admin', 'menu:admin:system', 'menu:admin:account', 'menu:admin:audit', 'menu:admin:platform'],
+    children: [
+      {
+        title: '通用设置',
+        keys: ['menu:admin:system:general', 'admin:system'],
+        actions: ['admin:system', 'config:save', 'config:import', 'config:export'],
+        apis: [
+          'api:config:list', 'api:config:save', 'api:config:history', 'api:config:import', 'api:config:export',
+          'api:security-policy:list', 'api:security-policy:create', 'api:security-policy:update',
+          'api:security-policy:delete',
+          'api:publish-strategy:list', 'api:publish-strategy:create', 'api:publish-strategy:update',
+          'api:publish-strategy:delete',
+          'api:notification:list', 'api:notification:send', 'api:notification:read', 'api:notification:delete',
+        ],
+      },
+      {
+        title: '知识库配置',
+        keys: ['menu:admin:system:kb-config', 'admin:system'],
+      },
+      {
+        title: '敏感词设置',
+        keys: ['menu:admin:system:sensitive', 'admin:system'],
+        actions: ['sensitive-word:create', 'sensitive-word:edit', 'sensitive-word:delete', 'sensitive-word:import'],
+        apis: ['api:sensitive-word:list', 'api:sensitive-word:create', 'api:sensitive-word:update', 'api:sensitive-word:delete'],
+      },
+      {
+        title: '字典管理',
+        keys: ['menu:admin:system:dictionary', 'admin:system'],
+        actions: ['dictionary:create', 'dictionary:edit', 'dictionary:delete'],
+        apis: ['api:dictionary:list', 'api:dictionary:create', 'api:dictionary:update', 'api:dictionary:delete', 'api:dictionary:types'],
+      },
+      {
+        title: '术语管理',
+        keys: ['menu:admin:system:terminology', 'admin:system'],
+        actions: [
+          'terminology:library:create', 'terminology:library:delete',
+          'terminology:term:create', 'terminology:term:edit', 'terminology:term:delete', 'terminology:import',
+        ],
+        apis: [
+          'api:terminology:library:list', 'api:terminology:library:create', 'api:terminology:library:delete',
+          'api:terminology:term:list', 'api:terminology:term:create', 'api:terminology:term:delete',
+        ],
+      },
+      {
+        title: '角色管理',
+        keys: ['menu:admin:account:roles', 'admin:role'],
+        actions: ['admin:role:create', 'admin:role:edit', 'admin:role:delete', 'admin:role:set-default'],
+        apis: ['api:role:list', 'api:role:detail', 'api:role:create', 'api:role:update', 'api:role:delete', 'api:role:set-default'],
+      },
+      {
+        title: '组织管理',
+        keys: ['menu:admin:account:org', 'admin:org'],
+        actions: ['admin:org:create', 'admin:org:edit', 'admin:org:delete'],
+        apis: [
+          'api:org:tree', 'api:org:flat', 'api:org:departments', 'api:org:members',
+          'api:org:create', 'api:org:update', 'api:org:delete',
+        ],
+      },
+      {
+        title: '人员管理',
+        keys: ['menu:admin:account:personnel', 'admin:user'],
+        actions: ['admin:user:create', 'admin:user:edit', 'admin:user:role-config', 'admin:user:disable'],
+        apis: ['api:personnel:list', 'api:personnel:create', 'api:personnel:update', 'api:personnel:assign-roles', 'api:personnel:status'],
+      },
+      {
+        title: '权限管理',
+        keys: ['menu:admin:account:permissions', 'admin:role'],
+        apis: ['api:permission:list', 'api:permission:tree', 'api:permission:create', 'api:permission:update', 'api:permission:delete'],
+      },
+      {
+        title: '系统日志',
+        keys: ['menu:admin:audit:system-log', 'admin:audit'],
+        actions: ['admin:audit'],
+        apis: ['api:audit:log:list'],
+      },
+      {
+        title: '开放密钥',
+        keys: ['menu:admin:platform:apikey', 'admin:system'],
+        actions: ['api-key:create', 'api-key:edit', 'api-key:delete', 'kb:manage'],
+      },
+      {
+        title: '数据分析',
         children: [
           {
             title: '知识库分析',
@@ -223,96 +404,6 @@ export const MENU_PERM_TREE: MenuPermNode[] = [
             keys: ['menu:operation:retrieval-analysis'],
             apis: ['api:retrieval:log:list', 'api:retrieval:log:analysis'],
           },
-        ],
-      },
-    ],
-  },
-
-  // ===== 应用 =====
-  {
-    title: '应用',
-    keys: ['menu:application'],
-    children: [
-      {
-        title: '应用中心',
-        keys: ['menu:application:center', 'app:use'],
-        actions: [
-          'app:create', 'app:edit', 'app:delete', 'app:use', 'app:publish',
-          'app:export', 'app:import', 'app:knowledge-update', 'app:member',
-          'app:config:basic', 'app:config:prompt', 'app:config:policy',
-        ],
-        apis: [
-          'api:app:list', 'api:app:detail', 'api:app:create', 'api:app:update', 'api:app:delete',
-          'api:app:config:basic', 'api:app:config:dialog', 'api:app:config:prompt', 'api:app:config:policy',
-          'api:app:config:export', 'api:app:config:import', 'api:app:config:advanced',
-          'api:app:trigger:list', 'api:app:trigger:create', 'api:app:trigger:update', 'api:app:trigger:delete',
-          'api:app:trigger:test',
-          'api:app:kb:bind', 'api:app:skill:bind', 'api:app:tool:bind', 'api:app:mcp:bind', 'api:app:database:bind',
-          'api:app:dialog-test:list', 'api:app:dialog-test:create', 'api:app:dialog-test:update',
-          'api:app:dialog-test:delete',
-          'api:app:optimization:list', 'api:app:optimization:create', 'api:app:optimization:update',
-          'api:app:optimization:delete', 'api:app:optimization:apply',
-          'api:app:publish',
-        ],
-      },
-      {
-        title: '应用运行',
-        keys: ['menu:application:runtime', 'app:use'],
-        actions: ['app:use'],
-        apis: [
-          'api:app:run', 'api:app:chat:session', 'api:app:chat:message', 'api:app:chat:feedback',
-          'api:app:conversation:list', 'api:app:conversation:detail', 'api:app:conversation:delete',
-        ],
-      },
-      {
-        title: '工具与服务',
-        children: [
-          {
-            title: '我的工具',
-            keys: ['menu:application:my-tools'],
-            actions: ['tool:create', 'tool:edit', 'tool:delete', 'tool:test'],
-            apis: ['api:tool:list', 'api:tool:create', 'api:tool:update', 'api:tool:delete'],
-          },
-          {
-            title: 'MCP管理',
-            keys: ['menu:application:mcp'],
-            actions: ['mcp:create', 'mcp:edit', 'mcp:delete', 'mcp:test'],
-            apis: ['api:mcp:list', 'api:mcp:create', 'api:mcp:update', 'api:mcp:delete', 'api:mcp:toggle', 'api:mcp:test'],
-          },
-          {
-            title: '技能管理',
-            keys: ['menu:application:skill'],
-            actions: ['skill:create', 'skill:edit', 'skill:delete', 'skill:export', 'skill:share'],
-            apis: [
-              'api:skill:list', 'api:skill:detail', 'api:skill:create', 'api:skill:update', 'api:skill:delete',
-              'api:skill:file:manage', 'api:skill:export',
-            ],
-          },
-          {
-            title: '数据库管理',
-            keys: ['menu:application:database'],
-            apis: ['api:database:list', 'api:database:detail', 'api:database:create', 'api:database:update', 'api:database:delete'],
-          },
-        ],
-      },
-      {
-        title: '业务流',
-        keys: ['menu:application:workflow', 'workflow:edit'],
-        actions: ['workflow:create', 'workflow:edit', 'workflow:delete', 'workflow:publish', 'workflow:run'],
-        apis: [
-          'api:workflow:list', 'api:workflow:detail', 'api:workflow:create', 'api:workflow:update',
-          'api:workflow:delete', 'api:workflow:publish', 'api:workflow:execute', 'api:workflow:node:manage',
-        ],
-      },
-      {
-        title: '测试案例',
-        keys: ['testcase:manage'],
-        actions: ['testcase:manage'],
-        apis: ['api:workflow:testcase:manage'],
-      },
-      {
-        title: '运营中心',
-        children: [
           {
             title: '反馈管理',
             keys: ['menu:operation:feedback'],
@@ -323,126 +414,6 @@ export const MENU_PERM_TREE: MenuPermNode[] = [
             title: '模型监控',
             keys: ['menu:operation:model-monitor'],
             apis: ['api:app:monitor'],
-          },
-        ],
-      },
-    ],
-  },
-
-  // ===== 管理 =====
-  {
-    title: '管理',
-    keys: ['menu:admin'],
-    children: [
-      {
-        title: '系统管理',
-        keys: ['menu:admin:system'],
-        children: [
-          {
-            title: '通用设置',
-            keys: ['menu:admin:system:general', 'admin:system'],
-            actions: ['admin:system', 'config:save', 'config:import', 'config:export'],
-            apis: [
-              'api:config:list', 'api:config:save', 'api:config:history', 'api:config:import', 'api:config:export',
-              'api:security-policy:list', 'api:security-policy:create', 'api:security-policy:update',
-              'api:security-policy:delete',
-              'api:publish-strategy:list', 'api:publish-strategy:create', 'api:publish-strategy:update',
-              'api:publish-strategy:delete',
-              'api:notification:list', 'api:notification:send', 'api:notification:read', 'api:notification:delete',
-            ],
-          },
-          {
-            title: '知识库配置',
-            keys: ['menu:admin:system:kb-config', 'admin:system'],
-          },
-          {
-            title: '敏感词设置',
-            keys: ['menu:admin:system:sensitive', 'admin:system'],
-            actions: ['sensitive-word:create', 'sensitive-word:edit', 'sensitive-word:delete', 'sensitive-word:import'],
-            apis: ['api:sensitive-word:list', 'api:sensitive-word:create', 'api:sensitive-word:update', 'api:sensitive-word:delete'],
-          },
-          {
-            title: '字典管理',
-            keys: ['menu:admin:system:dictionary', 'admin:system'],
-            actions: ['dictionary:create', 'dictionary:edit', 'dictionary:delete'],
-            apis: ['api:dictionary:list', 'api:dictionary:create', 'api:dictionary:update', 'api:dictionary:delete', 'api:dictionary:types'],
-          },
-          {
-            title: '术语管理',
-            keys: ['menu:admin:system:terminology', 'admin:system'],
-            actions: [
-              'terminology:library:create', 'terminology:library:delete',
-              'terminology:term:create', 'terminology:term:edit', 'terminology:term:delete', 'terminology:import',
-            ],
-            apis: [
-              'api:terminology:library:list', 'api:terminology:library:create', 'api:terminology:library:delete',
-              'api:terminology:term:list', 'api:terminology:term:create', 'api:terminology:term:delete',
-            ],
-          },
-        ],
-      },
-      {
-        title: '账号权限',
-        keys: ['menu:admin:account'],
-        children: [
-          {
-            title: '角色管理',
-            keys: ['menu:admin:account:roles', 'admin:role'],
-            actions: ['admin:role:create', 'admin:role:edit', 'admin:role:delete', 'admin:role:set-default'],
-            apis: ['api:role:list', 'api:role:detail', 'api:role:create', 'api:role:update', 'api:role:delete', 'api:role:set-default'],
-          },
-          {
-            title: '组织管理',
-            keys: ['menu:admin:account:org', 'admin:org'],
-            actions: ['admin:org:create', 'admin:org:edit', 'admin:org:delete'],
-            apis: [
-              'api:org:tree', 'api:org:flat', 'api:org:departments', 'api:org:members',
-              'api:org:create', 'api:org:update', 'api:org:delete',
-            ],
-          },
-          {
-            title: '人员管理',
-            keys: ['menu:admin:account:personnel', 'admin:user'],
-            actions: ['admin:user:create', 'admin:user:edit', 'admin:user:role-config', 'admin:user:disable'],
-            apis: ['api:personnel:list', 'api:personnel:create', 'api:personnel:update', 'api:personnel:assign-roles', 'api:personnel:status'],
-          },
-          {
-            title: '权限管理',
-            keys: ['menu:admin:account:permissions', 'admin:role'],
-            apis: ['api:permission:list', 'api:permission:tree', 'api:permission:create', 'api:permission:update', 'api:permission:delete'],
-          },
-        ],
-      },
-      {
-        title: '安全审计',
-        keys: ['menu:admin:audit'],
-        children: [
-          {
-            title: '系统日志',
-            keys: ['menu:admin:audit:system-log', 'admin:audit'],
-            actions: ['admin:audit'],
-            apis: ['api:audit:log:list'],
-          },
-        ],
-      },
-      {
-        title: '开放平台',
-        keys: ['menu:admin:platform'],
-        children: [
-          {
-            title: '模型管理',
-            keys: ['menu:admin:platform:model', 'admin:system'],
-            actions: ['model:create', 'model:edit', 'model:delete', 'model:test', 'model:import', 'model:export', 'model:toggle'],
-            apis: [
-              'api:model:list', 'api:model:detail', 'api:model:create', 'api:model:update', 'api:model:delete',
-              'api:model:toggle', 'api:model:test:chat', 'api:model:test:embedding', 'api:model:test:rerank',
-              'api:model:import', 'api:model:export',
-            ],
-          },
-          {
-            title: '开放密钥',
-            keys: ['menu:admin:platform:apikey', 'admin:system'],
-            actions: ['api-key:create', 'api-key:edit', 'api-key:delete', 'kb:manage'],
           },
         ],
       },

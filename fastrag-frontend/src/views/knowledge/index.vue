@@ -5,6 +5,7 @@ import { useAuth } from '@/composables/useAuth'
 import { useUserStore } from '@/stores/user'
 import { usePagination } from '@/composables/usePagination'
 import * as api from '@/api'
+import CategoryPanel from './components/CategoryPanel.vue'
 
 const router = useRouter()
 const { hasPermission } = useAuth()
@@ -65,7 +66,11 @@ const filteredKBs = computed(() => {
   if (searchKeyword.value) {
     list = list.filter((kb: any) => kb.name?.includes(searchKeyword.value))
   }
-  if (selectedCategory.value) {
+  if (selectedCategory.value === '__uncategorized__') {
+    // 未分类：无分类字段，或分类字段不在分类清单中（修订 #18）
+    const names = new Set(categories.value.map((c: any) => c.name))
+    list = list.filter((kb: any) => !kb.category || !names.has(kb.category))
+  } else if (selectedCategory.value) {
     list = list.filter((kb: any) => kb.category === selectedCategory.value)
   }
   if (selectedTags.value.length > 0) {
@@ -79,11 +84,6 @@ const pagedKBs = computed(() => {
   const start = (currentPage.value - 1) * pageSize.value
   return filteredKBs.value.slice(start, start + pageSize.value)
 })
-
-function handleCategoryClick(id: string) {
-  selectedCategory.value = selectedCategory.value === id ? '' : id
-  currentPage.value = 1
-}
 
 function handleTagToggle(tag: string) {
   const idx = selectedTags.value.indexOf(tag)
@@ -124,26 +124,12 @@ watch(filteredKBs, (list) => { total.value = list.length }, { immediate: true })
     </div>
 
     <div class="knowledge-body">
-      <!-- 左侧分类树 -->
-      <div class="category-sidebar">
-        <div class="sidebar-title">分类</div>
-        <el-input v-model="searchKeyword" placeholder="搜索分类" clearable size="small">
-          <template #prefix><el-icon><Search /></el-icon></template>
-        </el-input>
-        <div class="category-list">
-          <div
-            v-for="cat in categories"
-            :key="cat.id"
-            class="category-item"
-            :class="{ active: selectedCategory === cat.id }"
-            @click="handleCategoryClick(cat.id)"
-          >
-            <span v-if="cat.color" class="category-color-dot" :style="{ background: cat.color }" />
-            <span class="category-name">{{ cat.name }}</span>
-            <el-badge :value="cat.count" type="info" />
-          </div>
-        </div>
-      </div>
+      <!-- 左侧分类面板（修订 #18：ADP 式——全部/未分类/分类树 + 搜索 + 折叠 + 行内分类管理） -->
+      <CategoryPanel
+        v-model="selectedCategory"
+        :knowledge-bases="knowledgeBases"
+        @changed="loadData"
+      />
 
       <!-- 右侧内容区 -->
       <div class="knowledge-content">

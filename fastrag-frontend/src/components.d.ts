@@ -74,6 +74,7 @@ declare module 'vue' {
     Header: typeof import('./components/layout/Header.vue')['default']
     Logo: typeof import('./components/layout/Logo.vue')['default']
     ManualToc: typeof import('./components/portal/ManualToc.vue')['default']
+    NotificationBell: typeof import('./components/layout/NotificationBell.vue')['default']
     PortalLayout: typeof import('./components/portal/PortalLayout.vue')['default']
     PortalTopNav: typeof import('./components/portal/PortalTopNav.vue')['default']
     RouterLink: typeof import('vue-router')['RouterLink']
@@ -81,6 +82,7 @@ declare module 'vue' {
     Sidebar: typeof import('./components/layout/Sidebar.vue')['default']
     ThinkingBlock: typeof import('./components/ThinkingBlock.vue')['default']
     ToolCallRenderer: typeof import('./components/ToolCallRenderer.vue')['default']
+    UserMenu: typeof import('./components/layout/UserMenu.vue')['default']
   }
   export interface GlobalDirectives {
     vLoading: typeof import('element-plus/es')['ElLoadingDirective']

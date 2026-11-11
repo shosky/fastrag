@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed } from 'vue'
 import { useRoute } from 'vue-router'
+import NotificationBell from './NotificationBell.vue'
+import UserMenu from './UserMenu.vue'
 
 const route = useRoute()
 
@@ -28,9 +30,13 @@ const breadcrumbs = computed(() => {
       </el-breadcrumb>
     </div>
     <div class="header-right">
+      <!-- 通知铃铛（nav-shell）：全局入口，居页面操作按钮之前 -->
+      <NotificationBell class="header__bell" />
       <!-- Teleport 目标：页面通过 <Teleport to="#header-actions"> 注入操作按钮 -->
       <div id="header-actions" class="header__teleport"></div>
       <slot name="actions"></slot>
+      <!-- 用户入口（nav-shell 修订 #14）：最右侧，头像下拉 -->
+      <UserMenu class="header__user" />
     </div>
   </div>
 </template>

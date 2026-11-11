@@ -64,4 +64,5 @@ $shadow-nav-card: 0 2px 12px rgba(0, 0, 0, 0.08);
 // ========== 布局尺寸 ==========
 $nav-strip-width: 64px;
 $sub-menu-width: 176px;
+$sidebar-width: 208px; // 单列宽侧栏（nav-shell：替代窄条+二级面板双列合计 240px）；折叠态复用 $nav-strip-width
 $header-height: 64px;
