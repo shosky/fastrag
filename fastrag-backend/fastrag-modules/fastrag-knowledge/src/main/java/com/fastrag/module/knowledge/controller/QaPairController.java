@@ -23,6 +23,8 @@ import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.KBRole;
 import com.fastrag.common.enums.LogCategory;
 import com.fastrag.common.response.ApiResponse;
+import com.fastrag.module.knowledge.model.QaBatchConfirmRequest;
+import com.fastrag.module.knowledge.model.QaBatchConfirmResult;
 import com.fastrag.module.knowledge.model.QaCreateRequest;
 import com.fastrag.module.knowledge.model.QaImportResult;
 import com.fastrag.module.knowledge.service.QaPairService;
@@ -55,6 +57,19 @@ public class QaPairController {
     @KbAuth(KBRole.editor)
     @Loggable(category = LogCategory.operation, action = ActionType.qa_pair_confirmed, detail = "确认QA对")
     @PostMapping("/{id}/confirm") public ApiResponse<?> confirm(@PathVariable String kbId,@PathVariable String id) { svc.confirm(kbId,id); return ApiResponse.success(); }
+    /**
+     * 批量确认问答对（qa-pairs 2026-11-02 REQ-B04/B05）。
+     *
+     * <p>混选容忍（已 confirmed 幂等跳过）、单事务整批原子、单次 ≤10000 条；
+     * 返回确认数与跳过数；服务层写一条汇总审计日志。</p>
+     */
+    @KbAuth(KBRole.editor)
+    @Loggable(category = LogCategory.operation, action = ActionType.qa_pair_confirmed, detail = "批量确认QA对")
+    @PostMapping("/batch-confirm")
+    public ApiResponse<QaBatchConfirmResult> batchConfirm(@PathVariable String kbId,
+                                                          @Valid @RequestBody QaBatchConfirmRequest req) {
+        return ApiResponse.success(svc.batchConfirm(kbId, req.getIds()));
+    }
 
     /**
      * 批量导入问答对。

@@ -7,21 +7,29 @@
 ```
 fastrag-modules/fastrag-knowledge/src/main/java/com/fastrag/module/knowledge/
 ├── controller/
-│   ├── QaPairController.java      QA 端点门面：list/create/update/delete/confirm/import 六端点，@KbAuth+@Loggable（镜像 QaPairModule）
+│   ├── QaPairController.java      QA 端点门面：list/create/update/delete/confirm/batch-confirm/import 七端点，@KbAuth+@Loggable（镜像 QaPairModule）
 │   └── QaImportController.java    GET /import-template：SXSSF 流式生成 8 列模板（镜像 QaTemplateModule）
 ├── service/
-│   ├── QaPairService.java         六方法业务接口
-│   └── impl/QaPairServiceImpl.java CRUD/confirm/导入编排（镜像 QaPairModule）
+│   ├── QaPairService.java         七方法业务接口
+│   └── impl/QaPairServiceImpl.java CRUD/confirm/batchConfirm/导入编排（镜像 QaPairModule）
 ├── util/
 │   └── ExcelQaPairImporter.java   纯函数解析器：列别名/类型读取/行校验/归一化去重（镜像 ExcelParserModule）
 ├── mapper/KbQaPairMapper.java     空 BaseMapper<KbQaPair>
 ├── entity/KbQaPair.java           表 kb_qa_pair 实体（ASSIGN_ID；createdAt INSERT 填充）
 └── model/
     ├── QaCreateRequest.java       创建入参（@NotBlank question/answer；source/fileId 可选）
+    ├── QaBatchConfirmRequest.java 批量确认入参（@NotEmpty ids；≤10000 服务层校验）
+    ├── QaBatchConfirmResult.java  批量确认出参（confirmedCount/skippedCount）
     ├── QaPairDto.java             出参（id/kbId/fileId/fileName/question/answer/source/status/createdAt）
     ├── QaImportResult.java        导入统计（totalRows/successCount/skipCount/failCount/details）
     └── ImportRowResult.java       行级明细（10 字段 + failed/skipped/success 三工厂）
 init-scripts/schema.sql:205-216   kb_qa_pair 全量 DDL（SchemaInitializer 无本表增补）
+
+测试（2026-11-02 批量确认增量）：
+fastrag-modules/fastrag-knowledge/src/test/java/com/fastrag/module/knowledge/service/impl/QaPairServiceImplTest.java
+                                    batchConfirm 服务面 6 例（混选跳过/ghost 跳过/超限拒绝/空列表拒绝/事务失败异常传播/汇总审计）——本模块首个服务实现测试
+fastrag-frontend/src/views/knowledge/detail/components/QaPanel.test.ts
+                                    面板批量确认组件面 4 例（全选筛选结果/全 confirmed 禁用/N-M-K 提交闭环/取消保留选中）
 ```
 
 跨域消费方（非本特性文件，级联/召回实现所在）：`fastrag-knowledge/.../service/impl/KbServiceImpl.java`、`FileServiceImpl.java`、`fastrag-retrieval/.../service/impl/RetrievalServiceImpl.java`、`fastrag-knowledge/.../service/impl/AiChunkServiceImpl.java`（守卫）。
@@ -67,6 +75,23 @@ init-scripts/schema.sql:205-216   kb_qa_pair 全量 DDL（SchemaInitializer 无�
 
 **Parent Trace:** QaPairServiceImpl.importFromXlsx + ExcelQaPairImporter.parse → design.QaPairModule/ExcelParserModule → REQ-B03、C02~C09。
 
+### QaPairService.batchConfirm（from contract: 无契约 → design: QaPairModule，2026-11-02 增量 REQ-B04/B05）
+
+**Logic Flow:**
+1. 入参归一化：ids null→空表；逐项 nonNull→trim→去空→distinct；IF 空 THEN badRequest「请选择要确认的问答对」；
+2. IF 去重后 >10000 THEN badRequest「单次批量确认不能超过 10000 条」（零查询零写库即拒）；
+3. `transactionTemplate.executeWithoutResult` 单事务整批原子（复用导入先例 REQ-C07）：`selectList(kb_id=? AND id IN (…))` 一次取回（不存在 id 自然不在行集）→ 遍历：IF status≠"confirmed" THEN 置 confirmed + `updateById` + confirmedCount++ ELSE skippedCount++（幂等跳过）；事务尾 skippedCount += 请求 id 数 − 行集数（不存在/跨库 id 计入跳过，REQ-B02 静默精神）；任一 updateById 抛异常 → 整批回滚、异常上抛（无部分提交）；
+4. info 日志；`logService.addLog(kbId, operation, qa_pair_confirmed, "qa-pairs", "批量确认QA对: 确认=…, 跳过=…", null, "success")` 一条汇总审计（REQ-B05，沿导入 REQ-C08 口径）；
+5. RETURN `QaBatchConfirmResult{confirmedCount, skippedCount}`。
+
+Controller 面：`POST /batch-confirm`（editor + @Loggable + @Valid @NotEmpty）——与单条 confirm 并列，构成 REQ-B01 修订注记的确认状态机第二条写入路径。前端交互面：QaPanel.vue 复选框列（editor 经 `hasKBPermission(kbId,'kb:edit')` 门控）+ 表头全选（筛选结果语义，跨页保留）+ 批量操作栏（已选 N / 无 draft 行禁用）+ 二次确认弹窗（共 N/跳过 M/本次确认 K + 不可逆提示）→ 提交 → toast「已确认 X 条，跳过 Y 条」+ 刷新 + 清空选中（契约见 ui.md「qa-pairs 链」）。
+
+**Module Interactions:** Calls：KbQaPairMapper（1 查 N 更新）、TransactionTemplate、publish 模块 LogService（审计）；Called by：QaPairController.batchConfirm；Shared state：表 kb_qa_pair（读改写）、kb_log（审计追加）。
+
+**Decisions & Deviations:** ① 刻意区别于既有写方法的「不做 kbId 归属校验」（债务③）：批量路径查询按 kbId 过滤，跨库 id 不误伤他库数据、计入 skipped——单条方法维持现状不动，新路径自实现起即按库隔离；② skippedCount 合并「已 confirmed 幂等」与「不存在/跨库 id」两类为单一计数（前端只展示跳过总数，明细拆分无消费方）；③ 审计双写沿导入先例（controller @Loggable 汇总行 + service addLog 明细汇总），未收敛为单条——与 REQ-C08 同款现状，如实记录。
+
+**Parent Trace:** QaPairServiceImpl.batchConfirm + QaPairController.batchConfirm + QaPanel.vue → design.QaPairModule（2026-11-02 增补）→ REQ-B04/B05。
+
 ### GET /import-template（from contract: 无契约 → design: QaTemplateModule）
 
 **Logic Flow:**
@@ -95,6 +120,6 @@ init-scripts/schema.sql:205-216   kb_qa_pair 全量 DDL（SchemaInitializer 无�
 
 ## 3. Testing
 
-现有测试仅覆盖检索消费点：`RetrievalServiceImplTest`（qaPairMapper mock 注入 :64；QA 前置断言 :208-216「关键词命中时 QA 结果应优先返回」；分词模糊匹配用例 :218-216 起「DeepSeek V4参数 命中 DeepSeek V4 Pro 参数」）——对应 tdd S4 前 2 例。
+现有测试覆盖：检索消费点 `RetrievalServiceImplTest`（qaPairMapper mock 注入 :64；QA 前置断言 :208-216「关键词命中时 QA 结果应优先返回」；分词模糊匹配用例 :218-216 起「DeepSeek V4参数 命中 DeepSeek V4 Pro 参数」）；**批量确认增量（2026-11-02，红绿循环已执行）**：后端 `QaPairServiceImplTest` 6 例全绿（混选跳过 / ghost 跳过 / >10000 拒绝且零写库 / 空列表拒绝 / 事务内失败异常传播且不写审计 / 汇总审计一次），fastrag-knowledge 模块全量 BUILD SUCCESS；前端 `QaPanel.test.ts` 4 例全绿（全选筛选结果计数 / 全 confirmed 禁用 / 混选 N-M-K 提交闭环刷新清空 / 取消保留选中），前端全量 205/207（唯二失败为 widget 在制特性遗留，与本特性无关）。
 
-缺口（tdd 各切片均无现有实现，红绿循环未执行）：S1 全部（CRUD/confirm 状态机、越权现状断言）、S2 全部（解析边界 16 例——纯函数可直接落）、S3 全部（导入编排 4 例）、S4 后 2 例（draft 召回现状、降级）、S5 全部（级联 5 例，含孤儿缺陷现状断言）。执行时从 tdd §4 Tracer Bullet（解析判重→导入落库→召回前置纵切）起步。
+缺口（tdd 各切片红绿循环未执行）：S1 全部（CRUD/confirm 状态机、越权现状断言——本次仅 REQ-B04/B05 落地）、S2 全部（解析边界 16 例——纯函数可直接落）、S3 全部（导入编排 4 例）、S4 后 2 例（draft 召回现状、降级）、S5 全部（级联 5 例，含孤儿缺陷现状断言）。执行时从 tdd §4 Tracer Bullet（解析判重→导入落库→召回前置纵切）起步。

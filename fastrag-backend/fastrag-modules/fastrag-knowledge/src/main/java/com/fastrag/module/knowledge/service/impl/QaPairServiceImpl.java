@@ -1,6 +1,7 @@
 package com.fastrag.module.knowledge.service.impl;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.fastrag.common.exception.BusinessException;
 import com.fastrag.module.knowledge.entity.KbQaPair;
 import com.fastrag.module.knowledge.mapper.KbQaPairMapper;
 import com.fastrag.module.knowledge.model.*;
@@ -92,6 +93,56 @@ public class QaPairServiceImpl implements QaPairService {
             e.setStatus("confirmed");
             mapper.updateById(e);
         }
+    }
+
+    // ==================== 批量确认 ====================
+
+    /** 单次批量确认上限（对齐 Excel 导入 REQ-C04 的 10000 行口径） */
+    private static final int MAX_BATCH_CONFIRM = 10_000;
+
+    @Override
+    public QaBatchConfirmResult batchConfirm(String kbId, List<String> ids) {
+        List<String> distinctIds = ids == null ? List.of()
+                : ids.stream().filter(Objects::nonNull).map(String::trim)
+                        .filter(s -> !s.isEmpty()).distinct().toList();
+        if (distinctIds.isEmpty()) {
+            throw BusinessException.badRequest("请选择要确认的问答对");
+        }
+        if (distinctIds.size() > MAX_BATCH_CONFIRM) {
+            throw BusinessException.badRequest("单次批量确认不能超过 " + MAX_BATCH_CONFIRM + " 条");
+        }
+
+        // 单事务整批原子（复用导入写入先例 REQ-C07）：任一更新失败整批回滚，状态不变可重试
+        int[] counters = new int[2]; // [0]=confirmed, [1]=skipped
+        transactionTemplate.executeWithoutResult(status -> {
+            List<KbQaPair> rows = mapper.selectList(new LambdaQueryWrapper<KbQaPair>()
+                    .eq(KbQaPair::getKbId, kbId)
+                    .in(KbQaPair::getId, distinctIds));
+            // 混选容忍：仅 draft 行确认；已 confirmed 行幂等跳过；不存在/跨库 id 计入跳过（REQ-B02 静默精神）
+            for (KbQaPair row : rows) {
+                if (!"confirmed".equals(row.getStatus())) {
+                    row.setStatus("confirmed");
+                    mapper.updateById(row);
+                    counters[0]++;
+                } else {
+                    counters[1]++;
+                }
+            }
+            counters[1] += distinctIds.size() - rows.size();
+        });
+
+        log.info("[QaBatchConfirm] kbId={} 批量确认完成: 确认={}, 跳过={}", kbId, counters[0], counters[1]);
+
+        // 一条汇总审计（REQ-B05，对齐导入 REQ-C08 口径）
+        logService.addLog(kbId,
+                com.fastrag.common.enums.LogCategory.operation,
+                com.fastrag.common.enums.ActionType.qa_pair_confirmed,
+                "qa-pairs",
+                "批量确认QA对: 确认=" + counters[0] + ", 跳过=" + counters[1],
+                null,
+                "success");
+
+        return new QaBatchConfirmResult(counters[0], counters[1]);
     }
 
     // ==================== Excel 批量导入 ====================

@@ -1,11 +1,12 @@
 # 问答对管理（qa-pairs）— 架构设计
 
 > 总评：本特性为**全浅模块特性**——CRUD 面是 MyBatis-Plus 透传，控制器即接口；唯一有实质复杂度的单元是纯函数 Excel 解析器。因此 Module Map 如实标 (S) 与唯一的非 (S) 模块；按链铁律五份文档仍然齐备，契约章节按端点排除铁律只做排除说明与消费点登记（见 contract/interfaces.md `## qa-pairs`）。
+> **2026-11-02 增补（批量确认 REQ-B04/B05）**：QaPairModule 新增 `batchConfirm` 一个方法——校验上限 → 单事务批量状态转移（复用导入的 TransactionTemplate 先例）→ 计数返回 → 一条汇总审计；特性仍为全浅，无新模块、无新缝、无新 ADR（全部沿既有先例，见 §6 ADR 核对）。
 
 ## 1. Module Map
 
 ### QaPairModule — **(S)**，建议保持现状（不建议内联：是被检索链共享数据的写入口）
-- **Responsibility**：QA 对的 CRUD、confirm 状态转移与 Excel 导入编排（预加载既有问题→委托解析→单事务批量写→统计+审计）。
+- **Responsibility**：QA 对的 CRUD、confirm 状态转移（单条 + 2026-11-02 起的批量路径：上限校验 → 混选幂等跳过 → 单事务整批原子 → 计数返回 → 汇总审计）与 Excel 导入编排（预加载既有问题→委托解析→单事务批量写→统计+审计）。
 - **Files**：`fastrag-knowledge/.../controller/QaPairController.java`、`service/QaPairService.java`、`service/impl/QaPairServiceImpl.java`、`mapper/KbQaPairMapper.java`、`entity/KbQaPair.java`、`model/QaCreateRequest|QaPairDto|QaImportResult|ImportRowResult.java`
 - **Depth Rationale**：读/写基本是 `LambdaQueryWrapper + BaseMapper` 透传（list/create/delete 均单查询，QaPairServiceImpl.java:42-84 ‹CERTAIN›）；仅导入编排含预加载、归一化去重与事务分支（:100-190），该复杂度的大头已被 ExcelParserModule 吸走，余下是粘合代码——浅。 ‹CERTAIN›
 
@@ -29,6 +30,7 @@
 - `update(kbId, id, patch: Map) → QaPairDto` — 部分更新 question/answer
 - `delete(kbId, id) → void` — 物理删除
 - `confirm(kbId, id) → void` — draft→confirmed
+- `batchConfirm(kbId, ids: List<String>) → QaBatchConfirmResult{confirmedCount, skippedCount}` — 批量确认（REQ-B04/B05；混选跳过 + 单事务整批原子 + ≤10000 上限 + 汇总审计；形状 contract 阶段定稿）
 - `importFromXlsx(kbId, MultipartFile, overwrite) → QaImportResult` — 导入编排
 
 **ExcelParserModule 公共接口（静态）** 〔ExcelQaPairImporter.java:70-72,325 ‹CERTAIN›〕
@@ -44,7 +46,7 @@
 ### 缝 1：KB 判定缝（复用 iam，非本特性所立）
 - **What varies**：谁有权读/写该库的 QA 对。
 - **Adapters**：`@KbAuth(KBRole.viewer/editor)` 切面 + KbAccessChecker（唯一判定实现，归属 iam 特性）——本特性零适配器、纯消费。
-- **Stable side**：QaPairController 的 6 端点。
+- **Stable side**：QaPairController 的 7 端点（2026-11-02 起含批量确认）。
 - **Placement rationale**：鉴权横切面全后端统一在 fastrag-security，QA 端点不自带逻辑。〔QaPairController.java:44-77 ‹CERTAIN›〕
 
 ### 缝 2：Excel 解析边界（假设缝，不立缝）
@@ -72,6 +74,7 @@
 |---|---|---|
 | REQ-A01~A05 | QaPairModule | CRUD/鉴权/审计 |
 | REQ-B01~B03 | QaPairModule | confirm 状态机（B03 经 ExcelParserModule 落行状态） |
+| REQ-B04~B05 | QaPairModule | 2026-11-02 补锚：批量确认（混选幂等跳过 / 单事务整批原子 / ≤10000 上限 / 一条汇总审计），确认状态机第二写入路径，前端勾选交互见 spec §8 与 ui.md |
 | REQ-C01 | QaTemplateModule | 模板下载 |
 | REQ-C02~C09 | ExcelParserModule + QaPairModule | 解析/校验/归一化（解析器）+ 事务写回（服务） |
 | REQ-D01~D04 | （缝 3 消费点：检索特性 RetrievalServiceImpl） | 本特性侧仅表语义稳定 |
@@ -92,7 +95,7 @@
 **对既有 ADR 的要点核对**：
 - ADR-0001（解析策略绑定变更必须触发重新分片）：本特性的相容特化是「QA 模式文件拒绝重切」（FileServiceImpl.java:382-384，QA 对不受分片策略影响，不存在绑定漂移问题）——符合 ADR-0001 精神，无冲突。
 - ADR-0002（图存储收敛 Neo4j）：本特性不涉图谱，无关。
-- 新 ADR：**无**——未发现「难逆转+费解+真权衡」三者齐备的取舍（qa 通道权重 0.3、召回不过滤 status 属实现常量/待裁决项，不构成 ADR）。
+- 新 ADR：**无**——未发现「难逆转+费解+真权衡」三者齐备的取舍（qa 通道权重 0.3、召回不过滤 status 属实现常量/待裁决项，不构成 ADR）。2026-11-02 批量确认同样不构成：单事务与汇总审计均沿导入既例（REQ-C07/C08），无新权衡。
 
 ## ADR 引用指针
 

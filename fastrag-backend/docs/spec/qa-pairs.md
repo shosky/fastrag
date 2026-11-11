@@ -1,18 +1,30 @@
+---
+name: 问答对管理（qa-pairs）需求规格
+summary: "QA 对 CRUD、单条与批量确认、Excel 导入、召回消费与级联一致性需求（含批量确认 REQ-B04/B05）"
+type: spec
+id: SPEC-QA-PAIRS
+status: active
+updated: 2026-11-02
+hash: "7e17eaabd51c"
+summaryHash: "7e17eaabd51c"
+---
+
 # 问答对管理（qa-pairs）— 需求规格
 
-## 1. 特性与范围
+## 1. 特性与范围 {#scope}
 
-问答对管理为知识库提供人工维护的标准「问题—答案」数据（KbQaPair，表 `kb_qa_pair`）：用户可手动创建、查看、编辑、删除 QA 对，将其标记为已确认，并可按 Excel 模板批量导入；QA 对作为检索的独立召回通道数据源被检索链消费（裁决见 4.4），其生命周期受知识库/文件删除级联与重切口径约束（4.5）。显式排除：~~文件级 QA 自动提取（问答对提取模式）的后端流水线实现~~（2026-09-26 已立项为独立特性，见 [qa-generation.md](./qa-generation.md)）、QA 对向量Embedding入库、QA 对独立检索端点、QA 对草稿/确认之外的工作流状态（如审核流）。
+问答对管理为知识库提供人工维护的标准「问题—答案」数据（KbQaPair，表 `kb_qa_pair`）：用户可手动创建、查看、编辑、删除 QA 对，将其标记为已确认（单条或批量），并可按 Excel 模板批量导入。QA 对作为检索的独立召回通道数据源被检索链消费（裁决见 4.4）。其生命周期受知识库/文件删除级联与重切口径约束（4.5）。显式排除：文件级 QA 自动提取（问答对提取模式）的后端流水线实现。该项已于 2026-09-26 清偿立项为独立特性，见 [qa-generation.md](./qa-generation.md)（清偿注记见 REQ-E03）。另排除：QA 对向量Embedding入库、QA 对独立检索端点、QA 对草稿/确认之外的工作流状态（如审核流）。
 
-## 2. Out of Scope
+## 2. Out of Scope {#out-of-scope}
 
 - 文件「问答对提取」模式的提取流水线：`kb_file.processing_mode` 虽声明 `qa` 取值并随摄入消息下发，但消费端无提取分支——本特性只管辖 `kb_qa_pair` 表本身，提取流水线属 GAP（见 4.5 REQ-E03）。
 - QA 对的向量化与 Milvus 入库：QA 召回是 MySQL LIKE 分词模糊匹配，不经 Embedding。
 - QA 对的独立检索 API：召回发生在检索链内部通道，不新增 `/qa-search` 之类端点。
 - QA 对的多级审核流（提交→审核→驳回）：状态仅 draft/confirmed 两值。
 - QA 对在跨知识库移动时的迁移：移动文件即放弃源库 QA 对（级联删除，不搬家）。
+- QA 对的批量删除 / 批量导出 / 批量修改扩展字段（分类/关键词/优先级等）：2026-11-02 批量操作裁决一期仅做**批量确认**〔决议 2026-11-02 D1〕。批量改扩展字段另受 REQ-C09 债务制约（后端无对应存储列）。
 
-## 3. 领域术语
+## 3. 领域术语 {#terms}
 
 - **知识库（Knowledge Base）**：QA 对的宿主聚合根，表 `kb`。——CONTEXT.md
 - **知识分片（Chunk）**：检索最小单元；QA 对与其并列作为检索内容来源，互不隶属。——CONTEXT.md
@@ -20,8 +32,9 @@
 - **向量检索 / 混合检索（Hybrid Retrieval）**：QA 对是混合检索中「qa 通道」的数据源。——CONTEXT.md + RetrievalServiceImpl.java:792-839 ‹CERTAIN›
 - **统一响应（ApiResponse）**：全部 QA 端点返回包装；业务错误 = HTTP 200 + body.code。——CONTEXT.md
 - 本特性新增术语：**QA 对（KbQaPair）**——人工维护的问答知识单元，来源 manual/ai，状态 draft/confirmed〔KbQaPair.java:36-37 ‹CERTAIN›〕。
+- 本特性新增术语（2026-11-02）：**批量确认（Batch Confirm）**——对用户勾选的 QA 对集合的一次性确认操作，是确认状态机的第二条写入路径。语义四要素：混选容忍（已确认行幂等跳过）、单事务整批原子、单次上限 10000、一条汇总审计。〔决议 2026-11-02 D2-D7，裁决全录见 fastrag/.tmp/idd-qa-pairs-batch-confirm-grill-decisions.md〕
 
-## 4. 功能需求
+## 4. 功能需求 {#requirements}
 
 ### 4.1 QA 对 CRUD 与查询
 
@@ -40,6 +53,10 @@
 - **REQ-B01**：用户可确认 QA 对，使其状态从 draft 变为 confirmed；确认是单向转移，系统不提供「取消确认」操作。〔证据：QaPairServiceImpl.java:89-95（唯一写 confirmed 的单条路径，无 revert）；grep 全仓无 unconfirm/revert ‹CERTAIN›〕
 - **REQ-B02**：对不存在的 QA 对执行确认时不报错、无副作用（静默忽略）。〔证据：QaPairServiceImpl.java:91-94（null 检查后直接跳过）‹CERTAIN›〕
 - **REQ-B03**：Excel 导入可逐行指定初始状态，仅接受 draft/confirmed（含中文「草稿/已确认」变体），缺省 draft；非法状态值导致该行导入失败。〔证据：ExcelQaPairImporter.java:209-219,367-374 ‹CERTAIN›〕
+
+- **REQ-B04**：当用户对勾选的 QA 对集合发起批量确认时，系统应将其中 draft 行置为 confirmed、已 confirmed 行静默跳过（幂等），全部行在单事务内整批原子处理（任一行失败则整批回滚、状态不变），并返回确认数与跳过数。当单次请求超过 10000 条时，系统应以业务错误拒绝且零写入。〔证据：决议 2026-11-02 D3/D4/D6/D7。先例：幂等跳过 QaPairServiceImpl.java:89-95、单事务 QaPairServiceImpl.java:135-162、上限 MAX_DATA_ROWS（REQ-C04）‹CERTAIN›。端点形状由 contract 阶段定义〕
+- **REQ-B05**：批量确认完成后，系统应写一条汇总操作审计日志（含本次确认条数与跳过条数），不逐条记录。〔证据：决议 2026-11-02 D5；先例 REQ-C08 导入汇总审计 ‹CERTAIN›〕
+  ▸ **2026-11-02 修订（REQ-B01 补充）**：确认操作自此有两条写入路径：单条确认（REQ-B01 原文）与批量确认（REQ-B04）。状态机不变：单向 draft→confirmed、无撤销确认路径。批量确认同样不可逆，前端以二次确认弹窗兜底（见 §8）。
 
 ### 4.3 Excel 批量导入（模板下载 / 解析 / 批量写入）
 
@@ -76,20 +93,24 @@
 - **REQ-E04**：重新分片保留该文件既有 QA 对（QA 对为用户手工数据），但 QA 模式文件请求重切被拒绝。〔证据：FileServiceImpl.java:350-352（javadoc 口径）、382-384（守卫）‹CERTAIN›〕
 - **REQ-E05**：文件跨知识库移动时，源知识库中该文件的 QA 对被级联删除且不随迁目标库。〔证据：FileServiceImpl.java:750-756（先删 QA 对、无复制逻辑）‹CERTAIN›〕
 
-## 5. 非功能约束
+## 5. 非功能约束 {#constraints}
 
 - 全部 QA 端点鉴权走 @KbAuth 切面（viewer 读、editor 写），与全后端 KB ACL 一致。〔QaPairController.java:44-77 ‹CERTAIN›〕
 - 业务错误 = HTTP 200 + body.code（BusinessException.badRequest），统一 ApiResponse 包装。〔ExcelQaPairImporter.java:76-95 + CONTEXT.md ‹CERTAIN›〕例外登记：模板下载失败经 response.setStatus(500) 直写 HTTP 状态。〔QaImportController.java:104-107 ‹CERTAIN›〕
 - 导入批量写入必须单事务原子。〔QaPairServiceImpl.java:135-162 ‹CERTAIN›〕
 - 性能阈值（导入耗时上限、召回延迟预算）：〔决议 2026-09-24（R4 代裁）：取 **10000 行导入 P95 ≤ 60s（单事务批量写、逐行 LIKE 查库为主项）、QA 通道召回 P95 ≤ 200ms（kb 内 QA 对千级、LIKE 全表扫为瓶颈）**；理由：与 kb-core/retrieval 保守基线同量级；现状差距：无压测证据，QA 召回 LIKE 无索引覆盖，登记为观测义务。〕
 
-## 6. 验收清单
+## 6. 验收清单 {#acceptance}
 
 - [ ] 创建 QA 对缺问题或答案时被拒绝（@Valid 400 语义）（REQ-A01）
 - [ ] 新建 QA 对 status 恒为 draft、source 缺省 manual（REQ-A01）
 - [ ] 按 fileId 筛选列表仅返回该文件的 QA 对，列表按创建时间倒序（REQ-A02）
 - [ ] 更新仅携带 question 时答案保持不变，status 不变（REQ-A03）
 - [ ] 确认后状态为 confirmed；对不存在 id 确认返回 HTTP 200 且无异常（REQ-B01、REQ-B02）
+- [ ] 批量确认混选：N 条中含已 confirmed 行时跳过计数正确、仅 draft 行被确认（REQ-B04）
+- [ ] 批量确认原子性：构造中途失败后全部行状态不变，可整批重试（REQ-B04）
+- [ ] 批量确认超限：携带 10001 条 id 的请求被业务错误拒绝且零写入（REQ-B04）
+- [ ] 批量确认审计：一次批量操作仅新增一条汇总日志且含确认/跳过计数（REQ-B05）
 - [ ] 全角问题与半角同文问题在导入中被判为重复（REQ-C05）
 - [ ] overwrite=false 导入已存在问题时该行 skipped；overwrite=true 时原记录问题/答案/状态被更新（REQ-C05）
 - [ ] 优先级填 11 的新增行导入失败且明细注明「1-10」；同样数据在覆盖行被静默钳制（REQ-C06）
@@ -97,7 +118,7 @@
 - [ ] 10001 行文件导入截断至 10000 行并附超限失败明细（REQ-C04）
 - [ ] 加密 xlsx 导入返回业务错误（HTTP 200 + body.code）而非 5xx（REQ-C02）
 - [ ] enableKeywordMatch 开启且 QA 命中时，返回结果首项 source=qa（REQ-D01）
-- [ ] ~~draft 状态 QA 对同样被召回（现状口径）（REQ-D04）~~ 修订（2026-09-26）：manual draft 仍召回；ai draft 不召回、确认后召回（见 qa-generation REQ-C02）
+- [ ] draft 状态 QA 对召回口径（REQ-D04，2026-09-26 修订）：manual draft 仍召回；ai draft 不召回、确认后召回（见 qa-generation REQ-C02）
 - [ ] 删除知识库后，有名下文件的 QA 对无残留（现状：fileId=null 的导入 QA 对残留——REQ-E01 登记缺陷；豁免：占位/债务登记，见 implement 文档）
 - [ ] 重切后该文件 QA 对数量不变；QA 模式文件请求重切被拒绝（REQ-E04）
 - [ ] 文件移入他库后，源库中该文件 QA 对不复存在（REQ-E05）
@@ -113,6 +134,16 @@
 - [ ] 删除文件（回收站清除/硬删路径）后该文件 QA 对级联清理，失败仅告警（REQ-E02）
 - [ ] QA 模式文件重试清空该文件旧 QA 对；问答对提取流水线消费端无实现（GAP 登记）（REQ-E03；豁免：占位/债务登记，见 implement 文档；流水线已立项 qa-generation，2026-09-26 清偿）
 
-## 7. 测试策略
+## 7. 测试策略 {#testing}
 
-经由公共接口（QaPairService / QaPairController）与纯函数解析器（ExcelQaPairImporter）测试：① CRUD/confirm 状态机全转移与幂等语义（4.1/4.2）；② 导入解析边界——列别名、归一化去重、overwrite 分叉、优先级/状态校验不对称、10000 行截断、加密/损坏文件（4.3，重点用例族）；③ 检索消费点回归——qaChannelRecall 的分词命中与排序、draft 可召回（4.4，经 RetrievalServiceImpl 既有测试缝）；④ 级联一致性——KB/文件删除、重切守卫、跨库移动（4.5，联合 kb-core/file-ingestion 公共接口验证）。Excel 写入路径用真 MySQL（MyBatis-Plus），解析器为纯函数零 mock；检索链仅允许 mock Milvus/Embedding/Rerank（既有 RetrievalServiceImplTest 模式）。
+经由公共接口（QaPairService / QaPairController）与纯函数解析器（ExcelQaPairImporter）测试。① CRUD/confirm 状态机全转移与幂等语义，含批量确认的混选跳过、整批原子与上限拒绝（4.1/4.2 REQ-B04/B05）。② 导入解析边界——列别名、归一化去重、overwrite 分叉、优先级/状态校验不对称、10000 行截断、加密/损坏文件（4.3，重点用例族）。③ 检索消费点回归——qaChannelRecall 的分词命中与排序、draft 可召回（4.4，经 RetrievalServiceImpl 既有测试缝）。④ 级联一致性——KB/文件删除、重切守卫、跨库移动（4.5，联合 kb-core/file-ingestion 公共接口验证）。Excel 写入路径用真 MySQL（MyBatis-Plus），解析器为纯函数零 mock；检索链仅允许 mock Milvus/Embedding/Rerank（既有 RetrievalServiceImplTest 模式）。
+
+## 8. UI Decisions（2026-11-02 批量确认，决议 D2/D4/D8/D9）
+
+- **选择与全选**：问答对表格首列增加复选框；表头全选 = 当前筛选结果（搜索/状态/来源过滤命中行）全部选中，翻页保留已选，操作栏显示「已选 N 条」。〔决议 D2；前提：列表全量在前端（REQ-A02 现状）〕
+- **批量操作栏**：选中数 > 0 时浮现（对齐 FileManager 批量操作栏形态），含「批量确认」主按钮；所选集合中无 draft 行时按钮禁用（无可确认项）。
+- **二次确认**：执行前弹窗显示「共 N 条，其中 M 条已确认将跳过，本次确认 K 条」并标注确认不可逆；请求执行中按钮 loading 防重复提交。〔决议 D4〕
+- **结果反馈**：成功 toast「已确认 X 条，跳过 Y 条」并刷新列表、清空选中；失败经统一拦截器报错并保留选中以便重试。
+- **权限可见性**：批量控件仅 editor 及以上可见（REQ-A05）；viewer 不渲染复选框与操作栏。
+- **顺带修正（前端偏差清偿）**：状态筛选项清理为 draft/confirmed 两值——原「启用/停用」为永不命中的死选项（QaPanel.vue:36-43 偏差，对齐本 spec §4.2 与 KbQaPair 实体两值现状）。〔决议 D8〕
+- **契约补录登记**：ui.md 与 contract.md 现无问答对页/QA 端点条目（grep 零命中），批量端点与页面交互随本特性 design/contract 阶段补录。

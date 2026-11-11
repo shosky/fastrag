@@ -11,6 +11,17 @@ public interface QaPairService {
     void delete(String kbId, String id);
     void confirm(String kbId, String id);
     /**
+     * 批量确认问答对（2026-11-02 REQ-B04：确认状态机的第二条写入路径）。
+     *
+     * <p>混选容忍：已 confirmed 行幂等跳过、不存在/跨库 id 计入跳过；
+     * 全部行单事务整批原子（任一失败全回滚）；单次上限 10000 条。
+     *
+     * @param kbId 知识库 ID
+     * @param ids  待确认 QA 对 id 集合（内部去重）
+     * @return 确认数与跳过数
+     */
+    QaBatchConfirmResult batchConfirm(String kbId, List<String> ids);
+    /**
      * 从 Excel 文件批量导入问答对。
      *
      * @param kbId             知识库 ID

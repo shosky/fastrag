@@ -101,3 +101,22 @@
 - Tracer Bullet 建议：S2「全角判重」→ S3「合法行落库」→ S4「关键词命中前置」三例贯通「解析→落库→召回」最小纵切，先于其余用例。
 - 期望值原受 S0 两项 HITL 裁决约束的用例（S4「仅 draft 召回」、S3 落库字段面）已于 2026-09-24 代裁定稿：S4 断言=draft 可召回、S3 断言=5 列不落库；若用户日后推翻裁决，先改断言再跑红绿。
 - 现状口径断言（债务登记断言：S1 更新 500 语义 / S1 越权放行 / S2 覆盖行钳制 / S5 孤儿残留）执行时若债务已先行修复，按修复后语义改判并回写本文件。
+
+## 5. 2026-11-02 增量切片：批量确认（REQ-B04/B05，红绿循环已执行）
+
+切片（service 面 + 组件面，mock 边界 = mapper/transactionTemplate/logService 与 `@/api`）：
+
+| 测试 | Given | When | Then | 追溯 REQ | 落点 |
+|---|---|---|---|---|---|
+| [批量确认] 混选时 [仅 draft 确认且已确认幂等跳过] | d1=draft、d2=confirmed | batchConfirm(d1,d2) | 确认=1、跳过=1、d1→confirmed、updateById 一次 | B04 | QaPairServiceImplTest |
+| [批量确认] 含不存在/跨库 id 时 [计入跳过不报错] | 请求 d1+ghost、库内仅 d1 | batchConfirm | 确认=1、跳过=1 | B04 | 同上 |
+| [批量确认] 超 10000 条时 [业务错误拒绝零写库] | 10001 个 id | batchConfirm | badRequest；零 selectList、零事务、零审计 | B04 | 同上 |
+| [批量确认] 空 id 列表时 [业务错误拒绝] | 空表 / 全空白 | batchConfirm | badRequest | B04 | 同上 |
+| [批量确认] 事务内更新失败时 [异常传播整批不生效] | updateById 抛 RuntimeException | batchConfirm | 异常上抛、零审计 | B04/D6 | 同上 |
+| [批量确认] 成功时 [写一条汇总审计] | 1 条 draft | batchConfirm | addLog 恰一次 | B05 | 同上 |
+| [面板] 表头全选时 [筛选结果全选并显示计数] | 3 行 | 勾选表头 | 已选 3 条、按钮可用 | B04/D2 | QaPanel.test.ts |
+| [面板] 所选全为已确认时 [按钮禁用] | 仅 confirmed 行 | 勾选表头 | 按钮禁用 | B04/D3 | 同上 |
+| [面板] 混选提交时 [弹窗统计 N-M-K 并闭环] | d1/d2/c1 | 提交 | 弹窗文案、batch-confirm 调用、toast、刷新、清空 | B04/D4-D5 | 同上 |
+| [面板] 取消二次确认时 [不提交且保留选中] | confirm reject | 提交 | 零调用、操作栏保留 | D4 | 同上 |
+
+红绿证据：后端先红（testCompile 找不到 QaBatchConfirmResult 符号）后绿（QaPairServiceImplTest 6/6，fastrag-knowledge 模块 BUILD SUCCESS）；前端先红（无 batchConfirmQaPairs 导出 / 无复选框列）后绿（QaPanel.test.ts 4/4，前端全量 205/207——唯二失败为 widget 在制遗留）。实现期间两处测试自愈修正：Mockito void 方法须用 doAnswer 词序（executeWithoutResult）；弹窗文案断言按实际语序修正——均非行为变更。

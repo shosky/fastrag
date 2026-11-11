@@ -7,6 +7,8 @@ import { getModels, triggerQaGeneration, getQaGenerationStatus } from '@/api'
  * 问答对提炼参数对话框（qa-generation 前端 P1-P3 共用组件）：
  * 单文件（分片管理页/文件列表行内）与多选批量（文件列表批量栏）三个入口都挂载本组件，
  * 参数应用于全部传入文件；触发后对话框内轮询任务进度（3s），关闭即停止轮询（后台任务继续）。
+ * 存在未终态任务（triggering/running）时「提炼」按钮禁用；重开对话框按后端任务账本恢复进度显示，
+ * 防止进行中重复触发（后端另有 running + 心跳互斥兜底，见 QaGenerationServiceImpl.trigger）。
  */
 const props = defineProps<{
   modelValue: boolean
@@ -58,12 +60,16 @@ const STATUS_TYPES: Record<string, 'success' | 'info' | 'warning' | 'danger' | '
 }
 const TERMINAL = ['success', 'partial', 'failed']
 
+/** 存在未终态任务（triggering/running）→ 提炼按钮禁用（triggering 只覆盖受理阶段，running 由本值接管） */
+const hasActiveTask = computed(() => tasks.value.some((t) => !TERMINAL.includes(t.status)))
+
 let timer: number | null = null
 
 watch(visible, (v) => {
   if (v) {
     tasks.value = []
     loadModels()
+    restoreRunningTasks()
   } else {
     stopPolling()
   }
@@ -83,8 +89,40 @@ async function loadModels() {
   }
 }
 
+/**
+ * 打开对话框时按后端任务账本（GET generation/{fileId}，从未触发返回 null）恢复进行中任务的进度显示。
+ * 关闭弹窗即停轮询但后台任务继续；若无此恢复，重开后任务表格清空且提炼按钮可用，
+ * 会误导用户在任务进行中重复触发（后端互斥会报「该文件已有进行中的提炼任务」）。
+ */
+async function restoreRunningTasks() {
+  if (props.files.length === 0) return
+  const restored: TaskStatus[] = []
+  for (const f of props.files) {
+    try {
+      const d: any = await getQaGenerationStatus(props.kbId, f.id)
+      if (d?.status === 'running') {
+        restored.push({
+          fileId: f.id,
+          fileName: f.name,
+          status: 'running',
+          totalChunks: d.totalChunks ?? 0,
+          succeededChunks: d.succeededChunks ?? 0,
+          failedChunks: d.failedChunks ?? 0,
+          error: d.error ?? null,
+        })
+      }
+    } catch {
+      /* 单文件状态查询失败按「无进行中任务」处理，不阻断对话框打开 */
+    }
+  }
+  if (visible.value && tasks.value.length === 0 && restored.length > 0) {
+    tasks.value = restored
+    startPolling()
+  }
+}
+
 async function handleTrigger() {
-  if (props.files.length === 0 || triggering.value) return
+  if (props.files.length === 0 || triggering.value || hasActiveTask.value) return
   triggering.value = true
   tasks.value = props.files.map((f) => ({
     fileId: f.id,
@@ -223,7 +261,7 @@ function progressText(t: any): string {
 
     <template #footer>
       <el-button @click="visible = false">关闭</el-button>
-      <el-button type="primary" :loading="triggering" @click="handleTrigger">
+      <el-button type="primary" :loading="triggering" :disabled="hasActiveTask" @click="handleTrigger">
         提炼{{ files.length > 1 ? `（${files.length} 个文件）` : '' }}
       </el-button>
     </template>

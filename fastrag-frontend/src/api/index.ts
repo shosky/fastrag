@@ -460,6 +460,11 @@ export async function confirmQaPair(kbId: string, id: string) {
   return request.post(`/kb/${kbId}/qa-pairs/${id}/confirm`)
 }
 
+// 批量确认问答对（qa-pairs 2026-11-02 REQ-B04：混选幂等跳过，服务端单事务整批原子，≤10000 条）
+export async function batchConfirmQaPairs(kbId: string, ids: string[]) {
+  return request.post(`/kb/${kbId}/qa-pairs/batch-confirm`, { ids })
+}
+
 // 下载问答对导入模板
 export async function downloadQaImportTemplate(kbId: string) {
   return request.get(`/kb/${kbId}/qa-pairs/import-template`, { responseType: 'blob' })

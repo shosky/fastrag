@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import * as api from '@/api'
 import type { QaPair } from '@/types/knowledge'
 import { usePagination } from '@/composables/usePagination'
+import { useAuth } from '@/composables/useAuth'
 import QaImportDialog from './QaImportDialog.vue'
 
 const props = defineProps<{ kbId: string }>()
@@ -36,14 +37,13 @@ const answerTypes = [
 const statusOptions = [
   { label: '草稿', value: 'draft' },
   { label: '已确认', value: 'confirmed' },
-  { label: '启用', value: 'active' },
-  { label: '停用', value: 'disabled' },
 ]
 const STATUS_LABELS: Record<string, string> = { draft: '草稿', confirmed: '已确认', active: '启用', disabled: '停用' }
 const STATUS_COLORS: Record<string, string> = { draft: 'info', confirmed: 'warning', active: 'success', disabled: 'danger' }
 const SOURCE_LABELS: Record<string, string> = { manual: '手动录入', ai: 'AI 提炼' }
 
-const filteredList = computed(() => {
+// 过滤全量集（筛选/搜索命中行）——批量确认的「全选=筛选结果全选」语义以它为域
+const filteredAll = computed(() => {
   let list = dataList.value
   if (searchKeyword.value) {
     const kw = searchKeyword.value.toLowerCase()
@@ -51,11 +51,61 @@ const filteredList = computed(() => {
   }
   if (filterStatus.value) list = list.filter(q => q.status === filterStatus.value)
   if (filterSource.value) list = list.filter(q => q.source === filterSource.value)
-
-  total.value = list.length
-  const start = (currentPage.value - 1) * pageSize.value
-  return list.slice(start, start + pageSize.value)
+  return list
 })
+
+const filteredList = computed(() => {
+  total.value = filteredAll.value.length
+  const start = (currentPage.value - 1) * pageSize.value
+  return filteredAll.value.slice(start, start + pageSize.value)
+})
+
+// 批量确认（qa-pairs 链 2026-11-02：REQ-B04/B05，交互语义见 docs/ui/ui.md「qa-pairs 链」）
+const { hasKBPermission } = useAuth()
+const canBatchConfirm = computed(() => hasKBPermission(props.kbId, 'kb:edit'))
+const selectedIds = ref<string[]>([])
+const batchConfirming = ref(false)
+const selectedRows = computed(() => filteredAll.value.filter(q => selectedIds.value.includes(q.id)))
+const draftSelectedCount = computed(() => selectedRows.value.filter(q => q.status === 'draft').length)
+const confirmedSelectedCount = computed(() => selectedRows.value.length - draftSelectedCount.value)
+const allFilteredSelected = computed(() =>
+  filteredAll.value.length > 0 && filteredAll.value.every(q => selectedIds.value.includes(q.id)))
+const someFilteredSelected = computed(() =>
+  filteredAll.value.some(q => selectedIds.value.includes(q.id)) && !allFilteredSelected.value)
+
+function toggleSelectAllFiltered(v: boolean) {
+  const ids = filteredAll.value.map(q => q.id)
+  // 全选：并入筛选结果（保留筛选外跨页选中）；取消：仅移除筛选结果命中项
+  selectedIds.value = v
+    ? Array.from(new Set([...selectedIds.value, ...ids]))
+    : selectedIds.value.filter(id => !ids.includes(id))
+}
+
+function toggleRow(id: string, v: boolean) {
+  selectedIds.value = v ? [...selectedIds.value, id] : selectedIds.value.filter(x => x !== id)
+}
+
+async function handleBatchConfirm() {
+  const totalRows = selectedRows.value.length
+  try {
+    await ElMessageBox.confirm(
+      `共 ${totalRows} 条，其中 ${confirmedSelectedCount.value} 条已确认将跳过，本次确认 ${draftSelectedCount.value} 条。确认操作不可撤销，是否继续？`,
+      '批量确认',
+      { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+    )
+  } catch { return /* 用户取消，静默 */ }
+  batchConfirming.value = true
+  try {
+    const res: any = await api.batchConfirmQaPairs(
+      props.kbId,
+      selectedRows.value.map(q => q.id),
+    )
+    ElMessage.success(`已确认 ${res?.confirmedCount ?? 0} 条，跳过 ${res?.skippedCount ?? 0} 条`)
+    selectedIds.value = []
+    loadData()
+  } catch {} // 失败提示由 request 拦截器统一弹出（全局规范：错误文案取 e.message）
+  finally { batchConfirming.value = false }
+}
 
 async function loadData() {
   loading.value = true
@@ -64,6 +114,7 @@ async function loadData() {
     const list = res?.list || res || []
     dataList.value = list
     total.value = res?.total ?? list.length
+    selectedIds.value = [] // 数据集已更替，陈旧选中一并清空
     reset()
   } finally { loading.value = false }
 }
@@ -156,8 +207,38 @@ function handleSearch() { currentPage.value = 1 }
       <span style="color: #909399; font-size: 13px">共 {{ total }} 条</span>
     </div>
 
+    <!-- 批量操作栏（qa-pairs 链：选中后浮现，沿 FileManager 批量操作栏形态） -->
+    <div v-if="canBatchConfirm && selectedIds.length > 0" class="qa-panel__bulk-bar">
+      <span class="qa-panel__bulk-count">已选 {{ selectedIds.length }} 条</span>
+      <el-button
+        type="primary"
+        size="small"
+        :disabled="draftSelectedCount === 0"
+        :loading="batchConfirming"
+        :title="draftSelectedCount === 0 ? '所选均为已确认状态' : `确认 ${draftSelectedCount} 条，跳过 ${confirmedSelectedCount} 条`"
+        @click="handleBatchConfirm"
+      >
+        批量确认
+      </el-button>
+    </div>
+
     <!-- 表格 -->
     <el-table :data="filteredList" stripe size="small">
+      <el-table-column v-if="canBatchConfirm" width="44" align="center">
+        <template #header>
+          <el-checkbox
+            :model-value="allFilteredSelected"
+            :indeterminate="someFilteredSelected"
+            @change="toggleSelectAllFiltered"
+          />
+        </template>
+        <template #default="{ row }">
+          <el-checkbox
+            :model-value="selectedIds.includes(row.id)"
+            @change="(v: boolean) => toggleRow(row.id, v)"
+          />
+        </template>
+      </el-table-column>
       <el-table-column type="index" width="50" />
       <el-table-column prop="question" label="问题" min-width="200" show-overflow-tooltip />
       <el-table-column prop="answer" label="答案" min-width="250" show-overflow-tooltip />
@@ -288,6 +369,18 @@ function handleSearch() { currentPage.value = 1 }
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
+}
+
+.qa-panel__bulk-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 12px;
+
+  .qa-panel__bulk-count {
+    font-size: 13px;
+    color: #606266;
+  }
 }
 
 .qa-panel__pagination {

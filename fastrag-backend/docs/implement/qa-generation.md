@@ -203,3 +203,14 @@ init-scripts/schema.sql                    — +kb_qa_generation_task CREATE + �
 3. **文档出处补全**：QA 面板新增「来源文档」列（fileName，后端落库自 kb_file.name）；检索 qa 通道命中本就携带 fileId 进对话引用链路。
 4. 可观测性：任务终态必打一行 `[QaGeneration] task finished` 日志（含状态/分片/产出统计）；`upsertUnitRow` 撞 `uk_unit` 降级更新（图谱链缺陷，见 feature-map #10 登记）。
 5. 测试：35/35 绿（服务 27 含新增回退用例；替换「收尾事务失败」用例为「删旧先于产出」顺序断言）。
+
+## 8. 缺陷修复（2026-11-02，进度轮询期间「提炼」按钮可重复点击）
+
+- **现象**：生成问答对对话框内点击「提炼」受理成功进入 3s 轮询显示进度后，「提炼」按钮仍可点击；此时点下必撞后端互斥报「该文件已有进行中的提炼任务」（多文件批量时表现为部分受理失败），误导用户。
+- **根因**（CERTAIN，代码证据）：`triggering` 仅覆盖受理阶段（handleTrigger 置位，逐文件触发循环结束即复位），按钮此前只绑 `:loading="triggering"`——轮询阶段（任务 running）无任何禁用态。
+- **修复**（仅前端，共用组件一处覆盖单文件/批量/文件详情页三入口）：
+  1. 新增 `hasActiveTask` computed（tasks 中存在未终态 triggering/running 即 true）→ 提炼按钮 `:disabled="hasActiveTask"`，handleTrigger 增加同守卫；
+  2. 打开对话框时 `restoreRunningTasks()` 按后端任务账本（GET generation/{fileId}，从未触发返回 null）恢复 running 任务的进度显示——关闭弹窗即停轮询但后台任务继续，无此恢复则重开后表格清空且按钮可用，同样误导重复触发；恢复动作带 `visible && tasks.length===0` 竞态守卫，单文件状态查询失败静默降级（有注释，符合全局规范）。
+- **后端未改动**：文件级持久化互斥（running 且心跳新鲜拒绝受理）本就正确，数据安全早有兜底，本次纯 UX 层修复。
+- **测试**：新增 `QaGenerateDialog.test.ts`（前端组件回归 3 例）：初次打开可用 / running 禁用且重复点击不重复触发、终态恢复可用 / 关闭重开经账本恢复保持禁用。`pnpm vitest run <file>` 3/3 绿；全量 203 例 201 绿，2 失败位于 `src/views/widget/index.test.ts`（widget 在制特性工作区遗留，与本修复文件无依赖交集）。
+- **遗留**：全量 `vue-tsc -b` 当前在 TS 6.0.3 + vue-tsc 3.3.13 组合下于项目检查期内部崩溃（`Debug Failure. Expected -4660 >= 0`），移除本修复文件后仍复现，属工具链既有问题；本次触碰文件未经全量类型检查（vitest 运行时已验证），待工具链修复后补验。
