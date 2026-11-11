@@ -12,15 +12,72 @@ const isLoggedIn = computed(() => userStore.isLoggedIn)
 const heroPrimaryLabel = computed(() => (isLoggedIn.value ? '进入平台' : '立即开始'))
 const heroPrimaryTarget = computed(() => (isLoggedIn.value ? '/home' : '/login'))
 
-// 核心能力：七项生产级 RAG 能力，配平台真实界面截图
-const capabilities = [
-  { title: '知识库管理', img: '/portal/scene-knowledge.png', desc: '文档自动解析、分片、向量化，分类、标签、知识图谱一体化管理' },
-  { title: '智能分片', img: '/portal/scene-chunks.png', desc: '截图式分片卡片视图：编号、Token 统计、元数据面板，支持新增分片与重新分片' },
-  { title: '多种切片方式', img: '/portal/scene-parse.png', desc: '通用文档 / 音频 / 图片多种解析策略，分块大小与分隔符自由定制' },
-  { title: '知识图谱', img: '/portal/scene-graph.png', desc: '从分片自动抽取实体与关系，力导向图可视化，支持实体搜索' },
-  { title: '应用对话', img: '/portal/crop-chatcolumn.jpg', desc: '零代码创建对话应用，绑定知识库与模型，流式回答附带引用来源' },
-  { title: '检索增强', img: '/portal/crop-cite.jpg', desc: '向量 + 关键词混合检索与重排序，检索日志全程可分析' },
-  { title: '运营分析', img: '/portal/crop-analytics.png', desc: '知识资产盘点、热门排行与引用率统计，运营效果一目了然' },
+// 知识引擎：六项知识生产能力（CONTEXT.md 门户首页重构快照决策 6），「知识图谱」行配实拍锚点；
+// 行为纯展示不可点击（决策 16）
+const kbRows: { title: string; desc: string; img?: string }[] = [
+  {
+    title: '多格式解析与 AI 分片',
+    desc: 'PDF、Word、Markdown、音频、图片多策略解析，AI 分片处理复杂版式，结构级跨页合并不被页边界割裂',
+  },
+  {
+    title: '父子分片与引用溯源',
+    desc: '子分片负责精准召回、父分片承载完整上下文，回答附引用来源与相似度，可核验、可审计',
+  },
+  {
+    title: 'QA 对提炼',
+    desc: 'LLM 从分片自动提炼完整问答对，人工确认后进入检索通道，高频问题即刻成册',
+  },
+  {
+    title: '知识图谱',
+    img: '/portal/scene-graph.png',
+    desc: '从分片自动抽取实体与关系，实体向量相似度合并同名实体，力导向图可视化与实体搜索',
+  },
+  {
+    title: '混合检索与重排',
+    desc: '向量 + 关键词混合召回再统一重排，检索调试上线前即可验证问答质量',
+  },
+  {
+    title: '检索评估与运营分析',
+    desc: '基准测试与评测衡量检索质量，知识资产盘点、热门排行与引用率统计全程可分析',
+  },
+]
+
+// 应用与智能体：五项应用生产能力（快照决策 6），每行 1-2 个静态 pill，「应用与工作流编排」行配实拍锚点
+const agentRows: { title: string; pills: string[]; desc: string; img?: string }[] = [
+  {
+    title: '应用与工作流编排',
+    pills: ['可视化节点', '零代码'],
+    img: '/portal/scene-application.png',
+    desc: '零代码创建对话应用，可视化节点编排 LLM、检索、重排、条件、代码等流程，配置即时预览',
+  },
+  {
+    title: '智能体',
+    pills: ['自主规划', '工具调用'],
+    desc: 'Backend + Graph + Middleware + State 架构驱动，自主规划步骤并调用工具完成复杂任务',
+  },
+  {
+    title: '工具与技能生态',
+    pills: ['内置 / API / MCP / 技能'],
+    desc: '四类工具能力统一挂载：内置工具开箱即用，API 与 MCP 服务即接即用，技能包可导入分享',
+  },
+  {
+    title: '沙箱隔离执行',
+    pills: ['多后端隔离'],
+    desc: '对话内安全执行代码与命令，docker / cube / e2b 多后端抽象，容器加固与路径钳制保障安全',
+  },
+  {
+    title: 'Widget 对话卡片',
+    pills: ['19 组件'],
+    desc: '智能体输出结构化交互卡片，用户在卡片内确认与回传，结构化数据直接驱动后续流程',
+  },
+]
+
+// 工作原理四步（快照决策 9）：还原真实产品路径，含知识加工环节
+const steps = [
+  { num: '01', title: '上传解析', desc: '把 PDF、Word、Markdown 等文档拖入知识库，系统自动完成解析与结构化' },
+  { num: '02', title: '知识加工', desc: '自动分片、QA 对提炼与知识图谱构建，文档变成可推理的知识资产' },
+  { num: '03', title: '创建应用', desc: '零代码创建对话应用，绑定知识库与模型，需要时可视化编排工作流' },
+  { num: '04', title: '对话溯源', desc: '用自然语言提问，获得检索增强回答，每条回答附引用来源可核验' },
 ]
 
 // 业务场景：示例取自平台内真实应用
@@ -31,11 +88,13 @@ const scenarios = [
   { title: '知识运营', img: '/portal/scene-application.png', desc: '多应用统一管理，按业务线组织知识资产', example: '应用中心' },
 ]
 
-// 三步上手：还原真实产品路径
-const steps = [
-  { num: '01', title: '上传文档', desc: '把 PDF、Word、Markdown 等文档拖入知识库，系统自动完成解析、分片与向量化' },
-  { num: '02', title: '创建应用', desc: '一键创建对话应用，绑定知识库与模型，配置开场白后即可预览问答效果' },
-  { num: '03', title: '提问对话', desc: '用自然语言向应用提问，获得基于企业知识的检索增强回答，答案可溯源' },
+// 技术栈：私有化交付基座（快照决策 10），静态文字标签、无 icon 依赖
+const techStack = ['MySQL', 'Redis', 'RabbitMQ', 'Neo4j', 'Milvus', 'MinIO']
+
+// 资源区（快照决策 26：修复 resources 未定义缺陷）
+const resources = [
+  { title: '操作手册', desc: '从上传文档到应用对话的完整使用说明，按章节导航', path: '/portal/manual' },
+  { title: '产品动态', desc: '按版本查看功能更新记录', path: '/portal/changelog' },
 ]
 
 // 为什么选 FastRAG：四个真实卖点
@@ -66,13 +125,13 @@ const faqs = [
   },
   {
     q: '如何开始使用？',
-    a: '点击「立即开始」注册登录，按三步操作：上传文档到知识库 → 创建应用并绑定知识库 → 提问对话。遇到问题可随时查阅操作手册。',
+    a: '点击「立即开始」注册登录，按四步操作：上传文档到知识库 → 知识自动加工 → 创建应用并绑定知识库 → 提问对话。遇到问题可随时查阅操作手册。',
   },
 ]
 
 const latestVersion = CHANGELOG[0]?.version
 
-// 滚动渐显
+// 滚动渐显（动效基线四项之一，threshold 0.15）
 let revealObserver: IntersectionObserver | null = null
 
 onMounted(() => {
@@ -90,7 +149,7 @@ onMounted(() => {
         }
       })
     },
-    { threshold: 0.12 }
+    { threshold: 0.15 }
   )
   els.forEach((el) => revealObserver?.observe(el))
 })
@@ -100,12 +159,13 @@ onBeforeUnmount(() => revealObserver?.disconnect())
 
 <template>
   <div class="portal-home">
-    <!-- ===== hero：大字排版 + 大尺寸真实产品截图 ===== -->
+    <!-- ===== hero：四层文案 + 大尺寸真实产品截图 ===== -->
     <section class="hero">
       <div class="container hero__inner">
         <div class="hero__copy">
-          <span class="hero__badge">企业级检索增强生成平台</span>
-          <h1 class="hero__title">让企业知识<br />一问即答</h1>
+          <span class="hero__badge">私有化部署 · 开箱即用</span>
+          <h1 class="hero__title">让企业知识 <span class="grad">一问即答</span></h1>
+          <p class="hero__sub">企业级检索增强生成（RAG）平台</p>
           <p class="hero__desc">
             FastRAG 把散落在文档里的知识，变成可检索、可对话、可溯源的
             AI 问答服务——无需训练模型，上传文档即可使用。
@@ -132,77 +192,59 @@ onBeforeUnmount(() => revealObserver?.disconnect())
       </div>
     </section>
 
-    <!-- ===== 核心能力 ===== -->
+    <!-- ===== 知识引擎（双支柱一）：六条子能力行，纯展示 ===== -->
     <section class="section">
       <div class="container">
         <div class="section-head reveal">
-          <span class="section-head__eyebrow">核心能力</span>
-          <h2 class="section-head__title">生产级 RAG，开箱即用</h2>
-          <p class="section-head__sub">覆盖知识生产、检索增强与应用对话的完整链路</p>
+          <span class="section-head__eyebrow">知识引擎</span>
+          <h2 class="section-head__title">从文档到可问答的知识资产</h2>
+          <p class="section-head__sub">解析、分片、提炼、图谱、检索、评估——知识生产的完整链路</p>
         </div>
-        <div class="cap-grid">
-          <div v-for="cap in capabilities" :key="cap.title" class="cap-card reveal" @click="router.push('/home')">
-            <div class="cap-card__imgwrap">
-              <img :src="cap.img" :alt="cap.title + '界面'" class="cap-card__img" loading="lazy" />
+        <div class="pillar">
+          <div v-for="row in kbRows" :key="row.title" class="pillar-row kb-row reveal">
+            <div class="pillar-row__body">
+              <h3 class="pillar-row__title">{{ row.title }}</h3>
+              <p class="pillar-row__desc">{{ row.desc }}</p>
             </div>
-            <h3 class="cap-card__title">{{ cap.title }}</h3>
-            <p class="cap-card__desc">{{ cap.desc }}</p>
-          </div>
-        </div>
-      </div>
-    </section>
-
-    <!-- ===== 核心能力：bento 网格 ===== -->
-    <section class="section">
-      <div class="container">
-        <div class="section-head reveal">
-          <span class="section-head__eyebrow">核心能力</span>
-          <h2 class="section-head__title">生产级 RAG，开箱即用</h2>
-          <p class="section-head__sub">知识图谱 · 智能分片 · 多种切片方式 · 检索增强 · 应用对话</p>
-        </div>
-        <div class="bento">
-          <div v-for="(cap, idx) in capabilities" :key="cap.title" class="bento__card reveal" :class="{ 'reveal-d1': idx % 3 === 1, 'reveal-d2': idx % 3 === 2 }" @click="router.push('/home')">
-            <div class="bento__copy">
-              <h3>{{ cap.title }}</h3>
-              <p>{{ cap.desc }}</p>
-            </div>
-            <div class="bento__imgwrap">
-              <img :src="cap.img" :alt="cap.title + '界面截图'" class="bento__img" loading="lazy" />
+            <div v-if="row.img" class="pillar-row__imgwrap">
+              <img :src="row.img" :alt="row.title + '界面'" class="pillar-row__img" loading="lazy" />
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ===== 业务场景 ===== -->
+    <!-- ===== 应用与智能体（双支柱二）：五条子能力行 × 静态 pill ===== -->
     <section class="section section--muted">
       <div class="container">
         <div class="section-head reveal">
-          <span class="section-head__eyebrow">业务场景</span>
-          <h2 class="section-head__title">覆盖核心业务场景</h2>
-          <p class="section-head__sub">同一套知识引擎，服务多种业务形态——平台内的真实应用就在你身边</p>
+          <span class="section-head__eyebrow">应用与智能体</span>
+          <h2 class="section-head__title">不止于对话，更能编排与执行</h2>
+          <p class="section-head__sub">应用、智能体、工具、沙箱与对话卡片，一套平台全部承载</p>
         </div>
-        <div class="scenario-grid">
-          <div v-for="scene in scenarios" :key="scene.title" class="scenario-card reveal" @click="router.push('/home')">
-            <div class="scenario-card__imgwrap">
-              <img :src="scene.img" :alt="scene.title + '界面截图'" class="scenario-card__img" loading="lazy" />
+        <div class="pillar">
+          <div v-for="row in agentRows" :key="row.title" class="pillar-row agent-row reveal">
+            <div class="pillar-row__body">
+              <h3 class="pillar-row__title">{{ row.title }}</h3>
+              <p class="pillar-row__desc">{{ row.desc }}</p>
+              <div class="pillar-row__pills">
+                <span v-for="pill in row.pills" :key="pill" class="pill">{{ pill }}</span>
+              </div>
             </div>
-            <div class="scenario-card__body">
-              <h3 class="scenario-card__title">{{ scene.title }}</h3>
-              <p class="scenario-card__desc">{{ scene.desc }}</p>
-              <span class="scenario-card__example">平台示例：{{ scene.example }}</span>
+            <div v-if="row.img" class="pillar-row__imgwrap">
+              <img :src="row.img" :alt="row.title + '界面'" class="pillar-row__img" loading="lazy" />
             </div>
           </div>
         </div>
       </div>
     </section>
 
-    <!-- ===== 三步上手 ===== -->
+    <!-- ===== 工作原理：四步纯编号卡 ===== -->
     <section class="section">
       <div class="container">
         <div class="section-head reveal">
           <span class="section-head__eyebrow">快速开始</span>
-          <h2 class="section-head__title">三步构建企业知识问答</h2>
+          <h2 class="section-head__title">四步构建企业知识问答</h2>
           <p class="section-head__sub">无需训练模型，上传文档即可获得可对话的企业知识</p>
         </div>
         <div class="steps">
@@ -231,6 +273,43 @@ onBeforeUnmount(() => revealObserver?.disconnect())
             <h3 class="why-card__title">{{ why.title }}</h3>
             <p class="why-card__desc">{{ why.desc }}</p>
           </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 业务场景 ===== -->
+    <section class="section section--muted">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-head__eyebrow">业务场景</span>
+          <h2 class="section-head__title">覆盖核心业务场景</h2>
+          <p class="section-head__sub">同一套知识引擎，服务多种业务形态——平台内的真实应用就在你身边</p>
+        </div>
+        <div class="scenario-grid">
+          <div v-for="scene in scenarios" :key="scene.title" class="scenario-card reveal" @click="router.push('/home')">
+            <div class="scenario-card__imgwrap">
+              <img :src="scene.img" :alt="scene.title + '界面截图'" class="scenario-card__img" loading="lazy" />
+            </div>
+            <div class="scenario-card__body">
+              <h3 class="scenario-card__title">{{ scene.title }}</h3>
+              <p class="scenario-card__desc">{{ scene.desc }}</p>
+              <span class="scenario-card__example">平台示例：{{ scene.example }}</span>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- ===== 技术栈：六枚静态文字标签 ===== -->
+    <section class="section">
+      <div class="container">
+        <div class="section-head reveal">
+          <span class="section-head__eyebrow">技术栈</span>
+          <h2 class="section-head__title">现代而稳健的私有化交付基座</h2>
+          <p class="section-head__sub">全组件开源栈，内网私有化交付开箱即用</p>
+        </div>
+        <div class="tech-stack reveal">
+          <span v-for="tech in techStack" :key="tech" class="tech-pill">{{ tech }}</span>
         </div>
       </div>
     </section>
@@ -284,7 +363,7 @@ onBeforeUnmount(() => revealObserver?.disconnect())
           <div class="cta__dots" aria-hidden="true"></div>
           <div class="cta__copy">
             <h2>让企业知识，开始对话</h2>
-            <p>上传文档，三步获得可溯源的 AI 问答服务</p>
+            <p>上传文档，四步获得可溯源的 AI 问答服务</p>
             <el-button type="primary" size="large" class="btn" @click="router.push(heroPrimaryTarget)">
               {{ heroPrimaryLabel }}
             </el-button>
@@ -367,12 +446,27 @@ onBeforeUnmount(() => revealObserver?.disconnect())
 }
 
 .hero__title {
-  margin: 0 0 20px;
+  margin: 0 0 16px;
   font-size: 64px;
   line-height: 1.14;
   font-weight: 700;
   letter-spacing: -1.5px;
   color: #09090b;
+}
+
+// 「一问即答」蓝青渐变文字（模块文档视觉节）
+.grad {
+  background: linear-gradient(92deg, $color-primary-dark 0%, $color-primary 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+
+.hero__sub {
+  margin: 0 0 16px;
+  font-size: 20px;
+  font-weight: 600;
+  color: #18181b;
 }
 
 .hero__desc {
@@ -389,10 +483,10 @@ onBeforeUnmount(() => revealObserver?.disconnect())
   flex-wrap: wrap;
 }
 
-// 入场动效：徽章 → 标题 → 描述 → 按钮 依次浮现
-// 入场动效：徽章 → 标题 → 描述 → 按钮 依次浮现
+// 入场动效：徽章 → 标题 → 副标题 → 描述 → 按钮 依次浮现（动效基线）
 .hero__badge,
 .hero__title,
+.hero__sub,
 .hero__desc,
 .hero__actions {
   opacity: 0;
@@ -401,13 +495,9 @@ onBeforeUnmount(() => revealObserver?.disconnect())
 
 .hero__badge { animation-delay: 0.05s; }
 .hero__title { animation-delay: 0.15s; }
-.hero__desc { animation-delay: 0.3s; }
+.hero__sub { animation-delay: 0.25s; }
+.hero__desc { animation-delay: 0.35s; }
 .hero__actions { animation-delay: 0.45s; }
-
-@keyframes rise-in {
-  from { opacity: 0; transform: translateY(26px); }
-  to { opacity: 1; transform: translateY(0); }
-}
 
 @keyframes rise-in {
   from { opacity: 0; transform: translateY(26px); }
@@ -503,57 +593,74 @@ onBeforeUnmount(() => revealObserver?.disconnect())
   color: #52525b;
 }
 
-// ===== 核心能力 =====
-.cap-grid {
-  display: grid;
-  grid-template-columns: repeat(2, 1fr);
-  gap: 28px;
-}
-
-.cap-card {
+// ===== 双支柱子能力行（Yuxi 式轻列表）：纯展示、hover 仅底色微亮 =====
+.pillar-row {
+  display: flex;
+  align-items: center;
+  gap: 48px;
+  padding: 26px 32px;
   border: 1px solid #e4e4e7;
   border-radius: 16px;
-  padding: 20px 20px 28px;
   background: #fff;
-  cursor: pointer;
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
+  margin-bottom: 20px;
+  transition: background 0.2s;
 
   &:hover {
-    border-color: #d4d4d8;
-    box-shadow: 0 20px 48px -16px rgba(9, 9, 11, 0.14);
-    transform: translateY(-3px);
+    background: #fafafa;
   }
 }
 
-.cap-card__imgwrap {
-  border: 1px solid #f0f0f1;
-  border-radius: 10px;
-  overflow: hidden;
-  margin-bottom: 20px;
+.section--muted .pillar-row {
+  border-color: #e4e4e7;
 }
 
-.cap-card__img {
-  display: block;
-  width: 100%;
-  transition: transform 0.35s ease;
+.pillar-row__body {
+  flex: 1;
+  min-width: 0;
 }
 
-.cap-card:hover .cap-card__img {
-  transform: scale(1.025);
-}
-
-.cap-card__title {
-  margin: 0 0 10px;
+.pillar-row__title {
+  margin: 0 0 8px;
   font-size: 18px;
   font-weight: 600;
   color: #09090b;
 }
 
-.cap-card__desc {
+.pillar-row__desc {
   margin: 0;
   font-size: 14px;
   line-height: 1.8;
   color: #52525b;
+}
+
+.pillar-row__pills {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+}
+
+.pill {
+  padding: 3px 12px;
+  border: 1px solid #e4e4e7;
+  border-radius: $radius-round;
+  font-size: 12px;
+  color: #52525b;
+  background: #fff;
+  white-space: nowrap;
+}
+
+.pillar-row__imgwrap {
+  flex-shrink: 0;
+  width: 380px;
+  border: 1px solid #f0f0f1;
+  border-radius: 10px;
+  overflow: hidden;
+}
+
+.pillar-row__img {
+  display: block;
+  width: 100%;
 }
 
 // ===== 业务场景 =====
@@ -623,47 +730,10 @@ onBeforeUnmount(() => revealObserver?.disconnect())
   display: block;
 }
 
-// ===== 三步 =====
-.bento {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
-  gap: 24px;
-}
-
-.bento__card {
-  border: 1px solid #e4e4e7;
-  border-radius: 16px;
-  padding: 22px 22px 24px;
-  background: #fff;
-  cursor: pointer;
-  transition: border-color 0.2s, box-shadow 0.2s, transform 0.2s;
-
-  &:hover {
-    border-color: #d4d4d8;
-    box-shadow: 0 16px 40px -16px rgba(9, 9, 11, 0.14);
-    transform: translateY(-3px);
-
-    .bento__img {
-      transform: scale(1.03);
-    }
-  }
-}
-
-.bento__imgwrap {
-  border: 1px solid #f0f0f1;
-  border-radius: 10px;
-  overflow: hidden;
-}
-
-.bento__img {
-  display: block;
-  width: 100%;
-  transition: transform 0.35s ease;
-}
-
+// ===== 工作原理四步 =====
 .steps {
   display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  grid-template-columns: repeat(4, 1fr);
   gap: 28px;
 }
 
@@ -745,6 +815,26 @@ onBeforeUnmount(() => revealObserver?.disconnect())
   font-size: 14px;
   line-height: 1.8;
   color: #52525b;
+}
+
+// ===== 技术栈：静态文字标签 =====
+.tech-stack {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+
+.tech-pill {
+  padding: 8px 24px;
+  border: 1px solid #e4e4e7;
+  border-radius: $radius-round;
+  font-size: 14px;
+  font-weight: 600;
+  color: #52525b;
+  background: #fff;
+  letter-spacing: 0.5px;
 }
 
 // ===== 资源 =====
@@ -968,17 +1058,23 @@ onBeforeUnmount(() => revealObserver?.disconnect())
     font-size: 48px;
   }
 
-  .cap-grid,
-  .scenario-grid {
-    grid-template-columns: 1fr;
-  }
-
+  .scenario-grid,
   .steps {
     grid-template-columns: 1fr;
   }
 
   .why-grid {
     grid-template-columns: 1fr 1fr;
+  }
+
+  .pillar-row {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 20px;
+  }
+
+  .pillar-row__imgwrap {
+    width: 100%;
   }
 }
 
@@ -1001,8 +1097,17 @@ onBeforeUnmount(() => revealObserver?.disconnect())
   }
 }
 
-// ===== 滚动渐显（reduced-motion 降级） =====
+// ===== 动效降级（prefers-reduced-motion 全禁用，直接呈现最终态） =====
 @media (prefers-reduced-motion: reduce) {
+  .hero__badge,
+  .hero__title,
+  .hero__sub,
+  .hero__desc,
+  .hero__actions {
+    opacity: 1;
+    animation: none;
+  }
+
   .reveal {
     opacity: 1;
     transform: none;
@@ -1013,7 +1118,13 @@ onBeforeUnmount(() => revealObserver?.disconnect())
     animation: none;
   }
 
-  .cap-card:hover .cap-card__img,
+  .scenario-card:hover,
+  .step:hover,
+  .why-card:hover,
+  .resource-card:hover {
+    transform: none;
+  }
+
   .scenario-card:hover .scenario-card__img {
     transform: none;
   }

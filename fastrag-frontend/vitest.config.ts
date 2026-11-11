@@ -9,7 +9,10 @@ import vue from '@vitejs/plugin-vue'
 // 2026-09-26: 补 @vitejs/plugin-vue——组件级测试（MessageBubble/EffectivenessBar）
 // 直接 mount .vue SFC；DOM 环境由文件头 // @vitest-environment jsdom 按文件声明。
 export default defineConfig({
-  plugins: [vue()],
+  // transformAssetUrls 关闭（2026-11-04）：portal 首页 SFC 的 <img src="/portal/...">
+  // public 绝对路径会被插件转成模块导入，vite-node 解析 public 资源时抛 pathToFileURL 错误；
+  // 测试只需要字面量字符串，真实构建的资产处理由 vite.config.ts 自己的插件实例负责。
+  plugins: [vue({ template: { transformAssetUrls: false } })],
   resolve: {
     alias: {
       '@': path.resolve(__dirname, 'src'),
