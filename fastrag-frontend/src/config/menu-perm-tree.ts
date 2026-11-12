@@ -121,9 +121,6 @@ export const ACTION_API_LINKS: Record<string, string[]> = {
   'skill:delete': ['api:skill:delete'],
   'skill:export': ['api:skill:export'],
   'skill:share': ['api:skill:file:manage'],
-  'feedback:create': ['api:feedback:create'],
-  'feedback:reply': ['api:feedback:reply'],
-  'feedback:delete': ['api:feedback:delete'],
 
   // ----- 管理后台 -----
   'config:save': ['api:config:save'],
@@ -395,20 +392,10 @@ export const MENU_PERM_TREE: MenuPermNode[] = [
         title: '数据分析',
         children: [
           {
+            // 检索日志分析已并入本页（「检索日志」tab），检索日志 API 一并挂此节点
             title: '知识库分析',
             keys: ['menu:operation:kb-analytics'],
-            apis: ['api:analytics:kb'],
-          },
-          {
-            title: '检索日志分析',
-            keys: ['menu:operation:retrieval-analysis'],
-            apis: ['api:retrieval:log:list', 'api:retrieval:log:analysis'],
-          },
-          {
-            title: '反馈管理',
-            keys: ['menu:operation:feedback'],
-            actions: ['feedback:create', 'feedback:reply', 'feedback:delete'],
-            apis: ['api:feedback:list', 'api:feedback:create', 'api:feedback:update', 'api:feedback:delete', 'api:feedback:reply'],
+            apis: ['api:analytics:kb', 'api:retrieval:log:list', 'api:retrieval:log:analysis'],
           },
           {
             title: '模型监控',

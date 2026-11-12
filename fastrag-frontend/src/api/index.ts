@@ -1,7 +1,6 @@
 import request from '@/utils/request'
 import type { GraphData, GraphStats, PprRankItem } from '@/types/evaluation'
 import type { AiChunkApplyPayload, GraphExpansionResult, ParseStrategy, ParseStrategyForm, ParseStrategyMeta, KnowledgeBase } from '@/types/knowledge'
-import type { ChatSession, UserFeedback, FeedbackOverview, FeedbackStatistics } from '@/types/feedback'
 import type { ModelMonitorOverview } from '@/types/monitor'
 
 // ===========================================================================
@@ -1438,50 +1437,6 @@ export async function getLoginLogs(params?: { userId?: string; status?: string; 
 }
 
 // ===========================================================================
-// 反馈 API
-// ===========================================================================
-
-export async function getFeedback(params?: { kbId?: string }) {
-  return request.get('/feedback', { params })
-}
-
-export async function submitFeedback(data: Record<string, unknown>) {
-  return request.post('/feedback', data)
-}
-
-// ===========================================================================
-// M1 知识库用户反馈（扩展）
-// ===========================================================================
-
-export async function getFeedbackPage(params?: { kbId?: string; feedback?: string; status?: string; page?: number; pageSize?: number }) {
-  return request.get<unknown, { list: UserFeedback[]; total: number }>('/feedback', { params })
-}
-
-export async function getFeedbackStatistics(kbId?: string) {
-  return request.get<unknown, FeedbackStatistics>('/feedback/statistics', { params: { kbId } })
-}
-
-export async function updateFeedback(id: number | string, data: Record<string, unknown>) {
-  return request.put(`/feedback/${id}`, data)
-}
-
-export async function deleteFeedback(id: number | string) {
-  return request.delete(`/feedback/${id}`)
-}
-
-export async function replyFeedback(id: number | string, data: { reply: string; operator?: string }) {
-  return request.post(`/feedback/${id}/reply`, data)
-}
-
-export async function getFeedbackOverview(kbId?: string) {
-  return request.get<unknown, FeedbackOverview>('/feedback/overview', { params: { kbId } })
-}
-
-export async function getChatSessions(params?: { keyword?: string; userId?: string; page?: number; pageSize?: number }) {
-  return request.get<unknown, { list: ChatSession[]; total: number }>('/chat-sessions', { params })
-}
-
-// ===========================================================================
 // M2 知识检索增强
 // ===========================================================================
 
@@ -1961,9 +1916,6 @@ export async function importAppDialog(appId: string, data: Record<string, unknow
 }
 export async function updateAppVariable(appId: string, id: string, data: Record<string, unknown>) {
   return request.put(`/apps/${appId}/global-policy/variables/${id}`, data)
-}
-export async function saveAppSensitiveWords(appId: string, cfg: Record<string, unknown>) {
-  return request.put(`/apps/${appId}/global-policy/sensitive-words`, cfg)
 }
 export async function toggleAppPolicy(appId: string, cfg: Record<string, unknown>) {
   return request.post(`/apps/${appId}/global-policy/toggle`, cfg)

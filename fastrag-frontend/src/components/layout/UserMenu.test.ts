@@ -29,8 +29,6 @@ function buildRouter() {
     '/portal/changelog',
     '/login',
     '/operation/kb-analytics',
-    '/operation/retrieval-analysis',
-    '/operation/feedback',
     '/operation/model-monitor',
     '/admin/system/general-settings',
     '/admin/account/roles',

@@ -19,13 +19,6 @@ async function loadVariables() {
     const res = await api.getAppVariables(appId())
     variableList.value = (res as any) || []
   } catch (e) { variableList.value = [] }
-  if (!variableList.value.length) {
-    variableList.value = [
-      { id: 'v1', name: 'companyName', type: 'string', defaultValue: '示例公司', description: '公司名称' },
-      { id: 'v2', name: 'maxRetries', type: 'number', defaultValue: '3', description: '最大重试次数' },
-      { id: 'v3', name: 'enableLogging', type: 'boolean', defaultValue: 'true', description: '是否启用日志' },
-    ]
-  }
 }
 function openAddVariable() { isEditingVariable.value = false; editingVariableId.value = ''; variableForm.value = { ...variableFormDefault }; showVariableDialog.value = true }
 function openEditVariable(row: any) { isEditingVariable.value = true; editingVariableId.value = row.id; variableForm.value = { name: row.name, type: row.type, defaultValue: row.defaultValue, description: row.description }; showVariableDialog.value = true }
@@ -39,27 +32,23 @@ async function handleDeleteVariable(row: any) {
   try { await ElMessageBox.confirm('确认删除变量？', '确认', { type: 'warning' }); await api.deleteAppVariable(appId(), row.id); await loadVariables(); ElMessage.success('删除成功') } catch (e) {}
 }
 
-// 安全策略 (#4936/#4939~4940)
+// 安全策略：运行时唯一生效项是安全开关——门控平台敏感词库的输入拦截与输出过滤
+// （AppGlobalPolicy 的敏感词模式/兜底文案/未匹配字段运行时不消费，且词库已归平台词库管理，UI 不再暴露）
 const safetyEnabled = ref(1)
-const policyForm = ref({ safetyEnabled: 1, sensitiveWordMode: 'reject', fallbackText: '抱歉，没有理解您的问题', unmatchedEnabled: 1 })
-async function loadPolicy() { try { const r: any = await api.getAppGlobalPolicy(appId()); if (r) Object.assign(policyForm.value, r); safetyEnabled.value = policyForm.value.safetyEnabled } catch (e) {} }
-async function savePolicy() { await api.saveAppGlobalPolicy(appId(), policyForm.value); ElMessage.success('安全策略已保存') }
-async function handleToggleSafety() { policyForm.value.safetyEnabled = policyForm.value.safetyEnabled ? 0 : 1; await savePolicy() }
-
-// 敏感词 (#4937)
-const showSensitiveDialog = ref(false)
-const sensitiveWordText = ref('')
-const sensitiveWordMode = ref('reject')
-async function handleSaveSensitiveWords() {
-  if (!sensitiveWordText.value) { ElMessage.warning('请输入敏感词列表'); return }
-  const words = sensitiveWordText.value.split('\n').map(s => s.trim()).filter(Boolean)
-  await api.saveAppSensitiveWords(appId(), { words, mode: sensitiveWordMode.value }); showSensitiveDialog.value = false; ElMessage.success(`已保存 ${words.length} 个敏感词`)
+const savingPolicy = ref(false)
+async function loadPolicy() {
+  try {
+    const r: any = await api.getAppGlobalPolicy(appId())
+    if (r && r.safetyEnabled != null) safetyEnabled.value = r.safetyEnabled
+  } catch (e) {}
 }
-
-// 未匹配策略 (#4941~4943)
-const showUnmatchedDialog = ref(false)
-const unmatchedForm = ref({ fallbackText: '', redirectKbId: '', retryCount: 0 })
-async function handleSaveUnmatched() { await api.saveAppUnmatchedConfig(appId(), unmatchedForm.value); showUnmatchedDialog.value = false; ElMessage.success('未匹配策略已保存') }
+async function handleToggleSafety() {
+  savingPolicy.value = true
+  try {
+    await api.saveAppGlobalPolicy(appId(), { safetyEnabled: safetyEnabled.value })
+    ElMessage.success(safetyEnabled.value === 1 ? '安全策略已开启' : '安全策略已关闭')
+  } catch (e) { ElMessage.error('保存失败') } finally { savingPolicy.value = false }
+}
 
 onMounted(() => { loadVariables(); loadPolicy() })
 </script>
@@ -80,13 +69,12 @@ onMounted(() => { loadVariables(); loadPolicy() })
     <!-- 安全策略 -->
     <div class="card-panel" style="margin-top:16px">
       <div class="section-header"><div class="section-title">安全策略</div>
-        <el-switch v-model="policyForm.safetyEnabled" :active-value="1" :inactive-value="0" @change="handleToggleSafety" />
+        <el-switch v-model="safetyEnabled" :active-value="1" :inactive-value="0" :loading="savingPolicy" @change="handleToggleSafety" />
       </div>
-      <el-form label-width="120px" style="margin-top:12px">
-        <el-form-item label="敏感词处理"><el-select v-model="policyForm.sensitiveWordMode" style="width:160px"><el-option label="拒绝" value="reject" /><el-option label="替换" value="replace" /><el-option label="遮盖" value="mask" /></el-select></el-form-item>
-        <el-form-item label="兜底话术"><el-input v-model="policyForm.fallbackText" type="textarea" :rows="2" /></el-form-item>
-        <el-form-item><el-button type="primary" @click="savePolicy">保存策略</el-button><el-button style="margin-left:8px" @click="showSensitiveDialog=true">上传敏感词库</el-button><el-button style="margin-left:8px" @click="showUnmatchedDialog=true">未匹配设置</el-button></el-form-item>
-      </el-form>
+      <p class="section-hint">
+        开启后，对话将按平台敏感词库过滤用户输入与模型输出（命中词条的输入直接拦截，不进入模型）。
+        词库统一在「系统管理 → 敏感词」中维护，应用侧不再单独配置敏感词库与未匹配策略。
+      </p>
     </div>
     <!-- 变量弹窗 -->
     <el-dialog v-model="showVariableDialog" :title="isEditingVariable ? '编辑变量' : '新增变量'" width="480px">
@@ -98,28 +86,12 @@ onMounted(() => { loadVariables(); loadPolicy() })
       </el-form>
       <template #footer><el-button @click="showVariableDialog=false">取消</el-button><el-button type="primary" @click="handleSaveVariable">{{ isEditingVariable ? '保存' : '创建' }}</el-button></template>
     </el-dialog>
-    <!-- 敏感词弹窗 -->
-    <el-dialog v-model="showSensitiveDialog" title="上传敏感词库" width="500px">
-      <el-form label-width="100px">
-        <el-form-item label="处理模式"><el-select v-model="sensitiveWordMode" style="width:160px"><el-option label="拒绝" value="reject" /><el-option label="替换" value="replace" /><el-option label="遮盖" value="mask" /></el-select></el-form-item>
-        <el-form-item label="敏感词列表"><el-input v-model="sensitiveWordText" type="textarea" :rows="6" placeholder="每行一个敏感词" /></el-form-item>
-      </el-form>
-      <template #footer><el-button @click="showSensitiveDialog=false">取消</el-button><el-button type="primary" @click="handleSaveSensitiveWords">保存</el-button></template>
-    </el-dialog>
-    <!-- 未匹配策略弹窗 -->
-    <el-dialog v-model="showUnmatchedDialog" title="未匹配策略配置" width="480px">
-      <el-form label-width="110px">
-        <el-form-item label="兜底话术"><el-input v-model="unmatchedForm.fallbackText" type="textarea" :rows="2" /></el-form-item>
-        <el-form-item label="重定向知识库"><el-input v-model="unmatchedForm.redirectKbId" /></el-form-item>
-        <el-form-item label="重试次数"><el-input-number v-model="unmatchedForm.retryCount" :min="0" :max="5" /></el-form-item>
-      </el-form>
-      <template #footer><el-button @click="showUnmatchedDialog=false">取消</el-button><el-button type="primary" @click="handleSaveUnmatched">保存</el-button></template>
-    </el-dialog>
   </div>
 </template>
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
 .section-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: $spacing-base; gap:8px; }
 .section-title { font-size: 15px; font-weight: 600; }
+.section-hint { font-size: 13px; color: var(--el-text-color-secondary); line-height: 1.6; margin: 0; }
 .card-panel { background: var(--el-bg-color-overlay); border-radius: 8px; padding: 20px; border: 1px solid var(--el-border-color-light); }
 </style>

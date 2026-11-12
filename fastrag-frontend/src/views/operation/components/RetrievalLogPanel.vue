@@ -131,12 +131,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="page-container" v-loading="loading">
-    <!-- 页面标题 -->
-    <div class="section-header">
-      <h3>检索日志分析</h3>
-    </div>
-
+  <div v-loading="loading">
     <!-- 统计指标卡片 -->
     <div class="metric-cards">
       <div class="metric-card">
@@ -242,14 +237,6 @@ onMounted(() => {
 
 <style lang="scss" scoped>
 @use '@/assets/styles/variables' as *;
-
-.section-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: $spacing-lg;
-  h3 { margin: 0; }
-}
 
 .metric-cards {
   display: grid;

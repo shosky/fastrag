@@ -1,5 +1,6 @@
 // S1 静态不变量（nav-shell TDD T1.1/T1.2）：路由表快照 + 唯一新增路由。
-// 基线取自改造前提交（77 个 path/name 对，含门户与孤儿路由；提取口径 = 源码 path 行 + 其后最近的 name 行）。
+// 基线取自改造前提交（76 个 path/name 对，含门户与孤儿路由；提取口径 = 源码 path 行 + 其后最近的 name 行。
+// 2026-11-12：检索日志分析并入知识库分析（retrieval-analysis 改重定向、name 置 null），反馈管理路由删除）。
 import { describe, it, expect } from 'vitest'
 import routes from './routes'
 
@@ -52,10 +53,9 @@ const BASELINE: Pair[] = [
   ['application/:id/runtime', 'AppRuntimeOld'],
   ['operation', 'Operation'],
   ['kb-analytics', 'KbAnalytics'],
+  ['retrieval-analysis', null],
   ['model-monitor', 'ModelMonitor'],
-  ['feedback', 'Feedback'],
   ['qa-detail', 'QaDetail'],
-  ['retrieval-analysis', 'RetrievalAnalysis'],
   ['admin', 'Admin'],
   ['system/kb-config', 'SystemKbConfig'],
   ['system/general-settings', 'GeneralSettings'],
@@ -106,7 +106,7 @@ describe('路由表静态不变量（nav-shell T1.1/T1.2）', () => {
   ]
   const isAdded = ([p, n]: Pair) => ADDED.some(([ap, an]) => p === ap && n === an)
 
-  it('既有路由 path/name 映射零变化（基线 77 对逐对保留 + 恰增 notification 与 widget 三对）', () => {
+  it('既有路由 path/name 映射零变化（基线 76 对逐对保留 + 恰增 notification 与 widget 三对）', () => {
     const current = collectPairs(routes)
     expect(current.filter((pair) => !isAdded(pair))).toEqual(BASELINE)
     for (const added of ADDED) {

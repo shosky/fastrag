@@ -308,7 +308,12 @@ const routes: RouteRecordRaw[] = [
             path: 'kb-analytics',
             name: 'KbAnalytics',
             component: () => import('@/views/operation/kb-analytics.vue'),
-            meta: { title: '知识资产分析' },
+            meta: { title: '知识库分析' },
+          },
+          {
+            // 已并入知识库分析页「检索日志」tab，重定向保深链
+            path: 'retrieval-analysis',
+            redirect: '/operation/kb-analytics?tab=retrieval',
           },
           {
             path: 'model-monitor',
@@ -317,22 +322,10 @@ const routes: RouteRecordRaw[] = [
             meta: { title: '模型监控分析' },
           },
           {
-            path: 'feedback',
-            name: 'Feedback',
-            component: () => import('@/views/operation/feedback.vue'),
-            meta: { title: '用户反馈' },
-          },
-          {
             path: 'qa-detail',
             name: 'QaDetail',
             component: () => import('@/views/operation/qa-detail.vue'),
             meta: { title: '问答明细' },
-          },
-          {
-            path: 'retrieval-analysis',
-            name: 'RetrievalAnalysis',
-            component: () => import('@/views/operation/retrieval-analysis.vue'),
-            meta: { title: '检索日志分析' },
           },
         ],
       },

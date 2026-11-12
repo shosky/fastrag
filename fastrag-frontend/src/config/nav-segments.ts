@@ -98,8 +98,6 @@ export const navConfig: NavConfig = {
       title: '数据分析',
       items: [
         { key: 'kb-analytics', title: '知识库分析', path: '/operation/kb-analytics', icon: 'DataAnalysis' },
-        { key: 'retrieval-analysis', title: '检索日志分析', path: '/operation/retrieval-analysis', icon: 'Search' },
-        { key: 'feedback', title: '反馈管理', path: '/operation/feedback', icon: 'ChatLineSquare' },
         { key: 'model-monitor', title: '模型监控', path: '/operation/model-monitor', icon: 'Monitor' },
       ],
     },

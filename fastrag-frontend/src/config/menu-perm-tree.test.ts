@@ -39,10 +39,8 @@ const BASELINE_KEYS = [
   'menu:knowledge',
   'menu:knowledge:categories',
   'menu:knowledge:list',
-  'menu:operation:feedback',
   'menu:operation:kb-analytics',
   'menu:operation:model-monitor',
-  'menu:operation:retrieval-analysis',
   'testcase:manage',
   'workflow:edit',
 ]
@@ -95,7 +93,8 @@ describe('权限树静态不变量（nav-shell T1.3-T1.5）', () => {
     expect(childTitles).toContain('数据分析')
     const dataAnalysis = admin.children.find((n: any) => n.title === '数据分析')
     const daTitles = (dataAnalysis.children as any[]).map((n: any) => n.title)
-    expect(daTitles).toEqual(['知识库分析', '检索日志分析', '反馈管理', '模型监控'])
+    // 2026-11-12：检索日志分析并入知识库分析（tab），反馈管理模块下线
+    expect(daTitles).toEqual(['知识库分析', '模型监控'])
   })
 
   it('资源段包含自管理域移入的模型管理；旧「运营中心」分组名不再出现', () => {

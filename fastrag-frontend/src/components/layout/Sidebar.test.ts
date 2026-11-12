@@ -54,10 +54,10 @@ beforeEach(() => {
 })
 
 describe('四段渲染与权限过滤（T2.3/T2.4/T2.5/T2.6）', () => {
-  it('全权限账号：四段全渲染，侧边栏菜单 15 + 主页 = 16 个链接（修订 #15/#18 + widget 链资源段末项）', async () => {
+  it('全权限账号：四段全渲染，侧边栏菜单 13 + 主页 = 14 个链接（检索日志分析并入知识库分析、反馈管理下线）', async () => {
     const { wrapper } = mountSidebar(ADMIN)
     await flushPromises()
-    expect(wrapper.findAll('.nav-item')).toHaveLength(16)
+    expect(wrapper.findAll('.nav-item')).toHaveLength(14)
     const text = wrapper.text()
     for (const t of ['主页', '对话', '会话中心', '构建', '应用中心', '资源', '知识库', '模型管理', '提示词', 'Widget', '数据分析', '知识库分析']) {
       expect(text).toContain(t)

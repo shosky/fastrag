@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, reactive, onMounted } from 'vue'
+import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import BasicConfig from './components/BasicConfig.vue'
@@ -10,10 +10,8 @@ import ToolConfig from './components/ToolConfig.vue'
 import McpConfig from './components/McpConfig.vue'
 import DatabaseConfig from './components/DatabaseConfig.vue'
 import GlobalConfig from './components/GlobalConfig.vue'
-import DialogTest from './components/DialogTest.vue'
-import AppChat from './components/AppChat.vue'
-import MemberConfig from './components/MemberConfig.vue'
 import ChatLogs from './components/ChatLogs.vue'
+import MemberConfig from './components/MemberConfig.vue'
 import * as api from '@/api'
 
 const route = useRoute()
@@ -22,45 +20,20 @@ const appId = route.params.id as string
 const activeMenu = ref('basic')
 
 // ===========================================================================
-// 菜单
+// 菜单（一级平铺，不分组）
 // ===========================================================================
-	const menuGroups = reactive([
-	  {
-		  name: '配置',
-		  expanded: true,
-			  items: [
-			    { key: 'basic', label: '基础配置', icon: 'Setting' },
-			    { key: 'kb', label: '知识库配置', icon: 'Collection' },
-			    { key: 'skill', label: '技能', icon: 'MagicStick' },
-			    { key: 'tool', label: '工具', icon: 'SetUp' },
-			    { key: 'mcp', label: 'MCP', icon: 'Connection' },
-				    { key: 'database', label: '数据库', icon: 'Coin' },
-				    { key: 'widget', label: 'Widget', icon: 'Postcard' },
-				    { key: 'member', label: '成员', icon: 'User' },
-				    { key: 'global', label: '安全策略', icon: 'Lock' },
-			  ],
-	  },
-		  {
-		    name: '对话',
-		    expanded: true,
-		    items: [
-			      { key: 'chat', label: '对话调试', icon: 'ChatLineRound' },
-		      { key: 'dialog-test', label: '对话测试', icon: 'Checked' },
-		      { key: 'chat-log', label: '对话记录', icon: 'Document' },
-		    ],
-		  },
-])
-
-// 扁平化菜单项
-const menuItems = menuGroups.flatMap(group => group.items)
-
-// 展开/折叠分组
-function toggleMenuGroup(groupName: string) {
-  const group = menuGroups.find(g => g.name === groupName)
-  if (group) {
-    group.expanded = !group.expanded
-  }
-}
+const menuItems = [
+  { key: 'basic', label: '基础配置', icon: 'Setting' },
+  { key: 'kb', label: '知识库配置', icon: 'Collection' },
+  { key: 'skill', label: '技能', icon: 'MagicStick' },
+  { key: 'tool', label: '工具', icon: 'SetUp' },
+  { key: 'mcp', label: 'MCP', icon: 'Connection' },
+  { key: 'database', label: '数据库', icon: 'Coin' },
+  { key: 'widget', label: 'Widget', icon: 'Postcard' },
+  { key: 'member', label: '成员', icon: 'User' },
+  { key: 'global', label: '全局策略', icon: 'Operation' },
+  { key: 'chat-log', label: '对话记录', icon: 'Document' },
+]
 
 // 应用信息（从后端加载）
 const appInfo = ref({
@@ -112,27 +85,16 @@ function copyToClipboard(text: string) {
         <span>{{ appInfo.name }}</span>
       </div>
       <el-scrollbar class="menu-scrollbar">
-        <div class="menu-groups">
-          <div v-for="group in menuGroups" :key="group.name" class="menu-group">
-            <div class="group-header" @click="toggleMenuGroup(group.name)">
-              <span class="group-name">{{ group.name }}</span>
-              <el-icon class="group-expand-icon">
-                <ArrowDown v-if="group.expanded" />
-                <ArrowRight v-else />
-              </el-icon>
-            </div>
-            <div v-show="group.expanded" class="group-items">
-              <div
-                v-for="item in group.items"
-                :key="item.key"
-                class="menu-item"
-                :class="{ active: activeMenu === item.key }"
-                @click="activeMenu = item.key"
-              >
-                <el-icon><component :is="item.icon" /></el-icon>
-                <span>{{ item.label }}</span>
-              </div>
-            </div>
+        <div class="menu-list">
+          <div
+            v-for="item in menuItems"
+            :key="item.key"
+            class="menu-item"
+            :class="{ active: activeMenu === item.key }"
+            @click="activeMenu = item.key"
+          >
+            <el-icon><component :is="item.icon" /></el-icon>
+            <span>{{ item.label }}</span>
           </div>
         </div>
       </el-scrollbar>
@@ -150,11 +112,8 @@ function copyToClipboard(text: string) {
       <WidgetConfig v-if="activeMenu === 'widget'" :app-info="appInfo" />
       <MemberConfig v-if="activeMenu === 'member'" :app-info="appInfo" />
       <GlobalConfig v-if="activeMenu === 'global'" :app-info="appInfo" />
-	      <!-- 对话 -->
-	      <AppChat v-if="activeMenu === 'chat'" :app-info="appInfo" />
-      <DialogTest v-if="activeMenu === 'dialog-test'" :app-info="appInfo" />
-	      <!-- 运营 -->
-	      <ChatLogs v-if="activeMenu === 'chat-log'" :app-info="appInfo" />
+      <!-- 运营 -->
+      <ChatLogs v-if="activeMenu === 'chat-log'" :app-info="appInfo" />
 
     </div>
   </div>
@@ -189,65 +148,33 @@ function copyToClipboard(text: string) {
   }
 }
 
-.menu-groups {
+.menu-list {
   padding: $spacing-sm 0;
 }
 
-.menu-group {
-  margin-bottom: $spacing-xs;
-}
-
-.group-header {
+.menu-item {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  gap: $spacing-sm;
   padding: $spacing-sm $spacing-base;
+  font-size: 13px;
+  color: $text-regular;
   cursor: pointer;
-  user-select: none;
+  transition: all 0.2s;
 
   &:hover {
     background: $bg-hover;
-  }
-
-  .group-name {
-    font-size: 13px;
-    font-weight: 600;
     color: $text-primary;
   }
 
-  .group-expand-icon {
-    font-size: 12px;
-    color: $text-secondary;
-    transition: transform 0.3s;
+  &.active {
+    background: $bg-active;
+    color: $color-primary;
+    font-weight: 500;
   }
-}
 
-.group-items {
-  .menu-item {
-    display: flex;
-    align-items: center;
-    gap: $spacing-sm;
-    padding: $spacing-sm $spacing-base;
-    padding-left: $spacing-xl;
-    font-size: 13px;
-    color: $text-regular;
-    cursor: pointer;
-    transition: all 0.2s;
-
-    &:hover {
-      background: $bg-hover;
-      color: $text-primary;
-    }
-
-    &.active {
-      background: $bg-active;
-      color: $color-primary;
-      font-weight: 500;
-    }
-
-    .el-icon {
-      font-size: 16px;
-    }
+  .el-icon {
+    font-size: 16px;
   }
 }
 

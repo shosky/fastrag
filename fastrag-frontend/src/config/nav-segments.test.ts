@@ -46,12 +46,12 @@ describe('NavConfig 数据完整性（T2.1）', () => {
     expect(navConfig.segments.map((s) => s.key)).toEqual(['conversation', 'build', 'resource', 'analytics'])
   })
 
-  it('菜单项总数：侧边栏 15（1+1+9+4，widget 链增资源段 1 项）+ 下拉（门户资源 2 + 管理 12）= 29（修订 #15/#16/#18 + widget 链）', () => {
-    expect(segmentItems()).toHaveLength(15)
+  it('菜单项总数：侧边栏 13（1+1+9+2，检索日志分析并入知识库分析、反馈管理下线）+ 下拉（门户资源 2 + 管理 12）= 27', () => {
+    expect(segmentItems()).toHaveLength(13)
     expect(navConfig.segments[0].items).toHaveLength(1)
     expect(navConfig.segments[1].items).toHaveLength(1)
     expect(navConfig.segments[2].items).toHaveLength(9)
-    expect(navConfig.segments[3].items).toHaveLength(4)
+    expect(navConfig.segments[3].items).toHaveLength(2)
     expect(navConfig.segments[3].title).toBe('数据分析')
     expect(dropdownItems()).toHaveLength(14)
   })
@@ -93,10 +93,10 @@ describe('NavConfig 数据完整性（T2.1）', () => {
 })
 
 describe('菜单权限依据对齐（T2.2，权限键零改动下的映射一致性）', () => {
-  it('关键哨兵：模型管理/知识库分类/反馈管理 解析出预期权限键', () => {
+  it('关键哨兵：模型管理/知识库分类/知识库分析 解析出预期权限键', () => {
     expect(findRequiredPerms('/admin/platform/model-management')[0]).toBe('menu:admin:platform:model')
     expect(findRequiredPerms('/knowledge/categories')[0]).toBe('menu:knowledge:categories')
-    expect(findRequiredPerms('/operation/feedback')[0]).toBe('menu:operation:feedback')
+    expect(findRequiredPerms('/operation/kb-analytics')[0]).toBe('menu:operation:kb-analytics')
   })
 
   it('无权限键项（会话中心/沙箱配置/提示词/沙箱设置/Widget）在映射中无记录，登录恒显', () => {
