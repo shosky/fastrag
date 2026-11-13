@@ -191,6 +191,8 @@ public class IngestionConsumer implements IngestionHandler {
             boolean hasSegments = parseResult.getSegments() != null && !parseResult.getSegments().isEmpty();
             ParseStrategyConfig config = configResolver.resolve(strategyId);
             String strategy = config.getChunk().getStrategy(); // 默认 rule_fixed（向后兼容）
+            log.info("File {} chunk strategy resolved: strategy={}, chunkLength={}, hasNodes={}, hasSegments={}",
+                    fileId, strategy, config.getChunk().getChunkLength(), hasNodes, hasSegments);
             // 父分片聚合参数（仅 parent_child 策略 + 有 DocNode 结构时启用）
             int childChunkLength = -1;
             int maxParentLength = -1;
