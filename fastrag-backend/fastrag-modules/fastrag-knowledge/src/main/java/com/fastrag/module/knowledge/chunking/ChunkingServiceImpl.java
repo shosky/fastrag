@@ -255,6 +255,11 @@ public class ChunkingServiceImpl implements ChunkingService {
         String model = cfg.getEmbeddingModel() != null && !cfg.getEmbeddingModel().isBlank()
                 ? cfg.getEmbeddingModel() : kbEmbeddingModel;
 
+        log.info("Semantic chunking config: strategyId={}, chunkLength={}, semanticThreshold={}, "
+                        + "strategyEmbeddingModel='{}', kbEmbeddingModel='{}', textLength={}",
+                strategyId, chunkLength, threshold, cfg.getEmbeddingModel(), kbEmbeddingModel,
+                text == null ? 0 : text.length());
+
         if (text == null || text.trim().isEmpty()) {
             return new ArrayList<>();
         }
@@ -265,7 +270,13 @@ public class ChunkingServiceImpl implements ChunkingService {
             String trimmed = s.trim();
             if (!trimmed.isEmpty()) sentences.add(trimmed);
         }
+        // 每个句子的长度与开头预览，用于核对断句是否符合预期
+        log.info("Semantic chunking split text into {} sentences", sentences.size());
+        for (int i = 0; i < sentences.size(); i++) {
+            log.info("Sentence[{}] length={} head='{}'", i, sentences.get(i).length(), preview(sentences.get(i), 30));
+        }
         if (sentences.size() <= 1) {
+            log.info("Semantic chunking degenerated (<=1 sentence), falling back to rule-based chunking");
             return chunk(text, strategyId);
         }
 
@@ -320,28 +331,47 @@ public class ChunkingServiceImpl implements ChunkingService {
         int chunkIndex = 0;
         for (int i = 0; i < sentences.size(); i++) {
             boolean breakHere = false;
+            String reason = null;
             // 语义断点：与上一句相似度低于阈值
             if (i > 0) {
                 double sim = cosineSimilarity(vectors.get(i - 1), vectors.get(i));
-                if (sim < threshold) breakHere = true;
+                log.debug("Adjacent pair[{}->{}] sim={} (threshold={}) prev='{}' next='{}'",
+                        i - 1, i, String.format("%.4f", sim), threshold,
+                        preview(sentences.get(i - 1), 20), preview(sentences.get(i), 20));
+                if (sim < threshold) {
+                    breakHere = true;
+                    reason = String.format("semantic_break(sim=%.4f < %.2f)", sim, threshold);
+                }
             }
             // 硬上限：加上本句超长且已有内容
             if (current.length() > 0 && current.length() + sentences.get(i).length() > chunkLength) {
                 breakHere = true;
+                String cap = String.format("hard_cap(%d + %d > %d)",
+                        current.length(), sentences.get(i).length(), chunkLength);
+                reason = reason == null ? cap : reason + " + " + cap;
             }
             if (breakHere) {
-                chunks.add(buildChunk(chunkIndex++, current.toString().trim(), 0, new ArrayList<>()));
+                String chunkText = current.toString().trim();
+                log.info("Close chunk[{}] length={} reason=[{}] nextSentence[{}] head='{}'",
+                        chunkIndex, chunkText.length(), reason, i, preview(sentences.get(i), 30));
+                chunks.add(buildChunk(chunkIndex++, chunkText, 0, new ArrayList<>()));
                 current = new StringBuilder();
             }
             if (current.length() > 0) current.append("\n");
             current.append(sentences.get(i));
         }
         if (current.length() > 0) {
-            chunks.add(buildChunk(chunkIndex, current.toString().trim(), 0, new ArrayList<>()));
+            String chunkText = current.toString().trim();
+            log.info("Close final chunk[{}] length={} tail='{}'", chunkIndex, chunkText.length(), preview(chunkText, 30));
+            chunks.add(buildChunk(chunkIndex, chunkText, 0, new ArrayList<>()));
         }
 
-        log.info("Semantic chunking: {} sentences -> {} chunks (model={}, threshold={})",
-                sentences.size(), chunks.size(), model, threshold);
+        log.info("Semantic chunking done: {} sentences -> {} chunks (model={}, threshold={}, chunkLength={})",
+                sentences.size(), chunks.size(), model, threshold, chunkLength);
+        for (ChunkData c : chunks) {
+            log.info("Chunk[{}] length={} head='{}' tail='{}'",
+                    c.getIndex(), c.getContent().length(), preview(c.getContent(), 30), preview(c.getContent(), 30, true));
+        }
         return chunks;
     }
 
@@ -357,6 +387,19 @@ public class ChunkingServiceImpl implements ChunkingService {
         }
         if (na == 0 || nb == 0) return 0.0;
         return dot / (Math.sqrt(na) * Math.sqrt(nb));
+    }
+
+    /** 日志预览：压平空白，取开头 max 字符 */
+    private static String preview(String s, int max) {
+        String flat = s == null ? "" : s.replaceAll("\\s+", " ");
+        return flat.length() <= max ? flat : flat.substring(0, max) + "...";
+    }
+
+    /** 日志预览：压平空白，取结尾 max 字符 */
+    private static String preview(String s, int max, boolean tail) {
+        if (!tail) return preview(s, max);
+        String flat = s == null ? "" : s.replaceAll("\\s+", " ");
+        return flat.length() <= max ? flat : "..." + flat.substring(flat.length() - max);
     }
 
     @Override
