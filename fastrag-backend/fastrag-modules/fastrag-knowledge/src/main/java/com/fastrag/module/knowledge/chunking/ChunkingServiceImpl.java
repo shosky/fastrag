@@ -17,6 +17,10 @@ package com.fastrag.module.knowledge.chunking;
  *       不可切分单元整体保留，超长时按行（表格）或函数边界（代码）二次拆分；
  *       标题采用延迟合并策略，等待下一个正文节点合并，避免标题独占一个无意义 chunk；
  *       支持 tableMode=ignore 跳过表格，但对纯表格文档（Excel 类）自动豁免以避免数据丢失</li>
+ *   <li><b>语义切片（semanticChunk）</b>：预处理（噪声清洗/表格整块/标题绑定后句）→ 滑动窗口
+ *       向量化（Buffer=1 平滑短句抖动）→ 相对突降动态阈值断点（高分位，小样本回退绝对阈值）→
+ *       软硬双上限（软上限后放宽断点提前优雅落盘；硬截断携带 overlap 尾部单元）→
+ *       后置碎片合并（低于最小长度并入边界距离更小的邻片，纯表格片豁免）</li>
  * </ul>
  *
  * <p>依赖组件：
@@ -60,6 +64,21 @@ public class ChunkingServiceImpl implements ChunkingService {
 
     /** 语义切片断句用正则（后视保留分隔符） */
     private static final String SENTENCE_SPLIT_REGEX = "(?<=[。！？.!?\\n])";
+
+    /** 语义切片：软上限比例（累积超过 chunkLength*该值 后放宽断点条件，提前优雅落盘） */
+    private static final double SOFT_CAP_RATIO = 0.8;
+    /** 语义切片：硬截断时携带到下一片头部的 overlap 字符上限 */
+    private static final int OVERLAP_LIMIT = 200;
+    /** 语义切片：动态阈值取相邻单元距离的高分位（相对突降判定） */
+    private static final int DYNAMIC_PERCENTILE = 95;
+    /** 语义切片：软上限放宽后的阈值分位（低于主阈值，提前寻找落盘点） */
+    private static final int SOFT_PERCENTILE = 85;
+    /** 语义切片：启用动态阈值所需的最小距离样本数（不足则回退绝对阈值） */
+    private static final int MIN_SAMPLES_FOR_DYNAMIC = 30;
+    /** 语义切片：最小分片长度，低于该值的碎片并入语义更近的邻片 */
+    private static final int MIN_CHUNK_SIZE = 150;
+    /** 语义切片：标题形态单元最大长度（短且无句末标点视为标题，与后句绑定） */
+    private static final int HEADING_MAX_LENGTH = 60;
 
     /** 递归切分的句子边界兜底分隔符 */
     private static final List<String> SENTENCE_FALLBACK_DELIMITERS = List.of("。", "！", "？", "\n", "，", ";", "；");
@@ -264,30 +283,28 @@ public class ChunkingServiceImpl implements ChunkingService {
             return new ArrayList<>();
         }
 
-        // 1. 拆句
-        List<String> sentences = new ArrayList<>();
-        for (String s : text.split(SENTENCE_SPLIT_REGEX)) {
-            String trimmed = s.trim();
-            if (!trimmed.isEmpty()) sentences.add(trimmed);
+        // 0. 预处理：噪声清洗 + 结构原子块（表格行聚为整块，标题与后句绑定）
+        List<Unit> units = buildUnits(text, chunkLength);
+        if (units.isEmpty()) {
+            log.info("Semantic chunking produced no units after preprocessing, return empty");
+            return new ArrayList<>();
         }
-        // 每个句子的长度与开头预览，用于核对断句是否符合预期
-        log.info("Semantic chunking split text into {} sentences", sentences.size());
-        for (int i = 0; i < sentences.size(); i++) {
-            log.info("Sentence[{}] length={} head='{}'", i, sentences.get(i).length(), preview(sentences.get(i), 30));
-        }
-        if (sentences.size() <= 1) {
-            log.info("Semantic chunking degenerated (<=1 sentence), falling back to rule-based chunking");
-            return chunk(text, strategyId);
+        if (units.size() == 1) {
+            log.info("Semantic chunking degenerated to a single unit (length={}), return it whole",
+                    units.get(0).length());
+            List<ChunkData> single = new ArrayList<>();
+            single.add(buildChunk(0, units.get(0).text, 0, new ArrayList<>()));
+            return single;
         }
 
-        // 2. 无 Embedding 模型 → 回退规则分片（语义切片不可用，保证摄入不中断）
+        // 1. 无 Embedding 模型 → 回退规则分片（语义切片不可用，保证摄入不中断）
         if (model == null || model.isBlank()) {
             log.warn("Semantic chunking requires an embedding model "
                     + "(strategy chunk.embeddingModel or KB embeddingModel), falling back to rule-based chunking");
             return chunk(text, strategyId);
         }
 
-        // 3. 解析模型 API 配置（与存储路径一致：模型记录 apiUrl，云端服务正常使用；
+        // 2. 解析模型 API 配置（与存储路径一致：模型记录 apiUrl，云端服务正常使用；
         //    查不到记录时走默认网关），并校验模型类型：
         //    策略级模型在模型表中无 EMBEDDING 记录（如误配对话模型 Qwen3-8B）时，
         //    自动回退知识库级 embedding 模型 —— 历史错误配置自愈，避免 400/连接失败
@@ -306,68 +323,201 @@ public class ChunkingServiceImpl implements ChunkingService {
             apiKey = modelRecord.getApiKeyRef();
         }
 
+        // 3. 滑动窗口（Buffer=1）：窗口 = 前一单元 + 当前 + 后一单元拼接，平滑短句向量抖动
+        int n = units.size();
+        List<String> windows = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            StringBuilder w = new StringBuilder();
+            if (i > 0) w.append(units.get(i - 1).text).append('\n');
+            w.append(units.get(i).text);
+            if (i + 1 < n) w.append('\n').append(units.get(i + 1).text);
+            windows.add(w.toString());
+        }
+
         // 4. 批量向量化（分批 32，异常整体回退）
         List<List<Float>> vectors;
         try {
             vectors = new ArrayList<>();
-            for (int i = 0; i < sentences.size(); i += EMBED_BATCH_SIZE) {
-                int end = Math.min(i + EMBED_BATCH_SIZE, sentences.size());
-                vectors.addAll(embeddingService.embed(model, sentences.subList(i, end), apiUrl, apiKey));
+            for (int i = 0; i < n; i += EMBED_BATCH_SIZE) {
+                int end = Math.min(i + EMBED_BATCH_SIZE, n);
+                vectors.addAll(embeddingService.embed(model, windows.subList(i, end), apiUrl, apiKey));
             }
         } catch (Exception e) {
             log.warn("Semantic chunking embedding failed (model={}), falling back to rule-based chunking: {}",
                     model, e.getMessage());
             return chunk(text, strategyId);
         }
-        if (vectors.size() != sentences.size()) {
+        if (vectors.size() != n) {
             log.warn("Semantic chunking embedding count mismatch ({} vs {}), falling back to rule-based chunking",
-                    vectors.size(), sentences.size());
+                    vectors.size(), n);
             return chunk(text, strategyId);
         }
 
-        // 4. 相邻相似度断点 + chunkLength 硬上限累积
+        // 5. 相对突降动态阈值：相邻单元距离 d=1-cos，取全篇高分位作断点阈值
+        double[] dist = new double[n - 1];
+        for (int i = 0; i < n - 1; i++) {
+            dist[i] = 1.0 - cosineSimilarity(vectors.get(i), vectors.get(i + 1));
+        }
+        List<Double> distList = new ArrayList<>(dist.length);
+        for (double d : dist) distList.add(d);
+
+        int softCap = (int) Math.round(chunkLength * SOFT_CAP_RATIO);
+        int overlapLimit = Math.max(0, Math.min(OVERLAP_LIMIT, cfg.getOverlap()));
+        double dynThreshold;
+        double softThreshold;
+        String thresholdMode;
+        if (dist.length >= MIN_SAMPLES_FOR_DYNAMIC) {
+            dynThreshold = percentile(distList, DYNAMIC_PERCENTILE);
+            softThreshold = percentile(distList, SOFT_PERCENTILE);
+            thresholdMode = String.format("dynamic(pct%d=%.4f, pct%d=%.4f)",
+                    DYNAMIC_PERCENTILE, dynThreshold, SOFT_PERCENTILE, softThreshold);
+        } else {
+            // 距离样本太少，分位数不稳定，回退配置的绝对阈值（相似度阈值转距离域）
+            dynThreshold = 1.0 - threshold;
+            softThreshold = dynThreshold;
+            thresholdMode = String.format("absolute_fallback(sim<%.2f, samples=%d)", threshold, dist.length);
+        }
+        log.info("Semantic chunking thresholds: {}, units={}, softCap={}, overlapLimit={}, minChunkSize={}",
+                thresholdMode, n, softCap, overlapLimit, MIN_CHUNK_SIZE);
+
+        // 6. 主循环：语义断点 + 软上限提前落盘 + 硬上限（硬截断携带 overlap 尾部单元）
         List<ChunkData> chunks = new ArrayList<>();
-        StringBuilder current = new StringBuilder();
+        List<Double> leadingDists = new ArrayList<>();  // 每片头部边界距离（碎片合并方向依据）
+        List<Boolean> chunkHasText = new ArrayList<>(); // 片内是否含正文（纯表格片不参与合并）
+        List<String> curUnits = new ArrayList<>();
+        int curLen = 0;
         int chunkIndex = 0;
-        for (int i = 0; i < sentences.size(); i++) {
+        boolean armed = false;          // 累积超过软上限后置位，放宽断点条件
+        boolean curHasText = false;
+        double curLeadingDist = Double.NaN;
+        boolean pendingLeading = false; // 待记录当前片头部边界距离
+
+        for (int i = 0; i < n; i++) {
+            Unit u = units.get(i);
+            if (u.length() > chunkLength) {
+                log.warn("Unit[{}] length={} exceeds chunkLength={}, kept whole (atomic block)",
+                        i, u.length(), chunkLength);
+            }
             boolean breakHere = false;
             String reason = null;
-            // 语义断点：与上一句相似度低于阈值
-            if (i > 0) {
-                double sim = cosineSimilarity(vectors.get(i - 1), vectors.get(i));
-                log.debug("Adjacent pair[{}->{}] sim={} (threshold={}) prev='{}' next='{}'",
-                        i - 1, i, String.format("%.4f", sim), threshold,
-                        preview(sentences.get(i - 1), 20), preview(sentences.get(i), 20));
-                if (sim < threshold) {
+            boolean capForced = false;
+            if (!curUnits.isEmpty() && i > 0) {
+                double d = dist[i - 1];
+                log.debug("Adjacent pair[{}->{}] d={} (pct{}={}) prev='{}' next='{}'",
+                        i - 1, i, String.format("%.4f", d), DYNAMIC_PERCENTILE, String.format("%.4f", dynThreshold),
+                        preview(units.get(i - 1).text, 20), preview(u.text, 20));
+                if (d >= dynThreshold) {
                     breakHere = true;
-                    reason = String.format("semantic_break(sim=%.4f < %.2f)", sim, threshold);
+                    reason = String.format("semantic_break(d=%.4f >= pct%d=%.4f)",
+                            d, DYNAMIC_PERCENTILE, dynThreshold);
+                } else if (armed && d >= softThreshold) {
+                    breakHere = true;
+                    reason = String.format("soft_cap(d=%.4f >= pct%d=%.4f, curLen=%d)",
+                            d, SOFT_PERCENTILE, softThreshold, curLen);
                 }
             }
-            // 硬上限：加上本句超长且已有内容
-            if (current.length() > 0 && current.length() + sentences.get(i).length() > chunkLength) {
+            // 硬上限：加上本单元超长且已有内容
+            if (!curUnits.isEmpty() && curLen + u.length() > chunkLength) {
                 breakHere = true;
-                String cap = String.format("hard_cap(%d + %d > %d)",
-                        current.length(), sentences.get(i).length(), chunkLength);
+                capForced = true;
+                String cap = String.format("hard_cap(%d + %d > %d)", curLen, u.length(), chunkLength);
                 reason = reason == null ? cap : reason + " + " + cap;
             }
             if (breakHere) {
-                String chunkText = current.toString().trim();
-                log.info("Close chunk[{}] length={} reason=[{}] nextSentence[{}] head='{}'",
-                        chunkIndex, chunkText.length(), reason, i, preview(sentences.get(i), 30));
-                chunks.add(buildChunk(chunkIndex++, chunkText, 0, new ArrayList<>()));
-                current = new StringBuilder();
+                // 硬截断时把尾部单元（≤overlapLimit 字符）带入下一片头部，补救被劈开的上下文
+                List<String> carry = new ArrayList<>();
+                int tailLen = 0;
+                if (capForced && overlapLimit > 0) {
+                    while (curUnits.size() > 1
+                            && tailLen + curUnits.get(curUnits.size() - 1).length() <= overlapLimit) {
+                        String tail = curUnits.remove(curUnits.size() - 1);
+                        carry.add(0, tail);
+                        tailLen += tail.length() + 1;
+                    }
+                }
+                String content = String.join("\n", curUnits);
+                log.info("Close chunk[{}] length={} reason=[{}] nextUnit[{}] head='{}'",
+                        chunkIndex, content.length(), reason, i, preview(u.text, 30));
+                if (!carry.isEmpty()) {
+                    log.info("Carry overlap {} unit(s) ({} chars) into next chunk head", carry.size(), tailLen);
+                }
+                chunks.add(buildChunk(chunkIndex++, content, 0, new ArrayList<>()));
+                leadingDists.add(curLeadingDist);
+                chunkHasText.add(curHasText);
+                curUnits = new ArrayList<>(carry);
+                curLen = 0;
+                for (String t : curUnits) curLen += t.length() + 1;
+                curHasText = !carry.isEmpty();
+                armed = false;
+                curLeadingDist = Double.NaN;
+                pendingLeading = true;
             }
-            if (current.length() > 0) current.append("\n");
-            current.append(sentences.get(i));
+            if (pendingLeading) {
+                curLeadingDist = i > 0 ? dist[i - 1] : Double.NaN;
+                pendingLeading = false;
+            }
+            curUnits.add(u.text);
+            curLen += u.length() + 1;
+            curHasText |= !u.table;
+            if (curLen >= softCap) armed = true;
         }
-        if (current.length() > 0) {
-            String chunkText = current.toString().trim();
-            log.info("Close final chunk[{}] length={} tail='{}'", chunkIndex, chunkText.length(), preview(chunkText, 30));
-            chunks.add(buildChunk(chunkIndex, chunkText, 0, new ArrayList<>()));
+        if (!curUnits.isEmpty()) {
+            String content = String.join("\n", curUnits);
+            log.info("Close final chunk[{}] length={} tail='{}'", chunkIndex, content.length(), preview(content, 30));
+            chunks.add(buildChunk(chunkIndex, content, 0, new ArrayList<>()));
+            leadingDists.add(curLeadingDist);
+            chunkHasText.add(curHasText);
         }
 
-        log.info("Semantic chunking done: {} sentences -> {} chunks (model={}, threshold={}, chunkLength={})",
-                sentences.size(), chunks.size(), model, threshold, chunkLength);
+        // 7. 后置碎片合并：低于最小长度的片并入边界距离更小（语义更近）的邻片；纯表格片除外
+        int mergedCount = 0;
+        boolean changed = true;
+        while (changed && chunks.size() > 1) {
+            changed = false;
+            for (int j = 0; j < chunks.size(); j++) {
+                if (chunks.get(j).getContent().length() >= MIN_CHUNK_SIZE || !chunkHasText.get(j)) continue;
+                Integer prev = j > 0 ? j - 1 : null;
+                Integer next = j + 1 < chunks.size() ? j + 1 : null;
+                int target;
+                if (prev == null) {
+                    target = next;
+                } else if (next == null) {
+                    target = prev;
+                } else {
+                    double dPrev = leadingDists.get(j);     // prev|j 边界距离
+                    double dNext = leadingDists.get(j + 1); // j|next 边界距离
+                    target = Double.isNaN(dPrev) ? next
+                            : Double.isNaN(dNext) ? prev
+                            : (dNext <= dPrev ? next : prev);
+                }
+                if (target == j + 1) {
+                    String mergedContent = chunks.get(j).getContent() + "\n" + chunks.get(j + 1).getContent();
+                    chunks.set(j + 1, buildChunk(chunks.get(j + 1).getIndex(), mergedContent, 0, new ArrayList<>()));
+                    leadingDists.set(j + 1, leadingDists.get(j));
+                    chunkHasText.set(j + 1, chunkHasText.get(j) || chunkHasText.get(j + 1));
+                } else {
+                    String mergedContent = chunks.get(j - 1).getContent() + "\n" + chunks.get(j).getContent();
+                    chunks.set(j - 1, buildChunk(chunks.get(j - 1).getIndex(), mergedContent, 0, new ArrayList<>()));
+                    chunkHasText.set(j - 1, chunkHasText.get(j - 1) || chunkHasText.get(j));
+                }
+                log.info("Merge fragment chunk[{}] ({} chars < {}) into chunk[{}]",
+                        chunks.get(j).getIndex(), chunks.get(j).getContent().length(), MIN_CHUNK_SIZE, target);
+                chunks.remove(j);
+                leadingDists.remove(j);
+                chunkHasText.remove(j);
+                mergedCount++;
+                changed = true;
+                break; // 列表已变更，重扫
+            }
+        }
+
+        // 8. 重建连续分片序号 + 汇总日志
+        for (int i = 0; i < chunks.size(); i++) {
+            chunks.set(i, buildChunk(i, chunks.get(i).getContent(), 0, new ArrayList<>()));
+        }
+
+        log.info("Semantic chunking done: {} units -> {} chunks (merged {}, model={}, {}, chunkLength={})",
+                n, chunks.size(), mergedCount, model, thresholdMode, chunkLength);
         for (ChunkData c : chunks) {
             log.info("Chunk[{}] length={} head='{}' tail='{}'",
                     c.getIndex(), c.getContent().length(), preview(c.getContent(), 30), preview(c.getContent(), 30, true));
@@ -400,6 +550,124 @@ public class ChunkingServiceImpl implements ChunkingService {
         if (!tail) return preview(s, max);
         String flat = s == null ? "" : s.replaceAll("\\s+", " ");
         return flat.length() <= max ? flat : "..." + flat.substring(flat.length() - max);
+    }
+
+    /** 语义切片的原子单元：正文句子或表格块（表格块内部不再切分） */
+    private static final class Unit {
+        final String text;
+        final boolean table;
+
+        Unit(String text, boolean table) {
+            this.text = text;
+            this.table = table;
+        }
+
+        int length() {
+            return text.length();
+        }
+    }
+
+    /**
+     * 预处理：剔除图片占位符/分割线/纯符号残渣；表格行聚合为原子块（超长按行二次拆）；
+     * 短且无句末标点的单元视为标题，与紧随其后的正文单元绑定，避免标题滞留上一片末尾。
+     */
+    private List<Unit> buildUnits(String text, int chunkLength) {
+        String cleaned = text
+                .replaceAll("!\\s*\\[[^\\]]*\\]\\s*\\([^)]*\\)", " ")
+                .replaceAll("(?m)^\\s*[-=*]{3,}\\s*$", " ");
+        List<Unit> units = new ArrayList<>();
+        List<String> tableBuffer = new ArrayList<>();
+        int noiseDropped = 0;
+        for (String rawLine : cleaned.split("\n", -1)) {
+            String line = rawLine.trim();
+            if (line.isEmpty()) {
+                continue;
+            }
+            if (line.startsWith("|")) {
+                tableBuffer.add(line);
+                continue;
+            }
+            if (!tableBuffer.isEmpty()) {
+                flushTableBuffer(tableBuffer, units, chunkLength);
+            }
+            if (line.chars().noneMatch(Character::isLetterOrDigit)) {
+                noiseDropped++;
+                continue;
+            }
+            for (String part : line.split(SENTENCE_SPLIT_REGEX, -1)) {
+                String t = part.trim();
+                if (!t.isEmpty()) {
+                    units.add(new Unit(t, false));
+                }
+            }
+        }
+        if (!tableBuffer.isEmpty()) {
+            flushTableBuffer(tableBuffer, units, chunkLength);
+        }
+
+        int tableCount = 0;
+        int headingBound = 0;
+        List<Unit> bound = new ArrayList<>(units.size());
+        for (int i = 0; i < units.size(); i++) {
+            Unit u = units.get(i);
+            if (!u.table && isHeadingLike(u.text) && i + 1 < units.size() && !units.get(i + 1).table) {
+                bound.add(new Unit(u.text + "\n" + units.get(i + 1).text, false));
+                headingBound++;
+                i++;
+            } else {
+                bound.add(u);
+                if (u.table) {
+                    tableCount++;
+                }
+            }
+        }
+        for (int i = 0; i < bound.size(); i++) {
+            Unit u = bound.get(i);
+            log.info("Unit[{}] {} length={} head='{}'",
+                    i, u.table ? "TABLE" : "text", u.length(), preview(u.text, 30));
+        }
+        log.info("Preprocess: {} units ({} table blocks, {} headings bound to next unit), {} noise line(s) dropped",
+                bound.size(), tableCount, headingBound, noiseDropped);
+        return bound;
+    }
+
+    /** 表格行聚合为原子块；单块超长时按行拆成多个 ≤chunkLength 的子块（子块之间可切） */
+    private static void flushTableBuffer(List<String> lines, List<Unit> out, int chunkLength) {
+        List<String> buf = new ArrayList<>();
+        int len = 0;
+        for (String l : lines) {
+            if (!buf.isEmpty() && len + l.length() + 1 > chunkLength) {
+                out.add(new Unit(String.join("\n", buf), true));
+                buf = new ArrayList<>();
+                len = 0;
+            }
+            buf.add(l);
+            len += l.length() + 1;
+        }
+        if (!buf.isEmpty()) {
+            out.add(new Unit(String.join("\n", buf), true));
+        }
+        lines.clear();
+    }
+
+    /** 标题形态：短、无句末标点、含文字（如"小微ICT业务营销六步法""适用场景："） */
+    private static boolean isHeadingLike(String s) {
+        if (s.isEmpty() || s.length() > HEADING_MAX_LENGTH || s.startsWith("|")) {
+            return false;
+        }
+        if (s.chars().noneMatch(Character::isLetterOrDigit)) {
+            return false;
+        }
+        char last = s.charAt(s.length() - 1);
+        return last != '。' && last != '！' && last != '？' && last != '.' && last != '!' && last != '?';
+    }
+
+    /** 百分位数（内部复制排序，不改动原列表） */
+    private static double percentile(List<Double> values, double p) {
+        List<Double> sorted = new ArrayList<>(values);
+        Collections.sort(sorted);
+        int idx = (int) Math.ceil(p / 100.0 * (sorted.size() - 1));
+        return sorted.get(Math.min(Math.max(idx, 0), sorted.size() - 1));
     }
 
     @Override
