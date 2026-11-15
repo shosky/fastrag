@@ -86,6 +86,7 @@ public enum ActionType {
     chunk_created,
     chunk_updated,
     chunk_deleted,
+    chunk_llm_review,
 
     // ==================== 解析策略 ====================
     strategy_created,

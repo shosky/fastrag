@@ -8,8 +8,10 @@ import com.fastrag.module.knowledge.chunking.ParentChunkAssembler;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
 import com.fastrag.module.knowledge.entity.KbChunk;
+import com.fastrag.module.knowledge.entity.KbChunkLlmReview;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbChunkMapper;
+import com.fastrag.module.knowledge.mapper.KbChunkLlmReviewMapper;
 import com.fastrag.module.knowledge.mapper.KnowledgeBaseMapper;
 import com.fastrag.module.platform.entity.ModelRecord;
 import com.fastrag.module.platform.mapper.ModelRecordMapper;
@@ -30,6 +32,7 @@ import java.util.stream.Collectors;
 public class StorageServiceImpl implements StorageService {
 
     private final KbChunkMapper chunkMapper;
+    private final KbChunkLlmReviewMapper chunkLlmReviewMapper;
     private final MilvusService milvusService;
     private final EmbeddingService embeddingService;
     private final KbFileMapper fileMapper;
@@ -256,6 +259,27 @@ public class StorageServiceImpl implements StorageService {
                 kc.setTitle(chunk.getTitle());
                 kc.setHeadingPath(chunk.getHeadingPath());
                 kc.setParentId(chunk.getParentId());
+                // LLM 边界审查标记（structure_aware llmReview.enabled 启用时由 ChunkReviewService 回填）
+                kc.setLlmReviewed(chunk.getLlmReviewed() == null ? 0 : chunk.getLlmReviewed());
+                kc.setReviewModel(chunk.getReviewModel());
+                kc.setReviewTime(chunk.getReviewTime());
+                kc.setReviewNote(chunk.getReviewNote());
+                // LLM 边界审查明细（kb_chunk_llm_review；行数少走普通插入，失败不阻断入库主链）
+                if (chunk.getLlmReviewed() != null && chunk.getLlmReviewed() == 1) {
+                    try {
+                        KbChunkLlmReview r = new KbChunkLlmReview();
+                        r.setChunkId(chunkId);
+                        r.setKbId(kbId);
+                        r.setFileId(fileId);
+                        r.setModel(chunk.getReviewModel());
+                        r.setAdjusted(chunk.getReviewNote() != null && !chunk.getReviewNote().isEmpty() ? 1 : 0);
+                        r.setNote(chunk.getReviewNote());
+                        r.setPromptVersion(chunk.getReviewPromptVersion());
+                        chunkLlmReviewMapper.insert(r);
+                    } catch (Exception ex) {
+                        log.warn("Failed to insert llm review detail for chunk {}: {}", chunkId, ex.getMessage());
+                    }
+                }
                 // 元数据冗余回填（分册四：入库时把文件级元数据冗余到 chunk，检索过滤/排序直接消费）
                 if (file != null) {
                     kc.setRegion(file.getRegion());

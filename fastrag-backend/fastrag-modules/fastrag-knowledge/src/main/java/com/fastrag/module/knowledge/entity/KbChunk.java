@@ -26,6 +26,7 @@ package com.fastrag.module.knowledge.entity;
  */
 import com.baomidou.mybatisplus.annotation.*;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import lombok.Data;
 
 @Data
@@ -65,4 +66,14 @@ public class KbChunk {
     private Integer graphIndexed;
     /** 图谱提取结果缓存（JSON 格式） */
     private String extractionResult;
+
+    // LLM 边界审查（structure_aware llmReview.enabled 启用后回填）
+    /** 0=未经LLM审查 1=LLM审查通过（含keep未调整） */
+    private Integer llmReviewed;
+    /** 审查用 LLM 模型 */
+    private String reviewModel;
+    /** 审查时间 */
+    private LocalDateTime reviewTime;
+    /** LLM 边界调整说明 */
+    private String reviewNote;
 }

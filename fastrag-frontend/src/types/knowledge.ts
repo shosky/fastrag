@@ -460,6 +460,14 @@ export interface ParseStrategyChunkConfig {
   embeddingModel?: string
   /** Excel 按行切片参数（仅 excel_row 策略生效，REQ-H03/H04；行号 1-based） */
   excelRow?: ExcelRowConfig
+  /** LLM 分片边界审查（仅 structure_aware 策略生效，切片后入库前执行；默认关闭） */
+  llmReview?: LlmReviewConfig
+}
+
+/** LLM 分片边界审查参数 */
+export interface LlmReviewConfig {
+  /** 是否启用（默认关闭：涉及 LLM 调用成本与额外时延，按知识库自行开启） */
+  enabled: boolean
 }
 
 /** Excel 按行切片参数（保存期后端校验：区间 ≤5 行、切分起始行 > 表头结束行、行数 ≥1；4800 字符为切片硬上限） */
@@ -509,6 +517,7 @@ export const DEFAULT_ADVANCED: ParseStrategyAdvanced = {
     semanticThreshold: 30,
     embeddingModel: '',
     excelRow: { headerStartRow: 1, headerEndRow: 1, sliceStartRow: 2, rowsPerSlice: 100 },
+    llmReview: { enabled: false },
   },
   index: {
     embedFields: ['content', 'headingPath', 'fileName'],

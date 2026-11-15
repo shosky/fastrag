@@ -8,6 +8,7 @@ import com.fastrag.infra.rabbitmq.MessagePublisher;
 import com.fastrag.common.enums.ActionType;
 import com.fastrag.common.enums.LogCategory;
 import com.fastrag.module.knowledge.chunking.ChunkData;
+import com.fastrag.module.knowledge.chunking.ChunkReviewService;
 import com.fastrag.module.knowledge.chunking.ChunkingService;
 import com.fastrag.module.knowledge.config.StrategyConfigResolver;
 import com.fastrag.module.knowledge.entity.KbChunk;
@@ -98,6 +99,7 @@ public class IngestionConsumer implements IngestionHandler {
     private final MinioService minioService;
     private final DocumentParser documentParser;
     private final ChunkingService chunkingService;
+    private final ChunkReviewService chunkReviewService;
     private final StorageService storageService;
     private final KbFileMapper fileMapper;
     private final KbChunkMapper chunkMapper;
@@ -241,6 +243,19 @@ public class IngestionConsumer implements IngestionHandler {
             }
             log.info("[TIMING] chunking complete: {} ms, {} chunks",
                     System.currentTimeMillis() - t2, chunks.size());
+
+            // 4.1 LLM 分片边界审查（structure_aware + chunk.llmReview.enabled 启用时，
+            //     切片之后、入库之前执行；未启用/失败/超预算的分片保持原样标记未审）
+            int beforeReview = chunks.size();
+            chunks = chunkReviewService.reviewAndAdjust(kbId, fileId, strategyId, chunks);
+            if (chunks.stream().anyMatch(c -> c.getLlmReviewed() != null && c.getLlmReviewed() == 1)) {
+                try {
+                    logService.addLog(kbId, LogCategory.operation, ActionType.chunk_llm_review,
+                            fileId, "LLM 边界审查完成: " + beforeReview + " 片 -> " + chunks.size() + " 片",
+                            "system", "success", null);
+                } catch (Exception ignored) {
+                }
+            }
 
                 // 4.5 音频切片：按 ASR 时间戳切割音频并上传到 MinIO
                 long tSplitStart = System.currentTimeMillis();

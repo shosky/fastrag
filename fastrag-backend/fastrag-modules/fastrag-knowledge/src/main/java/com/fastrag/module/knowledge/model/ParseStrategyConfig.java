@@ -62,6 +62,20 @@ public class ParseStrategyConfig {
         private String embeddingModel = "";
         /** Excel 按行切片参数（仅 strategy=excel_row 消费，其余策略忽略；REQ-H01） */
         private ExcelRow excelRow;
+        /** LLM 分片边界审查（仅 structure_aware 策略生效，切片后入库前执行；默认关闭） */
+        private LlmReview llmReview = new LlmReview();
+    }
+
+    /**
+     * LLM 分片边界审查参数组。启用后 structuralChunk 输出分批送 LLM 审查边界合理性
+     * （碎片合并/混切拆分/切断论述对齐句界），LLM 仅输出调整方案、文字一个字不动，
+     * 调整执行后做内容守恒校验，失败整批回退并标记未审。
+     */
+    @Data
+    @NoArgsConstructor
+    public static class LlmReview {
+        /** 是否启用（默认关闭：涉及 LLM 调用成本与额外时延，按知识库自行开启） */
+        private boolean enabled = false;
     }
 
     /**

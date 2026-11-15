@@ -188,6 +188,11 @@ function normalizeAdvanced(advanced: any): ParseStrategyAdvanced {
       ...JSON.parse(JSON.stringify(DEFAULT_ADVANCED.chunk.excelRow)),
       ...(advanced.chunk.excelRow || {}),
     }
+    // llmReview 组兜底：存量数据缺失/为 null 时回落默认（enabled=false），避免模板解引用空对象
+    base.chunk.llmReview = {
+      ...JSON.parse(JSON.stringify(DEFAULT_ADVANCED.chunk.llmReview)),
+      ...(advanced.chunk.llmReview || {}),
+    }
   }
   if (advanced.index) base.index = { ...base.index, ...advanced.index }
   // 旧平铺字段：仅在新分组未提供时兼容映射
@@ -731,6 +736,13 @@ onMounted(() => {
               <el-switch v-model="adv.headingPath" />
               <span>生成层级路径元数据（如 第一章 &gt; 1.1 背景）</span>
             </div>
+          </el-form-item>
+          <el-form-item label="LLM 边界审查">
+            <div class="parse-strategy-page__switch-row">
+              <el-switch v-model="adv.llmReview.enabled" />
+              <span>切片后由 LLM 审查边界合理性（自动合并碎片/拆分混切，文字不改；每次摄入约增加 2-3 次 LLM 调用）</span>
+            </div>
+            <div class="form-tip">审查模型沿用策略的 LLM 模型配置；失败或超预算的分片保持原样并标记未审</div>
           </el-form-item>
         </template>
 

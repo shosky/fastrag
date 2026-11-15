@@ -20,6 +20,7 @@ package com.fastrag.module.knowledge.chunking;
 import lombok.Builder;
 import lombok.Data;
 
+import java.time.LocalDateTime;
 import java.util.List;
 
 @Data
@@ -41,4 +42,11 @@ public class ChunkData {
     private String chunkType;         // "text" | "image" | "table" | "code"，默认 "text"
     private String title;             // 所属最近标题（新增）
     private String headingPath;       // 层级路径，如 "第一章 > 1.1 背景"（新增）
+
+    // LLM 边界审查（llmReview.enabled 启用后由 ChunkReviewService 回填）
+    private Integer llmReviewed;      // 0=未经LLM审查 1=LLM审查通过（含keep未调整）
+    private String reviewModel;       // 审查用 LLM 模型
+    private LocalDateTime reviewTime; // 审查时间
+    private String reviewNote;        // LLM 边界调整说明
+    private String reviewPromptVersion; // 审查 prompt 版本
 }
