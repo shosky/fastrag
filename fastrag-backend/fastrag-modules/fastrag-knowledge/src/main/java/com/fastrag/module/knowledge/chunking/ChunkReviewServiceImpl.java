@@ -75,8 +75,12 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
             return chunks;
         }
         ParseStrategyConfig.ChunkConfig cfg = configResolver.resolve(strategyId).getChunk();
-        if (!"structure_aware".equals(cfg.getStrategy())
-                || cfg.getLlmReview() == null || !cfg.getLlmReview().isEnabled()) {
+        if (!"structure_aware".equals(cfg.getStrategy())) {
+            return chunks;
+        }
+        if (cfg.getLlmReview() == null || !cfg.getLlmReview().isEnabled()) {
+            // 可观测性：开关未开时必须留痕，否则"为什么没审查"无法从日志判断
+            log.info("[ChunkReview] disabled (llmReview.enabled=false), skip review for strategy {}", strategyId);
             return chunks;
         }
         String model = resolveModel(strategyId, kbId);

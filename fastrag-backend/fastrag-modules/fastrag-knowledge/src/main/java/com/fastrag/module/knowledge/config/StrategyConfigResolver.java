@@ -121,9 +121,21 @@ public class StrategyConfigResolver {
             setIfPresent(group, "semanticThreshold", v -> chunk.setSemanticThreshold(((Number) v).intValue()));
             setIfPresent(group, "embeddingModel", v -> chunk.setEmbeddingModel(String.valueOf(v)));
             applyExcelRow(chunk, group.get("excelRow"));
+            applyLlmReview(chunk, group.get("llmReview"));
         } else if (target instanceof ParseStrategyConfig.IndexConfig index) {
             setIfPresent(group, "embedFields", v -> index.setEmbedFields(toStringList(v)));
         }
+    }
+
+    /**
+     * 合并 chunk.llmReview 嵌套组（LLM 分片边界审查开关）。
+     * 仅新分组格式承载（旧平铺格式无对应存量字段）。
+     */
+    private void applyLlmReview(ParseStrategyConfig.ChunkConfig chunk, Object groupValue) {
+        if (!(groupValue instanceof Map<?, ?> raw)) return;
+        ParseStrategyConfig.LlmReview lr = new ParseStrategyConfig.LlmReview();
+        setIfPresent((Map<String, Object>) raw, "enabled", v -> lr.setEnabled(toBoolean(v)));
+        chunk.setLlmReview(lr);
     }
 
     /**
