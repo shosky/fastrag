@@ -298,7 +298,7 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
                         String type = chunks.get(v).getChunkType() == null ? "text" : chunks.get(v).getChunkType();
                         if (!"text".equals(type)) return null;
                         String beforeLine = op.path("beforeLine").asText("").trim();
-                        if (beforeLine.isEmpty() || !resolvable(chunks.get(v).getContent(), beforeLine)) return null;
+                        if (beforeLine.isEmpty() || resolvable(chunks.get(v).getContent(), beforeLine) < 0) return null;
                         mark(coverage, v, "split", from, to);
                         out.add(new Adjustment("split", null, v, beforeLine, reason));
                     }
