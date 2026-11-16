@@ -26,6 +26,7 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 import java.time.LocalDateTime;
@@ -56,6 +57,14 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
     /** 审查 prompt 版本（调整 prompt 时递增，明细表按版本追溯） */
     private static final String PROMPT_VERSION = "v1";
 
+    /**
+     * 全局总开关（application.yml: fastrag.chunk.llm-review.enabled，默认 false）。
+     * true = 强制对所有 structure_aware 摄入生效（测试/全局推广用）；
+     * false = 按策略级 llmReview.enabled 开关。
+     */
+    @Value("${fastrag.chunk.llm-review.enabled:false}")
+    private boolean globalEnabled;
+
     /** 一个边界调整方案：merge / split / keep */
     private record Adjustment(String action, List<Integer> chunks, Integer splitChunk,
                               String beforeLine, String reason) {
@@ -78,9 +87,12 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
         if (!"structure_aware".equals(cfg.getStrategy())) {
             return chunks;
         }
-        if (cfg.getLlmReview() == null || !cfg.getLlmReview().isEnabled()) {
+        // 生效判定：yml 全局总开关（强制）OR 策略级开关
+        boolean strategyEnabled = cfg.getLlmReview() != null && cfg.getLlmReview().isEnabled();
+        if (!globalEnabled && !strategyEnabled) {
             // 可观测性：开关未开时必须留痕，否则"为什么没审查"无法从日志判断
-            log.info("[ChunkReview] disabled (llmReview.enabled=false), skip review for strategy {}", strategyId);
+            log.info("[ChunkReview] disabled (global={}, strategy llmReview.enabled={}), skip review for strategy {}",
+                    globalEnabled, strategyEnabled, strategyId);
             return chunks;
         }
         String model = resolveModel(strategyId, kbId);
