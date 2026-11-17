@@ -76,6 +76,35 @@
 
 **Depth rationale：** 上游只需表达「这个文件按新绑定重切」；「保留 manual、其余三库清理、对账重排」的 ADR-0001 执行细节不外泄。
 
+### 分片方式参考（strategy → 分发 · 算法 · 专属参数）
+
+> 2026-11-16 增补：按策略逐个刻画「怎么切」的可读参考。分发代码 `IngestionConsumer.java:203-243`（六分支按序命中），算法实现 `chunking/ChunkingServiceImpl.java`，参数面 `ParseStrategyConfig.ChunkConfig:39-77`（advanced JSON `chunk` 组，经 StrategyConfigResolver 四层合并，见缝 1）。架构视角色（缝与深化）见 §3/§4，excel_row 全链设计见 [modules/parse-strategy.md](../modules/parse-strategy.md) 与 [adr/0012](../adr/0012-excel-row-slice-at-parse.md)。
+
+**分发规则（按序命中，一文件一次）：**
+
+| # | 条件 | 分发 | 说明 |
+|---|---|---|---|
+| 1 | hasSegments（音视频 ASR 分段存在） | `chunkBySegments` | 时间分段独占，strategy 类型不参与 |
+| 2 | strategy=parent_child 且 hasNodes | `structuralChunk` + 存储层父子装配 | 无节点时落兜底（#6） |
+| 3 | strategy=rule_recursive | `recursiveChunk(text)` | 纯文本路径 |
+| 4 | strategy=semantic | `semanticChunk(text)` | 纯文本路径；embedding 模型策略级优先、KB 级兜底 |
+| 5 | strategy=structure_aware 且 hasNodes | `structuralChunk` | 无节点时落兜底（#6） |
+| 6 | 兜底（rule_fixed 及其余策略） | hasNodes→`structuralChunk`；无节点→`chunk(text)` | excel_row 不显式出现于此——经兜底分支进 structuralChunk，由算法内部 excelRowMode 识别（strategy=excel_row 时生效） |
+
+**逐策略行为与专属参数：**
+
+| 策略 | 算法一句话 | 专属/敏感参数 | 关键行为 |
+|---|---|---|---|
+| rule_fixed | 分隔符+长度+overlap 规则切分 | `delimiters`（默认 `\n\n`）、`chunkLength`、`overlap` | PDF PAGE_BREAK 页感知、`[IMAGE:key]` 占位符提取、超长片保留尾部 overlap 延续下片；无 DocNode 时的唯一兜底路径 |
+| rule_recursive | 分隔符优先级逐级降级 | `chunkLength`、`overlap` | 分隔符逐级 → 句子边界 → 硬切，三级降级保证任何文本有产出 |
+| structure_aware | DocNode 树 + headingPath 栈结构切分 | `titlePrefix`、`headingPath`、`llmReview.enabled` | 不可切分单元（TABLE/CODE_BLOCK/公式/IMAGE）整体保留、超长按行（表格）/函数边界（代码）二次拆分；标题延迟合并防孤标题片；`parse.tableMode=ignore`（解析组参数）时表格不入片但纯表格文档豁免；切片后可选 **LLM 边界审查**（唯一接入该审查的策略，见下） |
+| parent_child | structure_aware 产子片 + 标题层级聚合父片 | `parentMaxChunkLength`（默认 2000）、`parentAggLevel`（H1/H2/H3/auto） | 装配在存储层（ParentChunkAssembler）而非切片期，父片免向量；父片超长按句子边界二次切分；此模式下 `chunkLength` 语义为子片目标长度 |
+| semantic | 相邻句向量相似度断点 | `semanticThreshold`（0~100 → 0.0~1.0）、`embeddingModel`（空=系统默认） | 预处理（表格整块原子/标题绑定后句）→ 滑窗向量化（Buffer=1 平滑短句）→ 相对突降动态阈值（高分位，小样本回退绝对阈值）→ 软硬双上限 → 碎片并入语义更近邻片；embedding 不可用时三重回退规则分片 |
+| excel_row | Excel 按行切片（structuralChunk 的 excelRowMode 分支） | `excelRow{headerStartRow, headerEndRow, sliceStartRow, rowsPerSlice}` | 表头区间捕获 + 行数软目标（缺省 100，4800 字符硬限兜底）；强制 overlap=0、禁 tableMode=ignore、切片独占（REQ-H01~H13） |
+| —（时间分段） | chunkBySegments | —（strategy 不适用） | 音视频 ASR segment 按文本长度比例线性分配 start/end；超长 segment 按句号等标点二次拆分 |
+
+**LLM 边界审查耦合（2026-11-14，仅 structure_aware）：** 切片之后、入库之前，输出分批（≤10 片/批，单篇 ≤3 次调用）送 LLM 审查边界合理性，仅允许 merge/split/keep 调整、文字逐字守恒，失败整批回退标记未审（`llm_reviewed=0`）。双开关：yml 全局 `fastrag.chunk.llm-review.enabled`（强制）或策略级 `chunk.llmReview.enabled`；模型解析回退链 `strategy.llmModel → kb.llmModel → kb.graphLlmModel`，全空跳过审查留 WARN。明细落 `kb_chunk_llm_review`，DDL 与运行时幂等增补双处同步（init-scripts/schema.sql + SchemaInitializer）。
+
 ## 3. Seam Diagram
 
 **缝 1：策略配置缝（StrategyConfigResolver）**
