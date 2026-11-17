@@ -23,6 +23,8 @@ public class KbCreateRequest {
     private String parseMode;
     private String splitMode;
     private Boolean graphAutoBuild;
+    /** 知识库级通用 LLM 模型（切片边界审查等 KB 级回退，优先于 graphLlmModel；与图谱配置解耦） */
+    private String llmModel;
     private String graphLlmModel;
     private List<String> tags;
     private Object fileTypeConfig;

@@ -1475,6 +1475,11 @@ ALTER TABLE kb_file ADD COLUMN IF NOT EXISTS metadata_source VARCHAR(16) DEFAULT
 -- kb 自定义属性 schema（customAttrs 复活落库）
 ALTER TABLE kb ADD COLUMN IF NOT EXISTS custom_attr_schema JSON DEFAULT NULL COMMENT 'KB 级自定义属性定义（customAttrs 复活落库）';
 
+-- kb 级 LLM 模型（chunk-review 特性解耦，2026-11-16；与 SchemaInitializer 双处同步）
+-- graph_llm_model 此前仅在 SchemaInitializer 增补、schema.sql 漏同步，一并补齐
+ALTER TABLE kb ADD COLUMN IF NOT EXISTS graph_llm_model VARCHAR(128) COMMENT '知识图谱构建用 LLM 模型';
+ALTER TABLE kb ADD COLUMN IF NOT EXISTS llm_model VARCHAR(128) DEFAULT NULL COMMENT '知识库级通用 LLM 模型（切片边界审查等 KB 级回退，优先于 graph_llm_model）';
+
 -- kb_chunk 元数据冗余列（检索过滤锚定 chunk，避免 JOIN）
 ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS region VARCHAR(64) DEFAULT NULL COMMENT '地域（冗余自 kb_file.region，入库时回填）';
 ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS publish_date DATE DEFAULT NULL COMMENT '发文日期（冗余自 kb_file.publish_date）';
@@ -1644,4 +1649,23 @@ CREATE TABLE IF NOT EXISTS app_widget_binding (
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
     UNIQUE KEY uk_app_widget (app_id, widget_id),
     INDEX idx_widget_app (app_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- LLM 分片边界审查（chunk-review 特性，2026-11-14；与 SchemaInitializer 双处同步，
+-- 同义 DDL 见 init-scripts/migration-20261114-llm-review.sql）
+ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS llm_reviewed TINYINT DEFAULT 0 COMMENT '0=未经LLM审查 1=LLM审查通过（含keep未调整）';
+ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS review_model VARCHAR(128) NULL COMMENT '审查用 LLM 模型';
+ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS review_time DATETIME NULL COMMENT '审查时间';
+ALTER TABLE kb_chunk ADD COLUMN IF NOT EXISTS review_note TEXT NULL COMMENT 'LLM 边界调整说明';
+
+CREATE TABLE IF NOT EXISTS kb_chunk_llm_review (
+    id VARCHAR(32) PRIMARY KEY,
+    chunk_id VARCHAR(64) NOT NULL COMMENT '分片 ID（{fileId}_chunk_{n}）',
+    kb_id VARCHAR(32),
+    file_id VARCHAR(32),
+    model VARCHAR(128) COMMENT '审查用 LLM 模型',
+    adjusted TINYINT DEFAULT 0 COMMENT '1=边界被调整 0=审查后保持原样',
+    note TEXT COMMENT 'LLM 边界调整说明',
+    prompt_version VARCHAR(16) COMMENT '审查 prompt 版本',
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

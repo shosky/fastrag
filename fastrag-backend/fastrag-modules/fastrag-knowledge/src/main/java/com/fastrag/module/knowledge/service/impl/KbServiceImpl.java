@@ -118,6 +118,7 @@ public class KbServiceImpl implements KbService {
         e.setParseMode(req.getParseMode());
         e.setSplitMode(req.getSplitMode());
         e.setGraphAutoBuild(req.getGraphAutoBuild() != null && req.getGraphAutoBuild() ? 1 : 0);
+        e.setLlmModel(req.getLlmModel());
         e.setGraphLlmModel(req.getGraphLlmModel());
         e.setFileTypeConfig(req.getFileTypeConfig() != null ? JSONUtil.toJsonStr(req.getFileTypeConfig()) : null);
         e.setRetrievalConfig(req.getRetrievalConfig() != null ? JSONUtil.toJsonStr(req.getRetrievalConfig()) : null);
@@ -163,6 +164,7 @@ public class KbServiceImpl implements KbService {
         if (req.getFileTypeConfig() != null) e.setFileTypeConfig(JSONUtil.toJsonStr(req.getFileTypeConfig()));
         if (req.getRetrievalConfig() != null) e.setRetrievalConfig(JSONUtil.toJsonStr(req.getRetrievalConfig()));
         if (req.getGraphAutoBuild() != null) e.setGraphAutoBuild(req.getGraphAutoBuild() ? 1 : 0);
+        if (req.getLlmModel() != null) e.setLlmModel(req.getLlmModel());
         if (req.getGraphLlmModel() != null) e.setGraphLlmModel(req.getGraphLlmModel());
         if (req.getCustomAttrSchema() != null) {
             e.setCustomAttrSchema(JSONUtil.toJsonStr(req.getCustomAttrSchema()));
@@ -350,6 +352,7 @@ public class KbServiceImpl implements KbService {
         d.setSplitMode(e.getSplitMode());
         d.setPermission(e.getPermission());
         d.setGraphAutoBuild(e.getGraphAutoBuild());
+        d.setLlmModel(e.getLlmModel());
         d.setGraphLlmModel(e.getGraphLlmModel());
         d.setFileTypeConfig(StrUtil.isNotBlank(e.getFileTypeConfig()) ? JSONUtil.parse(e.getFileTypeConfig()) : null);
         d.setRetrievalConfig(StrUtil.isNotBlank(e.getRetrievalConfig()) ? JSONUtil.parse(e.getRetrievalConfig()) : null);

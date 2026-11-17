@@ -8,7 +8,7 @@ package com.fastrag.module.knowledge.chunking;
  * 全覆盖校验（每个编号恰好出现一次）→ 按位置降序应用调整 → 内容守恒校验
  * （调整前后受影响范围的文本必须逐字相等，零丢失零篡改）→ 任一环节失败整批回退保持原样。</p>
  *
- * <p>模型解析回退链：策略 llmModel → 知识库 graphLlmModel → 缺失则跳过审查。
+ * <p>模型解析回退链：策略 llmModel → 知识库 llmModel → 知识库 graphLlmModel → 缺失则跳过审查。
  * 审查通过的分片回填 llmReviewed=1/reviewModel/reviewTime/reviewNote，
  * 由 StorageServiceImpl 持久化并写入 kb_chunk_llm_review 明细。</p>
  */
@@ -97,7 +97,7 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
         }
         String model = resolveModel(strategyId, kbId);
         if (model == null || model.isBlank()) {
-            log.warn("[ChunkReview] no LLM model configured (strategy.llmModel / kb.graphLlmModel), skip review");
+            log.warn("[ChunkReview] no LLM model configured (strategy.llmModel / kb.llmModel / kb.graphLlmModel), skip review");
             return chunks;
         }
         ModelRecord rec = resolveRecord(model);
@@ -206,7 +206,7 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
 
     // ==================== 模型解析 ====================
 
-    /** 模型回退链：策略 llmModel → 知识库 graphLlmModel → null（跳过审查） */
+    /** 模型回退链：策略 llmModel → 知识库 llmModel → 知识库 graphLlmModel → null（跳过审查） */
     private String resolveModel(String strategyId, String kbId) {
         try {
             KbParseStrategy ps = parseStrategyMapper.selectById(strategyId);
@@ -214,7 +214,13 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
                 return ps.getLlmModel();
             }
             KnowledgeBase kb = kbMapper.selectById(kbId);
-            return kb != null ? kb.getGraphLlmModel() : null;
+            if (kb == null) {
+                return null;
+            }
+            if (kb.getLlmModel() != null && !kb.getLlmModel().isBlank()) {
+                return kb.getLlmModel();
+            }
+            return kb.getGraphLlmModel();
         } catch (Exception e) {
             log.warn("[ChunkReview] resolve model failed: {}", e.getMessage());
             return null;

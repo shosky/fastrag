@@ -27,6 +27,8 @@ public class KbDto {
     private String splitMode;
     private String permission;
     private Integer graphAutoBuild;
+    /** 知识库级通用 LLM 模型（切片边界审查等 KB 级回退，优先于 graphLlmModel） */
+    private String llmModel;
     private String graphLlmModel;
     private List<String> tags;
     private Integer dimension;

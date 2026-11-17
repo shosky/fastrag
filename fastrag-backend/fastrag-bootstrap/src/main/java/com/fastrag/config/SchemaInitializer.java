@@ -126,6 +126,9 @@ public class SchemaInitializer {
         addColumnIfNotExists("kb_parse_strategy", "llm_model", "VARCHAR(128)");
         // 知识库级图谱 LLM 模型（parse strategy llmModel 为空时的 fallback）
         addColumnIfNotExists("kb", "graph_llm_model", "VARCHAR(128) COMMENT '知识图谱构建用 LLM 模型'");
+        // 知识库级通用 LLM 模型（切片边界审查的 KB 级回退，优先于 graphLlmModel；
+        // 与图谱配置解耦，不建图谱的 KB 也能配审查模型。与 schema.sql 增补段双处同步）
+        addColumnIfNotExists("kb", "llm_model", "VARCHAR(128) DEFAULT NULL COMMENT '知识库级通用 LLM 模型（切片边界审查等 KB 级回退，优先于 graph_llm_model）'");
         // 文件级专属自定义策略绑定（非空 = 该文件的隐藏策略，不参与知识库级策略匹配与列表）
         addColumnIfNotExists("kb_parse_strategy", "file_id",
                 "VARCHAR(32) DEFAULT NULL COMMENT '文件级绑定：非空=该文件专属自定义策略' AFTER kb_id");
@@ -136,6 +139,31 @@ public class SchemaInitializer {
             // S6 吞错降级：ensure skipped 属异常路径，INFO 会掩盖真实故障（smoke 实证），warn + 根因类名
             log.warn("Index kb_parse_strategy.file_id ensure skipped: {}: {}",
                     rootCauseClassName(e), e.getMessage());
+        }
+
+        // LLM 分片边界审查（chunk-review，2026-11-14；与 schema.sql 增补段/migration-20261114-llm-review.sql 双处同步。
+        // llm_reviewed 恒非空（StorageServiceImpl 缺省 0），列缺失会导致 kb_chunk 全部读写失败，必须幂等补齐）
+        addColumnIfNotExists("kb_chunk", "llm_reviewed", "TINYINT DEFAULT 0 COMMENT '0=未经LLM审查 1=LLM审查通过（含keep未调整）'");
+        addColumnIfNotExists("kb_chunk", "review_model", "VARCHAR(128) NULL COMMENT '审查用 LLM 模型'");
+        addColumnIfNotExists("kb_chunk", "review_time", "DATETIME NULL COMMENT '审查时间'");
+        addColumnIfNotExists("kb_chunk", "review_note", "TEXT NULL COMMENT 'LLM 边界调整说明'");
+        try {
+            jdbc.execute("""
+                CREATE TABLE IF NOT EXISTS kb_chunk_llm_review (
+                    id VARCHAR(32) PRIMARY KEY,
+                    chunk_id VARCHAR(64) NOT NULL COMMENT '分片 ID（{fileId}_chunk_{n}）',
+                    kb_id VARCHAR(32),
+                    file_id VARCHAR(32),
+                    model VARCHAR(128) COMMENT '审查用 LLM 模型',
+                    adjusted TINYINT DEFAULT 0 COMMENT '1=边界被调整 0=审查后保持原样',
+                    note TEXT COMMENT 'LLM 边界调整说明',
+                    prompt_version VARCHAR(16) COMMENT '审查 prompt 版本',
+                    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+            """);
+            log.info("Table kb_chunk_llm_review OK");
+        } catch (Exception e) {
+            log.error("Failed to create kb_chunk_llm_review: {}", e.getMessage());
         }
 
         // kb_file 上传向导处理配置（引擎/语言/编码/优先级/重试/媒体，JSON）

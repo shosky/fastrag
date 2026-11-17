@@ -201,3 +201,8 @@ agent:
     image: fastrag-sandbox:latest
     # 孤儿对账宽限期秒（REQ-H11）
     orphan-grace: 600
+
+fastrag:
+  chunk:
+    llm-review:
+      enabled: true

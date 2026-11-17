@@ -37,7 +37,7 @@ public class ParseStrategyConfig {
     @Data
     @NoArgsConstructor
     public static class ChunkConfig {
-        /** 分片策略类型：rule_fixed / rule_recursive / structure_aware / semantic / parent_child */
+        /** 分片策略类型：rule_fixed / rule_recursive / structure_aware / semantic / parent_child / excel_row */
         private String strategy = "rule_fixed";
         /**
          * 子分片长度（父子分片模式下为子分片目标长度；父分片按标题层级聚合，最大长度 = 该值 × 2）
