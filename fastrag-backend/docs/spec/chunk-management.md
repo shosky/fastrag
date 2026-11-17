@@ -1,10 +1,12 @@
 # 分片管理（chunk-management）— 需求规格
 
-## 1. 特性与范围
+## 1. 特性与范围 {#scope}
 
-分片管理特性覆盖「文档变成可检索分片」之后的全生命周期：五族分片算法（规则 / 递归 / 语义 / 时间分段 / 结构感知）把解析产物切分为知识分片，父子装配器把子分片按标题层级聚合为父分片，摄取管线把分片落库并向量化，用户通过分片接口查看、手工创建、编辑、删除（单个/批量）分片，或在策略绑定变更后对整文件重新分片（Re-chunk）。显式排除：解析产物如何产生（归 file-ingestion 的 DocumentParser）、策略绑定与换绑校验（归 parse-strategy.ParseStrategyBindingGuard，ADR-0001）、分片向量如何被检索消费（归 retrieval）、从分片抽取图谱（归 knowledge-graph，经 ExtractionUnitAssembler 重组，本链仅在共享文件关系上交叉引用）、AI 分片的选段落库交互面（归 ai-chunking，本链只约定其写 kb_chunk 的口径）。
+分片管理特性覆盖「文档变成可检索分片」之后的全生命周期。五族分片算法（规则 / 递归 / 语义 / 时间分段 / 结构感知）把解析产物切分为知识分片。父子装配器把子分片按标题层级聚合为父分片。摄取管线把分片落库并向量化。用户通过分片接口查看、手工创建、编辑、删除（单个/批量）分片，或在策略绑定变更后对整文件重新分片（Re-chunk）。
 
-## 2. Out of Scope
+显式排除：解析产物如何产生（归 file-ingestion 的 DocumentParser）。策略绑定与换绑校验（归 parse-strategy.ParseStrategyBindingGuard，ADR-0001）。分片向量如何被检索消费（归 retrieval）。从分片抽取图谱（归 knowledge-graph，经 ExtractionUnitAssembler 重组，本链仅在共享文件关系上交叉引用）。AI 分片的选段落库交互面（归 ai-chunking，本链只约定其写 kb_chunk 的口径）。
+
+## 2. Out of Scope {#out-of-scope}
 
 - **解析与格式**：PDF/DOCX/音视频等 8 类格式如何解析出文本/结构节点/时间分段——归 file-ingestion（DocumentParser）。本链只消费 `ParseResult{text, nodes, segments}`（ChunkingServiceImpl.java:31-33 输入类型 ‹CERTAIN›）。
 - **策略配置的存储与合并**：chunkLength/overlap/delimiters/tableMode 等参数如何从策略 advanced JSON 合并——归 parse-strategy（StrategyConfigResolver）。本链只声明「分片算法经其读取参数」这一依赖（ChunkingServiceImpl.java:49 ‹CERTAIN›）。
@@ -15,15 +17,20 @@
 - **QA 对**：kb_qa_pair 与分片无外键关系，QA 模式文件拒绝重切（FileServiceImpl.java:382-384 ‹CERTAIN›），QA 管理归 qa-pairs。
 - **权限体系**：@KbAuth 判定协议归 iam（复用，不重新定义）。
 
-## 3. 领域术语
+## 3. 领域术语 {#terms}
 
-引用 `fastrag-backend/CONTEXT.md`：**知识分片（Chunk）**、**父分片（Parent Chunk）**、**子分片（Child Chunk）**、**解析策略（Parse Strategy）**、**策略绑定（Strategy Binding）**、**自动匹配（Auto Match）**、**重新分片（Re-chunk）**、**AI分片（AI Chunking）**、**向量检索（Vector Retrieval）**、**抽取单元（Extraction Unit）**（交叉引用）、**Ingestion Pipeline**。本特性是「知识分片/父分片/子分片/重新分片」四个术语的定义主体：父子两级的语义（子分片向量召回、父分片按标题聚合作上下文）由本链的算法与装配行为落实。
+术语引用 `fastrag-backend/CONTEXT.md`。本特性是以下四个术语的定义主体：父子两级的语义（子分片向量召回、父分片按标题聚合作上下文）由本链的算法与装配行为落实。
 
-## 4. 功能需求
+- 定义主体：**知识分片（Chunk）**、**父分片（Parent Chunk）**、**子分片（Child Chunk）**、**重新分片（Re-chunk）**
+- 其余引用：**解析策略（Parse Strategy）**、**策略绑定（Strategy Binding）**、**自动匹配（Auto Match）**、**AI分片（AI Chunking）**、**向量检索（Vector Retrieval）**、**抽取单元（Extraction Unit）**（交叉引用）、**Ingestion Pipeline**
+
+## 4. 功能需求 {#requirements}
+
+本特性需求统一遵循绑定-重切一致性底线：**当解析策略绑定变更时，系统必须对整文件重新分片，不允许只改绑定不重切的漂移态**（见重切编排分节）。以下按读取、生命周期、算法、编排分节。
 
 ### 4.1 分片查看与查询
 
-分片管理页的读取面：按知识库（可选按文件过滤）分页浏览分片，系统自动探测该库处于「父子模式」还是「单层模式」——存在父分片行时按父分片分页并在行内嵌其子分片，无父分片时按扁平列表分页；同时返回整库叶分片字符总量与父分片数两个聚合指标，供管理页展示规模。单分片详情与总量计数是同域的轻量读取。
+分片管理页的读取面：按知识库（可选按文件过滤）分页浏览分片。系统自动探测该库处于「父子模式」还是「单层模式」——存在父分片行时按父分片分页并在行内嵌其子分片，无父分片时按扁平列表分页。同时返回整库叶分片字符总量与父分片数两个聚合指标，供管理页展示规模。单分片详情与总量计数是同域的轻量读取。
 
 - **REQ-A01**：列表接口在知识库内存在 chunkType='parent' 行时进入父子模式（mode=parent），按父分片与「无父归属的孤立子分片」混合分页，父分片行内嵌按 chunkIndex 升序的全部子分片。〔证据：ChunkServiceImpl.java:49-87 ‹CERTAIN›〕
 - **REQ-A02**：父子模式下，孤立子分片（chunkType≠parent 且 parent_id 为空，单分片章节产物）与父分片按 chunkIndex 升序混排，保持文档顺序。〔证据：ChunkServiceImpl.java:61-66 ‹CERTAIN›〕
@@ -97,7 +104,7 @@
 - **REQ-G04**：新增分片（graphIndexed 未提取）在文件图谱开关开启时自动触发增量图谱构建补齐；编辑内容时清理旧图谱数据后同样触发。〔证据：ChunkServiceImpl.java:190-191,249-269,531-553 ‹CERTAIN›〕
 - **REQ-G05**：摄取落库时向量化输入固定为 content + headingPath + fileName 拼接（结构层级与文件名进入向量语义），embedding 失败按批重试 3 次（指数退避）后以纯文本落库。〔证据：StorageServiceImpl.java:323-360,366-378 ‹CERTAIN›〕
 
-## 5. 非功能约束（仅代码/配置可证）
+## 5. 非功能约束（仅代码/配置可证） {#constraints}
 
 - **NFR-1（鉴权门槛）**：分片读操作要求 KB 角色 viewer+，写操作（创建/更新/删除/批量删除）要求 editor+，由 @KbAuth 切面统一判定（判定协议归 iam）。〔证据：ChunkController.java:42,51,57,63,70,77,85 ‹CERTAIN›〕
 - **NFR-2（操作审计）**：创建/更新/删除/批量删除四个写端点均有 @Loggable 审计埋点。〔证据：ChunkController.java:64,71,78,86 ‹CERTAIN›〕
@@ -108,7 +115,7 @@
 - **性能阈值**：分片列表/重切的时延与吞吐预算〔决议 2026-09-24：取「分片列表 p95 ≤ 500ms（单文件 ≤1000 分片、分页返回）；重切提交受理 p95 ≤ 2s（执行异步，HTTP 只承担入队）；单文件 1000 分片全流水线 < 10min（嵌入服务限速主导）」。理由：列表为分页查询、重切为受理式异步（入队即返回），与业界管理面读接口/异步任务受理预算一致；现状差距：已登记债务——无性能监控埋点与压测数据，阈值未经实测标定（代裁，用户可推翻）〕。
 - **手工内容上限**：单分片内容业务上限〔决议 2026-09-24：取「content ≤ 50,000 字符」（手工创建与编辑同限）——覆盖常用嵌入模型单条输入的上下文安全裕度（约 8k token），远低于 DDL MEDIUMTEXT 16MB，兼顾前端编辑器渲染；现状差距：已登记债务——create/update 直写入无业务校验（ChunkServiceImpl.java:156、213），需在入口补校验（代裁，用户可推翻）〕。
 
-## 6. 验收清单
+## 6. 验收清单 {#acceptance}
 
 - [ ] 存在父分片的库列表返回 mode=parent 且父分片行内嵌子分片，无父分片的库返回 mode=single（REQ-A01）
 - [ ] count 与 tokenTotal 均不含父分片贡献（REQ-A03、REQ-A04）
@@ -146,12 +153,12 @@
 - [ ] 新增分片在文件图谱开关开启时自动触发增量图谱构建补齐（REQ-G04）
 - [ ] 向量化输入固定为 content+headingPath+fileName 拼接，embedding 失败按批重试 3 次后纯文本落库（REQ-G05）
 
-## 7. 测试策略
+## 7. 测试策略 {#testing}
 
 经由公共接口（ChunkService 七方法、ChunkingService 五算法、ParentChunkAssembler.assemble、re-chunk 编排入口）测试，优先级：
 
-1. **父子装配语义**（ParentChunkAssembler 纯函数，无外部依赖，最高性价比）：连续同路径聚合、超长二次切分、aggLevel 截断、空路径归组、单分片不聚合——现有 7 个单测已覆盖主干（ParentChunkAssemblerTest.java:16-153），补 aggLevel=H1/H2/H3 用例。
-2. **算法族边界**（ChunkingServiceImpl + mock StrategyConfigResolver/EmbeddingService，mock 仅在系统边界）：tableMode 豁免、标题延迟合并、overlap 死循环防护、语义切片三重回退、时间比例分配——现有 ChunkingServiceImplTest（21 例）+ TableModeIgnoreTest（5 例）覆盖主干。
-3. **三库一致性**（ChunkService，mock Milvus/Embedding/GraphStore/MessagePublisher——均为真缝/系统边界）：删除级联三分区清理、编辑重嵌入删旧插新、索引位移的图谱改名、向量失败降级记账——**现状无测试，为最大缺口**（ChunkServiceImpl 无对应测试类）。
+1. **父子装配语义**（ParentChunkAssembler 纯函数，无外部依赖，最高性价比）：连续同路径聚合、超长二次切分、aggLevel 截断、空路径归组、单分片不聚合。现有 7 个单测已覆盖主干（ParentChunkAssemblerTest.java:16-153），补 aggLevel=H1/H2/H3 用例。
+2. **算法族边界**（ChunkingServiceImpl + mock StrategyConfigResolver/EmbeddingService，mock 仅在系统边界）：tableMode 豁免、标题延迟合并、overlap 死循环防护、语义切片三重回退、时间比例分配。现有 ChunkingServiceImplTest（21 例）+ TableModeIgnoreTest（5 例）覆盖主干。
+3. **三库一致性**（ChunkService，mock Milvus/Embedding/GraphStore/MessagePublisher——均为真缝/系统边界）：删除级联三分区清理、编辑重嵌入删旧插新、索引位移的图谱改名、向量失败降级记账。**现状无测试，为最大缺口**（ChunkServiceImpl 无对应测试类）。
 4. **重切编排**（FileServiceImpl.reChunkFile + reconcileManualChunks）：manual 保留、向量选择性删除、对账重排、状态守卫——现状无测试，缺口。
 5. **HITL 人工确认**：父分片聚合层级的产品语义（H1/H2/H3 截断观感）、纯表格文档判定的字符阈值（100/1000，ChunkingServiceImpl.java:983-987）是否符合真实 Excel 解析样本。

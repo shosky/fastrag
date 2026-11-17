@@ -3,7 +3,7 @@ name: modules group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 # modules — group index
 
@@ -13,6 +13,12 @@ updated: 2026-11-03
 
 - Path: `modules/app-chat.md`
 - Summary: —
+
+### Chunk Management
+
+- Path: `modules/chunk-management.md`
+- Summary: 分片全生命周期唯一权威——五族算法与分发（IF-009）、落库定音锤（IF-010）、手工分片三库连锁（IF-011）、重切编排（ADR-0001 执行面）。
+- Status: draft
 
 ### modules/conversation-trace.md
 

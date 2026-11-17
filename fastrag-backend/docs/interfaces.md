@@ -1,21 +1,21 @@
 ---
 name: Interfaces
-summary: FastRAG 外部 HTTP/SSE API 契约——Widget 资产对话域与解析策略 excel_row 保存校验域。
+summary: FastRAG 外部 HTTP/SSE API 契约——Widget 资产对话域、解析策略 excel_row 保存校验域与分片管理域。
 type: api
 id: DOC-INTERFACES
 status: draft
-updated: 2026-11-04
+updated: 2026-11-17
 satisfies: [SPEC-WIDGET, SPEC-PARSE-STRATEGY]
 decisions: [ADR-0010-WIDGET-TOOL-CHANNEL-SNAPSHOT-PROTOCOL, ADR-0012-EXCEL-ROW-SLICE-AT-PARSE]
 declares: [ERR-WG-SCHEMA-INVALID, ERR-WG-NOT-IN-BINDING, ERR-WG-BOUND-DELETE, ERR-WG-OVERSIZE, ERR-WG-ACTION-OVERSIZE, ERR-WG-BINDING-LIMIT, ERR-PS-EXT-DOMAIN, ERR-PS-HEADER-RANGE, ERR-PS-SLICE-START, ERR-PS-ROWS-PER-SLICE]
-hash: "bcdd11599bb3"
-summaryHash: "bcdd11599bb3"
+hash: "68fb176e65c6"
+summaryHash: "68fb176e65c6"
 ---
 
 # API Contract — FastRAG
 
-**Version:** v1.1.0  **Source:** `docs/spec/widget.md` + `modules/widget.md`（Widget 域）；`docs/spec/parse-strategy.md` §4.8 + `modules/parse-strategy.md`（解析策略 excel_row 增量域，API-013~015）
-**Compatibility:** Widget 域全部为新增面；v1.1.0 追加解析策略保存端点的 excel_row 校验契约（存量 CRUD 面早在 v1.0 前存在，本文仅登记 excel_row 增量拒绝面）；后续只增不改（字段退役走硬删除 + 版本主位递增）
+**Version:** v1.2.0  **Source:** `docs/spec/widget.md` + `modules/widget.md`（Widget 域）；`docs/spec/parse-strategy.md` §4.8 + `modules/parse-strategy.md`（解析策略 excel_row 增量域，API-013~015）；`modules/chunk-management.md`（分片管理域，API-016~022）
+**Compatibility:** Widget 域全部为新增面；v1.1.0 追加解析策略保存端点的 excel_row 校验契约（存量 CRUD 面早在 v1.0 前存在，本文仅登记 excel_row 增量拒绝面）；v1.2.0 登记分片管理 CRUD 七端点（存量面补登记，行为以 modules/chunk-management.md 契约为准）；后续只增不改（字段退役走硬删除 + 版本主位递增）
 **Wire 约定:** 全部 HTTP 端点返回统一包装 `ApiResponse{code:int, data:T, message:string}`——**code=200 成功**，业务错误 = HTTP 200 + 非 200 code（400 校验 / 403 越权 / 404 不存在 / 409 冲突）；`401` 保留给鉴权失效。SSE 端点响应流为 `text/event-stream`，事件词汇见 API-011/012。
 
 ## 共享类型 {#shared-types}
@@ -400,7 +400,9 @@ interface AppWidgetBindingView {
 ```
 
 **Errors:**
-- `ERR-WG-NOT-IN-BINDING` / `ERR-WG-SCHEMA-INVALID` / `ERR-WG-OVERSIZE` — 对话流内工具路径错误（**非 HTTP**）：以 `success:false` + Error 文本回灌智能体自纠，前端无卡片可渲染、对话不中断（REQ-WG-D04）。
+- `ERR-WG-NOT-IN-BINDING` — 对话流内工具路径错误（**非 HTTP**）：以 `success:false` + Error 文本回灌智能体自纠，前端无卡片可渲染、对话不中断（REQ-WG-D04）。
+- `ERR-WG-SCHEMA-INVALID` — 同上非 HTTP 通道：快照 Schema 校验失败，回灌文本由智能体自纠。
+- `ERR-WG-OVERSIZE` — 同上非 HTTP 通道：负载超尺寸上限，回灌文本由智能体自纠。
 **Producer constraints:** 快照五要素在工具执行时刻定格并随 toolCalls 落库；同 widgetKey 的后续快照由前端替换旧卡（过程反馈，REQ-WG-D06）。
 **Invariants:**
 - 含卡片消息与不含卡片消息在 SSE 事件词汇上无差别（REQ-WG-D07）；历史回放经消息 toolCalls 的 result.data 与实时同构
@@ -471,7 +473,10 @@ interface ParseStrategySaveRequest {
 **Response:** `200` `ApiResponse<ParseStrategyDto>`
 
 **Errors:**
-- `ERR-PS-EXT-DOMAIN` / `ERR-PS-HEADER-RANGE` / `ERR-PS-SLICE-START` / `ERR-PS-ROWS-PER-SLICE` (HTTP 200 + code 400) — 同 API-013，按「请求优先、否则沿用」的生效值触发（REQ-A04）。
+- `ERR-PS-EXT-DOMAIN` (HTTP 200 + code 400) — 同 API-013：excel_row 扩展名域校验，按「请求优先、否则沿用」的生效值触发。
+- `ERR-PS-HEADER-RANGE` (HTTP 200 + code 400) — 同 API-013：表头起止行区间校验。
+- `ERR-PS-SLICE-START` (HTTP 200 + code 400) — 同 API-013：切分起始行须大于表头结束行。
+- `ERR-PS-ROWS-PER-SLICE` (HTTP 200 + code 400) — 同 API-013：切分行数下限校验。
 - `404` — trigger: 策略不存在（REQ-A02）；recovery: 返回列表。
 - `400` — 同 API-013 基础校验。
 
@@ -484,16 +489,213 @@ interface ParseStrategySaveRequest {
 **Endpoint:** `POST /api/kb/{kbId}/files/{id}/strategy`
 **Auth:** KB editor  **Content-Type:** `application/json`
 **Path/Query:** `kbId` (string, required) — 知识库标识；`id` (string, required) — 文件标识
-**Purpose:** 文档级覆盖载体：upsert 保存文件级专属策略（REQ-D01）并在同一接口原子完成重切（REQ-E04）；excel_row 校验面与 API-013 同族。
+**Purpose:** 文档级覆盖载体：upsert 保存文件级专属策略并在同一接口原子完成重切（REQ-E04）；excel_row 校验面与 API-013 同族。
 
 **Request:** body `ParseStrategySaveRequest`（同 API-013；name 可空缺省「自定义」、description 超长静默截断至 200，REQ-D02）
 
 **Response:** `200` `ApiResponse<FileDto>`（保存即重切，返回重切后的文件 DTO）
 
 **Errors:**
-- `ERR-PS-EXT-DOMAIN` / `ERR-PS-HEADER-RANGE` / `ERR-PS-SLICE-START` / `ERR-PS-ROWS-PER-SLICE` (HTTP 200 + code 400) — 同 API-013。
+- `ERR-PS-EXT-DOMAIN` (HTTP 200 + code 400) — 同 API-013：excel_row 扩展名域校验（文件级保存同样生效）。
+- `ERR-PS-HEADER-RANGE` (HTTP 200 + code 400) — 同 API-013：表头起止行区间校验。
+- `ERR-PS-SLICE-START` (HTTP 200 + code 400) — 同 API-013：切分起始行校验。
+- `ERR-PS-ROWS-PER-SLICE` (HTTP 200 + code 400) — 同 API-013：切分行数下限校验。
 - `404` — trigger: 文件不存在；recovery: 返回文件列表。
 
 **Producer constraints:** 保存与重切原子完成，无「已保存未重切」中间态（REQ-E04）；同文件重复保存为 upsert（REQ-D01）。
 **Invariants:**
 - 文件级策略不入管理列表、不参与自动匹配、随文件删除级联清理（REQ-D01、REQ-C02）
+
+## API-016 — 分片列表（父子/单层双模式） {#api-016}
+
+**Endpoint:** `GET /api/kb/{kbId}/chunks`
+**Auth:** KB viewer
+**Path/Query:** `kbId` (string, required) — 知识库标识；`fileId` (string, optional) — 按文件过滤；`page` (int, optional, 默认 1)；`pageSize` (int, optional, 默认 20)
+**Purpose:** 分片管理页主读取面——自动探测父子/单层模式并按模式分页，附规模聚合指标。
+
+**Request:** none（查询参数见上）
+
+**Response:** `200` `ApiResponse<ChunkListData>`
+
+```typescript
+interface ChunkListData {
+  mode: "parent" | "single";   // parentCount>0 → parent；否则 single
+  list: ChunkDto[];            // parent 模式：父分片行内嵌 children；孤立子分片按 chunkIndex 混排
+  total: number;
+  page: number;
+  pageSize: number;
+  parentCount: number;         // 父分片总数
+  tokenTotal: number;          // 整库叶分片字符总量（排除父分片防重复统计）
+}
+interface ChunkDto {
+  id: string;                  // {fileId}_chunk_{n} | {fileId}_parent_{n} | {fileId}_manual_{n}
+  kbId: string; fileId: string; fileName: string;
+  chunkIndex: number; content: string;
+  vectorStored: number;        // 0|1（父分片恒 0）
+  chunkType: string;           // text | image | table | code | parent
+  title?: string; headingPath?: string;
+  pageNumber?: number; pageRange?: string;
+  startTime?: number; endTime?: number;   // 仅音视频时间分段
+  imageKeys?: string;          // JSON 数组串
+  parentId?: string;
+  children?: ChunkDto[];       // 仅列表接口父分片行携带
+  llmReviewed?: number;        // 0|1 —— LLM 边界审查标记（structure_aware 接入）
+}
+```
+
+**Errors:**
+- `403` (HTTP) — trigger: KB 角色低于 viewer；recovery: 提升角色。
+- `500` (HTTP 200 + code 500「服务异常」) — trigger: 查询层未预期异常；recovery: 重试，持续失败查服务端日志。
+
+**Producer constraints:** 父子模式判别按 `parentCount>0`（存在父分片行即整库父模式）；父分片行内嵌子分片按 chunkIndex 排序，孤儿子分片（无 parentId）按文档顺序混排。
+**Invariants:**
+- tokenTotal 排除父分片，避免父子重复统计
+- 分页作用于顶层行（parent 模式分页父分片，不按子分片数分页）
+
+## API-017 — 分片计数 {#api-017}
+
+**Endpoint:** `GET /api/kb/{kbId}/chunks/count`
+**Auth:** KB viewer
+**Path/Query:** `kbId` (string, required) — 知识库标识
+**Purpose:** 知识库维度分片总数（非父分片口径），供库级概览展示。
+
+**Request:** none
+
+**Response:** `200` `ApiResponse<number>`（如 `{ "code": 200, "data": 47 }`）
+
+**Errors:**
+- `403` (HTTP) — trigger: KB 角色低于 viewer；recovery: 提升角色。
+
+**Producer constraints:** 计数排除 `chunkType=parent`，与文件维度 chunkCount 口径一致。
+**Invariants:**
+- 与 API-016 的 total（单层模式）同源同口径
+
+## API-018 — 分片详情 {#api-018}
+
+**Endpoint:** `GET /api/kb/{kbId}/chunks/{id}`
+**Auth:** KB viewer
+**Path/Query:** `kbId` (string, required) — 知识库标识；`id` (string, required) — 分片 ID
+**Purpose:** 单分片详情读取（含审查/图谱元数据），归属校验防跨库读取。
+
+**Request:** none
+
+**Response:** `200` `ApiResponse<ChunkDto>`（无 children 字段）
+
+**Errors:**
+- `500` (HTTP 200 + code 500「服务异常」) — trigger: 分片不存在或 id 属于其他知识库（**现状**：服务层抛 RuntimeException 落兜底处理器，语义被吞为通用文案，具体原因只进服务端日志；RuntimeException→BusinessException 收敛为模块深化候选）；recovery: 校对 id。
+- `403` (HTTP) — trigger: KB 角色低于 viewer；recovery: 提升角色。
+
+**Producer constraints:** 归属校验以 `chunk.kbId == 路径 kbId` 为准。
+**Invariants:**
+- 返回的 ChunkDto 不含 children（父子嵌套仅列表接口组装）
+
+## API-019 — 手工创建分片 {#api-019}
+
+**Endpoint:** `POST /api/kb/{kbId}/chunks`
+**Auth:** KB editor  **Content-Type:** `application/json`
+**Path/Query:** `kbId` (string, required) — 知识库标识
+**Purpose:** 在指定位置（或末尾）插入用户手工分片——独立 manual ID 段、即建即向量化、触发增量图谱补齐；重分片/AI 分片应用时保留。
+
+**Request:** body `ChunkCreateRequest`
+
+```typescript
+interface ChunkCreateRequest {
+  fileId: string;              // 必填，归属文件
+  content: string;             // 必填，分片正文
+  insertAfterIndex?: number;   // 可选；提供时插入该索引之后（后续分片索引 +1），缺省追加末尾
+  chunkType?: string;          // 可选，缺省 "text"
+  pageNumber?: number;         // 可选
+  startTime?: number;          // 可选（音视频秒）
+  endTime?: number;            // 可选
+}
+```
+
+```json
+{ "fileId": "2122305483840462849", "content": "手工补充的正文段落", "insertAfterIndex": 3 }
+```
+
+**Response:** `200` `ApiResponse<ChunkDto>`（data.id 形如 `{fileId}_manual_{n}`）
+
+**Errors:**
+- `500` (HTTP 200 + code 500) — trigger: 文件不存在（RuntimeException 兜底，同 API-018 现状）；并发创建撞 `{fileId}_manual_{n}` 主键（manual 序号 max+1 非原子）；recovery: 核对 fileId / 重试。
+- `403` (HTTP) — trigger: KB 角色低于 editor；recovery: 提升角色。
+
+**Producer constraints:** 手工分片 origin=manual，重分片与 AI 分片应用时保留；嵌入模型取 KB 级配置（未配或失败则 `vectorStored=0` 纯文本落库，不阻断创建）。
+**Invariants:**
+- insertAfterIndex 大于当前最大索引时不报错——位移空集、分片落位该索引（可能出现索引空洞）
+- 创建成功后文件 chunkCount 即时对账（只统计子分片）
+
+## API-020 — 更新分片 {#api-020}
+
+**Endpoint:** `PUT /api/kb/{kbId}/chunks/{id}`
+**Auth:** KB editor  **Content-Type:** `application/json`
+**Path/Query:** `kbId` (string, required)；`id` (string, required) — 分片 ID
+**Purpose:** 部分编辑分片字段；内容变更联动重嵌入、父分片内容重拼与图谱增量重建。
+
+**Request:** body `Map<string, any>`（patch 语义，仅以下键生效，其余忽略）
+
+```typescript
+{
+  content?: string;      // 变更时触发：重嵌入（删旧向量插新）、父分片内容按 "\n\n" 重拼、图谱清理+增量重建
+  startTime?: number; endTime?: number;   // 音视频时间（秒）
+  pageNumber?: number;
+  chunkType?: string;
+  imageKeys?: string;    // JSON 数组串
+}
+```
+
+```json
+{ "content": "修正后的分片正文" }
+```
+
+**Response:** `200` `ApiResponse<ChunkDto>`
+
+**Errors:**
+- `500` (HTTP 200 + code 500) — trigger: 分片不存在/跨库（RuntimeException 兜底，同 API-018 现状）；recovery: 核对 id。
+- `403` (HTTP) — trigger: KB 角色低于 editor；recovery: 提升角色。
+
+**Producer constraints:** 部分更新语义——请求未含的键沿用现有值；重嵌入的 Milvus「删旧插新」失败时 warn 记账不回滚（vectorStored 可能失真，见模块契约 IF-011）。
+**Invariants:**
+- 内容未变时不触发向量/父分片/图谱联动
+- 图谱清理与增量重建按文件 `enableGraphBuild=1` 门控
+
+## API-021 — 删除单个分片 {#api-021}
+
+**Endpoint:** `DELETE /api/kb/{kbId}/chunks/{id}`
+**Auth:** KB editor
+**Path/Query:** `kbId` (string, required)；`id` (string, required) — 分片 ID
+**Purpose:** 删除分片并完成三库连锁清理与索引前移，保持索引连续性。
+
+**Request:** none
+
+**Response:** `200` `ApiResponse<void>`
+
+**Errors:**
+- `500` (HTTP 200 + code 500) — trigger: 分片不存在/跨库（RuntimeException 兜底，同 API-018 现状）；recovery: 核对 id。
+- `403` (HTTP) — trigger: KB 角色低于 editor；recovery: 提升角色。
+
+**Producer constraints:** 删父分片级联其全部子分片；Milvus 与图谱清理失败仅 warn 记账不阻断主数据删除。
+**Invariants:**
+- 单删后该文件其余分片 chunkIndex 前移保持连续：auto 分片删行重插（ID/向量/图谱 chunkId 同步改），manual 分片仅位移（ID 段稳定）
+
+## API-022 — 批量删除分片 {#api-022}
+
+**Endpoint:** `POST /api/kb/{kbId}/chunks/batch-delete`
+**Auth:** KB editor  **Content-Type:** `application/json`
+**Path/Query:** `kbId` (string, required) — 知识库标识
+**Purpose:** 批量删除分片（管理页多选场景），跨文件对账 chunkCount。
+
+**Request:** body `string[]`（分片 ID 数组）
+
+```json
+["2122305483840462849_chunk_3", "2122305483840462849_chunk_7"]
+```
+
+**Response:** `200` `ApiResponse<void>`
+
+**Errors:**
+- `403` (HTTP) — trigger: KB 角色低于 editor；recovery: 提升角色。
+
+**Producer constraints:** **现状语义**——不存在/跨库 id 静默过滤不报错（与 API-021 单删的抛错语义不对称）；删父分片级联子分片；Milvus/图谱失败 warn 记账不阻断。
+**Invariants:**
+- **批量删除不做索引重排**（允许 chunkIndex 空洞）；涉及文件的 chunkCount 逐文件对账

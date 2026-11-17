@@ -9,8 +9,8 @@ updated: 2026-11-04
 satisfies: [SPEC-PARSE-STRATEGY]
 decisions: [ADR-0012-EXCEL-ROW-SLICE-AT-PARSE]
 declares: []  # excel_row 保存校验错误码由 docs/interfaces.md 声明（contract 阶段），本档仅引用
-hash: "2505f24efca3"
-summaryHash: "2505f24efca3"
+hash: "dbb9b4be4166"
+summaryHash: "dbb9b4be4166"
 ---
 
 # 解析策略（parse-strategy）— 模块设计
@@ -288,8 +288,6 @@ StrategyConfigResolver: chunk.excelRow 嵌套组逐项容错合并；strategy=ex
   description: parseExcelContent 增加 excel_row 重载与显式表头分支（emitExplicitHeaderSlices）；parse() 前置 REQ-H09 守卫；内嵌表格走自动分支不受影响
 - path: fastrag-modules/fastrag-knowledge/src/main/java/com/fastrag/module/knowledge/parser/ExcelRowSlicer.java
   description: 按行切片纯函数助手——切分行数软目标 + 4800 字符硬上限（含表头）组装切片，单行超长硬切续段（REQ-H06 核心）
-- path: fastrag-modules/fastrag-knowledge/src/main/java/com/fastrag/module/knowledge/chunking/ChunkingServiceImpl.java
-  description: structuralChunk excelRowMode——忽略 tableMode、切片强制独占分片、零 overlap 回填、豁免 handleAtomicOverflow（adr/0012）
 - path: fastrag-modules/fastrag-knowledge/src/main/java/com/fastrag/module/knowledge/service/impl/ParseStrategyServiceImpl.java
   description: 策略 CRUD 与保存期校验宿主（StrategyCrud (S)）；validateExcelRowParams 三入口校验落点（ERR-PS-* 对应面）
 - path: fastrag-modules/fastrag-knowledge/src/main/java/com/fastrag/module/knowledge/service/impl/FileServiceImpl.java

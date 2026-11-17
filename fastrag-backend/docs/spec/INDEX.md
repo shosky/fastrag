@@ -3,7 +3,7 @@ name: spec group index
 summary: 待写：<本目录的入口说明>
 type: index
 status: active
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 # spec — group index
 

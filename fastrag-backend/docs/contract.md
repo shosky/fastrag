@@ -4,7 +4,7 @@ summary: 跨模块契约聚合视图——手写 Modules 分解图（design 拥�
 type: contract
 id: DOC-CONTRACT
 status: active
-updated: 2026-11-03
+updated: 2026-11-17
 ---
 
 # Contract Overview
@@ -14,7 +14,7 @@ updated: 2026-11-03
 
 ## Modules
 
-系统按「能力域」拆分模块：每个模块隐藏一个变化源（存储协议、执行机制、治理规则），调用方只依赖其定义单元。当前新链对话审计、应用对话编排、首页门户前端、平台导航壳前端、解析策略与 Widget（后端+前端）七个模块落 `modules/`，其余特性待后续链推进时迁入。
+系统按「能力域」拆分模块：每个模块隐藏一个变化源（存储协议、执行机制、治理规则），调用方只依赖其定义单元。当前新链对话审计、应用对话编排、首页门户前端、平台导航壳前端、解析策略、Widget（后端+前端）与分片管理八个模块落 `modules/`，其余特性待后续链推进时迁入。
 
 **conversation-trace** — 对话执行的内容级步骤留痕与回看：引擎观察点采集（IF-001，隐藏增量协议/截断/批量写/失败容忍）与查询侧重放组装（IF-002，隐藏增量重放算法），附步骤表实体与内联留存清理 → modules/conversation-trace.md
 
@@ -29,6 +29,8 @@ updated: 2026-11-03
 **widget-frontend** — Widget 前端组件族：WidgetCardRenderer 唯一渲染入口（递归渲染/降级占位/交互窗口/回传）三处消费（会话流/调试流/工作台预览），toolDisplay 增 `widget` 型路由 + 组件注册表与后端白名单测试钉一致，工作台三页与绑定面板（ADR-0010-WIDGET-TOOL-CHANNEL-SNAPSHOT-PROTOCOL；前端 profile，契约不投影 IF-*） → modules/widget-frontend.md
 
 **parse-strategy** — 策略配置面唯一权威：CRUD 与绑定-重切一致性守卫、三层配置合并（IF-006~008），Excel 按行切片在解析期装配为多 TABLE 节点、复用原子分片路径并豁免溢出二次拆分（ADR-0012-EXCEL-ROW-SLICE-AT-PARSE） → modules/parse-strategy.md
+
+**chunk-management** — 分片全生命周期唯一权威：五族算法与分发（IF-009，隐藏标题栈/围栏状态机/动态阈值/降级回退）、落库向量化定音锤（IF-010，隐藏分批重试/父子装配触发/Milvus 批写/错位防护）、手工分片三库连锁（IF-011，隐藏级联/索引位移/向量重建/图谱回收），重切编排为 ADR-0001 执行面（编排体收拢为深化候选） → modules/chunk-management.md
 
 ## IF-001 — ConversationTraceRecorder {#if-001}
 
@@ -187,4 +189,61 @@ resolveRequestedStrategy(kbId, fileId, extension, requestedId) -> strategyId|nul
 reChunkFile 换绑段（三态校验与绑定写回）                                           // :405-419
 rebuildProcessRequest(file)（重切真源覆盖快照）                                    // :226-247
 update patch 守卫（拒绝元数据接口改绑）                                            // :642-649
+```
+
+## IF-009 — ChunkingService {#if-chunkingservice}
+
+**Definition:** [`modules/chunk-management.md#if-chunkingservice`](modules/chunk-management.md#if-chunkingservice)
+
+**Purpose:** 五族分片算法唯一入口——调用方只见「解析产物进、`ChunkData` 列表出」，标题栈、围栏状态机、动态阈值、降级回退全部隐藏；分发到哪个算法由 `chunk.strategy` 经 IngestionConsumer 分发（缝 2）。
+
+**Signature:**
+```java
+// com.fastrag.module.knowledge.chunking
+public interface ChunkingService {
+    List<ChunkData> chunk(String text, String strategyId);                    // rule_fixed 规则切分（纯文本兜底路径）
+    List<ChunkData> chunk(String text, ParseStrategyConfig config);           // 同上，接受未落库临时配置（预览场景）
+    List<ChunkData> recursiveChunk(String text, String strategyId);           // rule_recursive 分隔符逐级降级
+    List<ChunkData> semanticChunk(String text, String strategyId, String kbEmbeddingModel); // semantic；KB 级 embedding 兜底
+    List<ChunkData> chunkBySegments(List<ParseResult.ChunkTimeSegment> segments, String strategyId); // 音视频 ASR 时间分段
+    List<ChunkData> structuralChunk(List<DocNode> nodes, String strategyId);  // structure_aware / parent_child / excel_row 共用入口
+}
+```
+
+## IF-010 — StorageService {#if-storageservice}
+
+**Definition:** [`modules/chunk-management.md#if-storageservice`](modules/chunk-management.md#if-storageservice)
+
+**Purpose:** 摄取管线落库定音锤——一方法吞掉「分片→三处存储」的全部编排：批量 embedding（重试）、父子装配触发、MySQL 批插、Milvus 批写、chunkCount 记账。
+
+**Signature:**
+```java
+// com.fastrag.module.knowledge.storage
+public interface StorageService {
+    void storeChunks(String kbId, String fileId, List<ChunkData> chunks);                 // 单层模式（childChunkLength=-1）
+    void storeChunks(String kbId, String fileId, List<ChunkData> chunks, int childChunkLength); // >0 启用父子装配；缺省 maxParentLength=childChunkLength×2
+    void storeChunks(String kbId, String fileId, List<ChunkData> chunks,
+                     int childChunkLength, int maxParentLength, String parentAggLevel);   // 父子装配全参；parentAggLevel=null → 装配器默认 auto
+    void storeChunkBatch(String kbId, String fileId, List<ChunkData> chunks, int batchStart); // 流式分批变体
+}
+```
+
+## IF-011 — ChunkService {#if-chunkservice}
+
+**Definition:** [`modules/chunk-management.md#if-chunkservice`](modules/chunk-management.md#if-chunkservice)
+
+**Purpose:** 用户手工操作分片（查/建/改/删/批删）的唯一入口——「删一个分片牵动三处存储与文件计数」的连锁完全内聚；ChunkController 7 端点是它的薄包装（HTTP 形态归 docs/interfaces.md）。
+
+**Signature:**
+```java
+// com.fastrag.module.knowledge.service
+public interface ChunkService {
+    PageResult list(String kbId, String fileId, int page, int pageSize);  // 父子/单层双模式分页（parentCount>0 判别 + tokenTotal 聚合）
+    long getCount(String kbId);                                            // 非父分片总数
+    ChunkDto getById(String kbId, String id);                              // 归属校验后详情
+    ChunkDto create(String kbId, ChunkCreateRequest req);                  // 手工创建（manual ID 段 + 向量 + 图谱联动）
+    ChunkDto update(String kbId, String id, Map<String, Object> fields);   // 部分编辑（内容变更→重嵌入+父分片刷新+图谱重建）
+    void delete(String kbId, String id);
+    void batchDelete(String kbId, List<String> ids);
+}
 ```
