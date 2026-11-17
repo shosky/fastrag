@@ -358,21 +358,28 @@ class ChunkingServiceImplTest {
         when(strategyMapper.selectById("s1")).thenReturn(
                 strategy("{\"chunk\":{\"strategy\":\"semantic\",\"semanticThreshold\":50,\"embeddingModel\":\"embed-1\"}}"));
 
-        // 句子向量：s0/s1 相似（同主题），s2 与它们迥异（主题突变）
-        // [1,0] [0.9,0.1]（与 s0 相似）[0,1]（突变）
-        // 主代码走 4 参 embed(model, sentences, apiUrl, apiKey)，stub 需与之匹配
-        when(embeddingService.embed(eq("embed-1"), anyList(), any(), any())).thenReturn(
-                List.of(
-                        List.of(1f, 0f),
-                        List.of(0.9f, 0.1f),
-                        List.of(0f, 1f)));
+        // 向量按「滑动窗口位置」对齐：主代码对每个窗口（前句+当前句+后句）取向量，
+        // mock 返回列表的第 i 项即窗口 i 的向量——必须覆盖全部单元窗口，数量失配会触发计数失配回退规则分片。
+        // 主题布局：s0 六句（单位 0~5，向量 [1,0]）+ s1 七句（单位 6~12，向量 [0.9,0.1]，与 s0 相似 0.99）
+        //          + s2 六句（单位 13~18，向量 [0,1]，与前组突变 0.11）；
+        // 每句 ≥25 字符且每片 ≥150 字符：低于 MIN_CHUNK_SIZE 的断片会被后置碎片合并并回邻片。
+        String s0 = "本季度华东区域销售业绩稳步增长，核心产品线贡献了主要增量。".repeat(6);
+        String s1 = "渠道库存周转保持健康水平，回款效率较上季度明显改善。".repeat(7);
+        String s2 = "海外市场拓展计划已经启动，组织架构与考核体系将同步重构。".repeat(6);
+        List<List<Float>> vectors = new java.util.ArrayList<>();
+        for (int i = 0; i < 19; i++) {
+            if (i < 6) vectors.add(List.of(1f, 0f));
+            else if (i < 13) vectors.add(List.of(0.9f, 0.1f));
+            else vectors.add(List.of(0f, 1f));
+        }
+        when(embeddingService.embed(eq("embed-1"), anyList(), any(), any())).thenReturn(vectors);
 
-        List<ChunkData> chunks = chunkingService.semanticChunk("这是第一句。这是第二句。这是第三句。", "s1", null);
+        List<ChunkData> chunks = chunkingService.semanticChunk(s0 + s1 + s2, "s1", null);
 
-        assertEquals(2, chunks.size(), "s1↔s2 相似（0.98>0.5）同块；s2↔s3 突变（0.1<0.5）断开");
-        assertTrue(chunks.get(0).getContent().contains("这是第一句。"));
-        assertTrue(chunks.get(0).getContent().contains("这是第二句。"));
-        assertTrue(chunks.get(1).getContent().contains("这是第三句。"));
+        assertEquals(2, chunks.size(), "s0↔s1 相似（0.99>0.5）同块；s1↔s2 突变（0.11<0.5）在单位 13 处断开");
+        assertTrue(chunks.get(0).getContent().contains("销售业绩稳步增长"));
+        assertTrue(chunks.get(0).getContent().contains("渠道库存周转"));
+        assertTrue(chunks.get(1).getContent().contains("海外市场拓展"));
     }
 
     @Test
@@ -406,11 +413,18 @@ class ChunkingServiceImplTest {
         mockChunkLength(1000);
         when(strategyMapper.selectById("s1")).thenReturn(
                 strategy("{\"chunk\":{\"strategy\":\"semantic\",\"semanticThreshold\":50}}"));
-        // 策略级未配置 → 使用 KB 级模型
-        when(embeddingService.embed(eq("kb-embed"), anyList(), any(), any())).thenReturn(
-                List.of(List.of(1f, 0f), List.of(0f, 1f)));
+        // 策略级未配置 → 使用 KB 级模型（kb-embed）
+        // 向量按窗口位置对齐（12 个窗口 = s0 六句 + s1 六句）：单位 5→6 之间距离 1.0 ≥ 0.5 断开；
+        // 每片 ≥150 字符，避免被后置碎片合并（MIN_CHUNK_SIZE）折回单片
+        String s0 = "本季度华东区域销售业绩稳步增长，核心产品线贡献了主要增量。".repeat(6);
+        String s1 = "海外市场拓展计划已经启动，组织架构与考核体系将同步重构。".repeat(6);
+        List<List<Float>> vectors = new java.util.ArrayList<>();
+        for (int i = 0; i < 12; i++) {
+            vectors.add(i < 6 ? List.of(1f, 0f) : List.of(0f, 1f));
+        }
+        when(embeddingService.embed(eq("kb-embed"), anyList(), any(), any())).thenReturn(vectors);
 
-        List<ChunkData> chunks = chunkingService.semanticChunk("这是第一句。这是第二句。", "s1", "kb-embed");
+        List<ChunkData> chunks = chunkingService.semanticChunk(s0 + s1, "s1", "kb-embed");
 
         assertEquals(2, chunks.size(), "KB 级模型兜底生效，低相似度断开");
     }

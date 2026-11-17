@@ -30,9 +30,10 @@ class IngestionQaHookTest {
 
     @BeforeEach
     void setUp() {
+        // 16 参构造（MarkdownService 为后增依赖，本测试不触达，传 null）
         consumer = new IngestionConsumer(
                 null, null, null, null, null, null, null, null,
-                null, null, null, null, null, null, qaGenerationService);
+                null, null, null, null, null, null, null, qaGenerationService);
     }
 
     private KbFile qaFile(String configJson) {
