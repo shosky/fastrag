@@ -110,6 +110,12 @@ ai:
         url: http://localhost:8866
         key: ${PADDLE_OCR_KEY:}
         model: PaddleOCR
+      # 上传向导可选 engine=deepseek：与默认引擎同源（siliconflow + DeepSeek-OCR），
+      # 显式声明以消除 resolveEngineProp 的「缺配置回退」告警
+      deepseek:
+        url: https://api.siliconflow.cn
+        key: ${ASR_API_KEY:}
+        model: deepseek-ai/DeepSeek-OCR
   ffmpeg:
     path: D:\Servers\ffmpeg-master-latest-win64-gpl\bin\ffmpeg.exe
 

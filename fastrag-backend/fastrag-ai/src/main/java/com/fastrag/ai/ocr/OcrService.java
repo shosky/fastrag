@@ -49,11 +49,16 @@ import java.time.Duration;
 import java.util.Base64;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 @Slf4j
 @Service
 @RequiredArgsConstructor
 public class OcrService {
+
+    /** 已告警过的「引擎缺配置」组合（engine.key）——同一组合只 WARN 一次，避免逐图刷屏 */
+    private static final Set<String> WARNED_MISSING_CONFIG = ConcurrentHashMap.newKeySet();
 
     private final ObjectMapper objectMapper;
     private final Environment environment;
@@ -161,7 +166,11 @@ public class OcrService {
         if (engine == null || engine.isBlank()) return defaultVal;
         String v = environment.getProperty("ai.ocr.engines." + engine + "." + key, String.class);
         if (v != null && !v.isBlank()) return v;
-        log.warn("OCR engine '{}' has no ai.ocr.engines.{}.{} config, falling back to default", engine, engine, key);
+        if (WARNED_MISSING_CONFIG.add(engine + "." + key)) {
+            log.warn("OCR engine '{}' has no ai.ocr.engines.{}.{} config, falling back to default", engine, engine, key);
+        } else {
+            log.debug("OCR engine '{}' has no ai.ocr.engines.{}.{} config, falling back to default", engine, engine, key);
+        }
         return defaultVal;
     }
 
