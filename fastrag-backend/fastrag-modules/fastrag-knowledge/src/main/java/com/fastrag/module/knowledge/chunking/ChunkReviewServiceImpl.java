@@ -55,7 +55,13 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
     /** 送审内容截断长度（省 token；beforeLine 引用超出截断范围会导致该批回退） */
     private static final int CONTENT_TRUNCATE = 800;
     /** 审查 prompt 版本（调整 prompt 时递增，明细表按版本追溯） */
-    private static final String PROMPT_VERSION = "v1";
+    private static final String PROMPT_VERSION = "v2";
+    /** 自纠重试时回灌给模型的违规修正提示（%1=违规原因，%2/%3=本批编号区间） */
+    private static final String CORRECTION_SUFFIX = """
+
+            注意：你上一次的输出存在如下违规，必须修正：
+            %1$s
+            请重新输出覆盖第 %2$d~%3$d 号分片的完整 JSON 调整方案，每个编号恰好出现一次，严格遵守 table/code 片只能 keep 的规则。""";
 
     /**
      * 全局总开关（application.yml: fastrag.chunk.llm-review.enabled，默认 false）。
@@ -130,28 +136,46 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
         int totalSplit = 0;
         int totalKeep = 0;
 
-        for (int b = 0; b < batches; b++) {
+        int b = 0;
+        while (b < batches) {
             int from = b * BATCH_SIZE;
             int to = Math.min(from + BATCH_SIZE, n);
             String prompt = buildPrompt(from, to, chunks);
 
-            String response;
-            try {
-                response = llmService.chatWithTimeout(model, prompt, rec.getApiUrl(), rec.getApiKeyRef(),
-                        false, TIMEOUT_SECONDS, 2048);
-            } catch (Exception e) {
-                log.warn("[ChunkReview] LLM call failed (batch {}-{}), stop and keep remaining original: {}",
-                        from, to - 1, e.getMessage());
-                break;
+            ParseOutcome outcome = null;
+            String response = null;
+            // 每批最多两次调用：首次 + 违规自纠重试（把失败原因回灌给模型；重试消耗同一调用预算，MAX_CALLS 封顶）
+            for (int attempt = 1; attempt <= 2; attempt++) {
+                if (attempt == 2 && calls >= MAX_CALLS) {
+                    log.warn("[ChunkReview] batch {}-{} invalid ({}), call budget exhausted, keep original; response={}",
+                            from, to - 1, outcome.error(), truncate(response, 600));
+                    break;
+                }
+                String promptToUse = attempt == 1
+                        ? prompt
+                        : prompt + CORRECTION_SUFFIX.formatted(outcome.error(), from, to - 1);
+                try {
+                    response = llmService.chatWithTimeout(model, promptToUse, rec.getApiUrl(), rec.getApiKeyRef(),
+                            false, TIMEOUT_SECONDS, 2048);
+                } catch (Exception e) {
+                    log.warn("[ChunkReview] LLM call failed (batch {}-{}, attempt {}), stop and keep remaining original: {}",
+                            from, to - 1, attempt, e.getMessage());
+                    response = null;
+                    break;
+                }
+                calls++;
+                outcome = parseAdjustments(response, from, to, chunks);
+                if (outcome.error() == null) break;
+                if (attempt == 1) {
+                    log.warn("[ChunkReview] batch {}-{} invalid ({}), retry once with correction hint",
+                            from, to - 1, outcome.error());
+                } else {
+                    log.warn("[ChunkReview] batch {}-{} invalid after correction retry ({}), keep original; response={}",
+                            from, to - 1, outcome.error(), truncate(response, 600));
+                }
             }
-            calls++;
+            if (outcome == null || outcome.error() != null) break;   // 本批失败：剩余批次保守终止
 
-            ParseOutcome outcome = parseAdjustments(response, from, to, chunks);
-            if (outcome.error() != null) {
-                log.warn("[ChunkReview] batch {}-{} invalid adjustments ({}), keep original; response={}",
-                        from, to - 1, outcome.error(), truncate(response, 600));
-                break;
-            }
             List<Adjustment> ads = outcome.adjustments();
 
             // 深拷贝快照，守恒校验失败整批回退
@@ -184,6 +208,7 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
                         : "chunk " + ad.splitChunk() + " @\"" + truncate(ad.beforeLine(), 30) + "\"";
                 log.info("[ChunkReview]   -> {} {}: {}", ad.action(), target, ad.reason());
             }
+            b++;
         }
 
         // 重建分片：连续编号 + 审查字段回填
@@ -268,12 +293,20 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
 
     private String buildPrompt(int from, int to, List<ChunkData> chunks) {
         StringBuilder list = new StringBuilder();
+        List<Integer> protectedIndexes = new ArrayList<>();
         for (int i = from; i < to; i++) {
             ChunkData c = chunks.get(i);
             String type = c.getChunkType() == null ? "text" : c.getChunkType();
-            list.append(i).append(". [").append(type).append("] ")
-                    .append(truncate(c.getContent(), CONTENT_TRUNCATE).replace('\n', ' ')).append('\n');
+            list.append(i).append(". [").append(type).append("]");
+            if ("table".equals(type) || "code".equals(type)) {
+                list.append("（仅可 keep，禁止合并/拆分）");
+                protectedIndexes.add(i);
+            }
+            list.append(' ').append(truncate(c.getContent(), CONTENT_TRUNCATE).replace('\n', ' ')).append('\n');
         }
+        String protectedNote = protectedIndexes.isEmpty()
+                ? "本批无 table/code 分片。"
+                : "本批中编号 " + protectedIndexes + " 为 table/code 分片，只能作为 keep 出现，出现在 merge/split 中即违规。";
         return """
                 你是知识库分片质量审核员。以下是同一篇文档按顺序切出的第 %d~%d 号分片（内容摘要）。
                 请审查分片边界是否合理，只允许调整边界，禁止改动、增删任何文字。
@@ -286,11 +319,11 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
                 规则：
                 1. merge 的分片编号必须连续（如 3,4,5），且合并后总长不得超过 %d 字符；
                 2. split 的 beforeLine 必须逐字引用该分片中某一行开头的一段原文，新片从该行开始；
-                3. type 为 table/code 的分片只能 keep，不得合并或拆分；
+                3. type 为 table/code 的分片只能 keep，不得合并或拆分；%s
                 4. 每个编号必须恰好出现一次（merge/split/keep 三选一），编号不重复、不遗漏；
                 5. 常见不合理：同一小节被切成多个碎片、一片混入明显不相关主题、切点切断句子论述、标题与正文分离。
                 分片列表：
-                %s""".formatted(from, to - 1, MAX_MERGE_LENGTH, list);
+                %s""".formatted(from, to - 1, MAX_MERGE_LENGTH, protectedNote, list);
     }
 
     // ==================== 调整方案解析与校验 ====================
