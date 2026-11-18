@@ -80,7 +80,7 @@
 
 > 2026-11-16 增补：按策略逐个刻画「怎么切」的可读参考。分发代码 `IngestionConsumer.java:203-243`（六分支按序命中），算法实现 `chunking/ChunkingServiceImpl.java`，参数面 `ParseStrategyConfig.ChunkConfig:39-77`（advanced JSON `chunk` 组，经 StrategyConfigResolver 四层合并，见缝 1）。架构视角色（缝与深化）见 §3/§4，excel_row 全链设计见 [modules/parse-strategy.md](../modules/parse-strategy.md) 与 [adr/0012](../adr/0012-excel-row-slice-at-parse.md)。
 
-**分发规则（按序命中，一文件一次）：**
+**分发规则（按序命中，一文件一次；各策略伪代码级实现细节见 [../modules/chunk-management.md#logic](../modules/chunk-management.md#logic)）：**
 
 | # | 条件 | 分发 | 说明 |
 |---|---|---|---|
@@ -102,6 +102,157 @@
 | semantic | 相邻句向量相似度断点 | `semanticThreshold`（0~100 → 0.0~1.0）、`embeddingModel`（空=系统默认） | 预处理（表格整块原子/标题绑定后句）→ 滑窗向量化（Buffer=1 平滑短句）→ 相对突降动态阈值（高分位，小样本回退绝对阈值）→ 软硬双上限 → 碎片并入语义更近邻片；embedding 不可用时三重回退规则分片 |
 | excel_row | Excel 按行切片（structuralChunk 的 excelRowMode 分支） | `excelRow{headerStartRow, headerEndRow, sliceStartRow, rowsPerSlice}` | 表头区间捕获 + 行数软目标（缺省 100，4800 字符硬限兜底）；强制 overlap=0、禁 tableMode=ignore、切片独占（REQ-H01~H13） |
 | —（时间分段） | chunkBySegments | —（strategy 不适用） | 音视频 ASR segment 按文本长度比例线性分配 start/end；超长 segment 按句号等标点二次拆分 |
+
+#### 各策略实现细节（伪代码，与 modules/chunk-management.md 契约节配套）
+
+> 2026-11-17 增补：按策略收录伪代码级实现流（取证自 ChunkingServiceImpl/ParentChunkAssembler 现行源码）。
+
+#### semantic —— semanticChunk 主链（e5f8b6a 四步优化后语义）
+
+```text
+semanticChunk(text, strategyId, kbEmbeddingModel):
+  threshold = clamp(cfg.semanticThreshold, 0, 100) / 100
+  model = cfg.embeddingModel 非空 ? 之 : kbEmbeddingModel
+  IF text 空白 THEN RETURN []
+  units = buildUnits(text, chunkLength)        # 噪声清洗/表格原子块/标题绑定后句
+  IF units.len == 0 THEN RETURN []
+  IF units.len == 1 THEN RETURN [整单元单分片]
+  IF model 空 THEN RETURN chunk(text, strategyId)          # 回退规则分片
+  modelRecord = resolveEmbeddingModelRecord(model)          # purpose=EMBEDDING + online
+  IF modelRecord == null AND kbEmbeddingModel 有效 AND != model:
+      model = kbEmbeddingModel; modelRecord = resolve(model)   # 误配对话模型自愈
+  windows = [units[i-1]+
++units[i]+
++units[i+1]]          # Buffer=1 滑窗平滑
+  vectors = embed(model, windows, apiUrl, apiKey) 分批 32
+  IF 异常 OR vectors.len != units.len THEN RETURN chunk(text, strategyId)  # 计数失配防错位
+  dist[i] = 1 - cos(vectors[i], vectors[i+1])
+  IF dist.len >= 30: threshold = percentile(dist, 95)       # 相对突降动态阈值
+  ELSE:             threshold = 1 - cfgThreshold             # 小样本回退绝对阈值
+  主循环 i=0..n-1:
+    IF d=dist[i-1] >= threshold THEN break  # 语义断点
+    ELIF armed(累积>0.8×chunkLength) AND d >= percentile(dist,85) THEN break  # 软上限提前落盘
+    IF curLen + u.len > chunkLength THEN break  # 硬上限（携带 overlap 尾部单元）
+    累积 u
+  后置碎片合并: content < 150 字符的片并入语义更近邻片（纯表格片豁免）
+  RETURN 重建 index/id 的分片列表
+```
+
+#### rule_fixed —— ruleBasedChunk（分隔符 + 长度 + overlap，纯文本兜底路径）
+
+```text
+ruleBasedChunk(text, chunkLength, delimiterPattern, joinDelimiter, overlap, titlePrefix, headingPath):
+  IF text 空 THEN RETURN []
+  text 归一化 
+ → 
+
+  pageBlocks = text.split([PAGE_BREAK:n])；同时收集各分页符页码      # PDF 页感知
+  持久状态: headingStack / currentTitle / pendingHeadings（挂起纯标题）
+            / inFence（代码围栏状态，跨 part、跨页块传递）
+  FOR 每个 pageBlock（块 0 页码沿用 1，其后取对应分页符页码）:
+    FOR part IN block.split(delimiterPattern):
+      FOR seg IN splitPartByHeadings(part, inFence):   # 逐行扫描 Markdown 标题；围栏内不识别标题行
+        IF seg 是标题行:
+          IF current 有正文且非纯 overlap 残尾 THEN flush(current)      # 旧章节落盘
+          headingStack = update(headingStack, seg.level, seg.title)
+          IF 标题行后无正文 THEN 挂起该标题（pendingHeadings），等待正文合并——标题永不孤片
+        unit = 挂起标题们 + 本段标题行 + 正文                             # 标题与正文永不分离
+        正则提取 [IMAGE:key] 占位符 → imageKeys（正文去除占位符后重 trim）
+        IF unit 正文 > chunkLength:
+          flush(current)；forceSplit(unit, chunkLength, overlap) 拆为子片逐片落盘
+          （首子片自带标题行，后续子片注入完整标题路径前缀）
+        ELIF current.len + unit > chunkLength:
+          flush(current)；current = 内容尾部 overlap 字符（pureOverlapTail 标记防垃圾小片）
+        current += joinDelimiter + unit；imageKeys 归并；记录最深已含标题下标（前缀注入依据）
+    页内 flush；文档以纯标题结尾时，挂起标题独立成片（标题行不丢失）
+```
+
+#### rule_recursive —— recursiveChunk（分隔符优先级逐级降级）
+
+```text
+recursiveChunk(text, strategyId):
+  chunkLength = max(1, cfg.chunkLength)；overlap = max(0, cfg.overlap)   # 入参钳制
+  delimiters = cfg.delimiters；空则回退句子边界分隔符集
+  IF text 空白 THEN RETURN []
+  pieces = doRecursiveSplit(text, delimiters, chunkLength):
+    IF text ≤ chunkLength 或分隔符用尽 THEN RETURN hardSplit(text)      # 句界优先，无句界按字符硬切
+    parts = splitKeepDelimiter(text, delimiters[0])                     # indexOf 扫描，保留分隔符
+    IF 未切中（parts ≤ 1）THEN 用下一级分隔符递归
+    逐 part: ≤ chunkLength 直接收；超长则用下一级分隔符继续递归
+  贪心合并: 累积 pieces 至接近 chunkLength 落盘，落盘后尾部 overlap 字符延续到下一片
+```
+
+#### structure_aware —— structuralChunk（DocNode 树 + headingPath 栈，三策略共用入口）
+
+```text
+structuralChunk(nodes, strategyId):
+  ignoreTables = parse.tableMode == "ignore"
+  IF strategy == excel_row: overlap=0；tableMode=ignore 强制失效（REQ-H08）
+  IF ignoreTables 且纯表格文档（nodes 仅 HEADING+TABLE）: tableMode 失效（C3 修复，防 Excel 类数据静默丢失）
+  FOR node IN nodes:
+    HEADING → flush 有正文的 current（纯标题 current 不 flush）；
+              连续标题先收编上一个 pending（防覆盖丢失）；
+              headingStack = update(node)；pending = 序列化标题（延迟合并，防孤标题片）
+    ignoreTables 且 TABLE → 跳过
+    其余节点: pending 标题 appendHeading 进 current（标题不算正文，防后续误 flush 孤片）
+    原子单元（TABLE/CODE_BLOCK/DISPLAY_MATH/INLINE_MATH/IMAGE）:
+       current 有正文 且 (excelRowMode 或 超 chunkLength) → flushWithOverlap；整体 append
+    文本段（PARAGRAPH）: splitText 按句拆 → 逐句累积，超 chunkLength → flushWithOverlap
+  尾部: 合并 pending 标题后 flush（防「内容=旧标题、元数据=新标题」错位片）
+  非 excel_row → handleAtomicOverflow(result, chunkLength)
+```
+
+共用二次拆 handleAtomicOverflow（超 chunkLength 的片按 chunkType 分派）：
+
+```text
+handleAtomicOverflow(chunks, maxLen):
+  overflowIdx = maxIndex + 1
+  FOR chunk 超 maxLen:
+    table → splitTableByRow: 定位表头行与分隔行，其前行视为标题前缀；
+            数据行累积超限落盘，新片重带货头；标题前缀仅附加到首子片
+    code  → splitCodeByFunction: 提取前缀/围栏语言/代码体，按函数定义边界聚合，重组围栏与前缀
+    公式、图片 → 保持完整不拆
+  拆出子片以 overflowIdx 连续续编号（id 同步重写）
+```
+
+#### parent_child —— structuralChunk 产子片 + 存储层 ParentChunkAssembler 装配
+
+```text
+storeChunks(childChunkLength>0) 触发 assemble(chunks, fileId, maxParentLength, aggLevel):
+  IF chunks < 2 THEN 不产父片（单分片文档无聚合意义）
+  aggLevel: "H1"/"H2"/"H3" → headingPath 截断至对应层级；"auto"/null → 完整路径（0=不截断，非法值回退 0）
+  分组键 = headingPath（null/空视为同一组，如文档前言）
+  按文档顺序扫描，连续同键归同组；换键即 buildParents
+  buildParents: 组内容 = 子分片内容按 "
+
+" 拼接（子片自带标题前缀，父片自包含）
+                组总长 > maxParentLength → 按子分片边界二次切分为多父片（共享标题上下文）
+                每章节组至少一个父片
+  父片: id = {fileId}_parent_{n}；chunkIndex = 组内首个子分片位置（保列表文档序）
+  子分片原地回填 parentId；父片免向量、不进 Milvus
+聚合在存储层的原因：摄入管线分片后还会按页归并图片 OCR 分片，存储层聚合保证图片分片同样进入所属章节父片
+```
+
+#### chunk_by_segments —— chunkBySegments（音视频 ASR 时间分段）
+
+```text
+chunkBySegments(segments, strategyId):
+  仅 chunkLength 参与语义（时间分段不适用 overlap/策略类型等参数）
+  FOR seg 非空文本:
+    IF seg.text ≤ chunkLength THEN 单片继承 seg.startTime/endTime
+    ELSE 按 。！？换行拆句、累积超限落盘:
+         chunkStart/End = seg.start + duration × 该片字符占比   # 时间按文本长度比例线性内插
+```
+
+#### excel_row —— structuralChunk 的 excelRowMode 分支（解析期已装配「表头 + N 行」TABLE 节点，一节点 ≡ 一分片）
+
+```text
+structuralChunk excelRowMode 增量（全链见 modules/parse-strategy.md 与 adr/0012）:
+  effectiveOverlap = 0                       # 切片自包含，不回填 overlap
+  tableMode=ignore 失效（REQ-H08）；纯表格豁免天然覆盖
+  原子分支 flush 条件追加 excelRowMode       # 每个切片 TABLE 强制独占分片（小切片不被 chunkLength 合并）
+  豁免 handleAtomicOverflow 二次拆分         # 切片尺寸由 4800 字符硬上限定义，按 chunkLength 拆会拆碎切片
+```
 
 **LLM 边界审查耦合（2026-11-14，仅 structure_aware）：** 切片之后、入库之前，输出分批（≤10 片/批，单篇 ≤3 次调用）送 LLM 审查边界合理性，仅允许 merge/split/keep 调整、文字逐字守恒，失败整批回退标记未审（`llm_reviewed=0`）。双开关：yml 全局 `fastrag.chunk.llm-review.enabled`（强制）或策略级 `chunk.llmReview.enabled`；模型解析回退链 `strategy.llmModel → kb.llmModel → kb.graphLlmModel`，全空跳过审查留 WARN。明细落 `kb_chunk_llm_review`，DDL 与运行时幂等增补双处同步（init-scripts/schema.sql + SchemaInitializer）。
 

@@ -9,8 +9,8 @@ updated: 2026-11-17
 satisfies: [REQ-A01, REQ-A02, REQ-A03, REQ-A04, REQ-A05, REQ-B01, REQ-B02, REQ-B03, REQ-B04, REQ-B05, REQ-B06, REQ-C01, REQ-C02, REQ-C03, REQ-C04, REQ-D01, REQ-D02, REQ-D03, REQ-D04, REQ-D05, REQ-D06, REQ-D07, REQ-D08, REQ-D09, REQ-D10, REQ-E01, REQ-E02, REQ-E03, REQ-E04, REQ-E05, REQ-F01, REQ-F02, REQ-F03, REQ-F04, REQ-F05, REQ-F06, REQ-G01, REQ-G02, REQ-G03, REQ-G04, REQ-G05]  # 世代 spec 未受管，REQ id 由 spec 层声明；逐条映射见追溯节
 decisions: []  # 核心裁决 ADR-0001（绑定-重切一致）与图谱存储唯一实现的原重构版 adr 文件缺失（design 文档 §6 载要点）；重建 adr 后回填
 declares: []  # ChunkController 7 端点等 HTTP 形态归 docs/interfaces.md；本模块暂无新增外部错误码（contract 阶段补充）
-hash: "7b484bcf39ec"
-summaryHash: "7b484bcf39ec"
+hash: "7a3a9637ab90"
+summaryHash: "7a3a9637ab90"
 ---
 
 # 分片管理（chunk-management）— 模块设计
@@ -238,39 +238,12 @@ CREATE TABLE kb_chunk_llm_review (
 
 ### Logic Flow
 
-IF-009 semanticChunk 主链（e5f8b6a 四步优化后语义，其余算法族要点随后）：
+各分片方式（`chunk.strategy`）的伪代码级实现细节，按策略分节；分发规则与参数默认值见契约节与世代记录「分片方式参考」。
 
-```text
-semanticChunk(text, strategyId, kbEmbeddingModel):
-  threshold = clamp(cfg.semanticThreshold, 0, 100) / 100
-  model = cfg.embeddingModel 非空 ? 之 : kbEmbeddingModel
-  IF text 空白 THEN RETURN []
-  units = buildUnits(text, chunkLength)        # 噪声清洗/表格原子块/标题绑定后句
-  IF units.len == 0 THEN RETURN []
-  IF units.len == 1 THEN RETURN [整单元单分片]
-  IF model 空 THEN RETURN chunk(text, strategyId)          # 回退规则分片
-  modelRecord = resolveEmbeddingModelRecord(model)          # purpose=EMBEDDING + online
-  IF modelRecord == null AND kbEmbeddingModel 有效 AND != model:
-      model = kbEmbeddingModel; modelRecord = resolve(model)   # 误配对话模型自愈
-  windows = [units[i-1]+\n+units[i]+\n+units[i+1]]          # Buffer=1 滑窗平滑
-  vectors = embed(model, windows, apiUrl, apiKey) 分批 32
-  IF 异常 OR vectors.len != units.len THEN RETURN chunk(text, strategyId)  # 计数失配防错位
-  dist[i] = 1 - cos(vectors[i], vectors[i+1])
-  IF dist.len >= 30: threshold = percentile(dist, 95)       # 相对突降动态阈值
-  ELSE:             threshold = 1 - cfgThreshold             # 小样本回退绝对阈值
-  主循环 i=0..n-1:
-    IF d=dist[i-1] >= threshold THEN break  # 语义断点
-    ELIF armed(累积>0.8×chunkLength) AND d >= percentile(dist,85) THEN break  # 软上限提前落盘
-    IF curLen + u.len > chunkLength THEN break  # 硬上限（携带 overlap 尾部单元）
-    累积 u
-  后置碎片合并: content < 150 字符的片并入语义更近邻片（纯表格片豁免）
-  RETURN 重建 index/id 的分片列表
-```
-
-structuralChunk 要点（structure_aware/parent_child/excel_row 共用）：headingPath 栈维护 H1-H6 层级。
-可切分单元累积至接近 chunkLength 落盘。不可切分单元（TABLE/CODE/公式/IMAGE）整体保留，超长按行/函数边界二次拆。标题延迟合并，等下一正文节点。
-excel_row 模式：overlap=0、切片独占、豁免溢出二次拆（adr/0012）。rule_recursive：分隔符逐级 → 句子边界 → 硬切，贪心合并 + overlap 尾部延续。
-chunkBySegments：ASR segment 按文本长度比例线性分配时间。
+五族算法与 excel_row 的伪代码级实现细节（semantic 滑窗断点、rule_fixed 标题挂起与围栏状态机、
+rule_recursive 降级、structuralChunk 延迟合并与二次拆、parent_child 装配算法、时间分段线性内插）
+统一收录于世代记录 [../design/chunk-management.md](../design/chunk-management.md)「分片方式参考 → 各策略实现细节」——
+分片算法的叙事文档按特性归 design 层，本节保留契约接口的实现流。
 
 IF-010 storeChunks 编排：
 
