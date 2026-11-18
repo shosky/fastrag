@@ -70,6 +70,12 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
                               String beforeLine, String reason) {
     }
 
+    /** 解析结果：error 非 null 表示校验失败（含具体原因），adjustments 为通过校验的调整方案 */
+    private record ParseOutcome(String error, List<Adjustment> adjustments) {
+        static ParseOutcome fail(String error) { return new ParseOutcome(error, null); }
+        static ParseOutcome ok(List<Adjustment> adjustments) { return new ParseOutcome(null, adjustments); }
+    }
+
     /** 审查过程中的工作分组：原文行序列 + 源分片原编号（拆分后可重复） */
     private static final class Group {
         final List<String> lines = new ArrayList<>();          // 原文行（split("\n",-1) 保留空行）
@@ -120,6 +126,9 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
         int batches = Math.min(MAX_CALLS, (n + BATCH_SIZE - 1) / BATCH_SIZE);
         int calls = 0;
         int reviewedUpTo = 0; // [0, reviewedUpTo) 内的源分片已被成功审查
+        int totalMerge = 0;
+        int totalSplit = 0;
+        int totalKeep = 0;
 
         for (int b = 0; b < batches; b++) {
             int from = b * BATCH_SIZE;
@@ -137,11 +146,13 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
             }
             calls++;
 
-            List<Adjustment> ads = parseAdjustments(response, from, to, chunks);
-            if (ads == null) {
-                log.warn("[ChunkReview] batch {}-{} invalid adjustments, keep original", from, to - 1);
+            ParseOutcome outcome = parseAdjustments(response, from, to, chunks);
+            if (outcome.error() != null) {
+                log.warn("[ChunkReview] batch {}-{} invalid adjustments ({}), keep original; response={}",
+                        from, to - 1, outcome.error(), truncate(response, 600));
                 break;
             }
+            List<Adjustment> ads = outcome.adjustments();
 
             // 深拷贝快照，守恒校验失败整批回退
             List<Group> snapshot = deepCopy(groups);
@@ -158,7 +169,21 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
                 break;
             }
             reviewedUpTo = to;
-            log.info("[ChunkReview] batch {}-{} applied {} adjustment(s)", from, to - 1, ads.size());
+            int mergeCount = (int) ads.stream().filter(a -> "merge".equals(a.action())).count();
+            int splitCount = (int) ads.stream().filter(a -> "split".equals(a.action())).count();
+            int keepCount = (int) ads.stream().filter(a -> "keep".equals(a.action())).count();
+            totalMerge += mergeCount;
+            totalSplit += splitCount;
+            totalKeep += keepCount;
+            log.info("[ChunkReview] batch {}-{} applied: merge={}, split={}, keep={} (entries={})",
+                    from, to - 1, mergeCount, splitCount, keepCount, ads.size());
+            for (Adjustment ad : ads) {
+                if ("keep".equals(ad.action())) continue;
+                String target = ad.chunks() != null
+                        ? "chunks " + ad.chunks()
+                        : "chunk " + ad.splitChunk() + " @\"" + truncate(ad.beforeLine(), 30) + "\"";
+                log.info("[ChunkReview]   -> {} {}: {}", ad.action(), target, ad.reason());
+            }
         }
 
         // 重建分片：连续编号 + 审查字段回填
@@ -199,8 +224,8 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
             idx++;
         }
 
-        log.info("[ChunkReview] done: {} chunks -> {} chunks (calls={}, reviewedUpTo={}, model={}, prompt={})",
-                n, result.size(), calls, reviewedUpTo, model, PROMPT_VERSION);
+        log.info("[ChunkReview] done: {} chunks -> {} chunks (calls={}, reviewedUpTo={}, merge={}, split={}, keep={}, model={}, prompt={})",
+                n, result.size(), calls, reviewedUpTo, totalMerge, totalSplit, totalKeep, model, PROMPT_VERSION);
         return result;
     }
 
@@ -275,16 +300,15 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
      * merge 编号连续、成员不含 table/code、合并后不超长；split 目标为 text 分片且 beforeLine 可定位。
      * 任一违规返回 null（整批回退）。
      */
-    private List<Adjustment> parseAdjustments(String response, int from, int to, List<ChunkData> chunks) {
+    private ParseOutcome parseAdjustments(String response, int from, int to, List<ChunkData> chunks) {
         try {
             String json = stripFences(response);
             int s = json.indexOf('{');
             int e = json.lastIndexOf('}');
-            if (s < 0 || e <= s) return null;
+            if (s < 0 || e <= s) return ParseOutcome.fail("no JSON object found in response");
             JsonNode root = objectMapper.readTree(json.substring(s, e + 1));
             JsonNode arr = root.get("adjustments");
-            if (arr == null || !arr.isArray() || arr.isEmpty()) return null;
-
+            if (arr == null || !arr.isArray() || arr.isEmpty()) return ParseOutcome.fail("adjustments array missing/empty");
             Map<Integer, String> coverage = new HashMap<>();
             List<Adjustment> out = new ArrayList<>();
             for (JsonNode op : arr) {
@@ -293,57 +317,66 @@ public class ChunkReviewServiceImpl implements ChunkReviewService {
                 switch (action) {
                     case "merge" -> {
                         JsonNode ids = op.path("chunks");
-                        if (!ids.isArray() || ids.size() < 2) return null;
+                        if (!ids.isArray() || ids.size() < 2) return ParseOutcome.fail("merge needs chunks array with >=2 members");
                         List<Integer> members = new ArrayList<>();
                         int prev = -1;
                         int total = 0;
                         for (JsonNode id : ids) {
                             int v = id.asInt(-1);
-                            if (v < from || v >= to || (prev >= 0 && v != prev + 1)) return null;
+                            if (v < from || v >= to) return ParseOutcome.fail("merge index " + v + " out of range [" + from + "," + to + ")");
+                            if (prev >= 0 && v != prev + 1) return ParseOutcome.fail("merge members not contiguous at " + v);
                             String type = chunks.get(v).getChunkType() == null ? "text" : chunks.get(v).getChunkType();
-                            if ("table".equals(type) || "code".equals(type)) return null;
+                            if ("table".equals(type) || "code".equals(type)) return ParseOutcome.fail("merge contains non-mergeable " + type + " chunk " + v);
                             total += chunks.get(v).getContent() == null ? 0 : chunks.get(v).getContent().length();
                             members.add(v);
                             prev = v;
                         }
-                        if (total > MAX_MERGE_LENGTH) return null;
+                        if (total > MAX_MERGE_LENGTH) return ParseOutcome.fail("merged length " + total + " > " + MAX_MERGE_LENGTH);
                         for (int v : members) mark(coverage, v, "merge", from, to);
                         out.add(new Adjustment("merge", members, null, null, reason));
                     }
                     case "split" -> {
                         int v = op.path("chunk").asInt(-1);
-                        if (v < from || v >= to) return null;
+                        if (v < from || v >= to) return ParseOutcome.fail("split index " + v + " out of range [" + from + "," + to + ")");
                         String type = chunks.get(v).getChunkType() == null ? "text" : chunks.get(v).getChunkType();
-                        if (!"text".equals(type)) return null;
+                        if (!"text".equals(type)) return ParseOutcome.fail("split target chunk " + v + " is " + type + " (only text splittable)");
                         String beforeLine = op.path("beforeLine").asText("").trim();
-                        if (beforeLine.isEmpty() || resolvable(chunks.get(v).getContent(), beforeLine) < 0) return null;
+                        if (beforeLine.isEmpty()) return ParseOutcome.fail("split beforeLine empty for chunk " + v);
+                        if (resolvable(chunks.get(v).getContent(), beforeLine) < 0)
+                            return ParseOutcome.fail("split beforeLine not found verbatim in chunk " + v + ": \"" + truncate(beforeLine, 40) + "\"");
                         mark(coverage, v, "split", from, to);
                         out.add(new Adjustment("split", null, v, beforeLine, reason));
                     }
                     case "keep" -> {
                         JsonNode ids = op.path("chunks");
-                        if (!ids.isArray() || ids.isEmpty()) return null;
+                        if (!ids.isArray() || ids.isEmpty()) return ParseOutcome.fail("keep needs non-empty chunks array");
                         List<Integer> members = new ArrayList<>();
                         for (JsonNode id : ids) {
                             int v = id.asInt(-1);
-                            if (v < from || v >= to) return null;
+                            if (v < from || v >= to) return ParseOutcome.fail("keep index " + v + " out of range [" + from + "," + to + ")");
                             members.add(v);
                             mark(coverage, v, "keep", from, to);
                         }
                         out.add(new Adjustment("keep", members, null, null, reason));
                     }
                     default -> {
-                        return null;
+                        return ParseOutcome.fail("unknown action \"" + action + "\"");
                     }
                 }
             }
             // 全覆盖校验：[from,to) 每个编号恰好一次
+            List<Integer> missing = new ArrayList<>();
             for (int v = from; v < to; v++) {
-                if (!coverage.containsKey(v)) return null;
+                if (!coverage.containsKey(v)) missing.add(v);
             }
-            return out;
+            if (!missing.isEmpty()) return ParseOutcome.fail("indexes not covered: " + missing);
+            return ParseOutcome.ok(out);
+        } catch (com.fasterxml.jackson.core.JsonProcessingException jpe) {
+            return ParseOutcome.fail("JSON parse failed: " + jpe.getOriginalMessage());
+        } catch (IllegalStateException ise) {
+            return ParseOutcome.fail(ise.getMessage()); // mark()：编号重复覆盖
         } catch (Exception ex) {
-            return null;
+            return ParseOutcome.fail("unexpected: " + ex.getMessage());
         }
     }
 

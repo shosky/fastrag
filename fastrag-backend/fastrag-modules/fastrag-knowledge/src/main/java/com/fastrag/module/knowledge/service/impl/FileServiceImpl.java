@@ -16,6 +16,7 @@ import com.fastrag.module.knowledge.chunking.ChunkData;
 import com.fastrag.module.knowledge.chunking.ChunkingService;
 import com.fastrag.module.knowledge.config.StrategyConfigResolver;
 import com.fastrag.module.knowledge.entity.KbChunk;
+import com.fastrag.module.knowledge.entity.KbChunkLlmReview;
 import com.fastrag.module.knowledge.entity.KbFile;
 import com.fastrag.module.knowledge.entity.KbParseStrategy;
 import com.fastrag.module.knowledge.entity.KbQaPair;
@@ -24,6 +25,7 @@ import com.fastrag.module.knowledge.entity.KbTag;
 import com.fastrag.module.knowledge.entity.KbTagRelation;
 import com.fastrag.module.knowledge.entity.KnowledgeBase;
 import com.fastrag.module.knowledge.mapper.KbChunkMapper;
+import com.fastrag.module.knowledge.mapper.KbChunkLlmReviewMapper;
 import com.fastrag.module.knowledge.mapper.KbFileMapper;
 import com.fastrag.module.knowledge.mapper.KbParseStrategyMapper;
 import com.fastrag.module.knowledge.mapper.KbQaPairMapper;
@@ -81,6 +83,7 @@ import java.util.stream.Collectors;
 public class FileServiceImpl implements FileService {
     private final KbFileMapper fileMapper;
     private final KbChunkMapper chunkMapper;
+    private final KbChunkLlmReviewMapper chunkLlmReviewMapper;
     private final KbQaPairMapper qaPairMapper;
     private final KbQaGenerationTaskMapper qaGenerationTaskMapper;
     private final MinioService minioService;
@@ -441,6 +444,13 @@ public class FileServiceImpl implements FileService {
                 .eq(KbChunk::getFileId, fileId)
                 .and(w -> w.isNull(KbChunk::getOrigin).or().ne(KbChunk::getOrigin, "manual")));
         log.info("[ReChunk] Deleted {} auto chunks (manual kept) for file: {}", chunkDeleted, fileId);
+
+        // LLM 边界审查明细随重切失效：按文件清理，避免陈旧明细贴到新分片上制造「已审」假证据
+        int reviewDetailDeleted = chunkLlmReviewMapper.delete(
+                new LambdaQueryWrapper<KbChunkLlmReview>().eq(KbChunkLlmReview::getFileId, fileId));
+        if (reviewDetailDeleted > 0) {
+            log.info("[ReChunk] Deleted {} stale llm-review detail rows for file: {}", reviewDetailDeleted, fileId);
+        }
 
         String collection = "kb_" + kbId.replace("-", "_");
         if (!autoEmbeddingIds.isEmpty()) {
